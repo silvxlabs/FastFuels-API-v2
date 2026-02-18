@@ -1,0 +1,21 @@
+[project]
+name = "exporter"
+version = "0.1.0"
+description = "Backend service for V2 export processing"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "functions-framework>=3.10.0",
+    "lib[firestore,gcs,zarr]",
+    "rioxarray>=0.21.0",
+]
+
+[dependency-groups]
+dev = [
+    "numpy>=2.0.0",
+    "pytest>=8.0.0",
+    "xarray>=2025.1.0",
+]
+
+[tool.uv.sources]
+lib = { path = "../lib", editable = true }

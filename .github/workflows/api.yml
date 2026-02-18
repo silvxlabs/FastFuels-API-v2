@@ -1,0 +1,95 @@
+name: CI/CD Pipeline for API Service
+
+env:
+  SERVICE_NAME: api-v2
+  REPO_NAME: v2
+  REGION: us-west1
+  PROJECT_ID: ${{ secrets.GCP_PROJECT }}
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'services/api/**'
+      - 'services/lib/**'
+      - '.github/workflows/api.yml'
+
+jobs:
+  determine-environment:
+    name: Determine Deployment Environment
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_env: ${{ steps.set-env.outputs.deploy_env }}
+    steps:
+      - name: Set deployment environment based on branch
+        id: set-env
+        run: |
+          if [[ $GITHUB_REF == 'refs/heads/main' ]]; then
+            echo "deploy_env=prod" >> $GITHUB_OUTPUT
+          else
+            echo "deploy_env=dev" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    name: Build Docker Image and Push to Artifact Registry
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Google Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGION }}-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:latest
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ needs.determine-environment.outputs.deploy_env }}
+          file: services/api/Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to ${{ needs.determine-environment.outputs.deploy_env }}
+    runs-on: ubuntu-latest
+    needs: [ determine-environment, build ]
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          CLOUD_RUN_NAME="${{ env.SERVICE_NAME }}-${{ needs.determine-environment.outputs.deploy_env }}"
+          API_URL=$(gcloud run services describe "$CLOUD_RUN_NAME" --region ${{ env.REGION }} --format='value(status.url)' 2>/dev/null || echo "")
+          gcloud run deploy "$CLOUD_RUN_NAME" \
+            --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ needs.determine-environment.outputs.deploy_env }} \
+            --region ${{ env.REGION }} \
+            --set-env-vars="\
+              DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
+              GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
+              GCP_REGION=${{ env.REGION }},\
+              GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
+              EXPORTS_BUCKET=${{ secrets.EXPORTS_BUCKET }},\
+              RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }},\
+              CORS_ORIGINS=${{ secrets.CORS_ORIGINS }},\
+              API_URL=$API_URL" \
+            --quiet

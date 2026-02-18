@@ -1,0 +1,57 @@
+"""
+Async GCS blob operations for FastAPI routes.
+
+Provides async file operations using gcsfs with asynchronous=True.
+
+Note: gcsfs async methods are prefixed with underscore (e.g., _exists, _rm).
+This is the official async API, not private methods.
+"""
+
+import logging
+
+import gcsfs
+
+logger = logging.getLogger(__name__)
+
+gcsfs_client: gcsfs.GCSFileSystem = gcsfs.GCSFileSystem(asynchronous=True)
+
+
+async def delete_directory(bucket_name: str, directory_path: str) -> None:
+    """Delete a directory and all its contents from GCS."""
+    full_path = f"{bucket_name}/{directory_path}"
+    if await gcsfs_client._exists(full_path):
+        await gcsfs_client._rm(full_path, recursive=True)
+
+
+async def delete_file(bucket_name: str, file_path: str) -> None:
+    """Delete a single file from GCS."""
+    full_path = f"{bucket_name}/{file_path}"
+    await gcsfs_client._rm(full_path)
+
+
+async def check_exists(bucket_name: str, path: str) -> bool:
+    """Check if a file or directory exists in GCS."""
+    full_path = f"{bucket_name}/{path}"
+    return await gcsfs_client._exists(full_path)
+
+
+async def download_file(gcs_path: str, local_path: str) -> None:
+    """Download a file from GCS to local filesystem."""
+    if gcs_path.startswith("gs://"):
+        gcs_path = gcs_path[5:]
+    await gcsfs_client._get(gcs_path, local_path)
+
+
+async def delete_directory_safe(bucket_name: str, directory_path: str) -> None:
+    """Best-effort async delete. For use as a BackgroundTasks callback."""
+    try:
+        await delete_directory(bucket_name, directory_path)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(
+            "Failed to delete GCS data at %s/%s: %s",
+            bucket_name,
+            directory_path,
+            e,
+        )

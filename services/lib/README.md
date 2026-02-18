@@ -66,7 +66,6 @@ All infrastructure values come from environment variables with safe defaults.
 | `GRIDDLE_SERVICE` | `griddle-v2` | Cloud Run service name for griddle |
 | `EXPORTER_SERVICE` | `exporter-v2` | Cloud Run service name for exporter |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8080` | Comma-separated CORS origins |
-| `API_URL` | `http://127.0.0.1:8080` | API URL for self-referencing responses |
 | `DEPLOYMENT_ENV` | `local` | Deployment environment |
 
 See `.env.example` in the repo root for the full list.

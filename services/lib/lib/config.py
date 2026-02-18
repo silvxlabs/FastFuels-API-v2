@@ -44,9 +44,6 @@ CORS_ORIGINS = [
     if origin.strip()
 ]
 
-# API URL — for self-referencing responses
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8080")
-
 # Deployment environment
 DEPLOYMENT_ENV = os.getenv("DEPLOYMENT_ENV", "local")
 

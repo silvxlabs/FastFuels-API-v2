@@ -14,6 +14,7 @@ Validation Checks:
 """
 
 import json
+import logging
 from pathlib import Path
 
 import geopandas as gpd
@@ -27,6 +28,8 @@ MAX_DOMAIN_AREA_SQ_METERS = 1.6e7
 
 # Default CRS if not specified
 DEFAULT_CRS = "EPSG:4326"
+
+logger = logging.getLogger(__name__)
 
 # Load CONUS boundary GeoDataFrame at module level
 _CONUS_GEOJSON_PATH = (
@@ -59,9 +62,10 @@ def parse_geojson_to_gdf(geojson: dict) -> GeoDataFrame:
         geojson_str = json.dumps(geojson)
         return gpd.read_file(geojson_str)
     except Exception as e:
+        logger.warning("Failed to parse GeoJSON: %s", e)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid GeoJSON. Unable to parse geometry: {e}",
+            detail="Invalid GeoJSON. Unable to parse geometry.",
         )
 
 

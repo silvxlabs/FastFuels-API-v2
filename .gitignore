@@ -1,0 +1,38 @@
+# Environment and credentials
+.env
+.env.local
+.env.*.local
+.config/
+
+# Service account keys (don't use *.json — blocks test fixtures)
+**/credentials*.json
+**/service-account*.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary files
+*.tif
+*.tif.aux.xml
+tmp/

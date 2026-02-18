@@ -1,0 +1,36 @@
+[project]
+name = "api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dask>=2026.1.2",
+    "dask-expr>=2.0.0",
+    "fastapi>=0.128.0",
+    "fastparquet>=2025.12.0",
+    "firebase-admin>=7.1.0",
+    "gcsfs>=2026.1.0",
+    "geojson-pydantic>=2.1.0",
+    "geopandas>=1.1.2",
+    "google-cloud-firestore>=2.23.0",
+    "google-cloud-logging>=3.13.0",
+    "google-cloud-run>=0.15.0",
+    "google-cloud-storage>=3.9.0",
+    "google-cloud-tasks>=2.21.0",
+    "gunicorn>=25.0.1",
+    "lib",
+    "pandas>=3.0.0",
+    "pandera>=0.29.0",
+    "pyarrow>=23.0.0",
+    "pydantic>=2.12.5",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "python-multipart>=0.0.22",
+    "ring>=0.10.1",
+    "uvicorn>=0.40.0",
+    "zarr>=3.1.5",
+]
+
+[tool.uv.sources]
+lib = { path = "../lib", editable = true }

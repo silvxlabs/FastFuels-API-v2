@@ -1,7 +1,7 @@
 FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y \
-    build-essential gdal-bin libgdal-dev libexpat1
+    libexpat1
 
 RUN pip install uv
 

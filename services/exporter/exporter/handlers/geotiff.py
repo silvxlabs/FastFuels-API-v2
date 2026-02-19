@@ -74,7 +74,7 @@ def export_geotiff(
 
     # Write GeoTIFF directly to GCS
     progress("Writing GeoTIFF...", 70)
-    gcs_path = f"{EXPORTS_BUCKET}/{export_id}/export.tif"
+    gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/export.tif"
     try:
         with rasterio.Env(CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE="YES"):
             ds.rio.to_raster(gcs_path, driver="GTiff")

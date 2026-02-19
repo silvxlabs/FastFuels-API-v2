@@ -19,6 +19,7 @@ GCP_PROJECT = os.environ["GCP_PROJECT"]
 # Non-sensitive config with safe defaults
 GCP_REGION = os.getenv("GCP_REGION", "us-west1")
 DEPLOYMENT_ENV = os.getenv("DEPLOYMENT_ENV", "local")
+INFRA_ENV = os.getenv("INFRA_ENV", "dev")
 
 # Bucket names
 GRIDS_BUCKET = os.getenv("GRIDS_BUCKET", "placeholder-bucket-name")
@@ -38,8 +39,8 @@ GRIDDLE_QUEUE = os.getenv("GRIDDLE_QUEUE", "griddle-v2-queue")
 EXPORTER_QUEUE = os.getenv("EXPORTER_QUEUE", "exporter-v2-queue")
 
 # Service names
-GRIDDLE_SERVICE = os.getenv("GRIDDLE_SERVICE", "griddle-v2")
-EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", "exporter-v2")
+GRIDDLE_SERVICE = os.getenv("GRIDDLE_SERVICE", f"griddle-v2-{INFRA_ENV}")
+EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", f"exporter-v2-{INFRA_ENV}")
 
 # Dev mode — disabled by default; must be explicitly enabled
 FASTFUELS_DEV_MODE = os.getenv("FASTFUELS_DEV_MODE", "false").lower() in ("true", "1")

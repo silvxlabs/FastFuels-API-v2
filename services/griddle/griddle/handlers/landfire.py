@@ -30,7 +30,7 @@ def _fetch_landfire_raster(
     Returns:
         DataArray with dims (y, x)
     """
-    url = f"{RASTERS_BUCKET}/LF{version}_{product}_CONUS.tif"
+    url = f"gs://{RASTERS_BUCKET}/LF{version}_{product}_CONUS.tif"
     raster = RasterConnection(url, connection_type="rioxarray", cache=True)
     data = raster.extract_window(
         roi=roi,

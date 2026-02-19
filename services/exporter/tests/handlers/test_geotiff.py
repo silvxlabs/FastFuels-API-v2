@@ -203,7 +203,7 @@ class TestExportGeotiffIntegration:
             noop_progress,
         )
 
-        assert gcs_path == f"{self.BUCKET}/{export_id}/export.tif"
+        assert gcs_path == f"gs://{self.BUCKET}/{export_id}/export.tif"
 
         # Read back from GCS and verify
         result = xr.open_dataset(gcs_path, engine="rasterio")

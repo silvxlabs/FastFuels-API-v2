@@ -12,7 +12,6 @@ WORKDIR /app/griddle
 
 RUN uv sync --frozen
 
-ENV PYTHONPATH=/app/griddle
 ENV FUNCTION_TARGET=process_grid_request
 ENV FUNCTION_SOURCE=griddle/main.py
 ENV FUNCTION_SIGNATURE_TYPE=http

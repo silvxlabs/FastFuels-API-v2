@@ -88,3 +88,37 @@ jobs:
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
               EXPORTS_BUCKET=${{ secrets.EXPORTS_BUCKET }}" \
             --quiet
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: services/exporter
+        run: uv sync --frozen --dev
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Run tests
+        working-directory: services/exporter
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GCP_REGION: ${{ env.REGION }}
+          GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
+          EXPORTS_BUCKET: ${{ secrets.EXPORTS_BUCKET }}
+        run: uv run pytest tests/ -v

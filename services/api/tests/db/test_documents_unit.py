@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from lib.config import DEV_OWNER_ID, DOMAINS_COLLECTION, GRIDS_COLLECTION
+from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
+
+MOCK_OWNER_ID = "TEST_OWNER"
 
 # Apply to all tests in this module
 pytestmark = pytest.mark.anyio
@@ -543,7 +545,7 @@ class TestListDocumentsAsync:
         ):
             docs, total = await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
             )
 
         assert len(docs) == 2
@@ -596,7 +598,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 page=2,
                 size=25,
             )
@@ -623,7 +625,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 sort_by="created_on",
                 sort_order="descending",
             )
@@ -650,7 +652,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 sort_by="name",
                 sort_order="ascending",
             )
@@ -675,7 +677,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 sort_by=None,
             )
 
@@ -699,7 +701,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
             )
 
         # Default page=0, size=100 means offset=0, limit=100
@@ -726,7 +728,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=GRIDS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 filters={"domain_id": "domain-123"},
             )
 
@@ -757,7 +759,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=GRIDS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 filters={"domain_id": "domain-123", "status": "completed"},
             )
 
@@ -793,7 +795,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 filters={},
             )
 
@@ -821,7 +823,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=GRIDS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 filters={"domain_id": "domain-456"},
             )
 
@@ -832,7 +834,7 @@ class TestListDocumentsAsync:
             or mock_where_initial.call_args.args[0]
         )
         assert initial_filter.field_path == "owner_id"
-        assert initial_filter.value == DEV_OWNER_ID
+        assert initial_filter.value == MOCK_OWNER_ID
 
         # Verify chained where was called with domain_id
         mock_where_chain.assert_called_once()
@@ -862,7 +864,7 @@ class TestListDocumentsAsync:
         ):
             docs, total_count = await documents_module.list_documents_async(
                 collection=GRIDS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 filters={"domain_id": "domain-123"},
             )
 
@@ -890,7 +892,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=GRIDS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 array_contains_filters={"tags": "surface-fuel"},
             )
 
@@ -922,7 +924,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=GRIDS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 filters={"source.name": "landfire"},
                 array_contains_filters={"tags": "baseline"},
             )
@@ -959,7 +961,7 @@ class TestListDocumentsAsync:
         ):
             await documents_module.list_documents_async(
                 collection=DOMAINS_COLLECTION,
-                owner_id=DEV_OWNER_ID,
+                owner_id=MOCK_OWNER_ID,
                 array_contains_filters={},
             )
 

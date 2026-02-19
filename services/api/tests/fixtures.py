@@ -13,26 +13,17 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from lib.config import DEV_OWNER_ID
+# Set by conftest.py from the pre-seeded Firestore key document.
+DEFAULT_OWNER_ID: str | None = None
 
 
 def make_domain_data(
-    owner_id: str = DEV_OWNER_ID,
+    owner_id: str | None = None,
     name: str = "Test Domain",
     description: str = "Test domain created by fixture",
     tags: list | None = None,
 ) -> dict:
-    """Factory function to create domain data as stored in Firestore.
-
-    Args:
-        owner_id: Owner ID for access control. Default: DEV_OWNER_ID
-        name: Domain name.
-        description: Domain description.
-        tags: List of tags.
-
-    Returns:
-        Dict matching Firestore domain document structure.
-    """
+    """Factory function to create domain data as stored in Firestore."""
     return {
         "type": "FeatureCollection",
         "id": f"test-{uuid.uuid4().hex}",
@@ -40,7 +31,7 @@ def make_domain_data(
         "description": description,
         "created_on": datetime.now(),
         "modified_on": datetime.now(),
-        "owner_id": owner_id,
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
         "tags": tags or [],
         "crs": {"type": "name", "properties": {"name": "EPSG:32611"}},
         "features": [
@@ -68,7 +59,7 @@ def make_domain_data(
 
 def make_grid_data(
     domain_id: str,
-    owner_id: str = DEV_OWNER_ID,
+    owner_id: str | None = None,
     name: str = "Test Grid",
     description: str = "Test grid created by fixture",
     status: str = "pending",
@@ -77,22 +68,7 @@ def make_grid_data(
     bands: list | None = None,
     georeference: dict | None = None,
 ) -> dict:
-    """Factory function to create grid data as stored in Firestore.
-
-    Args:
-        domain_id: Required domain ID this grid belongs to.
-        owner_id: Owner ID for access control. Default: DEV_OWNER_ID
-        name: Grid name.
-        description: Grid description.
-        status: Grid status. Default: "pending".
-        tags: List of tags.
-        source: Source specification dict. Defaults to LANDFIRE FBFM40.
-        bands: Band list. Defaults to fbfm + fuel_load.1hr.
-        georeference: Georeference dict. Defaults to a 34x34 grid at 30m.
-
-    Returns:
-        Dict matching Firestore grid document structure.
-    """
+    """Factory function to create grid data as stored in Firestore."""
     return {
         "id": f"test-{uuid.uuid4().hex}",
         "domain_id": domain_id,
@@ -101,7 +77,7 @@ def make_grid_data(
         "status": status,
         "created_on": datetime.now(),
         "modified_on": datetime.now(),
-        "owner_id": owner_id,
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
         "source": source
         or {
             "name": "landfire",
@@ -129,24 +105,15 @@ def make_grid_data(
 
 
 def make_application_data(
-    owner_id: str = DEV_OWNER_ID,
+    owner_id: str | None = None,
     name: str = "Test Application",
     description: str | None = "Test application created by fixture",
 ) -> dict:
-    """Factory function to create application data as stored in Firestore.
-
-    Args:
-        owner_id: Owner ID for access control. Default: DEV_OWNER_ID
-        name: Application name.
-        description: Application description.
-
-    Returns:
-        Dict matching Firestore application document structure.
-    """
+    """Factory function to create application data as stored in Firestore."""
     now = datetime.now(UTC)
     return {
         "id": f"test-{uuid.uuid4().hex}",
-        "owner_id": owner_id,
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
         "name": name,
         "description": description,
         "created_on": now,
@@ -156,7 +123,7 @@ def make_application_data(
 
 def make_export_data(
     domain_id: str,
-    owner_id: str = DEV_OWNER_ID,
+    owner_id: str | None = None,
     name: str = "Test Export",
     description: str = "Test export created by fixture",
     status: str = "pending",
@@ -166,23 +133,7 @@ def make_export_data(
     curl: str | None = None,
     expires_on: datetime | None = None,
 ) -> dict:
-    """Factory function to create export data as stored in Firestore.
-
-    Args:
-        domain_id: Required domain ID this export came from.
-        owner_id: Owner ID for access control. Default: DEV_OWNER_ID
-        name: Export name.
-        description: Export description.
-        status: Export status. Default: "pending".
-        tags: List of tags.
-        source: Source specification dict. Defaults to geotiff export.
-        signed_url: Signed download URL (populated when completed).
-        curl: curl command for downloading (populated when completed).
-        expires_on: When the signed URL expires.
-
-    Returns:
-        Dict matching Firestore export document structure.
-    """
+    """Factory function to create export data as stored in Firestore."""
     return {
         "id": f"test-{uuid.uuid4().hex}",
         "domain_id": domain_id,
@@ -192,7 +143,7 @@ def make_export_data(
         "progress": None,
         "created_on": datetime.now(),
         "modified_on": datetime.now(),
-        "owner_id": owner_id,
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
         "source": source
         or {
             "name": "geotiff",
@@ -208,7 +159,7 @@ def make_export_data(
 
 
 def make_key_data(
-    owner_id: str = DEV_OWNER_ID,
+    owner_id: str | None = None,
     creator_id: str | None = None,
     name: str = "Test Key",
     description: str | None = "Test key created by fixture",
@@ -221,29 +172,16 @@ def make_key_data(
 
     Generates a real secret/hash pair. The raw secret is stored in
     ``_test_secret`` for test convenience (not part of the Firestore doc).
-
-    Args:
-        owner_id: Owner ID for access control. Default: DEV_OWNER_ID
-        creator_id: Human user who created the key. Default: same as owner_id.
-        name: Key name.
-        description: Key description.
-        scopes: List of scopes. Default: ["read"].
-        access: Access type ("personal" or "application").
-        application_id: Application ID (required when access="application").
-        valid_days: Number of days the key is valid.
-
-    Returns:
-        Dict matching Firestore key document structure, with an extra
-        ``_test_secret`` field containing the raw secret.
     """
+    resolved = owner_id or DEFAULT_OWNER_ID
     raw_secret = secrets.token_hex(32)
     key_hash = hashlib.sha256(raw_secret.encode()).hexdigest()
     now = datetime.now(UTC)
 
     data = {
         "id": key_hash,
-        "owner_id": owner_id,
-        "creator_id": creator_id or owner_id,
+        "owner_id": resolved,
+        "creator_id": creator_id or resolved,
         "name": name,
         "description": description,
         "scopes": scopes or ["read"],

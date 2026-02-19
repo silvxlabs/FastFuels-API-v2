@@ -23,8 +23,6 @@ from api.auth import (
 from api.resources.keys.schema import Access, Key, Scope
 from ring import lru
 
-from lib.config import DEV_API_KEY, DEV_OWNER_ID
-
 
 class TestHashApiKey:
     def test_sha256_correctness(self):
@@ -191,52 +189,6 @@ class TestAuthenticateUser:
         with pytest.raises(Exception) as exc_info:
             await authenticate_user(request, api_key=None, bearer=None)
         assert exc_info.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_dev_mode_bypass_for_test_key(self):
-        request = self._make_request()
-        with patch("api.auth.FASTFUELS_DEV_MODE", True):
-            result = await authenticate_user(request, api_key=DEV_API_KEY, bearer=None)
-            assert result.state.id == DEV_OWNER_ID
-            assert result.state.access == Access.PERSONAL
-
-    @pytest.mark.asyncio
-    async def test_dev_mode_ignores_other_keys(self):
-        """Dev mode should NOT bypass auth for keys other than test-api-key."""
-        key = Key(
-            id="abc",
-            owner_id="real-owner",
-            creator_id="real-owner",
-            name="Real Key",
-            scopes=[Scope.READ, Scope.WRITE],
-            expires_on=datetime.now(UTC) + timedelta(days=30),
-        )
-        request = self._make_request()
-        request.method = "GET"
-
-        with (
-            patch("api.auth.FASTFUELS_DEV_MODE", True),
-            patch("api.auth.resolve_api_key", new_callable=AsyncMock, return_value=key),
-        ):
-            result = await authenticate_user(request, api_key="real-key", bearer=None)
-            assert result.state.id == "real-owner"
-
-    @pytest.mark.asyncio
-    async def test_production_mode_no_bypass(self):
-        """With DEV_MODE=False, test-api-key should go through normal auth."""
-        request = self._make_request()
-        request.method = "GET"
-
-        with (
-            patch("api.auth.FASTFUELS_DEV_MODE", False),
-            patch(
-                "api.auth.resolve_api_key",
-                new_callable=AsyncMock,
-                side_effect=Exception("not found"),
-            ),
-        ):
-            with pytest.raises(Exception):
-                await authenticate_user(request, api_key=DEV_API_KEY, bearer=None)
 
 
 # Short-TTL function for testing ring's expire behavior. Same configuration

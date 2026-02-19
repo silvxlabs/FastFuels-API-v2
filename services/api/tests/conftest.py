@@ -2,8 +2,9 @@
 Pytest configuration for API tests.
 
 Provides shared fixtures:
-- cleanup_stale_test_data: Autouse session fixture that removes leftover test data
-- client: HTTP client for API requests
+- test_owner_id: Lazy lookup of owner from pre-seeded test key in Firestore
+- cleanup_stale_test_data: Removes leftover test data (triggered via client)
+- client: HTTP client for API requests (depends on cleanup)
 - firestore_client: Firestore client for direct database operations
 - domain_for_testing: A domain owned by test-owner for tests that need a domain
 - domain_with_different_owner: A domain owned by different-owner for ownership tests
@@ -13,14 +14,13 @@ import os
 
 import gcsfs
 import pytest
+from api.auth import hash_api_key
 from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from httpx import Client
 
 from lib.config import (
     APPLICATIONS_COLLECTION,
-    DEV_API_KEY,
-    DEV_OWNER_ID,
     DOMAINS_COLLECTION,
     EXPORTS_BUCKET,
     EXPORTS_COLLECTION,
@@ -28,16 +28,11 @@ from lib.config import (
     GRIDS_COLLECTION,
     KEYS_COLLECTION,
 )
+from tests import fixtures
 from tests.fixtures import make_application_data, make_domain_data
 
 TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080")
-print(f"\nRunning tests at {TEST_URL}\n")
-
-TEST_KEY = os.getenv("TEST_API_KEY", DEV_API_KEY)
-HEADERS = {"API-KEY": TEST_KEY}
-CLIENT_ARGS = {"base_url": TEST_URL, "headers": HEADERS}
-
-TEST_OWNER_IDS = [DEV_OWNER_ID, "different-owner"]
+TEST_API_KEY = os.environ.get("TEST_API_KEY", "")
 COLLECTIONS = [
     DOMAINS_COLLECTION,
     GRIDS_COLLECTION,
@@ -47,12 +42,14 @@ COLLECTIONS = [
 ]
 
 
-def _delete_docs_by_owner(fs_client, collection: str, owner_id: str) -> list[str]:
+def _delete_docs_by_owner(
+    fs_client, collection: str, owner_id: str, skip_ids: set[str] | None = None
+) -> list[str]:
     """Delete all docs in a collection matching owner_id. Returns deleted doc IDs."""
     query = fs_client.collection(collection).where(
         filter=FieldFilter("owner_id", "==", owner_id)
     )
-    docs = list(query.stream())
+    docs = [doc for doc in query.stream() if not skip_ids or doc.id not in skip_ids]
     if not docs:
         return []
 
@@ -65,20 +62,31 @@ def _delete_docs_by_owner(fs_client, collection: str, owner_id: str) -> list[str
     return doc_ids
 
 
-@pytest.fixture(scope="session", autouse=True)
-def cleanup_stale_test_data():
-    """Remove leftover test data from previous runs before tests start.
+@pytest.fixture(scope="session")
+def test_owner_id():
+    """Resolve the test owner from the pre-seeded key in Firestore."""
+    key_hash = hash_api_key(TEST_API_KEY)
+    doc = firestore.Client().collection(KEYS_COLLECTION).document(key_hash).get()
+    if not doc.exists:
+        raise RuntimeError("TEST_API_KEY is not valid.")
+    owner_id = doc.to_dict()["owner_id"]
+    fixtures.DEFAULT_OWNER_ID = owner_id
+    return owner_id
 
-    Queries each collection for documents owned by test users and deletes
-    them. For grids, also removes the corresponding GCS directories.
-    """
+
+@pytest.fixture(scope="session")
+def cleanup_stale_test_data(test_owner_id):
+    """Remove leftover test data from previous runs before tests start."""
+    key_hash = hash_api_key(TEST_API_KEY)
+    owner_ids = [test_owner_id, "different-owner"]
+
     fs_client = firestore.Client()
     gcs = gcsfs.GCSFileSystem()
 
     # Collect grid and export IDs before deleting so we can clean up GCS
     grid_ids = []
     export_ids = []
-    for owner_id in TEST_OWNER_IDS:
+    for owner_id in owner_ids:
         query = fs_client.collection(GRIDS_COLLECTION).where(
             filter=FieldFilter("owner_id", "==", owner_id)
         )
@@ -108,18 +116,21 @@ def cleanup_stale_test_data():
     # Delete Firestore documents
     deleted_counts = {}
     for collection in COLLECTIONS:
+        skip_ids = {key_hash} if collection == KEYS_COLLECTION else None
         count = 0
-        for owner_id in TEST_OWNER_IDS:
-            count += len(_delete_docs_by_owner(fs_client, collection, owner_id))
+        for owner_id in owner_ids:
+            count += len(
+                _delete_docs_by_owner(fs_client, collection, owner_id, skip_ids)
+            )
         if count:
             deleted_counts[collection] = count
 
     # Also clean keys by creator_id (application keys have owner_id = app ID)
-    for owner_id in TEST_OWNER_IDS:
+    for owner_id in owner_ids:
         query = fs_client.collection(KEYS_COLLECTION).where(
             filter=FieldFilter("creator_id", "==", owner_id)
         )
-        docs = list(query.stream())
+        docs = [doc for doc in query.stream() if doc.id != key_hash]
         for i in range(0, len(docs), 500):
             batch = fs_client.batch()
             for doc in docs[i : i + 500]:
@@ -133,9 +144,10 @@ def cleanup_stale_test_data():
 
 
 @pytest.fixture(scope="session")
-def client():
+def client(cleanup_stale_test_data):
     """Session-scoped HTTP client for API tests."""
-    with Client(**CLIENT_ARGS) as client:
+    headers = {"API-KEY": TEST_API_KEY}
+    with Client(base_url=TEST_URL, headers=headers) as client:
         yield client
 
 
@@ -146,7 +158,7 @@ def firestore_client():
 
 
 @pytest.fixture(scope="session")
-def domain_for_testing(firestore_client):
+def domain_for_testing(firestore_client, test_owner_id):
     """A domain owned by test-owner, available for any test that needs a domain."""
     domain_data = make_domain_data(name="Shared Test Domain")
     doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
@@ -173,7 +185,7 @@ def domain_with_different_owner(firestore_client):
 
 
 @pytest.fixture(scope="session")
-def application_for_testing(firestore_client):
+def application_for_testing(firestore_client, test_owner_id):
     """An application owned by test-owner, available for any test that needs one."""
     app_data = make_application_data(name="Shared Test Application")
     doc_ref = firestore_client.collection(APPLICATIONS_COLLECTION).document(

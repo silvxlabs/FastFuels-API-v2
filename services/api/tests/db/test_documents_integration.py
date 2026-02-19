@@ -18,7 +18,7 @@ from api.db.documents import (
 from fastapi import HTTPException
 from google.cloud import firestore
 
-from lib.config import DEV_OWNER_ID
+MOCK_OWNER_ID = "TEST_OWNER"
 
 # Apply to all tests in this module
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -833,11 +833,11 @@ class TestDeleteDocumentAsync:
         """Document cannot be retrieved with get_document_async after deletion."""
         doc_id = f"test-delete-retrieve-{uuid.uuid4()}"
         doc_ref = firestore_client.collection(TEST_COLLECTION).document(doc_id)
-        await doc_ref.set({"name": "Will Be Deleted", "owner_id": DEV_OWNER_ID})
+        await doc_ref.set({"name": "Will Be Deleted", "owner_id": MOCK_OWNER_ID})
 
         # Verify we can retrieve it
         _, snapshot = await get_document_async(
-            TEST_COLLECTION, doc_id, owner_id=DEV_OWNER_ID
+            TEST_COLLECTION, doc_id, owner_id=MOCK_OWNER_ID
         )
         assert snapshot.exists
 

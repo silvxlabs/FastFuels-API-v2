@@ -153,9 +153,15 @@ class TestListExports:
         for export in data["exports"]:
             assert "fixture" in export["tags"]
 
-    def test_list_sort_by_created_on(self, client, export_in_firestore):
+    @pytest.mark.parametrize(
+        "sort_by,sort_order",
+        [("created_on", "ascending"), ("created_on", "descending")],
+    )
+    def test_list_sort_by_created_on(
+        self, client, export_in_firestore, sort_by, sort_order
+    ):
         """Sort exports by created_on."""
-        response = client.get(f"{ROUTE}?sort_by=created_on&sort_order=descending")
+        response = client.get(f"{ROUTE}?sort_by={sort_by}&sort_order={sort_order}")
         assert response.status_code == 200
 
     def test_list_pagination(self, client, export_in_firestore):

@@ -11,6 +11,7 @@ Provides shared fixtures:
 """
 
 import os
+import threading
 
 import gcsfs
 import pytest
@@ -149,6 +150,18 @@ def client(cleanup_stale_test_data):
     headers = {"API-KEY": TEST_API_KEY}
     with Client(base_url=TEST_URL, headers=headers, timeout=30.0) as client:
         yield client
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _warmup_api(client):
+    """Fire a warmup request to absorb Cloud Run cold start while unit tests run."""
+    thread = threading.Thread(
+        target=lambda: client.get("/", timeout=120.0),
+        daemon=True,
+    )
+    thread.start()
+    yield
+    thread.join(timeout=0)
 
 
 @pytest.fixture(scope="session")

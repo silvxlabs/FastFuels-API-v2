@@ -147,7 +147,7 @@ def cleanup_stale_test_data(test_owner_id):
 def client(cleanup_stale_test_data):
     """Session-scoped HTTP client for API tests."""
     headers = {"API-KEY": TEST_API_KEY}
-    with Client(base_url=TEST_URL, headers=headers) as client:
+    with Client(base_url=TEST_URL, headers=headers, timeout=30.0) as client:
         yield client
 
 

@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       deploy_env: ${{ steps.set-env.outputs.deploy_env }}
+      infra_env: ${{ steps.set-infra-env.outputs.deploy_env }}
     steps:
       - name: Set deployment environment based on branch
         id: set-env
@@ -86,6 +87,7 @@ jobs:
             --region ${{ env.REGION }} \
             --update-env-vars="\
               DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
+              INFRA_ENV=${{ needs.determine-environment.outputs.infra_env }},\
               GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
               GCP_REGION=${{ env.REGION }},\
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\

@@ -24,7 +24,7 @@ def save_zarr(grid_id: str, data: xr.Dataset) -> str:
     Returns:
         GCS path where data was written
     """
-    path = f"{GRIDS_BUCKET}/{grid_id}"
+    path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     _save_zarr(path, data)
     logger.info(f"Saved grid data to {path}")
     return path
@@ -39,7 +39,7 @@ def load_zarr(grid_id: str) -> xr.Dataset:
     Returns:
         Dataset with spatial metadata preserved
     """
-    path = f"{GRIDS_BUCKET}/{grid_id}"
+    path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     return _load_zarr(path)
 
 
@@ -52,7 +52,7 @@ def delete_zarr(grid_id: str) -> None:
     Args:
         grid_id: The grid document ID
     """
-    path = f"{GRIDS_BUCKET}/{grid_id}"
+    path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     try:
         delete_directory(path)
         logger.info(f"Deleted grid data at {path}")

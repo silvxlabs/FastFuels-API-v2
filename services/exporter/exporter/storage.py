@@ -25,7 +25,7 @@ def load_grid_zarr(grid_id: str) -> xr.Dataset:
     Returns:
         Dataset with grid data
     """
-    path = f"{GRIDS_BUCKET}/{grid_id}"
+    path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     return _load_zarr(path)
 
 
@@ -53,7 +53,7 @@ def delete_export_files(export_id: str) -> None:
     Args:
         export_id: The export document ID
     """
-    path = f"{EXPORTS_BUCKET}/{export_id}"
+    path = f"gs://{EXPORTS_BUCKET}/{export_id}"
     try:
         delete_directory(path)
         logger.info(f"Deleted export files at {path}")

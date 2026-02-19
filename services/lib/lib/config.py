@@ -41,8 +41,3 @@ EXPORTER_QUEUE = os.getenv("EXPORTER_QUEUE", "exporter-v2-queue")
 # Service names
 GRIDDLE_SERVICE = os.getenv("GRIDDLE_SERVICE", f"griddle-v2-{INFRA_ENV}")
 EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", f"exporter-v2-{INFRA_ENV}")
-
-# Dev mode — disabled by default; must be explicitly enabled
-FASTFUELS_DEV_MODE = os.getenv("FASTFUELS_DEV_MODE", "false").lower() in ("true", "1")
-DEV_API_KEY = os.getenv("DEV_API_KEY", "")
-DEV_OWNER_ID = os.getenv("DEV_OWNER_ID", "")

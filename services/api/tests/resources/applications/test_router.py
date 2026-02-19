@@ -10,7 +10,7 @@ import time
 import pytest
 from httpx import Client
 
-from lib.config import APPLICATIONS_COLLECTION, DEV_OWNER_ID, KEYS_COLLECTION
+from lib.config import APPLICATIONS_COLLECTION, KEYS_COLLECTION
 from tests.fixtures import make_key_data
 
 
@@ -39,12 +39,12 @@ class TestCreateApplication:
         assert data["name"] == "Minimal App"
         assert data.get("description") is None
 
-    def test_owner_id_matches_requester(self, client):
+    def test_owner_id_matches_requester(self, client, test_owner_id):
         response = client.post(self.route, json={"name": "Owner Check App"})
         assert response.status_code == 201
 
         data = response.json()
-        assert data["owner_id"] == DEV_OWNER_ID
+        assert data["owner_id"] == test_owner_id
 
     def test_id_is_32_char_hex(self, client):
         response = client.post(self.route, json={"name": "ID Check App"})
@@ -54,12 +54,14 @@ class TestCreateApplication:
         assert len(app_id) == 32
         int(app_id, 16)  # Should not raise — valid hex
 
-    def test_application_access_forbidden(self, client, firestore_client):
+    def test_application_access_forbidden(
+        self, client, firestore_client, test_owner_id
+    ):
         """Application-access keys cannot create applications (403)."""
         # Create an application to serve as the key owner
         app_data = {
             "id": "testapp403",
-            "owner_id": DEV_OWNER_ID,
+            "owner_id": test_owner_id,
             "name": "App For 403 Test",
         }
         app_ref = firestore_client.collection(APPLICATIONS_COLLECTION).document(

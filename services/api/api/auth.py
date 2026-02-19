@@ -19,7 +19,7 @@ from ring import lru
 
 from api.db.documents import firestore_client
 from api.resources.keys.schema import Access, Key
-from lib.config import DEV_API_KEY, DEV_OWNER_ID, FASTFUELS_DEV_MODE, KEYS_COLLECTION
+from lib.config import KEYS_COLLECTION
 
 API_KEY_HEADER = APIKeyHeader(name="api-key", auto_error=False)
 AUTH_BEARER = HTTPBearer(auto_error=False)
@@ -106,11 +106,6 @@ async def authenticate_user(
     bearer: HTTPAuthorizationCredentials = Security(AUTH_BEARER),
 ) -> Request:
     """Main auth dependency. Checks API key first, then Bearer token."""
-    if FASTFUELS_DEV_MODE and DEV_API_KEY and api_key == DEV_API_KEY:
-        request.state.id = DEV_OWNER_ID
-        request.state.access = Access.PERSONAL
-        return request
-
     if api_key:
         return await _api_key_auth(request, api_key)
     elif bearer:

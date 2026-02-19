@@ -49,13 +49,13 @@ All infrastructure values come from environment variables with safe defaults.
 |----------|-------------|
 | `GCP_PROJECT` | GCP project ID |
 | `GCP_REGION` | GCP region (e.g. `us-west1`) |
-| `GRIDS_BUCKET` | GCS bucket for grid data |
-| `EXPORTS_BUCKET` | GCS bucket for export data |
-| `RASTERS_BUCKET` | GCS bucket for raster data |
 
 **Optional** (safe defaults):
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `GRIDS_BUCKET` | `""` | GCS bucket for grid data |
+| `EXPORTS_BUCKET` | `""` | GCS bucket for export data |
+| `RASTERS_BUCKET` | `""` | GCS bucket for raster data |
 | `DOMAINS_COLLECTION` | `domains-v2` | Firestore collection for domains |
 | `GRIDS_COLLECTION` | `grids-v2` | Firestore collection for grids |
 | `EXPORTS_COLLECTION` | `exports-v2` | Firestore collection for exports |
@@ -65,7 +65,6 @@ All infrastructure values come from environment variables with safe defaults.
 | `EXPORTER_QUEUE` | `exporter-queue` | Cloud Tasks queue for exporter |
 | `GRIDDLE_SERVICE` | `griddle-v2` | Cloud Run service name for griddle |
 | `EXPORTER_SERVICE` | `exporter-v2` | Cloud Run service name for exporter |
-| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8080` | Comma-separated CORS origins |
 | `DEPLOYMENT_ENV` | `local` | Deployment environment |
 
 See `.env.example` in the repo root for the full list.

@@ -24,25 +24,16 @@ EXPORTS_COLLECTION = os.getenv("EXPORTS_COLLECTION", "exports-v2")
 KEYS_COLLECTION = os.getenv("KEYS_COLLECTION", "keys-v2")
 APPLICATIONS_COLLECTION = os.getenv("APPLICATIONS_COLLECTION", "applications-v2")
 
-# GCS buckets — required
-GRIDS_BUCKET = os.environ["GRIDS_BUCKET"]
-EXPORTS_BUCKET = os.environ["EXPORTS_BUCKET"]
-RASTERS_BUCKET = os.environ["RASTERS_BUCKET"]
+# GCS buckets
+GRIDS_BUCKET = os.getenv("GRIDS_BUCKET", "")
+EXPORTS_BUCKET = os.getenv("EXPORTS_BUCKET", "")
+RASTERS_BUCKET = os.getenv("RASTERS_BUCKET", "")
 
 # Cloud Tasks
 GRIDDLE_QUEUE = os.getenv("GRIDDLE_QUEUE", "griddle-queue")
 EXPORTER_QUEUE = os.getenv("EXPORTER_QUEUE", "exporter-queue")
 GRIDDLE_SERVICE = os.getenv("GRIDDLE_SERVICE", "griddle-v2")
 EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", "exporter-v2")
-
-# CORS origins — comma-separated list from env var
-CORS_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
-    ).split(",")
-    if origin.strip()
-]
 
 # Deployment environment
 DEPLOYMENT_ENV = os.getenv("DEPLOYMENT_ENV", "local")

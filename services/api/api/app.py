@@ -8,7 +8,22 @@ from api.resources.domains.router import router as domain_router
 from api.resources.exports.router import router as exports_router
 from api.resources.grids.router import router as grids_router
 from api.resources.keys.router import router as keys_router
-from lib.config import CORS_ORIGINS
+from lib.config import DEPLOYMENT_ENV
+
+CORS_ORIGINS = {
+    "prod": [
+        "http://localhost:3000",
+        "http://localhost:8080",
+    ],
+    "dev": [
+        "http://localhost:3000",
+        "http://localhost:8080",
+    ],
+    "local": [
+        "http://localhost:3000",
+        "http://localhost:8080",
+    ],
+}
 
 app = FastAPI(
     title="FastFuels API",
@@ -19,7 +34,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=CORS_ORIGINS.get(DEPLOYMENT_ENV, CORS_ORIGINS["local"]),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

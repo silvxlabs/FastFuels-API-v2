@@ -6,7 +6,6 @@ Tests GCS blob operations against real GCS using a dedicated test bucket.
 Prerequisite: The test bucket (TEST_BUCKET env var) must exist.
 """
 
-import os
 import uuid
 
 import gcsfs
@@ -20,9 +19,9 @@ from api.db.blobs import (
     download_file,
 )
 
-pytestmark = pytest.mark.asyncio(loop_scope="session")
+from lib.config import TEST_BUCKET
 
-TEST_BUCKET = os.environ.get("TEST_BUCKET", "test-bucket")
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
 @pytest_asyncio.fixture(loop_scope="session")

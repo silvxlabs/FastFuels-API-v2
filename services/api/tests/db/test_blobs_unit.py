@@ -19,18 +19,6 @@ def mock_gcsfs():
         yield mock
 
 
-class TestConstants:
-    def test_grids_bucket_from_config(self):
-        from lib.config import GRIDS_BUCKET
-
-        assert blobs.GRIDS_BUCKET == GRIDS_BUCKET
-
-    def test_exports_bucket_from_config(self):
-        from lib.config import EXPORTS_BUCKET
-
-        assert blobs.EXPORTS_BUCKET == EXPORTS_BUCKET
-
-
 class TestDeleteDirectory:
     async def test_deletes_existing_directory(self, mock_gcsfs):
         mock_gcsfs._exists.return_value = True

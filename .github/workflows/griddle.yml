@@ -107,18 +107,28 @@ jobs:
 
       - name: Install dependencies
         working-directory: services/griddle
-        run: uv sync --frozen
+        run: uv sync --frozen --extra test
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-      - name: Run tests
+      - name: Run unit tests
         working-directory: services/griddle
         env:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.REGION }}
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
           RASTERS_BUCKET: ${{ secrets.RASTERS_BUCKET }}
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ --ignore=tests/integration -v
+
+      - name: Run integration tests
+        working-directory: services/griddle
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GCP_REGION: ${{ env.REGION }}
+          GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
+          RASTERS_BUCKET: ${{ secrets.RASTERS_BUCKET }}
+          DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
+        run: uv run pytest tests/integration/ -n auto -v

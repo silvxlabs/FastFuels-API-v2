@@ -3,7 +3,13 @@ Zarr storage utilities for xarray Datasets.
 
 Provides save/load with correct decode_coords handling to preserve
 rioxarray spatial metadata (CRS, transform, spatial_ref coordinate).
+
+Uses consolidated metadata for fast remote reads. This is experimental
+for zarr v3 stores (zarr-specs#309) but stable in zarr-python and a
+good fit for our write-once, read-many grids on GCS.
 """
+
+import warnings
 
 import xarray as xr
 
@@ -34,7 +40,11 @@ def save_zarr(path: str, data: xr.Dataset, chunk_shape: tuple[int, int]) -> str:
             "Handlers must return Dataset with named 2D (y, x) variables."
         )
     data = data.chunk({"y": chunk_shape[0], "x": chunk_shape[1]})
-    data.to_zarr(path, mode="w", consolidated=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message="Consolidated metadata", category=UserWarning
+        )
+        data.to_zarr(path, mode="w", consolidated=True)
     return path
 
 

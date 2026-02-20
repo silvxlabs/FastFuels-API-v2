@@ -1,0 +1,23 @@
+{
+  "name": "test-landfire-topography",
+  "description": "",
+  "status": "pending",
+  "progress": null,
+  "source": {
+    "name": "landfire",
+    "product": "topography",
+    "version": "2020",
+    "bands": ["elevation", "slope", "aspect"],
+    "description": "LANDFIRE topographic data (elevation, slope, aspect)"
+  },
+  "modifications": [],
+  "bands": [
+    {"key": "elevation", "type": "continuous", "unit": "m", "index": 0},
+    {"key": "slope", "type": "continuous", "unit": "degrees", "index": 1},
+    {"key": "aspect", "type": "continuous", "unit": "degrees", "index": 2}
+  ],
+  "georeference": null,
+  "error": null,
+  "tags": [],
+  "chunk_shape": [512, 512]
+}

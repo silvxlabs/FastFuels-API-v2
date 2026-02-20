@@ -1,0 +1,44 @@
+{
+  "chunk_shape": [
+    512,
+    512
+  ],
+  "modifications": [],
+  "name": "",
+  "status": "completed",
+  "bands": [
+    {
+      "unit": null,
+      "type": "categorical",
+      "key": "fbfm",
+      "index": 0
+    }
+  ],
+  "description": "",
+  "tags": [],
+  "georeference": {
+    "crs": "EPSG:32612",
+    "transform": [
+      29.9469053581103,
+      0.0,
+      270856.4309049923,
+      0.0,
+      -29.94690535809431,
+      5195531.359464396
+    ],
+    "shape": [
+      46,
+      56
+    ]
+  },
+  "source": {
+    "version": "2022",
+    "description": "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
+    "product": "fbfm40",
+    "name": "landfire"
+  },
+  "progress": {
+    "percent": 100,
+    "message": "Complete"
+  }
+}

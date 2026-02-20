@@ -1,0 +1,23 @@
+{
+  "name": "test-lookup-fbfm40",
+  "description": "",
+  "status": "pending",
+  "progress": null,
+  "source": {
+    "name": "lookup",
+    "table": "fbfm40",
+    "source_grid_id": "PLACEHOLDER",
+    "source_band": "fbfm"
+  },
+  "modifications": [],
+  "bands": [
+    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m\u00b2", "index": 0},
+    {"key": "fuel_load.10hr", "type": "continuous", "unit": "kg/m\u00b2", "index": 1},
+    {"key": "fuel_depth", "type": "continuous", "unit": "m", "index": 2},
+    {"key": "moisture_of_extinction", "type": "continuous", "unit": "%", "index": 3}
+  ],
+  "georeference": null,
+  "error": null,
+  "tags": [],
+  "chunk_shape": [512, 512]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "test-uniform",
+  "description": "",
+  "status": "pending",
+  "progress": null,
+  "source": {
+    "name": "uniform",
+    "bands": [
+      {"quantity": "fuel_moisture.1hr", "value": 6.0},
+      {"quantity": "fuel_moisture.10hr", "value": 8.0}
+    ],
+    "resolution": 2.0
+  },
+  "modifications": [],
+  "bands": [
+    {"key": "fuel_moisture.1hr", "type": "continuous", "unit": null, "index": 0},
+    {"key": "fuel_moisture.10hr", "type": "continuous", "unit": null, "index": 1}
+  ],
+  "georeference": null,
+  "error": null,
+  "tags": [],
+  "chunk_shape": [512, 512]
+}

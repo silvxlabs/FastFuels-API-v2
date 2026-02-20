@@ -36,3 +36,7 @@ htmlcov/
 *.tif
 *.tif.aux.xml
 tmp/
+
+/.run/
+/docs/
+/CLAUDE.md

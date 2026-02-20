@@ -16,24 +16,24 @@ from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE
 pytestmark = pytest.mark.anyio
 
 
-def _clear_cache(tasks_module):
+async def _clear_cache(tasks_module):
     """Clear ring LRU cache for all known service keys."""
     for service in ["griddle", "test-service", "cache-test"]:
         try:
-            tasks_module._get_service_url.delete(service)
+            await tasks_module._get_service_url.delete(service)
         except Exception:
             pass
 
 
 @pytest.fixture
-def tasks_module():
+async def tasks_module():
     """Import tasks module with mocked Cloud Run client."""
     with patch("google.cloud.run_v2.ServicesAsyncClient"):
         from api import tasks
 
-        _clear_cache(tasks)
+        await _clear_cache(tasks)
         yield tasks
-        _clear_cache(tasks)
+        await _clear_cache(tasks)
 
 
 @pytest.fixture

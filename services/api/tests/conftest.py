@@ -159,6 +159,7 @@ def _warmup_api(client):
         target=lambda: client.get("/", timeout=120.0),
         daemon=True,
     )
+    print("Warming up API")
     thread.start()
     yield
     thread.join(timeout=0)

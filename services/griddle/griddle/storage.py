@@ -14,18 +14,19 @@ from lib.zarr_utils import save_zarr as _save_zarr
 logger = logging.getLogger(__name__)
 
 
-def save_zarr(grid_id: str, data: xr.Dataset) -> str:
+def save_zarr(grid_id: str, data: xr.Dataset, chunk_shape: tuple[int, int]) -> str:
     """Save grid data to Zarr in Cloud Storage.
 
     Args:
         grid_id: The grid document ID
         data: Dataset with named 2D (y, x) variables and spatial metadata.
+        chunk_shape: (height, width) chunk shape for on-disk Zarr chunks.
 
     Returns:
         GCS path where data was written
     """
     path = f"gs://{GRIDS_BUCKET}/{grid_id}"
-    _save_zarr(path, data)
+    _save_zarr(path, data, chunk_shape=chunk_shape)
     logger.info(f"Saved grid data to {path}")
     return path
 

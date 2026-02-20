@@ -8,7 +8,7 @@ rioxarray spatial metadata (CRS, transform, spatial_ref coordinate).
 import xarray as xr
 
 
-def save_zarr(path: str, data: xr.Dataset) -> str:
+def save_zarr(path: str, data: xr.Dataset, chunk_shape: tuple[int, int]) -> str:
     """Save an xarray Dataset to a Zarr store.
 
     Only accepts Dataset — not DataArray. This enforces the convention
@@ -18,6 +18,9 @@ def save_zarr(path: str, data: xr.Dataset) -> str:
     Args:
         path: Local or GCS path for the Zarr store
         data: Dataset with named variables and spatial metadata
+        chunk_shape: (height, width) chunk shape for on-disk Zarr chunks.
+            The Dataset is rechunked via xarray's .chunk() before writing —
+            xarray uses dask chunk sizes as Zarr on-disk chunks automatically.
 
     Returns:
         The path where data was written
@@ -30,6 +33,7 @@ def save_zarr(path: str, data: xr.Dataset) -> str:
             f"save_zarr requires xr.Dataset, got {type(data).__name__}. "
             "Handlers must return Dataset with named 2D (y, x) variables."
         )
+    data = data.chunk({"y": chunk_shape[0], "x": chunk_shape[1]})
     data.to_zarr(path, mode="w", consolidated=True)
     return path
 

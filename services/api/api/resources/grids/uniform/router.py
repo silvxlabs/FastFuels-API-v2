@@ -12,7 +12,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
-from api.resources.grids.schema import Grid
+from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.uniform.examples import CREATE_UNIFORM_OPENAPI_EXAMPLES
 from api.resources.grids.uniform.schema import (
     CreateUniformRequest,
@@ -97,6 +97,7 @@ async def create_uniform_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "chunk_shape": CHUNK_SHAPE,
         "owner_id": owner_id,
     }
 

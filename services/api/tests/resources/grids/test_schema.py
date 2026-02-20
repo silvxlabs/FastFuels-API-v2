@@ -9,6 +9,7 @@ from datetime import datetime
 
 import pytest
 from api.resources.grids.schema import (
+    CHUNK_SHAPE,
     Band,
     BandType,
     CreateGridRequestBase,
@@ -21,6 +22,14 @@ from api.resources.grids.schema import (
 )
 from api.schema import JobStatus
 from pydantic import ValidationError
+
+
+class TestChunkShape:
+    """Tests for CHUNK_SHAPE constant."""
+
+    def test_chunk_shape_is_512_512(self):
+        """CHUNK_SHAPE is [512, 512]."""
+        assert CHUNK_SHAPE == [512, 512]
 
 
 class TestBandType:
@@ -415,6 +424,17 @@ class TestGrid:
         del minimal_grid_data["bands"]
         with pytest.raises(ValidationError):
             Grid(**minimal_grid_data)
+
+    def test_chunk_shape_defaults_to_none(self, minimal_grid_data):
+        """chunk_shape defaults to None on Grid response."""
+        grid = Grid(**minimal_grid_data)
+        assert grid.chunk_shape is None
+
+    def test_chunk_shape_can_be_set(self, minimal_grid_data):
+        """chunk_shape can be set on Grid response."""
+        minimal_grid_data["chunk_shape"] = (512, 512)
+        grid = Grid(**minimal_grid_data)
+        assert grid.chunk_shape == (512, 512)
 
     def test_georeference_defaults_to_none(self, minimal_grid_data):
         """georeference defaults to None (populated by backend)."""

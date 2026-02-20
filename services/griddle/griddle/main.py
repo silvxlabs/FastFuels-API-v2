@@ -241,7 +241,8 @@ def process_grid_request(request: Request):
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)
-        save_zarr(grid_id, result)
+        chunk_shape = tuple(grid.get("chunk_shape", (512, 512)))
+        save_zarr(grid_id, result, chunk_shape=chunk_shape)
 
         # Update status to completed with georeference
         transform = result.rio.transform()

@@ -555,7 +555,7 @@ class TestLookupZarrRoundTrip:
         ]
         result = fbfm40_lookup("test-grid-id", bands, progress)
 
-        save_zarr(str(tmp_path / "lookup.zarr"), result)
+        save_zarr(str(tmp_path / "lookup.zarr"), result, chunk_shape=(512, 512))
         loaded = load_zarr(str(tmp_path / "lookup.zarr"))
 
         assert set(loaded.data_vars) == {"fuel_load.1hr", "fuel_depth", "savr.1hr"}
@@ -571,7 +571,7 @@ class TestLookupZarrRoundTrip:
         bands = [{"key": "fuel_load.1hr"}]
         result = fbfm40_lookup("test-grid-id", bands, progress)
 
-        save_zarr(str(tmp_path / "lookup.zarr"), result)
+        save_zarr(str(tmp_path / "lookup.zarr"), result, chunk_shape=(512, 512))
         loaded = load_zarr(str(tmp_path / "lookup.zarr"))
 
         assert "spatial_ref" in loaded.coords
@@ -587,7 +587,7 @@ class TestLookupZarrRoundTrip:
         bands = [{"key": "fuel_load.1hr"}]
         result = fbfm40_lookup("test-grid-id", bands, progress)
 
-        save_zarr(str(tmp_path / "lookup.zarr"), result)
+        save_zarr(str(tmp_path / "lookup.zarr"), result, chunk_shape=(512, 512))
         loaded = load_zarr(str(tmp_path / "lookup.zarr"))
 
         assert loaded.rio.crs is not None
@@ -603,7 +603,7 @@ class TestLookupZarrRoundTrip:
         bands = [{"key": "fuel_load.1hr"}, {"key": "fuel_depth"}]
         result = fbfm40_lookup("test-grid-id", bands, progress)
 
-        save_zarr(str(tmp_path / "lookup.zarr"), result)
+        save_zarr(str(tmp_path / "lookup.zarr"), result, chunk_shape=(512, 512))
         loaded = load_zarr(str(tmp_path / "lookup.zarr"))
 
         # Full Dataset to_raster — the exact operation the exporter performs

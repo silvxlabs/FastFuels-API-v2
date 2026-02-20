@@ -24,7 +24,7 @@ from api.resources.grids.landfire.schema import (
     LandfireTopographySource,
     build_topography_bands,
 )
-from api.resources.grids.schema import Grid
+from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -91,6 +91,7 @@ async def create_landfire_fbfm40(
         "bands": [FBFM40_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
+        "chunk_shape": CHUNK_SHAPE,
         "owner_id": owner_id,
     }
 
@@ -163,6 +164,7 @@ async def create_landfire_topography(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "chunk_shape": CHUNK_SHAPE,
         "owner_id": owner_id,
     }
 

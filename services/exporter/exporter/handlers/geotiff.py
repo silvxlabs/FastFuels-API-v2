@@ -77,7 +77,7 @@ def export_geotiff(
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/export.tif"
     try:
         with rasterio.Env(CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE="YES"):
-            ds.rio.to_raster(gcs_path, driver="GTiff")
+            ds.rio.to_raster(gcs_path, driver="GTiff", windowed=True)
     except Exception as e:
         raise ProcessingError(
             code="GEOTIFF_WRITE_ERROR",

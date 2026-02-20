@@ -20,7 +20,7 @@ from api.resources.grids.lookup.schema import (
     Fbfm40LookupSource,
     get_fbfm40_lookup_band,
 )
-from api.resources.grids.schema import Grid
+from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import validate_grid_has_band
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -143,6 +143,7 @@ async def create_fbfm40_lookup(
         "bands": [b.model_dump() for b in bands],
         "georeference": source_grid_data.get("georeference"),
         "tags": body.tags,
+        "chunk_shape": CHUNK_SHAPE,
         "owner_id": owner_id,
     }
 

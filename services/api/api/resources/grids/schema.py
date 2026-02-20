@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 from api.resources.grids.modifications import GridModification
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
+CHUNK_SHAPE = [512, 512]
+
 
 class BandType(StrEnum):
     """Type of band data."""
@@ -125,6 +127,12 @@ class Grid(BaseModel):
     error: JobError | None = Field(
         default=None,
         description="Error details if status is 'failed'. Traceback stored but not exposed.",
+    )
+
+    # Storage
+    chunk_shape: tuple[int, int] | None = Field(
+        default=None,
+        description="Zarr chunk shape (height, width).",
     )
 
     # User organization

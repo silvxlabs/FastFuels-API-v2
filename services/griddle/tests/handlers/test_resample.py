@@ -349,7 +349,7 @@ class TestResampleZarrRoundTrip:
             progress=progress,
         )
 
-        save_zarr(str(tmp_path / "resample.zarr"), result)
+        save_zarr(str(tmp_path / "resample.zarr"), result, chunk_shape=(512, 512))
         loaded = load_zarr(str(tmp_path / "resample.zarr"))
 
         assert set(loaded.data_vars) == {"fuel_load.1hr", "fuel_depth", "savr.1hr"}
@@ -378,7 +378,7 @@ class TestResampleZarrRoundTrip:
             progress=progress,
         )
 
-        save_zarr(str(tmp_path / "resample.zarr"), result)
+        save_zarr(str(tmp_path / "resample.zarr"), result, chunk_shape=(512, 512))
         loaded = load_zarr(str(tmp_path / "resample.zarr"))
 
         # Full Dataset to_raster — the exact operation the exporter performs

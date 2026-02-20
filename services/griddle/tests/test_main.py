@@ -110,6 +110,73 @@ class TestProcessGridRequest:
         assert first_call[0] == ("test-grid-id", "running")
         assert second_call[0][1] == "completed"
 
+    @patch("griddle.main.save_zarr")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.update_progress")
+    @patch("griddle.main.load_grid")
+    def test_chunk_shape_passed_to_save_zarr(
+        self,
+        mock_load_grid,
+        mock_update_progress,
+        mock_update_status,
+        mock_dispatch,
+        mock_save_zarr,
+    ):
+        """chunk_shape from grid doc is passed to save_zarr."""
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": {"name": "landfire", "product": "fbfm40"},
+            "domain_id": "test-domain-id",
+            "chunk_shape": [256, 256],
+        }
+
+        mock_result = MagicMock()
+        mock_result.rio.crs = "EPSG:32610"
+        mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
+        mock_result.shape = (100, 100)
+        mock_dispatch.return_value = mock_result
+
+        request = MockRequest(json_data={"id": "test-grid-id"})
+        process_grid_request(request)
+
+        mock_save_zarr.assert_called_once_with(
+            "test-grid-id", mock_result, chunk_shape=(256, 256)
+        )
+
+    @patch("griddle.main.save_zarr")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.update_progress")
+    @patch("griddle.main.load_grid")
+    def test_chunk_shape_defaults_when_missing(
+        self,
+        mock_load_grid,
+        mock_update_progress,
+        mock_update_status,
+        mock_dispatch,
+        mock_save_zarr,
+    ):
+        """chunk_shape defaults to (512, 512) for grids without it."""
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": {"name": "landfire", "product": "fbfm40"},
+            "domain_id": "test-domain-id",
+        }
+
+        mock_result = MagicMock()
+        mock_result.rio.crs = "EPSG:32610"
+        mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
+        mock_result.shape = (100, 100)
+        mock_dispatch.return_value = mock_result
+
+        request = MockRequest(json_data={"id": "test-grid-id"})
+        process_grid_request(request)
+
+        mock_save_zarr.assert_called_once_with(
+            "test-grid-id", mock_result, chunk_shape=(512, 512)
+        )
+
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main.update_status")
     @patch("griddle.main.load_grid")

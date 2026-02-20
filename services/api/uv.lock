@@ -1121,6 +1121,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dask", marker = "extra == 'zarr'", specifier = ">=2024.0.0" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.1.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.1.0" },
     { name = "geopandas", marker = "extra == 'raster'", specifier = ">=1.1.2" },

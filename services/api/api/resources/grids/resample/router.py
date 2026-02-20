@@ -17,7 +17,7 @@ from api.resources.grids.resample.schema import (
     CreateResampleRequest,
     ResampleSource,
 )
-from api.resources.grids.schema import Grid
+from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import validate_grid_has_georeference
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -136,6 +136,7 @@ async def create_resample(
         "bands": bands,
         "georeference": None,
         "tags": body.tags,
+        "chunk_shape": CHUNK_SHAPE,
         "owner_id": owner_id,
     }
 

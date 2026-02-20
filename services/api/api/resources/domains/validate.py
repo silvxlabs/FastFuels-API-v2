@@ -64,7 +64,7 @@ def parse_geojson_to_gdf(geojson: dict) -> GeoDataFrame:
     except Exception as e:
         logger.warning("Failed to parse GeoJSON: %s", e)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Invalid GeoJSON. Unable to parse geometry.",
         )
 
@@ -85,7 +85,7 @@ def validate_crs(crs_name: str) -> CRS:
         return CRS(crs_name)
     except CRSError:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid CRS '{crs_name}'. Must be a valid authority string (e.g., 'EPSG:4326').",
         )
 
@@ -102,7 +102,7 @@ def validate_geometry_has_area(gdf: GeoDataFrame) -> None:
     total_area = gdf.area.sum()
     if total_area <= 0:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Invalid geometry. The feature must have an area greater than zero.",
         )
 
@@ -124,7 +124,7 @@ def validate_area_within_limits(
     if area_sq_meters > max_area_sq_meters:
         max_sq_km = max_area_sq_meters / 1e6
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid spatial extent. Area must be less than {max_sq_km:.0f} square kilometers.",
         )
 
@@ -143,7 +143,7 @@ def validate_within_conus(gdf: GeoDataFrame) -> None:
 
     if not gdf_projected.within(conus_gdf.geometry.iloc[0]).all():
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Invalid spatial extent. The domain must be entirely within CONUS.",
         )
 
@@ -164,7 +164,7 @@ def estimate_utm_crs(gdf: GeoDataFrame) -> CRS:
         return gdf.estimate_utm_crs()
     except RuntimeError:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Unable to determine UTM CRS. Please provide a valid projected CRS.",
         )
 

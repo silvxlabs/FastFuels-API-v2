@@ -20,6 +20,8 @@ from pyproj import CRS
 from rasterio.transform import from_bounds
 from rioxarray.raster_dataset import RasterDataset
 
+from lib.zarr_utils import load_zarr, save_zarr
+
 MOCK_TO_RASTER = patch.object(RasterDataset, "to_raster")
 
 
@@ -235,4 +237,58 @@ class TestExportGeotiffIntegration:
 
         result = xr.open_dataset(gcs_path, engine="rasterio")
         assert result.sizes["band"] == 2
+        result.close()
+
+
+class TestExportChunkedZarr:
+    """Tests that chunked Zarr data exports correctly via windowed writes.
+
+    These save a Dataset as chunked Zarr locally, load it back (so it's
+    genuinely chunked), then run the full export pipeline to GCS.
+    """
+
+    BUCKET = os.environ["EXPORTS_BUCKET"]
+
+    @pytest.fixture
+    def export_id(self):
+        """Generate a unique export ID and clean up GCS files after test."""
+        eid = f"test-{uuid.uuid4().hex[:12]}"
+        yield eid
+        fs = gcsfs.GCSFileSystem()
+        bucket = os.environ["EXPORTS_BUCKET"]
+        if bucket.startswith("gs://"):
+            bucket = bucket[5:]
+        gcs_dir = f"{bucket}/{eid}"
+        try:
+            fs.rm(gcs_dir, recursive=True)
+        except FileNotFoundError:
+            pass
+
+    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    def test_chunked_zarr_exports_valid_geotiff(self, mock_load, export_id, tmp_path):
+        """Chunked Zarr data produces a valid GeoTIFF via windowed write."""
+        ds = make_test_dataset(
+            bands={
+                "fbfm": np.full((20, 20), 101, dtype=np.int32),
+                "fuel_load.1hr": np.random.rand(20, 20).astype(np.float64),
+            },
+            shape=(20, 20),
+        )
+
+        # Save as chunked Zarr and load back — data is genuinely chunked
+        zarr_path = str(tmp_path / "chunked.zarr")
+        save_zarr(zarr_path, ds, chunk_shape=(8, 8))
+        chunked_ds = load_zarr(zarr_path)
+        mock_load.return_value = chunked_ds
+
+        gcs_path = export_geotiff(
+            {"id": export_id},
+            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            noop_progress,
+        )
+
+        # Read back and verify
+        result = xr.open_dataset(gcs_path, engine="rasterio")
+        assert result.sizes["band"] == 2
+        assert CRS(result.rio.crs) == CRS("EPSG:32611")
         result.close()

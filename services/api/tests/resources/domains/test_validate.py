@@ -230,10 +230,17 @@ def valid_polygon_gdf():
 
 
 @pytest.fixture
+def projected_polygon_gdf(valid_polygon_gdf):
+    """A valid polygon GeoDataFrame projected to UTM."""
+    return valid_polygon_gdf.to_crs("EPSG:32610")
+
+
+@pytest.fixture
 def zero_area_gdf():
-    """A GeoDataFrame with zero area (point)."""
+    """A GeoDataFrame with zero area (point) in a projected CRS."""
     point = Point(-121.5, 38.5)
-    return GeoDataFrame(geometry=[point], crs="EPSG:4326")
+    gdf = GeoDataFrame(geometry=[point], crs="EPSG:4326")
+    return gdf.to_crs("EPSG:32610")
 
 
 @pytest.fixture
@@ -356,9 +363,9 @@ class TestValidateCrs:
 
 
 class TestValidateGeometryHasArea:
-    def test_valid_polygon_passes(self, valid_polygon_gdf):
+    def test_valid_polygon_passes(self, projected_polygon_gdf):
         """Should pass for polygon with area."""
-        validate_geometry_has_area(valid_polygon_gdf)
+        validate_geometry_has_area(projected_polygon_gdf)
 
     def test_zero_area_raises_422(self, zero_area_gdf):
         """Should raise 422 for zero area geometry."""

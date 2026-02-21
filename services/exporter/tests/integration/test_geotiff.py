@@ -12,6 +12,7 @@ Note: xr.open_dataset(engine="rasterio") reads multi-band GeoTIFFs as a single
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
+from exporter.filename import sanitize_filename
 
 from lib.config import EXPORTS_BUCKET
 
@@ -24,7 +25,8 @@ class TestGeotiffExport:
         """Export all bands from single-band FBFM40 grid."""
         export = exporter_runner(source_grid, "geotiff.json")
 
-        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/export.tif"
+        filename = sanitize_filename(export.get("name", ""), ".tif")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
         ds = xr.open_dataset(gcs_path, engine="rasterio")
 
         assert ds.sizes["band"] == 1
@@ -44,7 +46,8 @@ class TestGeotiffExport:
         """Export all 3 bands from topography grid."""
         export = exporter_runner(source_grid, "geotiff.json")
 
-        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/export.tif"
+        filename = sanitize_filename(export.get("name", ""), ".tif")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
         ds = xr.open_dataset(gcs_path, engine="rasterio")
 
         assert ds.sizes["band"] == 3
@@ -66,7 +69,8 @@ class TestGeotiffExport:
             source_overrides={"bands": ["elevation", "slope"]},
         )
 
-        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/export.tif"
+        filename = sanitize_filename(export.get("name", ""), ".tif")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
         ds = xr.open_dataset(gcs_path, engine="rasterio")
 
         assert ds.sizes["band"] == 2
@@ -88,7 +92,8 @@ class TestGeotiffExport:
             source_overrides={"bands": ["elevation"]},
         )
 
-        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/export.tif"
+        filename = sanitize_filename(export.get("name", ""), ".tif")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
         ds = xr.open_dataset(gcs_path, engine="rasterio")
 
         assert ds.sizes["band"] == 1

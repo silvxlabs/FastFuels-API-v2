@@ -13,6 +13,7 @@ import rasterio
 import rioxarray  # noqa: F401
 
 from exporter.errors import ProcessingError
+from exporter.filename import sanitize_filename
 from exporter.storage import load_grid_zarr
 from lib.config import EXPORTS_BUCKET
 
@@ -74,7 +75,8 @@ def export_geotiff(
 
     # Write GeoTIFF directly to GCS
     progress("Writing GeoTIFF...", 70)
-    gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/export.tif"
+    filename = sanitize_filename(export.get("name", ""), ".tif")
+    gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
     try:
         with rasterio.Env(CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE="YES"):
             ds.rio.to_raster(gcs_path, driver="GTiff", windowed=True)

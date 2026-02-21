@@ -19,7 +19,8 @@ uv sync
 
 ## Pre-commit
 
-This project uses [pre-commit](https://pre-commit.com/) to run code quality checks before each commit. Install it and set up the hooks:
+This project uses [pre-commit](https://pre-commit.com/) to run code quality checks before each commit. Install it and
+set up the hooks:
 
 ```bash
 pip install pre-commit
@@ -46,7 +47,8 @@ pre-commit autoupdate
 
 ## Shared Library (`services/lib`)
 
-The `lib` package is a pip-installable local package with optional dependency extras. Services declare only the extras they need:
+The `lib` package is a pip-installable local package with optional dependency extras. Services declare only the extras
+they need:
 
 ```toml
 # In a service's pyproject.toml
@@ -79,10 +81,3 @@ Build context is the repository root:
 ```bash
 docker build -f services/<service>/Dockerfile .
 ```
-
-## Coding Conventions
-
-- Use direct imports, not `__init__.py` re-exports
-- Import config from `lib.config`, not from `lib` directly
-- No decorative comment banners
-- See `CLAUDE.md` for full guidelines

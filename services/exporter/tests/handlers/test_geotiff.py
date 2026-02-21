@@ -96,6 +96,20 @@ class TestExportGeotiffUnit:
 
         assert result.endswith("/export-789/export.tif")
 
+    @MOCK_TO_RASTER
+    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    def test_returns_gcs_path_with_name(self, mock_load, _mock_raster):
+        """Uses sanitized export name in the GCS path."""
+        mock_load.return_value = make_test_dataset()
+
+        result = export_geotiff(
+            {"id": "export-789", "name": "My Export!"},
+            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            noop_progress,
+        )
+
+        assert result.endswith("/export-789/My_Export.tif")
+
     @patch("exporter.handlers.geotiff.load_grid_zarr")
     def test_missing_band_raises_processing_error(self, mock_load):
         """Missing band raises ProcessingError with BAND_NOT_FOUND code."""

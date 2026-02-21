@@ -182,7 +182,8 @@ def process_export_request(request: Request):
 
         progress_callback("Generating signed URL...", 90)
         signed_url = generate_signed_download(gcs_path, expiration_days)
-        curl = f"curl -o export.tif '{signed_url}'"
+        filename = gcs_path.rsplit("/", 1)[-1]
+        curl = f"curl -o {filename} '{signed_url}'"
 
         update_status(export_id, "completed", signed_url=signed_url, curl=curl)
 

@@ -10,6 +10,15 @@ dependencies = [
     "rioxarray>=0.21.0",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "gcsfs>=2024.1.0",
+    "google-cloud-tasks>=2.16.0",
+    "google-cloud-run>=0.10.0",
+    "pytest-xdist>=3.5.0",
+]
+
 [dependency-groups]
 dev = [
     "numpy>=2.0.0",

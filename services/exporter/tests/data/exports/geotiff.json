@@ -1,0 +1,19 @@
+{
+  "domain_id": "test-domain",
+  "owner_id": "integration-test",
+  "name": "Test GeoTIFF Export",
+  "description": "Integration test export",
+  "tags": [],
+  "status": "pending",
+  "progress": null,
+  "error": null,
+  "source": {
+    "name": "geotiff",
+    "grid_ids": ["PLACEHOLDER"],
+    "bands": null
+  },
+  "expiration_days": 1,
+  "signed_url": null,
+  "curl": null,
+  "expires_on": null
+}

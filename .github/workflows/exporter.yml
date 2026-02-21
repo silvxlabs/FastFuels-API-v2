@@ -131,4 +131,5 @@ jobs:
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
           EXPORTS_BUCKET: ${{ secrets.EXPORTS_BUCKET }}
           DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
+          INFRA_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
         run: uv run pytest tests/integration/ -n auto -v

@@ -46,18 +46,16 @@ class TestExport:
         assert export.domain_id == "domain_xyz"
         assert export.status == JobStatus.pending
         assert export.signed_url is None
-        assert export.curl is None
         assert export.expires_on is None
         assert export.progress is None
         assert export.error is None
 
     def test_completed_export_with_signed_url(self):
-        """Completed export has signed_url, curl, and expires_on."""
+        """Completed export has signed_url, and expires_on."""
         export = Export(
             **self._make_export(
                 status="completed",
                 signed_url="https://storage.googleapis.com/bucket/file.tif?X-Goog-Signature=abc",
-                curl="curl -o export.tif 'https://storage.googleapis.com/bucket/file.tif?X-Goog-Signature=abc'",
                 expires_on=datetime(2026, 1, 8),
             )
         )
@@ -66,7 +64,6 @@ class TestExport:
             export.signed_url
             == "https://storage.googleapis.com/bucket/file.tif?X-Goog-Signature=abc"
         )
-        assert export.curl is not None
         assert export.expires_on == datetime(2026, 1, 8)
 
     def test_failed_export_with_error(self):

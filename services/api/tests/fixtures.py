@@ -130,7 +130,6 @@ def make_export_data(
     tags: list | None = None,
     source: dict | None = None,
     signed_url: str | None = None,
-    curl: str | None = None,
     expires_on: datetime | None = None,
 ) -> dict:
     """Factory function to create export data as stored in Firestore."""
@@ -151,7 +150,6 @@ def make_export_data(
             "bands": None,
         },
         "signed_url": signed_url,
-        "curl": curl,
         "expires_on": expires_on,
         "error": None,
         "tags": tags or [],

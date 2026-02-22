@@ -8,16 +8,17 @@ Exports let users download v2 data in usable formats (GeoTIFF, QUIC-Fire, etc.).
 - **Two creation endpoints**: Domain-level for one or more grids, per-grid for single grid convenience
 - **Lifecycle CRUD is top-level**: `GET /v2/exports/{id}`, `DELETE /v2/exports/{id}`
 - **Exports survive domain deletion**: No cascade delete; exports are standalone artifacts
-- **Separate exporter-v2 backend service**: Not griddle — different concerns (read + convert + upload vs fetch + compute + store)
+- **Separate exporter-v2 backend service**: Not griddle — different concerns (read + convert + upload vs fetch +
+  compute + store)
 
 ## Endpoints
 
 ### Creation (domain-scoped, under grids)
 
-| Endpoint | Body field for grid(s) | Use case |
-|----------|----------------------|----------|
-| `POST /v2/domains/{domain_id}/grids/exports/geotiff` | `grid_ids: list[str]` | Export one or more grids |
-| `POST /v2/domains/{domain_id}/grids/{grid_id}/exports/geotiff` | *(none — grid_id in URL)* | Export a single grid |
+| Endpoint                                                       | Body field for grid(s)    | Use case                 |
+|----------------------------------------------------------------|---------------------------|--------------------------|
+| `POST /v2/domains/{domain_id}/grids/exports/geotiff`           | `grid_ids: list[str]`     | Export one or more grids |
+| `POST /v2/domains/{domain_id}/grids/{grid_id}/exports/geotiff` | *(none — grid_id in URL)* | Export a single grid     |
 
 Future formats:
 
@@ -116,17 +117,20 @@ Each export format has its own source schema with `name` identifying the format:
 6. exporter-v2 loads grid Zarr, converts to GeoTIFF, uploads to GCS
 7. exporter-v2 generates a signed download URL and curl command
 8. exporter-v2 updates Export doc (status: `completed`, `signed_url` and `curl` populated)
-9. User polls `GET /exports/{id}` until `completed`, then downloads via `signed_url` or `curl`
+9. User polls `GET /exports/{id}` until `completed`, then downloads via `signed_url`
 
 ## No Cascade Delete
 
-Exports are standalone artifacts. Deleting a domain does NOT delete its exports. The `domain_id` in the export is provenance metadata, not a lifecycle dependency. This allows users to:
+Exports are standalone artifacts. Deleting a domain does NOT delete its exports. The `domain_id` in the export is
+provenance metadata, not a lifecycle dependency. This allows users to:
+
 - Delete a domain while keeping generated exports
 - Clean up input data without losing output files
 
 ## Backend Service
 
-Exports are processed by **exporter-v2**, a separate Cloud Run service from griddle. See [services/exporter-v2/README.md](../../../../../exporter-v2/README.md).
+Exports are processed by **exporter-v2**, a separate Cloud Run service from griddle.
+See [services/exporter-v2/README.md](../../../../../exporter-v2/README.md).
 
 ## Future Work
 

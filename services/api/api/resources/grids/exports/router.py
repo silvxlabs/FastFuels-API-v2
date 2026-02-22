@@ -84,7 +84,6 @@ async def _create_export(
         "modified_on": request_time,
         "source": source.model_dump(),
         "signed_url": None,
-        "curl": None,
         "expiration_days": expiration_days,
         "expires_on": request_time + timedelta(days=expiration_days),
         "error": None,

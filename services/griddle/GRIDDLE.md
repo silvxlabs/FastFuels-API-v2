@@ -144,7 +144,7 @@ Cloud Run Service with functions-framework provides fast cold starts and instanc
 ### HTTP Trigger (Cloud Tasks)
 
 ```
-POST /grids/landfire/fbfm40
+POST /grids/fbfm40/landfire
     ↓
 API creates grid doc (status: pending)
     ↓

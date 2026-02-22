@@ -1,61 +1,23 @@
 """
-api/v2/resources/grids/landfire/schema.py
+api/v2/resources/grids/topography/schema.py
 
-Schema models for LANDFIRE grid sources.
+Schema models for the Topography grid product.
 
-LANDFIRE provides raster products at 30m resolution. Currently supports:
-- FBFM40: Fire Behavior Fuel Model codes (categorical)
-- Topography: Elevation, slope, and aspect (continuous)
-
-Note: FBFM40 returns only the fuel model codes. To convert codes to fuel
-parameters (fuel loads, SAV, depth), use the /grids/lookup/fbfm40 endpoint.
+Topography data includes elevation, slope, and aspect. Currently sourced
+from LANDFIRE at 30m resolution. Future sources include 3DEP (1m/10m/30m).
 """
 
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
 
 
-class LandfireSource(BaseModel):
-    """Base source specification for LANDFIRE data products."""
-
-    name: Literal["landfire"] = "landfire"
-    product: str
-    version: str
-    description: str = ""
-
-
-class LandfireFbfm40Source(LandfireSource):
-    """Source for LANDFIRE FBFM40 (Fire Behavior Fuel Model 40).
-
-    Returns categorical fuel model codes at 30m resolution. The codes
-    correspond to Scott-Burgan 40 fuel model classifications.
-    """
-
-    product: Literal["fbfm40"] = "fbfm40"
-    description: Literal[
-        "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
-    ] = "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
-
-
-class CreateLandfireFbfm40Request(CreateGridRequestBase):
-    """Request to create a grid from LANDFIRE FBFM40.
-
-    Returns a single-band grid with categorical fuel model codes.
-    To convert codes to fuel parameters, use /grids/lookup/fbfm40.
-    """
-
-    version: str = "2022"
-
-
-FBFM40_BAND = Band(key="fbfm", type=BandType.categorical, unit=None, index=0)
-
-
 class TopographyBand(StrEnum):
-    """Available bands for LANDFIRE topographic data."""
+    """Available bands for topographic data."""
 
     elevation = "elevation"
     slope = "slope"

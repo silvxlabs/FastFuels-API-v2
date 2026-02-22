@@ -52,7 +52,7 @@ async def create_fbfm40_lookup(
     lookup tables.
 
     Takes a source grid containing categorical FBFM codes (from
-    `/grids/landfire/fbfm40`) and produces a new grid with the requested
+    `/grids/fbfm40/landfire`) and produces a new grid with the requested
     continuous fuel parameters.
 
     ## Request Body

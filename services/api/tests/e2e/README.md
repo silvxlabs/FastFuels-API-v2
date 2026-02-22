@@ -59,7 +59,7 @@ def test_create_blue_mtn_landfire_fbfm40(
     create_static_fixture(
         client=client,
         domain_id=blue_mountain_domain["id"],
-        endpoint="/grids/landfire/fbfm40",
+        endpoint="/grids/fbfm40/landfire",
         body={},
         static_name="static-test-blue-mtn-landfire-fbfm40",
     )

@@ -21,11 +21,15 @@ tests/
     │   └── test_validate.py        # Validation function unit tests
     └── grids/
         ├── test_router.py          # CRUD endpoint tests (/grids, /grids/{id})
-        └── landfire/
-            └── test_router.py      # LANDFIRE source endpoint tests
+        ├── fbfm40/
+        │   ├── test_router.py      # FBFM40 endpoint tests
+        │   └── test_schema.py      # FBFM40 schema unit tests
+        └── topography/
+            ├── test_router.py      # Topography endpoint tests
+            └── test_schema.py      # Topography schema unit tests
 ```
 
-**Important:** Test directory structure mirrors code structure. Source-specific endpoints (LANDFIRE, 3DEP, etc.) have their own test subdirectories matching `api/resources/grids/{source}/`.
+**Important:** Test directory structure mirrors code structure. Product-specific endpoints (FBFM40, Topography, etc.) have their own test subdirectories matching `api/resources/grids/{product}/`.
 
 ## Test Categories
 

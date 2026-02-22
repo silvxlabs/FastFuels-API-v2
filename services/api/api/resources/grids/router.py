@@ -2,7 +2,7 @@
 api/v2/resources/grids/router.py
 
 Router for the Grid resource with standard CRUD endpoints.
-Source-specific endpoints (LANDFIRE, 3DEP, etc.) are in their respective subdirectories.
+Product-specific endpoints (FBFM40, Topography, etc.) are in their respective subdirectories.
 """
 
 from datetime import datetime
@@ -21,7 +21,7 @@ from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.exports.router import (
     single_grid_router as single_grid_exports_router,
 )
-from api.resources.grids.landfire.router import router as landfire_router
+from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.lookup.router import router as lookup_router
 from api.resources.grids.resample.router import router as resample_router
 from api.resources.grids.schema import (
@@ -30,6 +30,7 @@ from api.resources.grids.schema import (
     ListGridsResponse,
     UpdateGridRequestBody,
 )
+from api.resources.grids.topography.router import router as topography_router
 from api.resources.grids.uniform.router import router as uniform_router
 from api.schema import SortOrder
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
@@ -293,7 +294,10 @@ router.include_router(grid_exports_router, prefix="/exports", tags=["Grids - Exp
 router.include_router(
     single_grid_exports_router, prefix="/{grid_id}/exports", tags=["Grids - Exports"]
 )
-router.include_router(landfire_router, prefix="/landfire", tags=["Grids - LANDFIRE"])
+router.include_router(fbfm40_router, prefix="/fbfm40", tags=["Grids - FBFM40"])
+router.include_router(
+    topography_router, prefix="/topography", tags=["Grids - Topography"]
+)
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(uniform_router, prefix="/uniform", tags=["Grids - Uniform"])

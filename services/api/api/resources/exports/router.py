@@ -138,7 +138,7 @@ async def get_export(
     # Get Export Endpoint
 
     Retrieves a specific export resource by its unique identifier.
-    When the export is completed, the response includes a signed_url and curl command.
+    When the export is completed, the response includes a signed_url.
 
     ## Path Parameters
 

@@ -27,8 +27,7 @@ class Export(BaseModel):
     but have independent lifecycle — deleting a domain does not delete its exports.
 
     When status is "completed", signed_url contains a signed URL for
-    downloading the exported file, and curl contains a ready-to-use
-    curl command.
+    downloading the exported file.
     """
 
     id: str
@@ -57,10 +56,6 @@ class Export(BaseModel):
     signed_url: str | None = Field(
         default=None,
         description="Signed URL for downloading the exported file. Populated on completion.",
-    )
-    curl: str | None = Field(
-        default=None,
-        description="curl command for downloading the exported file. Populated on completion.",
     )
     expires_on: datetime | None = Field(
         default=None,

@@ -247,7 +247,6 @@ def exporter_runner():
             f"error={export.get('error')}"
         )
         assert export["signed_url"] is not None, "signed_url should be set"
-        assert export["curl"] is not None, "curl should be set"
 
         return export
 

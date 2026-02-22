@@ -25,7 +25,6 @@ def export_in_firestore(firestore_client, domain_for_testing):
         tags=["test", "fixture"],
         status="completed",
         signed_url="https://storage.googleapis.com/bucket/file.tif?X-Goog-Signature=abc",
-        curl="curl -o export.tif 'https://storage.googleapis.com/bucket/file.tif?X-Goog-Signature=abc'",
     )
     doc_ref = firestore_client.collection(EXPORTS_COLLECTION).document(
         export_data["id"]
@@ -78,7 +77,6 @@ class TestGetExport:
             data["signed_url"]
             == "https://storage.googleapis.com/bucket/file.tif?X-Goog-Signature=abc"
         )
-        assert data["curl"] is not None
         assert "source" in data
         assert "created_on" in data
         assert "modified_on" in data

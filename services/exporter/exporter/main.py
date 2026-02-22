@@ -83,7 +83,6 @@ def update_status(
     export_id: str,
     status: str,
     signed_url: str | None = None,
-    curl: str | None = None,
     error: dict | None = None,
 ) -> None:
     """Update export status."""
@@ -99,8 +98,6 @@ def update_status(
 
     if signed_url is not None:
         data["signed_url"] = signed_url
-    if curl is not None:
-        data["curl"] = curl
 
     if error is not None:
         data["error"] = error
@@ -181,11 +178,9 @@ def process_export_request(request: Request):
         expiration_days = export.get("expiration_days", 7)
 
         progress_callback("Generating signed URL...", 90)
-        signed_url = generate_signed_download(gcs_path, expiration_days)
-        filename = gcs_path.rsplit("/", 1)[-1]
-        curl = f"curl -o {filename} '{signed_url}'"
 
-        update_status(export_id, "completed", signed_url=signed_url, curl=curl)
+        signed_url = generate_signed_download(gcs_path, expiration_days)
+        update_status(export_id, "completed", signed_url=signed_url)
 
         logger.info("Processing complete", extra=ids)
         return "OK", 200

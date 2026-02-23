@@ -251,8 +251,11 @@ def validate_domain(geojson: dict) -> DomainValidationResult:
     # 4. Validate geometry has area
     validate_geometry_has_area(gdf)
 
-    # 5. Get area and validate limits
-    area = gdf.area.sum()
+    # 5. Get bounding box area and validate limits
+    # We validate against the bounding box area (not polygon area) because
+    # backend services always clip to the bounding box, never the polygon.
+    minx, miny, maxx, maxy = gdf.total_bounds
+    area = (maxx - minx) * (maxy - miny)
     validate_area_within_limits(area)
 
     # 6. Validate within CONUS

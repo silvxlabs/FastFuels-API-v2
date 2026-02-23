@@ -9,6 +9,7 @@ import geopandas as gpd
 import pytest
 from griddle.dispatch import (
     dispatch_handler,
+    handle_chm,
     handle_landfire,
     handle_lookup,
     handle_pim,
@@ -838,3 +839,101 @@ class TestHandleUniform:
         progress.assert_called()
         call_args = progress.call_args_list[0][0]
         assert "uniform" in call_args[0].lower()
+
+
+class TestDispatchHandlerChm:
+    """Tests for dispatch_handler routing to chm."""
+
+    @patch("griddle.dispatch.handle_chm")
+    def test_routes_chm_source(self, mock_handle_chm):
+        """dispatch_handler routes chm source to handle_chm."""
+        mock_result = MagicMock()
+        mock_handle_chm.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {
+            "source": {
+                "name": "chm",
+                "product": "meta",
+                "version": "2024",
+            },
+            "domain_id": "test-domain-id",
+        }
+
+        result = dispatch_handler(grid, progress)
+
+        mock_handle_chm.assert_called_once_with(grid, grid["source"], progress)
+        assert result == mock_result
+
+
+class TestHandleChm:
+    """Tests for handle_chm function."""
+
+    @patch("griddle.dispatch.chm.fetch_meta_chm")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_routes_meta_to_handler(self, mock_load_domain, mock_fetch):
+        """handle_chm routes meta product to fetch_meta_chm."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_load_domain.return_value = mock_gdf
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {
+            "product": "meta",
+            "version": "2024",
+        }
+
+        result = handle_chm(grid, source, progress)
+
+        mock_load_domain.assert_called_once_with("test-domain-id")
+        mock_fetch.assert_called_once_with(mock_gdf, "2024", progress)
+        assert result == mock_result
+
+    @patch("griddle.dispatch.chm.fetch_meta_chm")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_default_version(self, mock_load_domain, mock_fetch):
+        """handle_chm uses 2024 as default version."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {"product": "meta"}  # No version specified
+
+        handle_chm(grid, source, progress)
+
+        call_args = mock_fetch.call_args[0]
+        assert call_args[1] == "2024"
+
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_unknown_product_raises(self, mock_load_domain):
+        """handle_chm raises ProcessingError for unknown product."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {"product": "unknown_product"}
+
+        with pytest.raises(ProcessingError) as exc_info:
+            handle_chm(grid, source, progress)
+
+        assert exc_info.value.code == "UNKNOWN_PRODUCT"
+        assert "unknown_product" in exc_info.value.message
+
+    @patch("griddle.dispatch.chm.fetch_meta_chm")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_calls_progress_callback(self, mock_load_domain, mock_fetch):
+        """handle_chm reports progress."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {"product": "meta", "version": "2024"}
+
+        handle_chm(grid, source, progress)
+
+        progress.assert_called()
+        call_args = progress.call_args_list[0][0]
+        assert "CHM" in call_args[0]
+        assert "meta" in call_args[0]

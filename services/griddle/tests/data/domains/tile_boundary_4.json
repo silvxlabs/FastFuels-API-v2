@@ -1,0 +1,34 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [276743.8, 5159747.44],
+            [277743.8, 5159747.44],
+            [277743.8, 5160747.44],
+            [276743.8, 5160747.44],
+            [276743.8, 5159747.44]
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "0"
+    }
+  ],
+  "name": "tile-boundary-4",
+  "description": "1km domain spanning 4 Meta CHM tiles near Blue Mountain",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:32612"
+    }
+  },
+  "tags": [],
+  "id": "tile_boundary_test_domain",
+  "created_on": "2026-02-23T00:00:00.000000",
+  "modified_on": "2026-02-23T00:00:00.000000"
+}

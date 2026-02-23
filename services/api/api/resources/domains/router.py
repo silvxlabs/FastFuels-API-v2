@@ -37,7 +37,31 @@ from api.resources.domains.schema import (
     UpdateDomainRequestBody,
 )
 from api.resources.domains.validate import validate_domain
-from lib.config import DOMAINS_COLLECTION, GRIDS_BUCKET, GRIDS_COLLECTION
+from lib.config import (
+    DOMAINS_COLLECTION,
+    GRIDS_BUCKET,
+    GRIDS_COLLECTION,
+    INVENTORIES_BUCKET,
+    INVENTORIES_COLLECTION,
+)
+
+# Child resource types that cascade-delete when a domain is force-deleted.
+# Each entry defines a Firestore collection, the foreign key linking to the
+# domain, and an optional GCS bucket for storage cleanup.
+# Exports are deliberately excluded — they survive domain deletion as
+# standalone provenance artifacts.
+CHILD_RESOURCES = [
+    {
+        "collection": GRIDS_COLLECTION,
+        "foreign_key": "domain_id",
+        "bucket": GRIDS_BUCKET,
+    },
+    {
+        "collection": INVENTORIES_COLLECTION,
+        "foreign_key": "domain_id",
+        "bucket": INVENTORIES_BUCKET,
+    },
+]
 
 router = APIRouter()
 
@@ -546,16 +570,20 @@ async def delete_domain(
         owner_id=owner_id,
     )
 
-    # Check for child grids
-    grids_query = (
-        firestore_client.collection(GRIDS_COLLECTION)
-        .where(filter=FieldFilter("domain_id", "==", domain_id))
-        .where(filter=FieldFilter("owner_id", "==", owner_id))
-        .limit(1)
-    )
-    child_grids = await grids_query.get()
+    # Check for child resources across all registered types
+    has_children = False
+    for resource in CHILD_RESOURCES:
+        query = (
+            firestore_client.collection(resource["collection"])
+            .where(filter=FieldFilter(resource["foreign_key"], "==", domain_id))
+            .where(filter=FieldFilter("owner_id", "==", owner_id))
+            .limit(1)
+        )
+        if await query.get():
+            has_children = True
+            break
 
-    if child_grids and not force:
+    if has_children and not force:
         raise HTTPException(
             status_code=status.HTTP_412_PRECONDITION_FAILED,
             detail=(
@@ -564,19 +592,23 @@ async def delete_domain(
             ),
         )
 
-    if child_grids and force:
-        # Re-query without limit to get all child grids, then batch delete
-        all_grids_query = (
-            firestore_client.collection(GRIDS_COLLECTION)
-            .where(filter=FieldFilter("domain_id", "==", domain_id))
-            .where(filter=FieldFilter("owner_id", "==", owner_id))
-        )
-        all_grid_docs = await all_grids_query.get()
-        batch = firestore_client.batch()
-        for doc in all_grid_docs:
-            batch.delete(doc.reference)
-            background_tasks.add_task(delete_directory_safe, GRIDS_BUCKET, doc.id)
-        await batch.commit()
+    if has_children and force:
+        for resource in CHILD_RESOURCES:
+            all_docs_query = (
+                firestore_client.collection(resource["collection"])
+                .where(filter=FieldFilter(resource["foreign_key"], "==", domain_id))
+                .where(filter=FieldFilter("owner_id", "==", owner_id))
+            )
+            all_docs = await all_docs_query.get()
+            if all_docs:
+                batch = firestore_client.batch()
+                for doc in all_docs:
+                    batch.delete(doc.reference)
+                    if resource.get("bucket"):
+                        background_tasks.add_task(
+                            delete_directory_safe, resource["bucket"], doc.id
+                        )
+                await batch.commit()
 
     # Delete the domain document
     await delete_document_async(

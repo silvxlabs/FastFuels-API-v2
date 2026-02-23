@@ -17,6 +17,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.resources.grids.chm.router import router as chm_router
 from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.exports.router import (
     single_grid_router as single_grid_exports_router,
@@ -300,6 +301,7 @@ router.include_router(
     topography_router, prefix="/topography", tags=["Grids - Topography"]
 )
 router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
+router.include_router(chm_router, prefix="/chm", tags=["Grids - CHM"])
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(uniform_router, prefix="/uniform", tags=["Grids - Uniform"])

@@ -122,6 +122,7 @@ jobs:
           GCP_REGION: ${{ env.REGION }}
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
           RASTERS_BUCKET: ${{ secrets.RASTERS_BUCKET }}
+          TABLES_BUCKET: ${{ secrets.TABLES_BUCKET }}
         run: uv run pytest tests/ --ignore=tests/integration -v
 
       - name: Run integration tests
@@ -131,6 +132,7 @@ jobs:
           GCP_REGION: ${{ env.REGION }}
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
           RASTERS_BUCKET: ${{ secrets.RASTERS_BUCKET }}
+          TABLES_BUCKET: ${{ secrets.TABLES_BUCKET }}
           DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
           INFRA_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
         run: uv run pytest tests/integration/ -n auto -v

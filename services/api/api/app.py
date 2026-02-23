@@ -7,6 +7,7 @@ from api.resources.applications.router import router as applications_router
 from api.resources.domains.router import router as domain_router
 from api.resources.exports.router import router as exports_router
 from api.resources.grids.router import router as grids_router
+from api.resources.inventories.router import router as inventories_router
 from api.resources.keys.router import router as keys_router
 from lib.config import DEPLOYMENT_ENV
 
@@ -57,6 +58,11 @@ api_router.include_router(domain_router, prefix="/domains", tags=["Domains"])
 api_router.include_router(exports_router, prefix="/exports", tags=["Exports"])
 api_router.include_router(
     grids_router, prefix="/domains/{domain_id}/grids", tags=["Grids"]
+)
+api_router.include_router(
+    inventories_router,
+    prefix="/domains/{domain_id}/inventories",
+    tags=["Inventories"],
 )
 api_router.include_router(keys_router, prefix="/keys", tags=["Keys"])
 api_router.include_router(

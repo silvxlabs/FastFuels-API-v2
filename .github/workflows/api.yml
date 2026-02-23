@@ -91,7 +91,8 @@ jobs:
               GCP_REGION=${{ env.REGION }},\
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
               EXPORTS_BUCKET=${{ secrets.EXPORTS_BUCKET }},\
-              RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }}" \
+              RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }},\
+              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }}" \
             --quiet
 
       - name: Get service URL
@@ -136,6 +137,7 @@ jobs:
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
           EXPORTS_BUCKET: ${{ secrets.EXPORTS_BUCKET }}
           RASTERS_BUCKET: ${{ secrets.RASTERS_BUCKET }}
+          INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
           TEST_API_URL: ${{ needs.deploy.outputs.service_url }}
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}

@@ -104,6 +104,45 @@ def make_grid_data(
     }
 
 
+def make_inventory_data(
+    domain_id: str,
+    owner_id: str | None = None,
+    name: str = "Test Inventory",
+    description: str = "Test inventory created by fixture",
+    status: str = "pending",
+    tags: list | None = None,
+    source: dict | None = None,
+    inventory_type: str = "tree",
+    summary: dict | None = None,
+    georeference: dict | None = None,
+) -> dict:
+    """Factory function to create inventory data as stored in Firestore."""
+    return {
+        "id": f"test-{uuid.uuid4().hex}",
+        "domain_id": domain_id,
+        "type": inventory_type,
+        "name": name,
+        "description": description,
+        "status": status,
+        "progress": None,
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
+        "source": source
+        or {
+            "name": "pim",
+            "source_pim_grid_id": f"test-{uuid.uuid4().hex}",
+            "point_process": "inhomogeneous_poisson",
+            "seed": 42,
+        },
+        "modifications": [],
+        "summary": summary,
+        "georeference": georeference,
+        "error": None,
+        "tags": tags or [],
+    }
+
+
 def make_application_data(
     owner_id: str | None = None,
     name: str = "Test Application",

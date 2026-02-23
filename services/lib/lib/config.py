@@ -25,6 +25,7 @@ INFRA_ENV = os.getenv("INFRA_ENV", "dev")
 GRIDS_BUCKET = os.getenv("GRIDS_BUCKET", "placeholder-bucket-name")
 EXPORTS_BUCKET = os.getenv("EXPORTS_BUCKET", "placeholder-bucket-name")
 RASTERS_BUCKET = os.getenv("RASTERS_BUCKET", "placeholder-bucket-name")
+INVENTORIES_BUCKET = os.getenv("INVENTORIES_BUCKET", "placeholder-bucket-name")
 TABLES_BUCKET = os.getenv("TABLES_BUCKET", "placeholder-bucket-name")
 TEST_BUCKET = os.getenv("TEST_BUCKET", "placeholder-bucket-name")
 
@@ -32,13 +33,16 @@ TEST_BUCKET = os.getenv("TEST_BUCKET", "placeholder-bucket-name")
 DOMAINS_COLLECTION = os.getenv("DOMAINS_COLLECTION", "domains-v2")
 GRIDS_COLLECTION = os.getenv("GRIDS_COLLECTION", "grids-v2")
 EXPORTS_COLLECTION = os.getenv("EXPORTS_COLLECTION", "exports-v2")
+INVENTORIES_COLLECTION = os.getenv("INVENTORIES_COLLECTION", "inventories-v2")
 KEYS_COLLECTION = os.getenv("KEYS_COLLECTION", "keys-v2")
 APPLICATIONS_COLLECTION = os.getenv("APPLICATIONS_COLLECTION", "applications-v2")
 
 # Queue names
 GRIDDLE_QUEUE = os.getenv("GRIDDLE_QUEUE", "griddle-v2-queue")
 EXPORTER_QUEUE = os.getenv("EXPORTER_QUEUE", "exporter-v2-queue")
+STANDGEN_QUEUE = os.getenv("STANDGEN_QUEUE", "standgen-v2-queue")
 
 # Service names
 GRIDDLE_SERVICE = os.getenv("GRIDDLE_SERVICE", f"griddle-v2-{INFRA_ENV}")
 EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", f"exporter-v2-{INFRA_ENV}")
+STANDGEN_SERVICE = os.getenv("STANDGEN_SERVICE", f"standgen-v2-{INFRA_ENV}")

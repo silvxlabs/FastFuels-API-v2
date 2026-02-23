@@ -86,7 +86,7 @@ jobs:
               GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
               GCP_REGION=${{ env.REGION }},\
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
-              RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }}" \
+              RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }},\
               TABLES_BUCKET=${{ secrets.TABLES_BUCKET }}" \
             --quiet
 

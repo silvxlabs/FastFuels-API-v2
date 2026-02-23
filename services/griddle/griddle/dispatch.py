@@ -11,7 +11,7 @@ import geopandas as gpd
 import xarray as xr
 
 from griddle.errors import ProcessingError
-from griddle.handlers import landfire, lookup, pim, resample, uniform
+from griddle.handlers import chm, landfire, lookup, pim, resample, uniform
 from lib.config import DOMAINS_COLLECTION
 from lib.firestore import DocumentNotFoundError, get_document
 
@@ -46,13 +46,8 @@ def dispatch_handler(
             return handle_pim(grid, source, progress_callback)
         case "uniform":
             return handle_uniform(grid, source, progress_callback)
-        # Future handlers:
-        # case "3dep":
-        #     return handle_3dep(grid, source, progress_callback)
-        # case "meta2024":
-        #     return handle_meta2024(grid, source, progress_callback)
-        # case "blend":
-        #     return handle_blend(grid, source, progress_callback)
+        case "chm":
+            return handle_chm(grid, source, progress_callback)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",
@@ -217,6 +212,39 @@ def handle_uniform(
         resolution=source["resolution"],
         progress=progress,
     )
+
+
+def handle_chm(
+    grid: dict,
+    source: dict,
+    progress: Callable[[str, int | None], None],
+) -> xr.Dataset:
+    """Handle CHM source grids.
+
+    Args:
+        grid: Grid document
+        source: Source configuration from grid
+        progress: Progress callback
+
+    Returns:
+        Dataset with CHM data
+    """
+    domain_gdf = load_domain_gdf(grid["domain_id"])
+
+    product = source["product"]
+    version = source.get("version", "2024")
+
+    progress(f"Fetching CHM {product} v{version}...", 10)
+
+    match product:
+        case "meta":
+            return chm.fetch_meta_chm(domain_gdf, version, progress)
+        case _:
+            raise ProcessingError(
+                code="UNKNOWN_PRODUCT",
+                message=f"Unknown CHM product: {product}",
+                suggestion="Supported products: meta",
+            )
 
 
 def load_domain_gdf(domain_id: str) -> gpd.GeoDataFrame:

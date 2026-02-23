@@ -11,7 +11,7 @@ import geopandas as gpd
 import xarray as xr
 
 from griddle.errors import ProcessingError
-from griddle.handlers import landfire, lookup, resample, uniform
+from griddle.handlers import landfire, lookup, pim, resample, uniform
 from lib.config import DOMAINS_COLLECTION
 from lib.firestore import DocumentNotFoundError, get_document
 
@@ -42,6 +42,8 @@ def dispatch_handler(
             return handle_lookup(grid, source, progress_callback)
         case "resample":
             return handle_resample(grid, source, progress_callback)
+        case "pim":
+            return handle_pim(grid, source, progress_callback)
         case "uniform":
             return handle_uniform(grid, source, progress_callback)
         # Future handlers:
@@ -93,6 +95,40 @@ def handle_landfire(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown LANDFIRE product: {product}",
                 suggestion="Supported products: fbfm40, topography",
+            )
+
+
+def handle_pim(
+    grid: dict,
+    source: dict,
+    progress: Callable[[str, int | None], None],
+) -> xr.Dataset:
+    """Handle PIM source grids.
+
+    Args:
+        grid: Grid document
+        source: Source configuration from grid
+        progress: Progress callback
+
+    Returns:
+        Dataset with PIM data
+    """
+    domain_gdf = load_domain_gdf(grid["domain_id"])
+
+    product = source["product"]
+    version = source.get("version", "2022")
+    bands = source.get("bands", ["tm_id"])
+
+    progress(f"Fetching PIM {product} v{version}...", 10)
+
+    match product:
+        case "treemap":
+            return pim.fetch_treemap(domain_gdf, version, bands, progress)
+        case _:
+            raise ProcessingError(
+                code="UNKNOWN_PRODUCT",
+                message=f"Unknown PIM product: {product}",
+                suggestion="Supported products: treemap",
             )
 
 

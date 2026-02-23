@@ -32,6 +32,20 @@ def test_create_blue_mtn_landfire_fbfm40(
 
 
 @pytest.mark.dependency()
+def test_create_blue_mtn_pim_treemap(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create static TreeMap PIM fixture on Blue Mountain domain."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/pim/treemap",
+        body={},
+        static_name="static-test-blue-mtn-pim-treemap",
+    )
+
+
+@pytest.mark.dependency()
 def test_create_blue_mtn_landfire_topography(
     create_static_fixture, client, blue_mountain_domain
 ):

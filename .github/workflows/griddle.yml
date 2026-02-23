@@ -66,7 +66,7 @@ jobs:
   deploy:
     name: Deploy to ${{ needs.determine-environment.outputs.deploy_env }}
     runs-on: ubuntu-latest
-    needs: [determine-environment, build]
+    needs: [ determine-environment, build ]
     steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -87,12 +87,13 @@ jobs:
               GCP_REGION=${{ env.REGION }},\
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
               RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }}" \
+              TABLES_BUCKET=${{ secrets.TABLES_BUCKET }}" \
             --quiet
 
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-    needs: [determine-environment, deploy]
+    needs: [ determine-environment, deploy ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -11,6 +11,7 @@ from griddle.dispatch import (
     dispatch_handler,
     handle_landfire,
     handle_lookup,
+    handle_pim,
     handle_resample,
     handle_uniform,
     load_domain_gdf,
@@ -482,6 +483,142 @@ class TestDispatchHandler:
 
         mock_handle_lookup.assert_called_once_with(grid, grid["source"], progress)
         assert result == mock_result
+
+
+class TestDispatchHandlerPim:
+    """Tests for dispatch_handler routing to pim."""
+
+    @patch("griddle.dispatch.handle_pim")
+    def test_routes_pim_source(self, mock_handle_pim):
+        """dispatch_handler routes pim source to handle_pim."""
+        mock_result = MagicMock()
+        mock_handle_pim.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {
+            "source": {
+                "name": "pim",
+                "product": "treemap",
+                "version": "2022",
+                "bands": ["tm_id"],
+            },
+            "domain_id": "test-domain-id",
+        }
+
+        result = dispatch_handler(grid, progress)
+
+        mock_handle_pim.assert_called_once_with(grid, grid["source"], progress)
+        assert result == mock_result
+
+
+class TestHandlePim:
+    """Tests for handle_pim function."""
+
+    @patch("griddle.dispatch.pim.fetch_treemap")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_routes_treemap_to_handler(self, mock_load_domain, mock_fetch):
+        """handle_pim routes treemap product to fetch_treemap."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_load_domain.return_value = mock_gdf
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {
+            "product": "treemap",
+            "version": "2022",
+            "bands": ["tm_id", "plt_cn"],
+        }
+
+        result = handle_pim(grid, source, progress)
+
+        mock_load_domain.assert_called_once_with("test-domain-id")
+        mock_fetch.assert_called_once_with(
+            mock_gdf, "2022", ["tm_id", "plt_cn"], progress
+        )
+        assert result == mock_result
+
+    @patch("griddle.dispatch.pim.fetch_treemap")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_default_version(self, mock_load_domain, mock_fetch):
+        """handle_pim uses 2022 as default version."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {"product": "treemap", "bands": ["tm_id"]}
+
+        handle_pim(grid, source, progress)
+
+        call_args = mock_fetch.call_args[0]
+        assert call_args[1] == "2022"
+
+    @patch("griddle.dispatch.pim.fetch_treemap")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_passes_bands_list(self, mock_load_domain, mock_fetch):
+        """handle_pim passes bands list to treemap handler."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {
+            "product": "treemap",
+            "version": "2022",
+            "bands": ["tm_id"],
+        }
+
+        handle_pim(grid, source, progress)
+
+        call_args = mock_fetch.call_args[0]
+        assert call_args[2] == ["tm_id"]
+
+    @patch("griddle.dispatch.pim.fetch_treemap")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_default_bands_when_missing(self, mock_load_domain, mock_fetch):
+        """handle_pim defaults to tm_id band when bands key is missing."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {"product": "treemap", "version": "2022"}
+
+        handle_pim(grid, source, progress)
+
+        call_args = mock_fetch.call_args[0]
+        assert call_args[2] == ["tm_id"]
+
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_unknown_product_raises(self, mock_load_domain):
+        """handle_pim raises ProcessingError for unknown product."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {"product": "unknown_product"}
+
+        with pytest.raises(ProcessingError) as exc_info:
+            handle_pim(grid, source, progress)
+
+        assert exc_info.value.code == "UNKNOWN_PRODUCT"
+        assert "unknown_product" in exc_info.value.message
+
+    @patch("griddle.dispatch.pim.fetch_treemap")
+    @patch("griddle.dispatch.load_domain_gdf")
+    def test_calls_progress_callback(self, mock_load_domain, mock_fetch):
+        """handle_pim reports progress."""
+        mock_load_domain.return_value = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {"domain_id": "test-domain-id"}
+        source = {"product": "treemap", "version": "2022", "bands": ["tm_id"]}
+
+        handle_pim(grid, source, progress)
+
+        progress.assert_called()
+        call_args = progress.call_args_list[0][0]
+        assert "PIM" in call_args[0]
+        assert "treemap" in call_args[0]
 
 
 class TestHandleLookup:

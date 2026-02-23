@@ -23,6 +23,7 @@ from api.resources.grids.exports.router import (
 )
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.lookup.router import router as lookup_router
+from api.resources.grids.pim.router import router as pim_router
 from api.resources.grids.resample.router import router as resample_router
 from api.resources.grids.schema import (
     Grid,
@@ -298,6 +299,7 @@ router.include_router(fbfm40_router, prefix="/fbfm40", tags=["Grids - FBFM40"])
 router.include_router(
     topography_router, prefix="/topography", tags=["Grids - Topography"]
 )
+router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(uniform_router, prefix="/uniform", tags=["Grids - Uniform"])

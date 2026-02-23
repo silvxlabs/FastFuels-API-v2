@@ -1,0 +1,21 @@
+{
+  "name": "test-pim-treemap",
+  "description": "",
+  "status": "pending",
+  "progress": null,
+  "source": {
+    "name": "pim",
+    "product": "treemap",
+    "version": "2022",
+    "bands": ["tm_id"],
+    "description": "TreeMap plot imputation raster (FIA plot IDs at 30m)"
+  },
+  "modifications": [],
+  "bands": [
+    {"key": "tm_id", "type": "categorical", "unit": null, "index": 0}
+  ],
+  "georeference": null,
+  "error": null,
+  "tags": [],
+  "chunk_shape": [512, 512]
+}

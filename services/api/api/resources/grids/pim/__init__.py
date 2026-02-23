@@ -1,0 +1,1 @@
+"""PIM grid product endpoints."""

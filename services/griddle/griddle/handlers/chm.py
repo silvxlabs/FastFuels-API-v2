@@ -5,11 +5,10 @@ Pure functions that fetch CHM data for a domain extent.
 All handlers return xr.Dataset where each variable name is a band name.
 """
 
-import os
 from collections.abc import Callable
-from contextlib import contextmanager
 
 import geopandas as gpd
+import rasterio
 import xarray as xr
 from rioxarray.merge import merge_arrays
 
@@ -17,20 +16,6 @@ from lib.config import TABLES_BUCKET
 from lib.raster import RasterConnection
 
 S3_BASE = "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm"
-
-
-@contextmanager
-def _anonymous_s3():
-    """Temporarily set AWS_NO_SIGN_REQUEST for anonymous S3 access."""
-    prev = os.environ.get("AWS_NO_SIGN_REQUEST")
-    os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
-    try:
-        yield
-    finally:
-        if prev is None:
-            os.environ.pop("AWS_NO_SIGN_REQUEST", None)
-        else:
-            os.environ["AWS_NO_SIGN_REQUEST"] = prev
 
 
 def fetch_meta_chm(
@@ -77,8 +62,9 @@ def fetch_meta_chm(
     n_tiles = len(tile_names)
 
     # Fetch each tile and extract the window covering the ROI
+    # Use rasterio.Env to force GDAL unsigned S3 requests for this operation.
     tile_arrays = []
-    with _anonymous_s3():
+    with rasterio.Env(AWS_NO_SIGN_REQUEST="YES"):
         for i, tile_name in enumerate(tile_names):
             progress(
                 f"Fetching CHM tile {i + 1}/{n_tiles}...",

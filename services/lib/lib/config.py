@@ -25,6 +25,7 @@ INFRA_ENV = os.getenv("INFRA_ENV", "dev")
 GRIDS_BUCKET = os.getenv("GRIDS_BUCKET", "placeholder-bucket-name")
 EXPORTS_BUCKET = os.getenv("EXPORTS_BUCKET", "placeholder-bucket-name")
 RASTERS_BUCKET = os.getenv("RASTERS_BUCKET", "placeholder-bucket-name")
+TABLES_BUCKET = os.getenv("TABLES_BUCKET", "placeholder-bucket-name")
 TEST_BUCKET = os.getenv("TEST_BUCKET", "placeholder-bucket-name")
 
 # Collection names

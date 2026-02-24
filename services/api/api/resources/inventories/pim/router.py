@@ -17,7 +17,7 @@ from api.resources.inventories.pim.schema import (
     CreatePimInventoryRequest,
     PimInventorySource,
 )
-from api.resources.inventories.schema import Inventory
+from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -116,6 +116,23 @@ async def create_pim_inventory(
             ),
         )
 
+    # Validate the grid contains the plot ID band needed for expansion
+    product = grid_source.get("product", "treemap")
+    required_bands = {"treemap": "tm_id"}
+    required_band = required_bands.get(product)
+    if required_band:
+        grid_bands = source_grid_data.get("bands", [])
+        band_keys = [b["key"] if isinstance(b, dict) else b for b in grid_bands]
+        if required_band not in band_keys:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Source PIM grid is missing the required '{required_band}' band. "
+                    f"Available bands: {band_keys}. "
+                    f"Create a PIM grid that includes '{required_band}' for inventory expansion."
+                ),
+            )
+
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now()
     source = PimInventorySource(
@@ -136,7 +153,7 @@ async def create_pim_inventory(
         "modified_on": request_time,
         "source": source.model_dump(),
         "modifications": [],
-        "summary": None,
+        "columns": [c.model_dump() for c in BASE_INVENTORY_COLUMNS],
         "georeference": None,
         "error": None,
         "tags": body.tags,

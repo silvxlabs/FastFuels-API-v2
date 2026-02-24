@@ -11,7 +11,7 @@ require valid credentials.
 Two sources of test data:
 
 - **Export templates**: `tests/data/exports/` (e.g., `geotiff.json`)
-- **Grid templates**: `services/griddle/tests/data/grids/` (shared format,
+- **Grid templates**: `services/lib/tests/static_data/grids/` (shared format,
   e.g., `static-test-blue-mtn-landfire-fbfm40.json`)
 
 Static grid data lives in GCS at `gs://{GRIDS_BUCKET}/static-test-*` and is

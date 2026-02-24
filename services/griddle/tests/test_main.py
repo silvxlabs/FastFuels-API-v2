@@ -73,6 +73,7 @@ class TestProcessGridRequest:
 
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main._load_domain")
     @patch("griddle.main.update_status")
     @patch("griddle.main.update_progress")
     @patch("griddle.main.load_grid")
@@ -81,6 +82,7 @@ class TestProcessGridRequest:
         mock_load_grid,
         mock_update_progress,
         mock_update_status,
+        mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
     ):
@@ -91,6 +93,7 @@ class TestProcessGridRequest:
             "source": {"name": "landfire", "product": "fbfm40"},
             "domain_id": "test-domain-id",
         }
+        mock_load_domain.return_value = MagicMock()
 
         mock_result = MagicMock()
         mock_result.rio.crs = "EPSG:32610"
@@ -112,6 +115,7 @@ class TestProcessGridRequest:
 
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main._load_domain")
     @patch("griddle.main.update_status")
     @patch("griddle.main.update_progress")
     @patch("griddle.main.load_grid")
@@ -120,6 +124,7 @@ class TestProcessGridRequest:
         mock_load_grid,
         mock_update_progress,
         mock_update_status,
+        mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
     ):
@@ -130,6 +135,7 @@ class TestProcessGridRequest:
             "domain_id": "test-domain-id",
             "chunk_shape": [256, 256],
         }
+        mock_load_domain.return_value = MagicMock()
 
         mock_result = MagicMock()
         mock_result.rio.crs = "EPSG:32610"
@@ -146,6 +152,7 @@ class TestProcessGridRequest:
 
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main._load_domain")
     @patch("griddle.main.update_status")
     @patch("griddle.main.update_progress")
     @patch("griddle.main.load_grid")
@@ -154,6 +161,7 @@ class TestProcessGridRequest:
         mock_load_grid,
         mock_update_progress,
         mock_update_status,
+        mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
     ):
@@ -163,6 +171,7 @@ class TestProcessGridRequest:
             "source": {"name": "landfire", "product": "fbfm40"},
             "domain_id": "test-domain-id",
         }
+        mock_load_domain.return_value = MagicMock()
 
         mock_result = MagicMock()
         mock_result.rio.crs = "EPSG:32610"
@@ -177,11 +186,12 @@ class TestProcessGridRequest:
             "test-grid-id", mock_result, chunk_shape=(512, 512)
         )
 
+    @patch("griddle.main._load_domain")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main.update_status")
     @patch("griddle.main.load_grid")
     def test_unexpected_error_returns_500(
-        self, mock_load_grid, mock_update_status, mock_dispatch
+        self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
     ):
         """Unexpected error returns 500 to trigger Cloud Tasks retry."""
         mock_load_grid.return_value = {
@@ -189,6 +199,7 @@ class TestProcessGridRequest:
             "source": {"name": "landfire", "product": "fbfm40"},
             "domain_id": "test-domain-id",
         }
+        mock_load_domain.return_value = MagicMock()
         mock_dispatch.side_effect = RuntimeError("Unexpected error")
 
         request = MockRequest(json_data={"id": "test-grid-id"})
@@ -197,11 +208,12 @@ class TestProcessGridRequest:
 
         assert status_code == 500
 
+    @patch("griddle.main._load_domain")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main.update_status")
     @patch("griddle.main.load_grid")
     def test_processing_error_returns_200(
-        self, mock_load_grid, mock_update_status, mock_dispatch
+        self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
     ):
         """ProcessingError returns 200 (error recorded, no retry needed)."""
         from griddle.errors import ProcessingError
@@ -211,6 +223,7 @@ class TestProcessGridRequest:
             "source": {"name": "landfire", "product": "fbfm40"},
             "domain_id": "test-domain-id",
         }
+        mock_load_domain.return_value = MagicMock()
         mock_dispatch.side_effect = ProcessingError(
             code="TEST_ERROR",
             message="Test error message",

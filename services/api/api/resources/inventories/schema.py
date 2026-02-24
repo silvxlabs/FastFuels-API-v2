@@ -9,7 +9,6 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from api.resources.grids.schema import Georeference
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
 
@@ -33,27 +32,6 @@ class PointProcess(StrEnum):
     inhomogeneous_poisson = "inhomogeneous_poisson"
 
 
-class SummaryStats(BaseModel):
-    """Min/max/mean/std summary for a numeric attribute."""
-
-    min: float
-    max: float
-    mean: float
-    std: float
-
-
-class InventorySummary(BaseModel):
-    """Summary statistics populated by the backend on completion."""
-
-    total_entities: int
-    entities_per_hectare: float
-    area_hectares: float
-    species_count: int
-    height_stats: SummaryStats
-    dbh_stats: SummaryStats
-    basal_area: float
-
-
 class CreateInventoryRequestBase(BaseModel):
     """Base fields for inventory creation requests."""
 
@@ -71,11 +49,45 @@ class UpdateInventoryRequestBody(BaseModel):
     tags: list[str] | None = Field(None, max_length=50)
 
 
+class ColumnType(StrEnum):
+    """Type of column data."""
+
+    continuous = "continuous"
+    categorical = "categorical"
+
+
+class Column(BaseModel):
+    """A single column in an inventory."""
+
+    key: str = Field(..., description="Column name (e.g., 'dbh', 'fia_species_code')")
+    type: ColumnType
+    unit: str | None = None
+
+
+# Base columns always present in a tree inventory
+BASE_INVENTORY_COLUMNS = [
+    Column(key="x", type=ColumnType.continuous, unit="m"),
+    Column(key="y", type=ColumnType.continuous, unit="m"),
+    Column(key="fia_species_code", type=ColumnType.categorical),
+    Column(key="fia_status_code", type=ColumnType.categorical),
+    Column(key="dbh", type=ColumnType.continuous, unit="cm"),
+    Column(key="height", type=ColumnType.continuous, unit="m"),
+    Column(key="crown_ratio", type=ColumnType.continuous),
+]
+
+
+class InventoryGeoreference(BaseModel):
+    """Spatial reference for an inventory, computed from the domain geometry."""
+
+    crs: str
+    bounds: tuple[float, float, float, float]
+
+
 class Inventory(BaseModel):
     """The Inventory resource.
 
-    When status is "pending" or "running", summary and georeference will be null.
-    The backend populates these after successfully processing data,
+    When status is "pending" or "running", georeference will be null.
+    The backend populates it after successfully processing data,
     at which point status transitions to "completed".
     """
 
@@ -93,11 +105,8 @@ class Inventory(BaseModel):
     modified_on: datetime
     source: dict
     modifications: list = Field(default_factory=list)
-    summary: InventorySummary | None = Field(
-        default=None,
-        description="Summary statistics. Null until backend completes processing.",
-    )
-    georeference: Georeference | None = Field(
+    columns: list[Column] = Field(default_factory=list)
+    georeference: InventoryGeoreference | None = Field(
         default=None,
         description="Spatial reference. Null until backend completes processing.",
     )

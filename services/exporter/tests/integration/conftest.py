@@ -35,8 +35,10 @@ logger = logging.getLogger(__name__)
 TEST_DATA_DIR = Path(__file__).parent.parent / "data"
 EXPORTS_DIR = TEST_DATA_DIR / "exports"
 
-# Grid JSON templates live in griddle's test data (shared format)
-GRIDS_DIR = Path(__file__).parents[3] / "griddle" / "tests" / "data" / "grids"
+# Shared test data lives in lib/tests/static_data
+GRIDS_DIR = (
+    Path(__file__).resolve().parents[3] / "lib" / "tests" / "static_data" / "grids"
+)
 
 
 def load_json(path: Path) -> dict:

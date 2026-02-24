@@ -20,6 +20,8 @@ dependencies = [
 test = [
     "pytest>=9.0.2",
     "pytest-xdist>=3.5.0",
+    "google-cloud-run>=0.10.0",
+    "google-cloud-tasks>=2.16.0",
 ]
 
 [tool.uv.sources]

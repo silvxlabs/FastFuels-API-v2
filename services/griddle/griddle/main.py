@@ -18,7 +18,8 @@ from flask import Request
 from griddle.dispatch import dispatch_handler
 from griddle.errors import CancelledException, ProcessingError
 from griddle.storage import delete_zarr, save_zarr
-from lib.config import GRIDS_COLLECTION
+from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
+from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 
 
@@ -159,6 +160,34 @@ def make_progress_callback(grid_id: str):
     return callback
 
 
+def _load_domain(domain_id: str):
+    """Load domain from Firestore and parse into GeoDataFrame.
+
+    Raises ProcessingError for domain-related failures.
+    """
+    try:
+        _, snapshot = get_document(DOMAINS_COLLECTION, domain_id)
+        return parse_domain_gdf(snapshot.to_dict())
+    except DocumentNotFoundError:
+        raise ProcessingError(
+            code="DOMAIN_NOT_FOUND",
+            message=f"Domain {domain_id} not found.",
+            suggestion="Ensure the domain exists before creating a grid.",
+        )
+    except EmptyDomainError:
+        raise ProcessingError(
+            code="EMPTY_DOMAIN",
+            message="Domain has no geometry.",
+            suggestion="Create a domain with at least one polygon feature.",
+        )
+    except InvalidGeometryError as e:
+        raise ProcessingError(
+            code="INVALID_GEOMETRY",
+            message=str(e),
+            suggestion="Ensure the domain has valid GeoJSON geometry.",
+        )
+
+
 @functions_framework.http
 def process_grid_request(request: Request):
     """Main entry point for grid processing.
@@ -230,9 +259,12 @@ def process_grid_request(request: Request):
         return "OK", 200
 
     try:
+        # Load and parse domain
+        domain_gdf = _load_domain(grid["domain_id"])
+
         # Dispatch to handler
         progress_callback = make_progress_callback(grid_id)
-        result = dispatch_handler(grid, progress_callback)
+        result = dispatch_handler(grid, domain_gdf, progress_callback)
 
         # TODO: Apply modifications if present
         # if grid.get("modifications"):

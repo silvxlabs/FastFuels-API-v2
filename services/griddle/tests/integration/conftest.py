@@ -32,9 +32,9 @@ from lib.gcs.blobs import delete_directory, exists
 
 logger = logging.getLogger(__name__)
 
-TEST_DATA_DIR = Path(__file__).parent.parent / "data"
-DOMAINS_DIR = TEST_DATA_DIR / "domains"
-GRIDS_DIR = TEST_DATA_DIR / "grids"
+STATIC_DATA_DIR = Path(__file__).resolve().parents[3] / "lib" / "tests" / "static_data"
+DOMAINS_DIR = STATIC_DATA_DIR / "domains"
+GRIDS_DIR = STATIC_DATA_DIR / "grids"
 
 
 def load_json(path: Path) -> dict:

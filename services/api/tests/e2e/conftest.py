@@ -18,14 +18,15 @@ from pathlib import Path
 
 import gcsfs
 import pytest
+from api.resources.domains.examples import EXAMPLE_WGS84_DEFAULT
 from google.cloud import firestore
 
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 
 logger = logging.getLogger(__name__)
 
-GRIDDLE_TEST_DATA = (
-    Path(__file__).resolve().parents[3] / "griddle" / "tests" / "data" / "grids"
+STATIC_GRIDS_DIR = (
+    Path(__file__).resolve().parents[3] / "lib" / "tests" / "static_data" / "grids"
 )
 
 STATIC_PREFIX = "static-test-"
@@ -92,7 +93,7 @@ def _poll_for_completion(
 def _save_json_template(grid: dict, static_name: str) -> None:
     """Save a completed grid document as a JSON template for griddle tests."""
     template = {k: v for k, v in grid.items() if k not in STRIP_FIELDS}
-    out_path = GRIDDLE_TEST_DATA / f"{static_name}.json"
+    out_path = STATIC_GRIDS_DIR / f"{static_name}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(template, f, indent=2, default=str)
@@ -102,7 +103,7 @@ def _save_json_template(grid: dict, static_name: str) -> None:
 
 def _load_static_template(static_name: str) -> dict:
     """Load a previously-generated static fixture JSON template."""
-    path = GRIDDLE_TEST_DATA / f"{static_name}.json"
+    path = STATIC_GRIDS_DIR / f"{static_name}.json"
     if not path.exists():
         pytest.fail(
             f"Static template {path} not found. "
@@ -217,33 +218,10 @@ def create_static_fixture(firestore_client, test_owner_id):
 def blue_mountain_domain(client):
     """Create the Blue Mountain domain via the API, clean up after.
 
-    Blue Mountain Recreation Area (~1 sq km near Missoula, Montana).
-    Geographic coordinates — the API auto-projects to UTM zone 11N.
+    Uses EXAMPLE_WGS84_DEFAULT — the canonical Blue Mountain Recreation Area
+    (~1 sq km near Missoula, Montana). The API auto-projects to UTM zone 11N.
     """
-    body = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [
-                        [
-                            [-113.98819, 46.87174],
-                            [-114.00274, 46.87159],
-                            [-114.00304, 46.86407],
-                            [-113.98849, 46.86421],
-                            [-113.98819, 46.87174],
-                        ]
-                    ],
-                },
-                "properties": {},
-            }
-        ],
-        "name": "Blue Mountain",
-        "description": "Blue Mountain Recreation Area near Missoula, Montana.",
-    }
-    response = client.post("/domains", json=body, timeout=30.0)
+    response = client.post("/domains", json=EXAMPLE_WGS84_DEFAULT, timeout=30.0)
     assert response.status_code == 201, (
         f"POST /domains returned {response.status_code}: {response.text}"
     )

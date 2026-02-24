@@ -40,7 +40,7 @@ To add a new domain:
    `create_static_fixture()` with the appropriate endpoint, request body, and
    `static_name`
 2. Run the e2e tests to generate the zarr in GCS and the JSON template
-3. Commit the generated JSON template from `services/griddle/tests/data/grids/`
+3. Commit the generated JSON template from `services/lib/tests/static_data/grids/`
 
 ## Chained fixtures
 
@@ -87,7 +87,7 @@ fails, dependent tests are automatically skipped.
 ## Where outputs go
 
 - **Zarr data**: `gs://{GRIDS_BUCKET}/static-test-{domain}-{name}/`
-- **JSON template**: `services/griddle/tests/data/grids/static-test-{domain}-{name}.json`
+- **JSON template**: `services/lib/tests/static_data/grids/static-test-{domain}-{name}.json`
 
 ## When to regenerate
 

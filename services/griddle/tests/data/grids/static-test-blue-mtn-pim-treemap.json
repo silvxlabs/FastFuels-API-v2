@@ -1,16 +1,33 @@
 {
+  "description": "",
+  "status": "completed",
+  "name": "",
   "tags": [],
+  "bands": [
+    {
+      "unit": null,
+      "key": "tm_id",
+      "index": 0,
+      "type": "categorical"
+    }
+  ],
+  "source": {
+    "description": "TreeMap plot imputation raster (FIA plot IDs at 30m)",
+    "bands": [
+      "tm_id"
+    ],
+    "name": "pim",
+    "product": "treemap",
+    "version": "2022"
+  },
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "modifications": [],
   "chunk_shape": [
     512,
     512
-  ],
-  "bands": [
-    {
-      "key": "tm_id",
-      "index": 0,
-      "unit": null,
-      "type": "categorical"
-    }
   ],
   "georeference": {
     "shape": [
@@ -26,22 +43,5 @@
       5195531.359464401
     ],
     "crs": "EPSG:32612"
-  },
-  "source": {
-    "bands": [
-      "tm_id"
-    ],
-    "version": "2022",
-    "product": "treemap",
-    "name": "pim",
-    "description": "TreeMap plot imputation raster (FIA plot IDs at 30m)"
-  },
-  "description": "",
-  "progress": {
-    "message": "Complete",
-    "percent": 100
-  },
-  "status": "completed",
-  "modifications": [],
-  "name": ""
+  }
 }

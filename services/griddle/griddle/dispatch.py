@@ -4,7 +4,6 @@ Handler dispatch for Griddle.
 Routes grid requests to the appropriate handler based on source type.
 """
 
-import json
 from collections.abc import Callable
 
 import geopandas as gpd
@@ -12,18 +11,18 @@ import xarray as xr
 
 from griddle.errors import ProcessingError
 from griddle.handlers import chm, landfire, lookup, pim, resample, uniform
-from lib.config import DOMAINS_COLLECTION
-from lib.firestore import DocumentNotFoundError, get_document
 
 
 def dispatch_handler(
     grid: dict,
+    domain_gdf: gpd.GeoDataFrame,
     progress_callback: Callable[[str, int | None], None],
 ) -> xr.Dataset:
     """Route to appropriate handler based on source type.
 
     Args:
         grid: Grid document from Firestore
+        domain_gdf: Domain geometry as GeoDataFrame
         progress_callback: Function to report progress (message, percent)
 
     Returns:
@@ -37,17 +36,17 @@ def dispatch_handler(
 
     match source_name:
         case "landfire":
-            return handle_landfire(grid, source, progress_callback)
+            return handle_landfire(domain_gdf, source, progress_callback)
         case "lookup":
             return handle_lookup(grid, source, progress_callback)
         case "resample":
-            return handle_resample(grid, source, progress_callback)
+            return handle_resample(source, progress_callback)
         case "pim":
-            return handle_pim(grid, source, progress_callback)
+            return handle_pim(domain_gdf, source, progress_callback)
         case "uniform":
-            return handle_uniform(grid, source, progress_callback)
+            return handle_uniform(domain_gdf, source, progress_callback)
         case "chm":
-            return handle_chm(grid, source, progress_callback)
+            return handle_chm(domain_gdf, source, progress_callback)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",
@@ -57,22 +56,11 @@ def dispatch_handler(
 
 
 def handle_landfire(
-    grid: dict,
+    domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Handle LANDFIRE source grids.
-
-    Args:
-        grid: Grid document
-        source: Source configuration from grid
-        progress: Progress callback
-
-    Returns:
-        Dataset with LANDFIRE data
-    """
-    domain_gdf = load_domain_gdf(grid["domain_id"])
-
+    """Handle LANDFIRE source grids."""
     product = source["product"]
     version = source.get("version", "2022")
 
@@ -94,22 +82,11 @@ def handle_landfire(
 
 
 def handle_pim(
-    grid: dict,
+    domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Handle PIM source grids.
-
-    Args:
-        grid: Grid document
-        source: Source configuration from grid
-        progress: Progress callback
-
-    Returns:
-        Dataset with PIM data
-    """
-    domain_gdf = load_domain_gdf(grid["domain_id"])
-
+    """Handle PIM source grids."""
     product = source["product"]
     version = source.get("version", "2022")
     bands = source.get("bands", ["tm_id"])
@@ -132,16 +109,7 @@ def handle_lookup(
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Handle lookup source grids.
-
-    Args:
-        grid: Grid document
-        source: Source configuration from grid
-        progress: Progress callback
-
-    Returns:
-        Dataset with looked-up fuel parameters
-    """
+    """Handle lookup source grids."""
     table = source["table"]
 
     progress(f"Looking up {table} fuel parameters...", 10)
@@ -162,20 +130,10 @@ def handle_lookup(
 
 
 def handle_resample(
-    grid: dict,
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Handle resample source grids.
-
-    Args:
-        grid: Grid document
-        source: Source configuration from grid
-        progress: Progress callback
-
-    Returns:
-        Dataset with resampled data
-    """
+    """Handle resample source grids."""
     progress("Resampling grid...", 10)
 
     return resample.resample_grid(
@@ -188,22 +146,11 @@ def handle_resample(
 
 
 def handle_uniform(
-    grid: dict,
+    domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Handle uniform source grids.
-
-    Args:
-        grid: Grid document
-        source: Source configuration from grid
-        progress: Progress callback
-
-    Returns:
-        Dataset with constant-value bands
-    """
-    domain_gdf = load_domain_gdf(grid["domain_id"])
-
+    """Handle uniform source grids."""
     progress("Creating uniform grid...", 10)
 
     return uniform.create_uniform_grid(
@@ -215,22 +162,11 @@ def handle_uniform(
 
 
 def handle_chm(
-    grid: dict,
+    domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Handle CHM source grids.
-
-    Args:
-        grid: Grid document
-        source: Source configuration from grid
-        progress: Progress callback
-
-    Returns:
-        Dataset with CHM data
-    """
-    domain_gdf = load_domain_gdf(grid["domain_id"])
-
+    """Handle CHM source grids."""
     product = source["product"]
     version = source.get("version", "2024")
 
@@ -245,69 +181,3 @@ def handle_chm(
                 message=f"Unknown CHM product: {product}",
                 suggestion="Supported products: meta",
             )
-
-
-def load_domain_gdf(domain_id: str) -> gpd.GeoDataFrame:
-    """Load domain as a GeoDataFrame.
-
-    Handles Firestore serialization quirks:
-    - Coordinates are stored as JSON strings (Firestore doesn't support nested arrays)
-    - CRS is stored as a GeoJSON CRS object: {"properties": {"name": "EPSG:..."}, "type": "name"}
-
-    Follows the same pattern as lib.spatial.get_geodataframe_from_domain_data.
-
-    Args:
-        domain_id: Domain document ID
-
-    Returns:
-        GeoDataFrame with domain geometry
-
-    Raises:
-        ProcessingError: If domain not found, has no geometry, or geometry is invalid
-    """
-    try:
-        _, snapshot = get_document(DOMAINS_COLLECTION, domain_id)
-        domain = snapshot.to_dict()
-    except DocumentNotFoundError:
-        raise ProcessingError(
-            code="DOMAIN_NOT_FOUND",
-            message=f"Domain {domain_id} not found.",
-            suggestion="Ensure the domain exists before creating a grid.",
-        )
-
-    features = domain.get("features", [])
-    if not features:
-        raise ProcessingError(
-            code="EMPTY_DOMAIN",
-            message="Domain has no geometry.",
-            suggestion="Create a domain with at least one polygon feature.",
-        )
-
-    # Parse stringified coordinates from Firestore (same as lib.spatial.domain_coords_str_to_dict)
-    # Extract CRS from GeoJSON CRS object (same as lib.spatial: domain_data["crs"]["properties"]["name"])
-    # Build GeoDataFrame from features (same as lib.spatial.get_geodataframe_from_domain_data)
-    try:
-        for feature in features:
-            coords = feature.get("geometry", {}).get("coordinates")
-            if isinstance(coords, str):
-                feature["geometry"]["coordinates"] = json.loads(coords)
-
-        crs_field = domain.get("crs")
-        if isinstance(crs_field, dict):
-            crs = crs_field["properties"]["name"]
-        else:
-            crs = crs_field or "EPSG:4326"
-
-        gdf = gpd.GeoDataFrame.from_features(features)
-        if crs != "local":
-            gdf = gdf.set_crs(crs)
-    except ProcessingError:
-        raise
-    except Exception as e:
-        raise ProcessingError(
-            code="INVALID_GEOMETRY",
-            message=f"Failed to parse domain geometry: {e}",
-            suggestion="Ensure the domain has valid GeoJSON geometry.",
-        )
-
-    return gdf

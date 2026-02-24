@@ -31,7 +31,7 @@ class TestGeotiffExport:
 
         assert ds.sizes["band"] == 1
         assert ds.rio.crs is not None
-        assert str(ds.rio.crs) == "EPSG:32612"
+        assert str(ds.rio.crs) == "EPSG:32611"
         assert "x" in ds.dims
         assert "y" in ds.dims
 
@@ -52,7 +52,7 @@ class TestGeotiffExport:
 
         assert ds.sizes["band"] == 3
         assert ds.rio.crs is not None
-        assert str(ds.rio.crs) == "EPSG:32612"
+        assert str(ds.rio.crs) == "EPSG:32611"
 
         ds.close()
 
@@ -75,7 +75,7 @@ class TestGeotiffExport:
 
         assert ds.sizes["band"] == 2
         assert ds.rio.crs is not None
-        assert str(ds.rio.crs) == "EPSG:32612"
+        assert str(ds.rio.crs) == "EPSG:32611"
 
         ds.close()
 
@@ -98,6 +98,6 @@ class TestGeotiffExport:
 
         assert ds.sizes["band"] == 1
         assert ds.rio.crs is not None
-        assert str(ds.rio.crs) == "EPSG:32612"
+        assert str(ds.rio.crs) == "EPSG:32611"
 
         ds.close()

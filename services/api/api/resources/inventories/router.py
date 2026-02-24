@@ -207,7 +207,7 @@ async def update_inventory(
 
     The following fields are immutable:
 
-    - **id**, **domain_id**, **type**, **source**, **modifications**, **summary**, **georeference**
+    - **id**, **domain_id**, **type**, **source**, **modifications**, **georeference**
     - **created_on** (creation timestamp is permanent)
 
     The **modified_on** field is automatically updated.

@@ -149,7 +149,6 @@ class TestCreatePimInventory:
         assert data["description"] == ""
         assert data["tags"] == []
         assert data["modifications"] == []
-        assert data["summary"] is None
         assert data["georeference"] is None
         assert data["error"] is None
 
@@ -889,7 +888,6 @@ class TestUpdateInventory:
         assert "modified_on" in data
         assert "source" in data
         assert "modifications" in data
-        assert "summary" in data
         assert "georeference" in data
         assert "tags" in data
 

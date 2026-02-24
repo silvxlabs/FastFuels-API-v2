@@ -15,11 +15,9 @@ from api.resources.inventories.schema import (
     CreateInventoryRequestBase,
     Inventory,
     InventorySortField,
-    InventorySummary,
     InventoryType,
     ListInventoriesResponse,
     PointProcess,
-    SummaryStats,
     UpdateInventoryRequestBody,
 )
 from pydantic import ValidationError
@@ -52,44 +50,6 @@ class TestInventorySortField:
         assert InventorySortField.created_on == "created_on"
         assert InventorySortField.modified_on == "modified_on"
         assert InventorySortField.name == "name"
-
-
-class TestSummaryStats:
-    """Tests for SummaryStats model."""
-
-    def test_valid_stats(self):
-        stats = SummaryStats(min=1.0, max=10.0, mean=5.5, std=2.3)
-        assert stats.min == 1.0
-        assert stats.max == 10.0
-        assert stats.mean == 5.5
-        assert stats.std == 2.3
-
-    def test_all_fields_required(self):
-        with pytest.raises(ValidationError):
-            SummaryStats(min=1.0, max=10.0)
-
-
-class TestInventorySummary:
-    """Tests for InventorySummary model."""
-
-    def test_valid_summary(self):
-        summary = InventorySummary(
-            total_entities=1000,
-            entities_per_hectare=500.0,
-            area_hectares=2.0,
-            species_count=5,
-            height_stats=SummaryStats(min=1.0, max=30.0, mean=15.0, std=7.0),
-            dbh_stats=SummaryStats(min=2.0, max=80.0, mean=20.0, std=12.0),
-            basal_area=25.0,
-        )
-        assert summary.total_entities == 1000
-        assert summary.species_count == 5
-        assert summary.height_stats.mean == 15.0
-        assert summary.dbh_stats.mean == 20.0
-
-    def test_all_fields_required(self):
-        with pytest.raises(ValidationError):
-            InventorySummary(total_entities=1000)
 
 
 class TestCreateInventoryRequestBase:
@@ -176,35 +136,20 @@ class TestInventory:
         assert inv.description == ""
         assert inv.status == "pending"
         assert inv.modifications == []
-        assert inv.summary is None
         assert inv.georeference is None
         assert inv.error is None
         assert inv.tags == []
         assert inv.progress is None
 
-    def test_inventory_with_summary(self):
-        summary = {
-            "total_entities": 500,
-            "entities_per_hectare": 250.0,
-            "area_hectares": 2.0,
-            "species_count": 3,
-            "height_stats": {"min": 1.0, "max": 20.0, "mean": 10.0, "std": 5.0},
-            "dbh_stats": {"min": 2.0, "max": 50.0, "mean": 15.0, "std": 8.0},
-            "basal_area": 20.0,
-        }
-        inv = self._make_inventory(summary=summary)
-        assert inv.summary is not None
-        assert inv.summary.total_entities == 500
-
     def test_inventory_with_georeference(self):
         geo = {
             "crs": "EPSG:32611",
-            "transform": (30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
-            "shape": (100, 100),
+            "bounds": (500000.0, 5200000.0, 501000.0, 5201000.0),
         }
         inv = self._make_inventory(georeference=geo)
         assert inv.georeference is not None
         assert inv.georeference.crs == "EPSG:32611"
+        assert inv.georeference.bounds == (500000.0, 5200000.0, 501000.0, 5201000.0)
 
     def test_required_fields(self):
         with pytest.raises(ValidationError):

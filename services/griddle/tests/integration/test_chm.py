@@ -40,3 +40,21 @@ def test_meta_chm_4_tiles(griddle_runner):
     """Meta CHM across 4 tiles: domain on a tile corner."""
     ds = griddle_runner("tile_boundary_4.json", "chm_meta.json")
     _assert_valid_chm(ds, "32612")
+
+
+def test_naip_chm(griddle_runner):
+    """NAIP CHM single-tile: Blue Mountain domain (~1 sq km in Montana)."""
+    ds = griddle_runner("blue_mtn.json", "chm_naip.json")
+    _assert_valid_chm(ds, "32611")
+
+
+def test_naip_chm_2_tiles(griddle_runner):
+    """NAIP CHM across 2 tiles: domain on an E/W tile boundary."""
+    ds = griddle_runner("tile_boundary_2.json", "chm_naip.json")
+    _assert_valid_chm(ds, "32612")
+
+
+def test_naip_chm_4_tiles(griddle_runner):
+    """NAIP CHM across 4 tiles: domain on a tile corner."""
+    ds = griddle_runner("tile_boundary_4.json", "chm_naip.json")
+    _assert_valid_chm(ds, "32612")

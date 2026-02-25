@@ -1,0 +1,19 @@
+{
+  "domain_id": "test-domain",
+  "owner_id": "integration-test",
+  "name": "Test GeoPackage Export",
+  "description": "Integration test export",
+  "tags": [],
+  "status": "pending",
+  "progress": null,
+  "error": null,
+  "source": {
+    "name": "geopackage",
+    "inventory_id": "PLACEHOLDER",
+    "columns": null,
+    "crs": "EPSG:32611"
+  },
+  "expiration_days": 1,
+  "signed_url": null,
+  "expires_on": null
+}

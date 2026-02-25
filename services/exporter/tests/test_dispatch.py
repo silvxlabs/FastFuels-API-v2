@@ -47,6 +47,23 @@ class TestDispatchHandler:
         if isinstance(exc_info.value, ProcessingError):
             assert exc_info.value.code != "UNKNOWN_FORMAT"
 
+    @pytest.mark.parametrize("fmt", ["parquet", "csv", "geojson", "geopackage"])
+    def test_inventory_format_recognized(self, fmt):
+        """Inventory format names are dispatched (will fail on missing inventory, but not UNKNOWN_FORMAT)."""
+        export = {
+            "id": "test-export",
+            "source": {
+                "name": fmt,
+                "inventory_id": "nonexistent",
+            },
+        }
+
+        with pytest.raises(Exception) as exc_info:
+            dispatch_handler(export, self._noop_progress)
+
+        if isinstance(exc_info.value, ProcessingError):
+            assert exc_info.value.code != "UNKNOWN_FORMAT"
+
     def test_missing_source_raises(self):
         """Export without source field raises KeyError."""
         export = {"id": "test-export"}

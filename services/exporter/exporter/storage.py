@@ -6,9 +6,10 @@ Handles loading grid data from Zarr and uploading export files to GCS.
 
 import logging
 
+import pandas as pd
 import xarray as xr
 
-from lib.config import EXPORTS_BUCKET, GRIDS_BUCKET
+from lib.config import EXPORTS_BUCKET, GRIDS_BUCKET, INVENTORIES_BUCKET
 from lib.gcs import delete_directory
 from lib.gcs.signed_urls import generate_download_signed_url
 from lib.zarr_utils import load_zarr as _load_zarr
@@ -27,6 +28,19 @@ def load_grid_zarr(grid_id: str) -> xr.Dataset:
     """
     path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     return _load_zarr(path)
+
+
+def load_inventory_parquet(inventory_id: str) -> pd.DataFrame:
+    """Load inventory data from partitioned Parquet in Cloud Storage.
+
+    Args:
+        inventory_id: The inventory document ID
+
+    Returns:
+        DataFrame with inventory data
+    """
+    path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+    return pd.read_parquet(path)
 
 
 def generate_signed_download(gcs_path: str, expiration_days: int) -> str:

@@ -8,6 +8,7 @@ GeoPackage).
 
 import io
 import logging
+import os
 import tempfile
 import traceback
 import zipfile
@@ -232,10 +233,11 @@ def export_geopackage(
     gdf = _to_geodataframe(df, crs)
 
     progress("Writing GeoPackage...", 80)
-    with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=True) as tmp:
-        gdf.to_file(tmp.name, driver="GPKG")
-        tmp.seek(0)
-        gpkg_bytes = tmp.read()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = os.path.join(tmpdir, "export.gpkg")
+        gdf.to_file(tmp_path, driver="GPKG")
+        with open(tmp_path, "rb") as f:
+            gpkg_bytes = f.read()
 
     filename = sanitize_filename(export.get("name", ""), ".gpkg")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"

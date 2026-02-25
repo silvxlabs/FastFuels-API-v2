@@ -1,0 +1,49 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              308742,
+              5200378
+            ],
+            [
+              310672,
+              5200378
+            ],
+            [
+              310672,
+              5201948
+            ],
+            [
+              308742,
+              5201948
+            ],
+            [
+              308742,
+              5200378
+            ]
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "0"
+    }
+  ],
+  "name": "BLACKFOOT UPPER TESTING.",
+  "description": "Testing bounds that cross 4 naip tiles, contains road and water features and 3DEP data.",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:32612"
+    }
+  },
+  "tags": [],
+  "id": "blackfoot_upper_test_domain",
+  "created_on": "2026-02-23T00:00:00.000000",
+  "modified_on": "2026-02-23T00:00:00.000000"
+}

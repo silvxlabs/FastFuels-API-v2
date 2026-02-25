@@ -1,0 +1,20 @@
+{
+  "name": "test-chm-naip",
+  "description": "NAIP canopy height for integration test",
+  "status": "pending",
+  "progress": null,
+  "source": {
+    "name": "chm",
+    "product": "naip",
+    "version": "latest",
+    "description": "NAIP CONUS canopy height model at 0.6m resolution"
+  },
+  "modifications": [],
+  "bands": [
+    {"key": "chm", "type": "continuous", "unit": "m", "index": 0}
+  ],
+  "georeference": null,
+  "error": null,
+  "tags": [],
+  "chunk_shape": [512, 512]
+}

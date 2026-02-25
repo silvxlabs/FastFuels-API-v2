@@ -48,8 +48,8 @@ class Export(BaseModel):
     source: dict = Field(
         ...,
         description=(
-            "Format-specific export configuration. For GeoTIFF exports, contains "
-            "'name', 'grid_ids' (list of exported grid IDs), and optional 'bands'."
+            "Format-specific export configuration. Contains 'name' (the export format) "
+            "plus additional fields depending on the source type."
         ),
     )
 
@@ -144,6 +144,58 @@ class ExportSingleGridGeoTiffRequest(BaseModel):
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
+
+
+class InventoryExportFormat(StrEnum):
+    """Supported inventory export formats."""
+
+    parquet = "parquet"
+    csv = "csv"
+    geojson = "geojson"
+    geopackage = "geopackage"
+
+
+class ExportInventoryRequest(BaseModel):
+    """Request body for creating an inventory export.
+
+    Used at: POST /domains/{domain_id}/inventories/{inventory_id}/exports/{format}
+    """
+
+    columns: list[str] | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "Column keys to include in the export (e.g. 'x', 'dbh', 'height'). "
+            "Omit to export all columns. Maximum 100 columns."
+        ),
+    )
+    expiration_days: int = Field(
+        default=7,
+        ge=1,
+        le=7,
+        description="Number of days until the signed download URL expires (max 7). Default: 7.",
+    )
+    name: str = Field("", max_length=255)
+    description: str = Field("", max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+
+
+class InventoryExportSource(BaseModel):
+    """Stored source metadata for inventory exports.
+
+    Recorded in the Export.source field for provenance.
+    """
+
+    name: str = Field(..., pattern="^(parquet|csv|geojson|geopackage)$")
+    inventory_id: str
+    columns: list[str] | None = Field(
+        default=None,
+        description="Column keys included, or null for all columns.",
+    )
+    crs: str | None = Field(
+        default=None,
+        description="CRS from the inventory georeference, included for spatial formats.",
+    )
 
 
 class GeoTiffExportSource(BaseModel):

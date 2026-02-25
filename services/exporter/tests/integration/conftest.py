@@ -26,6 +26,8 @@ from lib.config import (
     EXPORTS_COLLECTION,
     GRIDS_BUCKET,
     GRIDS_COLLECTION,
+    INVENTORIES_BUCKET,
+    INVENTORIES_COLLECTION,
 )
 from lib.firestore.documents import delete_document, get_document, set_document
 from lib.gcs.blobs import delete_directory, exists
@@ -38,6 +40,13 @@ EXPORTS_DIR = TEST_DATA_DIR / "exports"
 # Shared test data lives in lib/tests/static_data
 GRIDS_DIR = (
     Path(__file__).resolve().parents[3] / "lib" / "tests" / "static_data" / "grids"
+)
+INVENTORIES_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "lib"
+    / "tests"
+    / "static_data"
+    / "inventories"
 )
 
 
@@ -226,6 +235,104 @@ def exporter_runner():
         export_data["source"]["grid_ids"] = [grid_id]
 
         # Apply optional source overrides (e.g., band subset)
+        if source_overrides:
+            export_data["source"].update(source_overrides)
+
+        # Create Firestore export document
+        set_document(EXPORTS_COLLECTION, export_id, export_data)
+        export_ids.append(export_id)
+
+        # Run exporter
+        _run_exporter(export_id)
+
+        # Get final export state
+        if DEPLOYMENT_ENV != "local":
+            export = _poll_for_completion(export_id, timeout=timeout)
+        else:
+            _, snapshot = get_document(EXPORTS_COLLECTION, export_id)
+            export = snapshot.to_dict()
+
+        # Verify common invariants
+        assert export["status"] == "completed", (
+            f"Export did not complete: status={export['status']}, "
+            f"error={export.get('error')}"
+        )
+        assert export["signed_url"] is not None, "signed_url should be set"
+
+        return export
+
+    yield _run
+
+    # Teardown: delete GCS export files and Firestore documents
+    for export_id in export_ids:
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        delete_document(EXPORTS_COLLECTION, export_id)
+
+
+@pytest.fixture
+def source_inventory(request):
+    """Copy a static fixture parquet to a test-specific path.
+
+    Used with ``@pytest.mark.parametrize("source_inventory", [...], indirect=True)``
+    to provide a completed source inventory for export tests.
+
+    The static parquet is copied to a unique test path, a Firestore document is
+    created from the corresponding JSON template, and both are cleaned up on
+    teardown.
+    """
+    static_name = request.param
+    inventory_id = f"test-{uuid4().hex}"
+
+    # Copy static parquet to test-specific path
+    fs = gcsfs.GCSFileSystem()
+    src = f"{INVENTORIES_BUCKET}/{static_name}"
+    dst = f"{INVENTORIES_BUCKET}/{inventory_id}"
+    fs.cp(src, dst, recursive=True)
+
+    # Create Firestore doc from JSON template
+    inventory_data = load_json(INVENTORIES_DIR / f"{static_name}.json")
+    inventory_data["id"] = inventory_id
+    set_document(INVENTORIES_COLLECTION, inventory_id, inventory_data)
+
+    yield inventory_id
+
+    # Cleanup
+    gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+    if exists(gcs_path):
+        delete_directory(gcs_path)
+    delete_document(INVENTORIES_COLLECTION, inventory_id)
+
+
+@pytest.fixture
+def inventory_exporter_runner():
+    """Run the exporter for a source inventory and return the final export document.
+
+    Like ``exporter_runner`` but sets ``source["inventory_id"]`` instead of
+    ``source["grid_ids"]``.
+
+    Usage::
+
+        def test_something(inventory_exporter_runner, source_inventory):
+            export = inventory_exporter_runner(source_inventory, "parquet.json")
+            assert export["status"] == "completed"
+    """
+    export_ids = []
+
+    def _run(
+        inventory_id: str,
+        export_file: str,
+        timeout: int = 120,
+        source_overrides: dict | None = None,
+    ) -> dict:
+        # Load export template
+        export_data = load_json(EXPORTS_DIR / export_file)
+        export_id = f"test-{uuid4().hex}"
+        export_data["id"] = export_id
+        export_data["source"]["inventory_id"] = inventory_id
+
+        # Apply optional source overrides (e.g., column subset)
         if source_overrides:
             export_data["source"].update(source_overrides)
 

@@ -45,6 +45,23 @@ def test_create_blue_mtn_pim_treemap(
     )
 
 
+@pytest.mark.dependency(depends=["test_create_blue_mtn_pim_treemap"])
+def test_create_blue_mtn_pim_inventory(
+    create_static_inventory_fixture, client, blue_mountain_domain
+):
+    """Create static PIM inventory fixture on Blue Mountain domain."""
+    create_static_inventory_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/inventories/pim",
+        body={
+            "source_pim_grid_id": "static-test-blue-mtn-pim-treemap",
+        },
+        static_name="static-test-blue-mtn-pim-inventory",
+        grid_dependency="static-test-blue-mtn-pim-treemap",
+    )
+
+
 @pytest.mark.dependency()
 def test_create_blue_mtn_landfire_topography(
     create_static_fixture, client, blue_mountain_domain

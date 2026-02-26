@@ -173,6 +173,36 @@ def _stringify_coordinates(domain_data: dict) -> dict:
     return data
 
 
+@pytest.fixture(scope="module")
+def module_pim_grid(request):
+    """Module-scoped variant of source_pim_grid.
+
+    Copies a static PIM grid to a test-specific GCS path and creates the
+    Firestore document. Shared across all tests in a module for efficiency.
+
+    Used with ``@pytest.mark.parametrize("module_pim_grid", [...], indirect=True)``
+    or requested directly from module-scoped fixtures.
+    """
+    static_name = request.param
+    grid_id = f"test-{uuid4().hex}"
+
+    fs = gcsfs.GCSFileSystem()
+    src = f"{GRIDS_BUCKET}/{static_name}"
+    dst = f"{GRIDS_BUCKET}/{grid_id}"
+    fs.cp(src, dst, recursive=True)
+
+    grid_data = load_json(GRIDS_DIR / f"{static_name}.json")
+    grid_data["id"] = grid_id
+    set_document(GRIDS_COLLECTION, grid_id, grid_data)
+
+    yield grid_id
+
+    gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
+    if exists(gcs_path):
+        delete_directory(gcs_path)
+    delete_document(GRIDS_COLLECTION, grid_id)
+
+
 @pytest.fixture
 def source_pim_grid(request):
     """Copy a static PIM grid fixture to a test-specific path.

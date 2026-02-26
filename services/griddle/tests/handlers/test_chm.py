@@ -194,7 +194,7 @@ class TestFetchMetaChm:
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
     def test_no_intersecting_tiles_raises(self, mock_read_file, mock_raster_cls):
-        """Raises ValueError when no tiles intersect the ROI."""
+        """Raises ProcessingError(COVERAGE_ERROR) when no tiles intersect the ROI."""
         mock_read_file.return_value = gpd.GeoDataFrame(
             {"tile": pd.Series([], dtype=str)},
             geometry=[],
@@ -202,8 +202,12 @@ class TestFetchMetaChm:
         )
         progress = MagicMock()
 
-        with pytest.raises(ValueError, match="No Meta CHM tiles found"):
+        # Update to expect the V2-standard ProcessingError
+        with pytest.raises(ProcessingError) as exc_info:
             fetch_meta_chm(_make_roi(), "2024", progress)
+
+        # Strictly verify the error code is COVERAGE_ERROR
+        assert exc_info.value.code == "COVERAGE_ERROR"
 
     @patch("griddle.handlers.chm.merge_arrays")
     @patch("griddle.handlers.chm.RasterConnection")
@@ -367,22 +371,21 @@ class TestFetchNaipChm:
         assert progress.call_count >= 2
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_parquet")
-    def test_no_intersecting_tiles_raises(self, mock_read_parquet, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_file")
+    def test_no_intersecting_tiles_raises(self, mock_read_file, mock_raster_cls):
         """Raises ProcessingError(COVERAGE_ERROR) when no tiles intersect the ROI."""
-        mock_read_parquet.return_value = gpd.GeoDataFrame(
-            {
-                "chm_url": pd.Series([], dtype=str),
-                "scale_factor": pd.Series([], dtype=float),
-            },
+        mock_read_file.return_value = gpd.GeoDataFrame(
+            {"tile": pd.Series([], dtype=str)},
             geometry=[],
             crs="EPSG:4326",
         )
         progress = MagicMock()
 
+        # Update to expect the V2-standard ProcessingError
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), "2020", progress)
+            fetch_meta_chm(_make_roi(), "2024", progress)
 
+        # # Strictly verify the error code is COVERAGE_ERROR
         assert exc_info.value.code == "COVERAGE_ERROR"
 
     @patch("griddle.handlers.chm.merge_arrays")

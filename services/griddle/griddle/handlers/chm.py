@@ -22,28 +22,24 @@ NAIP_INDEX_URL = f"gs://{TABLES_BUCKET}/naip_chm_index.parquet"
 
 def _process_intersecting_tiles(
     roi: gpd.GeoDataFrame,
-    intersecting_tiles: gpd.GeoDataFrame,
+    fetch_urls: list[str],
+    scale_factors: list[float],
     gdal_env: dict[str, str],
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Shared core processing logic for CHM extractions.
-
-    Expects intersecting_tiles to contain 'fetch_url' and 'scale_factor' columns.
-    """
-    n_tiles = len(intersecting_tiles)
+    """Shared core processing logic for CHM extractions."""
+    n_tiles = len(fetch_urls)
     tile_arrays = []
 
     # Apply the specific GDAL environment variables (e.g., AWS auth bypass)
     with rasterio.Env(**gdal_env):
-        for i, (_, row) in enumerate(intersecting_tiles.iterrows()):
+        for i, (url, scale) in enumerate(zip(fetch_urls, scale_factors)):
             progress(
                 f"Fetching CHM tile {i + 1}/{n_tiles}...",
                 10 + int(60 * (i + 1) / n_tiles),
             )
 
-            raster = RasterConnection(
-                row["fetch_url"], connection_type="rioxarray", cache=True
-            )
+            raster = RasterConnection(url, connection_type="rioxarray", cache=True)
             data = raster.extract_window(
                 roi=roi,
                 projection_padding_meters=1200,
@@ -54,9 +50,8 @@ def _process_intersecting_tiles(
             data_2d = data.squeeze("band", drop=True)
 
             # Apply scale factor if needed (e.g., NAIP UInt16 -> Float meters)
-            scale_factor = float(row.get("scale_factor", 1.0))
-            if scale_factor != 1.0:
-                data_2d = data_2d / scale_factor
+            if scale != 1.0:
+                data_2d = data_2d / scale
 
             tile_arrays.append(data_2d)
 
@@ -99,14 +94,14 @@ def fetch_meta_chm(
             suggestion="The domain may be outside the dataset coverage area.",
         )
 
-    # Standardize columns for the shared processor
-    # Meta requires building the S3 URL dynamically and uses no scale factor
-    intersecting["fetch_url"] = f"{S3_BASE}/" + intersecting["tile"] + ".tif"
-    intersecting["scale_factor"] = 1.0
+    # Extract exactly what the helper needs into explicit Python lists
+    fetch_urls = [f"{S3_BASE}/{tile}.tif" for tile in intersecting["tile"]]
+    scale_factors = [1.0] * len(fetch_urls)
 
     return _process_intersecting_tiles(
         roi=roi,
-        intersecting_tiles=intersecting,
+        fetch_urls=fetch_urls,
+        scale_factors=scale_factors,
         gdal_env={"AWS_NO_SIGN_REQUEST": "YES"},
         progress=progress,
     )
@@ -142,15 +137,17 @@ def fetch_naip_chm(
             suggestion="The domain may be outside the CONUS coverage area.",
         )
 
-    # Standardize columns for the shared processor
-    # NAIP provides HTTP URLs directly and uses a 100x scale factor
-    intersecting["fetch_url"] = intersecting["chm_url"]
-    if "scale_factor" not in intersecting.columns:
-        intersecting["scale_factor"] = 100.0
+    # Extract exactly what the helper needs into explicit Python lists
+    fetch_urls = intersecting["chm_url"].tolist()
+    if "scale_factor" in intersecting.columns:
+        scale_factors = intersecting["scale_factor"].tolist()
+    else:
+        scale_factors = [100.0] * len(fetch_urls)
 
     return _process_intersecting_tiles(
         roi=roi,
-        intersecting_tiles=intersecting,
+        fetch_urls=fetch_urls,
+        scale_factors=scale_factors,
         gdal_env={},  # Standard HTTP requests require no auth config
         progress=progress,
     )

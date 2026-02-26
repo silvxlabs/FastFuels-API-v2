@@ -1,14 +1,14 @@
 {
   "domain_id": "test-domain",
   "owner_id": "integration-test",
-  "name": "Test GeoTIFF Export",
+  "name": "Test Zarr Export",
   "description": "Integration test export",
   "tags": [],
   "status": "pending",
   "progress": null,
   "error": null,
   "source": {
-    "name": "geotiff",
+    "name": "zarr",
     "grid_id": "PLACEHOLDER",
     "bands": null
   },

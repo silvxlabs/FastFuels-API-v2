@@ -49,25 +49,28 @@ def sample_tree_table():
 class TestRasterToPlots:
     def test_basic_conversion(self, sample_dataset):
         gdf = raster_to_plots_gdf(sample_dataset, "tm_id")
-        # 4 non-zero pixels
-        assert len(gdf) == 4
+        # All 6 pixels (3x2 grid) including zeros
+        assert len(gdf) == 6
         assert "PLOT_ID" in gdf.columns
         assert gdf.crs is not None
 
-    def test_filters_zeros(self, sample_dataset):
+    def test_includes_zeros_as_anchors(self, sample_dataset):
+        """Zero-value cells must be kept as zero-density anchors for interpolation."""
         gdf = raster_to_plots_gdf(sample_dataset, "tm_id")
-        assert 0 not in gdf["PLOT_ID"].values
+        assert 0 in gdf["PLOT_ID"].values
+        assert (gdf["PLOT_ID"] == 0).sum() == 2  # 2 zero cells in fixture
 
     def test_correct_plot_ids(self, sample_dataset):
         gdf = raster_to_plots_gdf(sample_dataset, "tm_id")
-        expected_ids = {101, 102, 103, 104}
+        expected_ids = {0, 101, 102, 103, 104}
         assert set(gdf["PLOT_ID"].values) == expected_ids
 
     def test_geometry_is_points(self, sample_dataset):
         gdf = raster_to_plots_gdf(sample_dataset, "tm_id")
         assert all(g.geom_type == "Point" for g in gdf.geometry)
 
-    def test_all_zeros_returns_empty(self):
+    def test_all_zeros_returns_all_cells(self):
+        """All-zero raster still returns cells (as zero-density anchors)."""
         x = np.array([500000.0, 500030.0])
         y = np.array([4500000.0, 4500030.0])
         da = xr.DataArray(
@@ -78,7 +81,8 @@ class TestRasterToPlots:
         ds = ds.rio.write_crs("EPSG:32610")
 
         gdf = raster_to_plots_gdf(ds, "tm_id")
-        assert len(gdf) == 0
+        assert len(gdf) == 4
+        assert all(gdf["PLOT_ID"] == 0)
 
 
 class TestFilterAndConvert:

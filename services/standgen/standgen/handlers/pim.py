@@ -175,6 +175,11 @@ def handle_pim(
 def raster_to_plots_gdf(dataset: xr.Dataset, plot_id_band: str) -> gpd.GeoDataFrame:
     """Convert an xarray Dataset's plot ID variable to a plots GeoDataFrame.
 
+    Includes ALL raster cells (including zero/NaN plot IDs) so that cells
+    without trees act as zero-density anchors during density interpolation.
+    Without these anchors, the interpolation produces positive density
+    everywhere and trees get placed in areas that should be empty.
+
     Args:
         dataset: xarray Dataset with spatial coordinates
         plot_id_band: Name of the data variable containing plot IDs
@@ -184,10 +189,9 @@ def raster_to_plots_gdf(dataset: xr.Dataset, plot_id_band: str) -> gpd.GeoDataFr
     """
     da = dataset[plot_id_band]
     df = da.to_dataframe(name="PLOT_ID").reset_index()
-    df = df.dropna(subset=["PLOT_ID"])
-    df = df[df["PLOT_ID"] != 0]
+    df["PLOT_ID"] = df["PLOT_ID"].fillna(0).astype(int)
     return gpd.GeoDataFrame(
-        {"PLOT_ID": df["PLOT_ID"].astype(int).values},
+        {"PLOT_ID": df["PLOT_ID"].values},
         geometry=gpd.points_from_xy(df["x"], df["y"]),
         crs=str(da.rio.crs),
     )

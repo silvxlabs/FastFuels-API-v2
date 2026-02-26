@@ -22,6 +22,7 @@ dependencies = [
     "lib",
     "pandas>=3.0.0",
     "pandera>=0.29.0",
+    "pint>=0.25.2",
     "pyarrow>=23.0.0",
     "pydantic>=2.12.5",
     "pytest>=9.0.2",

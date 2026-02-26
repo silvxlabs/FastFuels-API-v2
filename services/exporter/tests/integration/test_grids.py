@@ -9,12 +9,15 @@ Note: xr.open_dataset(engine="rasterio") reads multi-band GeoTIFFs as a single
 ``ds.sizes["band"]``, not ``len(ds.data_vars)``.
 """
 
+import os
+import tempfile
 import zipfile
 
 import gcsfs
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
+import zarr
 from exporter.filename import sanitize_filename
 
 from lib.config import EXPORTS_BUCKET
@@ -106,6 +109,26 @@ class TestGeotiffExport:
         ds.close()
 
 
+def _download_and_extract_zarr(gcs_path: str) -> tuple[str, str]:
+    """Download a zipped zarr from GCS and extract to a temp directory.
+
+    Returns (extract_dir, zarr_path) for cleanup and opening.
+    """
+    fs = gcsfs.GCSFileSystem()
+    extract_dir = tempfile.mkdtemp()
+    zip_path = os.path.join(extract_dir, "export.zip")
+
+    with fs.open(gcs_path, "rb") as f:
+        with open(zip_path, "wb") as tmp:
+            tmp.write(f.read())
+
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(extract_dir)
+
+    zarr_path = os.path.join(extract_dir, "export.zarr")
+    return extract_dir, zarr_path
+
+
 class TestZarrExport:
     @pytest.mark.parametrize(
         "source_grid", ["static-test-blue-mtn-landfire-fbfm40"], indirect=True
@@ -117,12 +140,16 @@ class TestZarrExport:
         filename = sanitize_filename(export.get("name", ""), ".zip")
         gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
 
-        # Download and verify it's a valid zip containing a zarr store
-        fs = gcsfs.GCSFileSystem()
-        with fs.open(gcs_path, "rb") as f:
-            with zipfile.ZipFile(f) as zf:
-                names = zf.namelist()
-                assert any(".zmetadata" in n or ".zattrs" in n for n in names)
+        extract_dir, zarr_path = _download_and_extract_zarr(gcs_path)
+
+        group = zarr.open_group(zarr_path, mode="r")
+        assert len(list(group.members())) > 0
+
+        ds = xr.open_dataset(zarr_path, engine="zarr", decode_coords="all")
+        assert "fbfm" in ds.data_vars
+        assert "spatial_ref" in ds.coords
+        assert "spatial_ref" not in ds.data_vars
+        ds.close()
 
     @pytest.mark.parametrize(
         "source_grid",
@@ -136,11 +163,18 @@ class TestZarrExport:
         filename = sanitize_filename(export.get("name", ""), ".zip")
         gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
 
-        fs = gcsfs.GCSFileSystem()
-        with fs.open(gcs_path, "rb") as f:
-            with zipfile.ZipFile(f) as zf:
-                names = zf.namelist()
-                assert any(".zmetadata" in n or ".zattrs" in n for n in names)
+        extract_dir, zarr_path = _download_and_extract_zarr(gcs_path)
+
+        group = zarr.open_group(zarr_path, mode="r")
+        assert len(list(group.members())) > 0
+
+        ds = xr.open_dataset(zarr_path, engine="zarr", decode_coords="all")
+        assert "elevation" in ds.data_vars
+        assert "slope" in ds.data_vars
+        assert "aspect" in ds.data_vars
+        assert "spatial_ref" in ds.coords
+        assert "spatial_ref" not in ds.data_vars
+        ds.close()
 
     @pytest.mark.parametrize(
         "source_grid",
@@ -158,15 +192,12 @@ class TestZarrExport:
         filename = sanitize_filename(export.get("name", ""), ".zip")
         gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
 
-        # Download zip and open as zarr to verify band subset
-        fs = gcsfs.GCSFileSystem()
-        with fs.open(gcs_path, "rb") as f:
-            with zipfile.ZipFile(f) as zf:
-                names = zf.namelist()
-                # Verify elevation and slope dirs exist, aspect does not
-                has_elevation = any("elevation/" in n for n in names)
-                has_slope = any("slope/" in n for n in names)
-                has_aspect = any("aspect/" in n for n in names)
-                assert has_elevation
-                assert has_slope
-                assert not has_aspect
+        extract_dir, zarr_path = _download_and_extract_zarr(gcs_path)
+
+        ds = xr.open_dataset(zarr_path, engine="zarr", decode_coords="all")
+        assert "elevation" in ds.data_vars
+        assert "slope" in ds.data_vars
+        assert "aspect" not in ds.data_vars
+        assert "spatial_ref" in ds.coords
+        assert "spatial_ref" not in ds.data_vars
+        ds.close()

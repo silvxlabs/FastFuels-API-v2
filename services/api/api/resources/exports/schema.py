@@ -23,7 +23,7 @@ class ExportSortField(StrEnum):
 class Export(BaseModel):
     """The Export resource.
 
-    Exports are standalone artifacts that record provenance (domain_id, grid_ids)
+    Exports are standalone artifacts that record provenance (domain_id, grid_id)
     but have independent lifecycle — deleting a domain does not delete its exports.
 
     When status is "completed", signed_url contains a signed URL for
@@ -84,48 +84,17 @@ class ListExportsResponse(PaginatedResponse):
     exports: list[Export]
 
 
-class ExportGeoTiffRequest(BaseModel):
-    """Request body for creating a GeoTIFF export from one or more grids.
+class GridExportFormat(StrEnum):
+    """Supported grid export formats."""
 
-    Used at: POST /domains/{domain_id}/grids/exports/geotiff
-
-    All referenced grids must belong to the specified domain and have
-    status "completed".
-    """
-
-    grid_ids: list[str] = Field(
-        ...,
-        min_length=1,
-        description=(
-            "IDs of grids to include in the export. All grids must be "
-            "completed and belong to the domain in the URL path."
-        ),
-    )
-    bands: list[str] | None = Field(
-        default=None,
-        description=(
-            "Band keys to include (e.g. 'fuel_load.1hr', 'fbfm'). "
-            "Omit to export all bands from each grid."
-        ),
-    )
-    expiration_days: int = Field(
-        default=7,
-        ge=1,
-        le=7,
-        description="Number of days until the signed download URL expires (max 7). Default: 7.",
-    )
-    name: str = Field("", max_length=255)
-    description: str = Field("", max_length=2000)
-    tags: list[str] = Field(default_factory=list, max_length=50)
+    geotiff = "geotiff"
+    zarr = "zarr"
 
 
-class ExportSingleGridGeoTiffRequest(BaseModel):
-    """Request body for exporting a single grid to GeoTIFF.
+class ExportGridRequest(BaseModel):
+    """Request body for creating a grid export.
 
-    Used at: POST /domains/{domain_id}/grids/{grid_id}/exports/geotiff
-
-    The grid to export is identified by the {grid_id} path parameter.
-    The request body only contains optional band selection and metadata.
+    Used at: POST /domains/{domain_id}/grids/{grid_id}/exports/{format}
     """
 
     bands: list[str] | None = Field(
@@ -198,17 +167,14 @@ class InventoryExportSource(BaseModel):
     )
 
 
-class GeoTiffExportSource(BaseModel):
-    """Stored source metadata for GeoTIFF exports.
+class GridExportSource(BaseModel):
+    """Stored source metadata for grid exports.
 
-    Recorded in the Export.source field for provenance. The grid_ids field
-    is always a list, even when created via the single-grid endpoint.
+    Recorded in the Export.source field for provenance.
     """
 
-    name: str = Field("geotiff", pattern="^geotiff$")
-    grid_ids: list[str] = Field(
-        ..., description="IDs of grids included in this export."
-    )
+    name: str = Field(..., pattern="^(geotiff|zarr)$")
+    grid_id: str
     bands: list[str] | None = Field(
         default=None,
         description="Band keys included, or null for all bands.",

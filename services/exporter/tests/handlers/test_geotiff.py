@@ -1,5 +1,5 @@
 """
-Tests for exporter GeoTIFF handler.
+Tests for exporter grid handlers.
 
 Unit tests mock storage to test handler logic.
 Integration tests write to the real GCS bucket.
@@ -15,7 +15,7 @@ import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from exporter.errors import ProcessingError
-from exporter.handlers.geotiff import export_geotiff
+from exporter.handlers.grid import export_geotiff
 from pyproj import CRS
 from rasterio.transform import from_bounds
 from rioxarray.raster_dataset import RasterDataset
@@ -69,48 +69,48 @@ class TestExportGeotiffUnit:
     """
 
     @MOCK_TO_RASTER
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_loads_correct_grid(self, mock_load, _mock_raster):
         """Calls load_grid_zarr with the grid_id from source."""
         mock_load.return_value = make_test_dataset()
 
         export_geotiff(
             {"id": "test-export"},
-            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            {"grid_id": "grid-abc", "name": "geotiff"},
             noop_progress,
         )
 
         mock_load.assert_called_once_with("grid-abc")
 
     @MOCK_TO_RASTER
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_returns_gcs_path(self, mock_load, _mock_raster):
         """Returns the expected GCS path."""
         mock_load.return_value = make_test_dataset()
 
         result = export_geotiff(
             {"id": "export-789"},
-            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            {"grid_id": "grid-abc", "name": "geotiff"},
             noop_progress,
         )
 
         assert result.endswith("/export-789/export.tif")
 
     @MOCK_TO_RASTER
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_returns_gcs_path_with_name(self, mock_load, _mock_raster):
         """Uses sanitized export name in the GCS path."""
         mock_load.return_value = make_test_dataset()
 
         result = export_geotiff(
             {"id": "export-789", "name": "My Export!"},
-            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            {"grid_id": "grid-abc", "name": "geotiff"},
             noop_progress,
         )
 
         assert result.endswith("/export-789/My_Export.tif")
 
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_missing_band_raises_processing_error(self, mock_load):
         """Missing band raises ProcessingError with BAND_NOT_FOUND code."""
         mock_load.return_value = make_test_dataset()
@@ -119,7 +119,7 @@ class TestExportGeotiffUnit:
             export_geotiff(
                 {"id": "test-export"},
                 {
-                    "grid_ids": ["grid-abc"],
+                    "grid_id": "grid-abc",
                     "name": "geotiff",
                     "bands": ["fbfm", "nonexistent"],
                 },
@@ -129,7 +129,7 @@ class TestExportGeotiffUnit:
         assert exc_info.value.code == "BAND_NOT_FOUND"
         assert "nonexistent" in exc_info.value.message
 
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_grid_load_failure_raises_processing_error(self, mock_load):
         """Grid load failure raises ProcessingError with GRID_LOAD_ERROR code."""
         mock_load.side_effect = FileNotFoundError("Zarr store not found")
@@ -137,7 +137,7 @@ class TestExportGeotiffUnit:
         with pytest.raises(ProcessingError) as exc_info:
             export_geotiff(
                 {"id": "test-export"},
-                {"grid_ids": ["missing-grid"], "name": "geotiff"},
+                {"grid_id": "missing-grid", "name": "geotiff"},
                 noop_progress,
             )
 
@@ -145,7 +145,7 @@ class TestExportGeotiffUnit:
         assert "missing-grid" in exc_info.value.message
 
     @MOCK_TO_RASTER
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_progress_without_band_subset(self, mock_load, _mock_raster):
         """Reports loading and writing progress."""
         mock_load.return_value = make_test_dataset()
@@ -153,7 +153,7 @@ class TestExportGeotiffUnit:
 
         export_geotiff(
             {"id": "test-export"},
-            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            {"grid_id": "grid-abc", "name": "geotiff"},
             lambda msg, pct=None: calls.append((msg, pct)),
         )
 
@@ -163,7 +163,7 @@ class TestExportGeotiffUnit:
         ]
 
     @MOCK_TO_RASTER
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_progress_with_band_subset(self, mock_load, _mock_raster):
         """Reports band selection step when bands specified."""
         mock_load.return_value = make_test_dataset()
@@ -171,7 +171,7 @@ class TestExportGeotiffUnit:
 
         export_geotiff(
             {"id": "test-export"},
-            {"grid_ids": ["grid-abc"], "name": "geotiff", "bands": ["fbfm"]},
+            {"grid_id": "grid-abc", "name": "geotiff", "bands": ["fbfm"]},
             lambda msg, pct=None: calls.append((msg, pct)),
         )
 
@@ -206,7 +206,7 @@ class TestExportGeotiffIntegration:
         except FileNotFoundError:
             pass
 
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_writes_valid_geotiff_to_gcs(self, mock_load, export_id):
         """Writes a valid GeoTIFF to GCS and reads it back."""
         crs_str = "EPSG:32611"
@@ -215,7 +215,7 @@ class TestExportGeotiffIntegration:
 
         gcs_path = export_geotiff(
             {"id": export_id},
-            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            {"grid_id": "grid-abc", "name": "geotiff"},
             noop_progress,
         )
 
@@ -227,7 +227,7 @@ class TestExportGeotiffIntegration:
         assert CRS(result.rio.crs) == CRS(crs_str)
         result.close()
 
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_band_subset_writes_correct_bands_to_gcs(self, mock_load, export_id):
         """Band subset writes only selected bands to GCS."""
         ds = make_test_dataset(
@@ -242,7 +242,7 @@ class TestExportGeotiffIntegration:
         gcs_path = export_geotiff(
             {"id": export_id},
             {
-                "grid_ids": ["grid-abc"],
+                "grid_id": "grid-abc",
                 "name": "geotiff",
                 "bands": ["fuel_load.1hr", "fuel_load.10hr"],
             },
@@ -278,7 +278,7 @@ class TestExportChunkedZarr:
         except FileNotFoundError:
             pass
 
-    @patch("exporter.handlers.geotiff.load_grid_zarr")
+    @patch("exporter.handlers.grid.load_grid_zarr")
     def test_chunked_zarr_exports_valid_geotiff(self, mock_load, export_id, tmp_path):
         """Chunked Zarr data produces a valid GeoTIFF via windowed write."""
         ds = make_test_dataset(
@@ -297,7 +297,7 @@ class TestExportChunkedZarr:
 
         gcs_path = export_geotiff(
             {"id": export_id},
-            {"grid_ids": ["grid-abc"], "name": "geotiff"},
+            {"grid_id": "grid-abc", "name": "geotiff"},
             noop_progress,
         )
 

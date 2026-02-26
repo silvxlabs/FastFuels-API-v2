@@ -232,7 +232,7 @@ def exporter_runner():
         export_data = load_json(EXPORTS_DIR / export_file)
         export_id = f"test-{uuid4().hex}"
         export_data["id"] = export_id
-        export_data["source"]["grid_ids"] = [grid_id]
+        export_data["source"]["grid_id"] = grid_id
 
         # Apply optional source overrides (e.g., band subset)
         if source_overrides:
@@ -310,7 +310,7 @@ def inventory_exporter_runner():
     """Run the exporter for a source inventory and return the final export document.
 
     Like ``exporter_runner`` but sets ``source["inventory_id"]`` instead of
-    ``source["grid_ids"]``.
+    ``source["grid_id"]``.
 
     Usage::
 

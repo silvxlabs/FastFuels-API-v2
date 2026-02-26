@@ -25,6 +25,23 @@ EXAMPLE_PIM_FULL = {
     "tags": ["baseline"],
 }
 
+# Request with modifications (remove small trees from microplot expansion)
+EXAMPLE_PIM_WITH_MODIFICATIONS = {
+    "source_pim_grid_id": "PLACEHOLDER_GRID_ID",
+    "seed": 42,
+    "name": "PIM inventory with small tree removal",
+    "modifications": [
+        {
+            "conditions": {
+                "attribute": "dbh",
+                "operator": "le",
+                "value": 12.7,
+            },
+            "actions": {"modifier": "remove"},
+        }
+    ],
+}
+
 CREATE_PIM_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_PIM_MINIMAL,
@@ -42,9 +59,19 @@ CREATE_PIM_OPENAPI_EXAMPLES = {
             "optional fields specified."
         ),
     },
+    "with_modifications": {
+        "value": EXAMPLE_PIM_WITH_MODIFICATIONS,
+        "summary": "With modifications (remove small trees)",
+        "description": (
+            "Creates an inventory from a PIM grid and removes trees "
+            "with dbh <= 12.7 cm after expansion. This is a common "
+            "fix for unrealistic microplot tree densities."
+        ),
+    },
 }
 
 ALL_PIM_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_PIM_MINIMAL),
     ("full", EXAMPLE_PIM_FULL),
+    ("with_modifications", EXAMPLE_PIM_WITH_MODIFICATIONS),
 ]

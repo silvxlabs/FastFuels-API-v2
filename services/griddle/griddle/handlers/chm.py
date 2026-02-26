@@ -96,11 +96,7 @@ def fetch_meta_chm(
 
 
 # Point directly to our FastFuels bucket for the fixed index
-# NAIP_INDEX_URL = f"gs://{TABLES_BUCKET}/fixed_naip_chm_index.geojson"
-# TEMPORARY LOCAL PATH for testing.
-# Update this to the absolute path where you saved naip_chm_index.parquet
-NAIP_INDEX_URL = "/Users/daithimartin/PycharmProjects/FastFuels-API-v2/sandbox/naip_chm_index.parquet"
-
+NAIP_INDEX_URL = f"gs://{TABLES_BUCKET}/naip_chm_index.parquet"
 
 def fetch_naip_chm(
     roi: gpd.GeoDataFrame,

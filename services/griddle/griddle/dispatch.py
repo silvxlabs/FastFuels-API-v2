@@ -177,6 +177,8 @@ def handle_chm(
     match product:
         case "meta":
             return chm.fetch_meta_chm(domain_gdf, version, progress)
+        case "naip":
+            return chm.fetch_naip_chm(domain_gdf, version, progress)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",

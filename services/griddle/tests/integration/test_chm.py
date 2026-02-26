@@ -8,6 +8,9 @@ These tests hit real Meta CHM tiles via S3 and write to real GCS/Firestore,
 so they require valid credentials and may take a few minutes.
 """
 
+import os
+import tempfile
+
 import numpy as np
 
 
@@ -22,6 +25,14 @@ def _assert_valid_chm(ds, expected_crs_code):
     values = ds["chm"].values
     assert values.dtype in (np.float32, np.float64)
     assert np.nanmin(values) >= 0
+
+    # The Exporter Contract: Verify the Dataset can be successfully written to a GeoTIFF
+    with tempfile.NamedTemporaryFile(suffix=".tif") as tmp:
+        ds.rio.to_raster(tmp.name)
+
+        # Verify the TIFF was actually created and has bytes
+        assert os.path.exists(tmp.name)
+        assert os.path.getsize(tmp.name) > 0
 
 
 def test_meta_chm(griddle_runner):
@@ -39,4 +50,22 @@ def test_meta_chm_2_tiles(griddle_runner):
 def test_meta_chm_4_tiles(griddle_runner):
     """Meta CHM across 4 tiles: domain on a tile corner."""
     ds = griddle_runner("tile_boundary_4.json", "chm_meta.json")
+    _assert_valid_chm(ds, "32612")
+
+
+def test_naip_chm(griddle_runner):
+    """NAIP CHM single-tile: Blue Mountain domain (~1 sq km in Montana)."""
+    ds = griddle_runner("blue_mtn.json", "chm_naip.json")
+    _assert_valid_chm(ds, "32611")
+
+
+def test_naip_chm_2_tiles(griddle_runner):
+    """NAIP CHM across 2 tiles: domain on an E/W tile boundary."""
+    ds = griddle_runner("blackfoot.json", "chm_naip.json")
+    _assert_valid_chm(ds, "32612")
+
+
+def test_naip_chm_4_tiles(griddle_runner):
+    """NAIP CHM across 4 tiles: domain on a tile corner."""
+    ds = griddle_runner("blackfoot_upper.json", "chm_naip.json")
     _assert_valid_chm(ds, "32612")

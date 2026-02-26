@@ -1,5 +1,3 @@
-# Internal imports
-
 # External imports
 import rioxarray
 from geopandas import GeoDataFrame

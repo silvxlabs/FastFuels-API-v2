@@ -8,6 +8,7 @@ import geopandas as gpd
 import pytest
 from griddle.dispatch import (
     dispatch_handler,
+    handle_3dep,
     handle_chm,
     handle_landfire,
     handle_lookup,
@@ -614,3 +615,134 @@ class TestHandleChm:
         call_args = progress.call_args_list[0][0]
         assert "CHM" in call_args[0]
         assert "meta" in call_args[0]
+
+
+class TestDispatchHandler3dep:
+    """Tests for dispatch_handler routing to 3dep."""
+
+    @patch("griddle.dispatch.handle_3dep")
+    def test_routes_3dep_source(self, mock_handle_3dep):
+        """dispatch_handler routes 3dep source to handle_3dep."""
+        mock_result = MagicMock()
+        mock_handle_3dep.return_value = mock_result
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {
+            "source": {
+                "name": "3dep",
+                "product": "topography",
+                "resolution": 10,
+                "bands": ["elevation"],
+            },
+            "domain_id": "test-domain-id",
+        }
+
+        result = dispatch_handler(grid, mock_gdf, progress)
+
+        mock_handle_3dep.assert_called_once_with(mock_gdf, grid["source"], progress)
+        assert result == mock_result
+
+
+class TestHandle3dep:
+    """Tests for handle_3dep function."""
+
+    @patch("griddle.dispatch.threedep.fetch_topography")
+    def test_routes_topography_to_handler(self, mock_fetch):
+        """handle_3dep routes topography product to fetch_topography."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_dataset = MagicMock()
+        mock_metadata = {"tiles": ["url"], "tile_count": 1}
+        mock_fetch.return_value = (mock_dataset, mock_metadata)
+        progress = MagicMock()
+
+        grid = {
+            "source": {
+                "name": "3dep",
+                "product": "topography",
+                "resolution": 10,
+                "bands": ["elevation", "slope", "aspect"],
+            },
+        }
+
+        result = handle_3dep(mock_gdf, grid["source"], progress)
+
+        mock_fetch.assert_called_once_with(
+            mock_gdf, 10, ["elevation", "slope", "aspect"], progress
+        )
+        assert result == mock_dataset
+
+    @patch("griddle.dispatch.threedep.fetch_topography")
+    def test_merges_tile_metadata_into_source(self, mock_fetch):
+        """handle_3dep merges tile metadata into the source dict."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_dataset = MagicMock()
+        mock_metadata = {
+            "tiles": ["https://example.com/tile.tif"],
+            "tile_source": None,
+            "tile_count": 1,
+            "native_crs": "EPSG:4326",
+            "acquisition_dates": None,
+        }
+        mock_fetch.return_value = (mock_dataset, mock_metadata)
+        progress = MagicMock()
+
+        source = {
+            "name": "3dep",
+            "product": "topography",
+            "resolution": 10,
+            "bands": ["elevation"],
+        }
+
+        handle_3dep(mock_gdf, source, progress)
+
+        assert source["tiles"] == ["https://example.com/tile.tif"]
+        assert source["tile_count"] == 1
+        assert source["native_crs"] == "EPSG:4326"
+
+    @patch("griddle.dispatch.threedep.fetch_topography")
+    def test_default_resolution(self, mock_fetch):
+        """handle_3dep uses 10 as default resolution."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = (MagicMock(), {})
+        progress = MagicMock()
+
+        source = {"product": "topography", "bands": ["elevation"]}
+
+        handle_3dep(mock_gdf, source, progress)
+
+        call_args = mock_fetch.call_args[0]
+        assert call_args[1] == 10
+
+    def test_unknown_product_raises(self):
+        """handle_3dep raises ProcessingError for unknown product."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        source = {"product": "unknown_product", "resolution": 10}
+
+        with pytest.raises(ProcessingError) as exc_info:
+            handle_3dep(mock_gdf, source, progress)
+
+        assert exc_info.value.code == "UNKNOWN_PRODUCT"
+        assert "unknown_product" in exc_info.value.message
+
+    @patch("griddle.dispatch.threedep.fetch_topography")
+    def test_calls_progress_callback(self, mock_fetch):
+        """handle_3dep reports progress."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = (MagicMock(), {})
+        progress = MagicMock()
+
+        source = {
+            "product": "topography",
+            "resolution": 10,
+            "bands": ["elevation"],
+        }
+
+        handle_3dep(mock_gdf, source, progress)
+
+        progress.assert_called()
+        call_args = progress.call_args_list[0][0]
+        assert "3DEP" in call_args[0]
+        assert "topography" in call_args[0]

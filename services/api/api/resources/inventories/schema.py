@@ -9,6 +9,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from api.resources.inventories.modification_models import InventoryModification
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
 
@@ -104,7 +105,7 @@ class Inventory(BaseModel):
     created_on: datetime
     modified_on: datetime
     source: dict
-    modifications: list = Field(default_factory=list)
+    modifications: list[InventoryModification] = Field(default_factory=list)
     columns: list[Column] = Field(default_factory=list)
     georeference: InventoryGeoreference | None = Field(
         default=None,

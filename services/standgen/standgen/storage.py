@@ -26,6 +26,13 @@ def load_tree_table(version: str) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
+def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:
+    """Load an inventory's Parquet data from GCS as a dask DataFrame."""
+    path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+    logger.info(f"Loading inventory parquet from {path}")
+    return dd.read_parquet(path)
+
+
 def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     """Write a dask DataFrame to GCS as partitioned Parquet.
 

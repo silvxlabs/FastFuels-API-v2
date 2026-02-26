@@ -9,6 +9,7 @@ dependencies = [
     "lib[firestore,gcs,zarr,raster]",
     "pint>=0.24",
     "pyarrow>=18.0.0",
+    "s3fs>=2024.2.0",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +18,11 @@ test = [
     "pytest-xdist>=3.5.0",
     "google-cloud-tasks>=2.16.0",
     "google-cloud-run>=0.10.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests requiring network access (deselect with '-m \"not integration\"')",
 ]
 
 [tool.uv.sources]

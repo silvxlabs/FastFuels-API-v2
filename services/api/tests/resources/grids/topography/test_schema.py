@@ -10,7 +10,10 @@ from api.resources.grids.schema import BandType
 from api.resources.grids.topography.schema import (
     TOPOGRAPHY_BAND_DEFS,
     CreateLandfireTopographyRequest,
+    CreateThreeDepTopographyRequest,
     LandfireTopographySource,
+    ThreeDepResolution,
+    ThreeDepTopographySource,
     TopographyBand,
     build_topography_bands,
 )
@@ -206,3 +209,155 @@ class TestBuildTopographyBands:
         assert bands[0].index == 0
         assert bands[1].key == "elevation"
         assert bands[1].index == 1
+
+
+class TestThreeDepResolution:
+    """Tests for ThreeDepResolution enum."""
+
+    def test_has_exactly_three_members(self):
+        assert len(ThreeDepResolution) == 3
+
+    def test_one_meter(self):
+        assert ThreeDepResolution.one_meter == 1
+
+    def test_ten_meter(self):
+        assert ThreeDepResolution.ten_meter == 10
+
+    def test_thirty_meter(self):
+        assert ThreeDepResolution.thirty_meter == 30
+
+
+class TestThreeDepTopographySource:
+    """Tests for ThreeDepTopographySource model."""
+
+    def test_product_is_always_topography(self):
+        source = ThreeDepTopographySource(
+            resolution=10, bands=[TopographyBand.elevation]
+        )
+        assert source.product == "topography"
+
+    def test_product_cannot_be_overridden(self):
+        with pytest.raises(ValidationError):
+            ThreeDepTopographySource(
+                product="other", resolution=10, bands=[TopographyBand.elevation]
+            )
+
+    def test_name_is_always_3dep(self):
+        source = ThreeDepTopographySource(
+            resolution=10, bands=[TopographyBand.elevation]
+        )
+        assert source.name == "3dep"
+
+    def test_bands_are_stored(self):
+        source = ThreeDepTopographySource(
+            resolution=10,
+            bands=[TopographyBand.elevation, TopographyBand.slope],
+        )
+        assert source.bands == [TopographyBand.elevation, TopographyBand.slope]
+
+    def test_resolution_is_required(self):
+        with pytest.raises(ValidationError):
+            ThreeDepTopographySource(bands=[TopographyBand.elevation])
+
+    def test_bands_are_required(self):
+        with pytest.raises(ValidationError):
+            ThreeDepTopographySource(resolution=10)
+
+    def test_metadata_fields_default_to_none(self):
+        source = ThreeDepTopographySource(
+            resolution=10, bands=[TopographyBand.elevation]
+        )
+        assert source.tiles is None
+        assert source.tile_source is None
+        assert source.tile_count is None
+        assert source.native_crs is None
+        assert source.acquisition_dates is None
+
+    def test_model_dump(self):
+        source = ThreeDepTopographySource(
+            resolution=10,
+            bands=[TopographyBand.elevation, TopographyBand.aspect],
+        )
+        data = source.model_dump()
+        assert data["name"] == "3dep"
+        assert data["product"] == "topography"
+        assert data["resolution"] == 10
+        assert data["bands"] == ["elevation", "aspect"]
+        assert data["tiles"] is None
+
+    def test_model_dump_with_metadata(self):
+        source = ThreeDepTopographySource(
+            resolution=10,
+            bands=[TopographyBand.elevation],
+            tiles=["https://example.com/tile.tif"],
+            tile_source="s1m",
+            tile_count=1,
+            native_crs="EPSG:4326",
+            acquisition_dates=["20230515"],
+        )
+        data = source.model_dump()
+        assert data["tiles"] == ["https://example.com/tile.tif"]
+        assert data["tile_source"] == "s1m"
+        assert data["tile_count"] == 1
+        assert data["native_crs"] == "EPSG:4326"
+        assert data["acquisition_dates"] == ["20230515"]
+
+
+class TestCreateThreeDepTopographyRequest:
+    """Tests for CreateThreeDepTopographyRequest model."""
+
+    def test_minimal_valid_request(self):
+        request = CreateThreeDepTopographyRequest()
+        assert request.resolution == ThreeDepResolution.ten_meter
+        assert request.bands == [TopographyBand.elevation]
+        assert request.name == ""
+        assert request.description == ""
+        assert request.tags == []
+
+    def test_resolution_defaults_to_10m(self):
+        request = CreateThreeDepTopographyRequest()
+        assert request.resolution == 10
+
+    def test_resolution_can_be_1m(self):
+        request = CreateThreeDepTopographyRequest(resolution=1)
+        assert request.resolution == ThreeDepResolution.one_meter
+
+    def test_resolution_can_be_30m(self):
+        request = CreateThreeDepTopographyRequest(resolution=30)
+        assert request.resolution == ThreeDepResolution.thirty_meter
+
+    def test_invalid_resolution_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(resolution=5)
+
+    def test_bands_default_to_elevation_only(self):
+        request = CreateThreeDepTopographyRequest()
+        assert request.bands == [TopographyBand.elevation]
+
+    def test_bands_can_be_all_three(self):
+        request = CreateThreeDepTopographyRequest(
+            bands=["elevation", "slope", "aspect"]
+        )
+        assert len(request.bands) == 3
+
+    def test_bands_cannot_be_empty(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(bands=[])
+
+    def test_invalid_band_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(bands=["invalid"])
+
+    def test_full_request_with_all_fields(self):
+        request = CreateThreeDepTopographyRequest(
+            resolution=1,
+            name="High-res terrain",
+            description="1m DEM",
+            tags=["3dep"],
+            bands=["elevation", "slope"],
+        )
+        assert request.name == "High-res terrain"
+        assert request.description == "1m DEM"
+        assert request.tags == ["3dep"]
+        assert request.resolution == 1
+        assert request.bands == [TopographyBand.elevation, TopographyBand.slope]

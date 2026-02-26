@@ -1,0 +1,26 @@
+{
+  "name": "test-3dep-topography-1m",
+  "description": "",
+  "status": "pending",
+  "progress": null,
+  "source": {
+    "name": "3dep",
+    "product": "topography",
+    "resolution": 1,
+    "bands": ["elevation"],
+    "description": "3DEP topographic data (elevation) at 1m from S1M",
+    "tiles": null,
+    "tile_source": null,
+    "tile_count": null,
+    "native_crs": null,
+    "acquisition_dates": null
+  },
+  "modifications": [],
+  "bands": [
+    {"key": "elevation", "type": "continuous", "unit": "m", "index": 0}
+  ],
+  "georeference": null,
+  "error": null,
+  "tags": [],
+  "chunk_shape": [512, 512]
+}

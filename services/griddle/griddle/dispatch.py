@@ -10,7 +10,7 @@ import geopandas as gpd
 import xarray as xr
 
 from griddle.errors import ProcessingError
-from griddle.handlers import chm, landfire, lookup, pim, resample, uniform
+from griddle.handlers import chm, landfire, lookup, pim, resample, threedep, uniform
 
 
 def dispatch_handler(
@@ -47,6 +47,8 @@ def dispatch_handler(
             return handle_uniform(domain_gdf, source, progress_callback)
         case "chm":
             return handle_chm(domain_gdf, source, progress_callback)
+        case "3dep":
+            return handle_3dep(domain_gdf, source, progress_callback)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",
@@ -180,4 +182,35 @@ def handle_chm(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown CHM product: {product}",
                 suggestion="Supported products: meta",
+            )
+
+
+def handle_3dep(
+    domain_gdf: gpd.GeoDataFrame,
+    source: dict,
+    progress: Callable[[str, int | None], None],
+) -> xr.Dataset:
+    """Handle 3DEP source grids.
+
+    Unlike other handlers, 3DEP returns tile metadata alongside the dataset.
+    The metadata is merged into the source dict so it gets written back to
+    Firestore.
+    """
+    product = source["product"]
+    resolution = source.get("resolution", 10)
+
+    progress(f"Fetching 3DEP {product} {resolution}m...", 10)
+
+    match product:
+        case "topography":
+            dataset, tile_metadata = threedep.fetch_topography(
+                domain_gdf, resolution, source["bands"], progress
+            )
+            source.update(tile_metadata)
+            return dataset
+        case _:
+            raise ProcessingError(
+                code="UNKNOWN_PRODUCT",
+                message=f"Unknown 3DEP product: {product}",
+                suggestion="Supported products: topography",
             )

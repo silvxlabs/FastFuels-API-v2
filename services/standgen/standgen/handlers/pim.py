@@ -22,6 +22,7 @@ from standgen.columns import (
     RENAME_MAP,
 )
 from standgen.errors import ProcessingError
+from standgen.modifications import apply_modifications
 from standgen.storage import load_pim_grid, load_tree_table, save_parquet
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,12 @@ def handle_pim(
 
     # Select final column set
     ddf = ddf[BASE_COLUMNS]
+
+    # Apply modifications if present
+    modifications = inventory.get("modifications", [])
+    if modifications:
+        progress("Applying modifications...", 77)
+        ddf = ddf.map_partitions(apply_modifications, modifications)
 
     # Write Parquet to GCS (lazy — each partition writes separately)
     progress("Writing inventory data...", 80)

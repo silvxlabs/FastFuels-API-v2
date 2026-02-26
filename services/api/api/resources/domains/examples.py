@@ -169,6 +169,37 @@ EXAMPLE_BLACKFOOT = {
 
 
 # =============================================================================
+# Example: Bondurant, Wyoming (S1M 1-Meter Coverage)
+# =============================================================================
+# Small domain in western Wyoming with known 3DEP S1M (Seamless 1-Meter)
+# coverage. Useful for testing 1m resolution topography requests.
+
+EXAMPLE_BONDURANT = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-110.72191134418632, 42.635711976574456],
+                        [-110.71581298102096, 42.63569701132406],
+                        [-110.71579249057953, 42.64019978690923],
+                        [-110.72189129343488, 42.64021475450427],
+                        [-110.72191134418632, 42.635711976574456],
+                    ]
+                ],
+            },
+        }
+    ],
+    "name": "Bondurant, Wyoming",
+    "description": "Small domain in western Wyoming with known 3DEP S1M 1-meter coverage.",
+}
+
+
+# =============================================================================
 # OpenAPI Examples Dictionary
 # =============================================================================
 
@@ -216,6 +247,14 @@ CREATE_DOMAIN_OPENAPI_EXAMPLES = {
             "diverse feature types including 3DEP point cloud data, roads, and water bodies."
         ),
     },
+    "bondurant": {
+        "value": EXAMPLE_BONDURANT,
+        "summary": "Bondurant, Wyoming (S1M 1m Coverage)",
+        "description": (
+            "Creates a domain in western Wyoming with known 3DEP Seamless 1-Meter (S1M) "
+            "coverage. Use this area to test 1m resolution topography grid requests."
+        ),
+    },
 }
 
 
@@ -231,4 +270,5 @@ ALL_EXAMPLE_VALUES = [
     ("epsg5070", EXAMPLE_EPSG5070),
     ("utm", EXAMPLE_UTM),
     ("blackfoot", EXAMPLE_BLACKFOOT),
+    ("bondurant", EXAMPLE_BONDURANT),
 ]

@@ -53,3 +53,62 @@ ALL_TOPOGRAPHY_EXAMPLE_VALUES = [
     ("elevation_only", EXAMPLE_TOPOGRAPHY_ELEVATION_ONLY),
     ("with_metadata", EXAMPLE_TOPOGRAPHY_WITH_METADATA),
 ]
+
+# 3DEP examples
+
+EXAMPLE_3DEP_MINIMAL = {}
+
+EXAMPLE_3DEP_ALL_BANDS = {
+    "bands": ["elevation", "slope", "aspect"],
+}
+
+EXAMPLE_3DEP_1M = {
+    "resolution": 1,
+    "bands": ["elevation"],
+}
+
+EXAMPLE_3DEP_WITH_METADATA = {
+    "name": "High-res terrain",
+    "description": "10m elevation for wind flow modeling",
+    "tags": ["topography", "3dep"],
+    "resolution": 10,
+    "bands": ["elevation", "slope", "aspect"],
+}
+
+CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES = {
+    "minimal": {
+        "value": EXAMPLE_3DEP_MINIMAL,
+        "summary": "Minimal request (10m elevation)",
+        "description": (
+            "Creates a grid with default settings. Returns elevation at 10m resolution."
+        ),
+    },
+    "all_bands": {
+        "value": EXAMPLE_3DEP_ALL_BANDS,
+        "summary": "All bands",
+        "description": (
+            "Creates a grid with elevation, slope, and aspect at default "
+            "10m resolution."
+        ),
+    },
+    "1m_elevation": {
+        "value": EXAMPLE_3DEP_1M,
+        "summary": "1m elevation",
+        "description": (
+            "Creates a grid with 1m elevation data from 3DEP seamless 1-meter "
+            "(S1M) or legacy project tiles."
+        ),
+    },
+    "with_metadata": {
+        "value": EXAMPLE_3DEP_WITH_METADATA,
+        "summary": "With name and tags",
+        "description": ("Creates a named 10m grid with all topography bands and tags."),
+    },
+}
+
+ALL_3DEP_EXAMPLE_VALUES = [
+    ("minimal", EXAMPLE_3DEP_MINIMAL),
+    ("all_bands", EXAMPLE_3DEP_ALL_BANDS),
+    ("1m_elevation", EXAMPLE_3DEP_1M),
+    ("with_metadata", EXAMPLE_3DEP_WITH_METADATA),
+]

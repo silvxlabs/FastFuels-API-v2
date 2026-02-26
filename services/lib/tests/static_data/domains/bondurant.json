@@ -1,0 +1,49 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              522800,
+              4720400
+            ],
+            [
+              523300,
+              4720400
+            ],
+            [
+              523300,
+              4720900
+            ],
+            [
+              522800,
+              4720900
+            ],
+            [
+              522800,
+              4720400
+            ]
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "0"
+    }
+  ],
+  "name": "Bondurant, Wyoming",
+  "description": "Small domain in western Wyoming with known S1M 1m coverage.",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:32612"
+    }
+  },
+  "tags": [],
+  "id": "test-s1m-coverage",
+  "created_on": "2026-02-25T00:00:00.000000",
+  "modified_on": "2026-02-25T00:00:00.000000"
+}

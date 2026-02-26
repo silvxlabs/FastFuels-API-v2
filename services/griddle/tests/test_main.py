@@ -71,6 +71,7 @@ class TestProcessGridRequest:
 
         assert status_code == 200
 
+    @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main._load_domain")
@@ -85,6 +86,7 @@ class TestProcessGridRequest:
         mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
+        mock_update_document,
     ):
         """Successful processing returns 200 and updates status to complete."""
         # Setup mocks
@@ -113,6 +115,7 @@ class TestProcessGridRequest:
         assert first_call[0] == ("test-grid-id", "running")
         assert second_call[0][1] == "completed"
 
+    @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main._load_domain")
@@ -127,6 +130,7 @@ class TestProcessGridRequest:
         mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
+        mock_update_document,
     ):
         """chunk_shape from grid doc is passed to save_zarr."""
         mock_load_grid.return_value = {
@@ -150,6 +154,7 @@ class TestProcessGridRequest:
             "test-grid-id", mock_result, chunk_shape=(256, 256)
         )
 
+    @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main._load_domain")
@@ -164,6 +169,7 @@ class TestProcessGridRequest:
         mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
+        mock_update_document,
     ):
         """chunk_shape defaults to (512, 512) for grids without it."""
         mock_load_grid.return_value = {

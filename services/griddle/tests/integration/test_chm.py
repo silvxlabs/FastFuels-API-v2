@@ -8,6 +8,9 @@ These tests hit real Meta CHM tiles via S3 and write to real GCS/Firestore,
 so they require valid credentials and may take a few minutes.
 """
 
+import os
+import tempfile
+
 import numpy as np
 
 
@@ -22,6 +25,14 @@ def _assert_valid_chm(ds, expected_crs_code):
     values = ds["chm"].values
     assert values.dtype in (np.float32, np.float64)
     assert np.nanmin(values) >= 0
+
+    # The Exporter Contract: Verify the Dataset can be successfully written to a GeoTIFF
+    with tempfile.NamedTemporaryFile(suffix=".tif") as tmp:
+        ds.rio.to_raster(tmp.name)
+
+        # Verify the TIFF was actually created and has bytes
+        assert os.path.exists(tmp.name)
+        assert os.path.getsize(tmp.name) > 0
 
 
 def test_meta_chm(griddle_runner):

@@ -28,13 +28,29 @@ class TestDispatchHandler:
         assert exc_info.value.code == "UNKNOWN_FORMAT"
         assert "pdf" in exc_info.value.message
 
+    def test_zarr_source_name_recognized(self):
+        """zarr source name is dispatched (will fail on missing grid, but not UNKNOWN_FORMAT)."""
+        export = {
+            "id": "test-export",
+            "source": {
+                "name": "zarr",
+                "grid_id": "nonexistent",
+            },
+        }
+
+        with pytest.raises(Exception) as exc_info:
+            dispatch_handler(export, self._noop_progress)
+
+        if isinstance(exc_info.value, ProcessingError):
+            assert exc_info.value.code != "UNKNOWN_FORMAT"
+
     def test_geotiff_source_name_recognized(self):
         """geotiff source name is dispatched (will fail on missing grid, but not UNKNOWN_FORMAT)."""
         export = {
             "id": "test-export",
             "source": {
                 "name": "geotiff",
-                "grid_ids": ["nonexistent"],
+                "grid_id": "nonexistent",
             },
         }
 

@@ -10,9 +10,10 @@ from datetime import datetime
 import pytest
 from api.resources.exports.schema import (
     Export,
-    ExportGeoTiffRequest,
+    ExportGridRequest,
     ExportSortField,
-    GeoTiffExportSource,
+    GridExportFormat,
+    GridExportSource,
     ListExportsResponse,
     UpdateExportRequestBody,
 )
@@ -219,36 +220,38 @@ class TestListExportsResponse:
         assert response.exports[0].id == "abc"
 
 
-class TestExportGeoTiffRequest:
-    """Tests for ExportGeoTiffRequest model."""
+class TestGridExportFormat:
+    """Tests for GridExportFormat enum."""
+
+    def test_geotiff(self):
+        assert GridExportFormat.geotiff == "geotiff"
+
+    def test_zarr(self):
+        assert GridExportFormat.zarr == "zarr"
+
+    def test_has_2_members(self):
+        assert len(GridExportFormat) == 2
+
+
+class TestExportGridRequest:
+    """Tests for ExportGridRequest model."""
 
     def test_minimal_valid_request(self):
-        request = ExportGeoTiffRequest(grid_ids=["grid_abc"])
-        assert request.grid_ids == ["grid_abc"]
+        request = ExportGridRequest()
         assert request.bands is None
         assert request.expiration_days == 7
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
 
-    def test_grid_ids_required(self):
-        with pytest.raises(ValidationError):
-            ExportGeoTiffRequest()
-
-    def test_grid_ids_cannot_be_empty(self):
-        with pytest.raises(ValidationError):
-            ExportGeoTiffRequest(grid_ids=[])
-
     def test_with_bands(self):
-        request = ExportGeoTiffRequest(
-            grid_ids=["grid_abc"],
+        request = ExportGridRequest(
             bands=["fuel_load.1hr", "fuel_load.10hr"],
         )
         assert request.bands == ["fuel_load.1hr", "fuel_load.10hr"]
 
     def test_with_all_fields(self):
-        request = ExportGeoTiffRequest(
-            grid_ids=["grid_abc"],
+        request = ExportGridRequest(
             bands=["fbfm"],
             expiration_days=3,
             name="FBFM export",
@@ -262,59 +265,63 @@ class TestExportGeoTiffRequest:
 
     def test_none_bands_exports_all(self):
         """bands=None means export all bands."""
-        request = ExportGeoTiffRequest(grid_ids=["g1"])
+        request = ExportGridRequest()
         assert request.bands is None
 
     def test_empty_bands_list_accepted(self):
         """Empty bands list is technically valid (handler may reject)."""
-        request = ExportGeoTiffRequest(grid_ids=["g1"], bands=[])
+        request = ExportGridRequest(bands=[])
         assert request.bands == []
 
     def test_expiration_days_default(self):
-        request = ExportGeoTiffRequest(grid_ids=["g1"])
+        request = ExportGridRequest()
         assert request.expiration_days == 7
 
     def test_expiration_days_custom(self):
-        request = ExportGeoTiffRequest(grid_ids=["g1"], expiration_days=3)
+        request = ExportGridRequest(expiration_days=3)
         assert request.expiration_days == 3
 
     def test_expiration_days_max_7(self):
         with pytest.raises(ValidationError):
-            ExportGeoTiffRequest(grid_ids=["g1"], expiration_days=8)
+            ExportGridRequest(expiration_days=8)
 
     def test_expiration_days_min_1(self):
         with pytest.raises(ValidationError):
-            ExportGeoTiffRequest(grid_ids=["g1"], expiration_days=0)
+            ExportGridRequest(expiration_days=0)
 
 
-class TestGeoTiffExportSource:
-    """Tests for GeoTiffExportSource model."""
+class TestGridExportSource:
+    """Tests for GridExportSource model."""
 
-    def test_name_is_always_geotiff(self):
-        source = GeoTiffExportSource(grid_ids=["g1"])
+    def test_geotiff_name(self):
+        source = GridExportSource(name="geotiff", grid_id="g1")
         assert source.name == "geotiff"
 
-    def test_name_cannot_be_overridden(self):
-        with pytest.raises(ValidationError):
-            GeoTiffExportSource(name="other", grid_ids=["g1"])
+    def test_zarr_name(self):
+        source = GridExportSource(name="zarr", grid_id="g1")
+        assert source.name == "zarr"
 
-    def test_grid_ids_required(self):
+    def test_invalid_name_rejected(self):
         with pytest.raises(ValidationError):
-            GeoTiffExportSource()
+            GridExportSource(name="other", grid_id="g1")
+
+    def test_grid_id_required(self):
+        with pytest.raises(ValidationError):
+            GridExportSource(name="geotiff")
 
     def test_bands_optional(self):
-        source = GeoTiffExportSource(grid_ids=["g1"])
+        source = GridExportSource(name="geotiff", grid_id="g1")
         assert source.bands is None
 
     def test_with_bands(self):
-        source = GeoTiffExportSource(grid_ids=["g1"], bands=["fuel_load.1hr"])
+        source = GridExportSource(name="geotiff", grid_id="g1", bands=["fuel_load.1hr"])
         assert source.bands == ["fuel_load.1hr"]
 
     def test_model_dump(self):
-        source = GeoTiffExportSource(grid_ids=["g1"], bands=["fbfm"])
+        source = GridExportSource(name="geotiff", grid_id="g1", bands=["fbfm"])
         data = source.model_dump()
         assert data == {
             "name": "geotiff",
-            "grid_ids": ["g1"],
+            "grid_id": "g1",
             "bands": ["fbfm"],
         }

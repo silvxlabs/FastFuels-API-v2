@@ -3,9 +3,7 @@ api/v2/resources/grids/exports/router.py
 
 Router for grid export creation endpoints.
 
-Two routers for two URL patterns:
-- router:             POST /domains/{domain_id}/grids/exports/geotiff
-- single_grid_router: POST /domains/{domain_id}/grids/{grid_id}/exports/geotiff
+URL pattern: POST /domains/{domain_id}/grids/{grid_id}/exports/{format}
 
 Lifecycle endpoints (list, get, patch, delete) are at /v2/exports/.
 """
@@ -20,14 +18,11 @@ from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.resources.exports.schema import (
     Export,
-    ExportGeoTiffRequest,
-    ExportSingleGridGeoTiffRequest,
-    GeoTiffExportSource,
+    ExportGridRequest,
+    GridExportFormat,
+    GridExportSource,
 )
-from api.resources.grids.exports.examples import (
-    CREATE_GEOTIFF_OPENAPI_EXAMPLES,
-    CREATE_SINGLE_GRID_GEOTIFF_OPENAPI_EXAMPLES,
-)
+from api.resources.grids.exports.examples import CREATE_GRID_EXPORT_OPENAPI_EXAMPLES
 from api.resources.grids.utils import validate_grid_has_band
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -39,55 +34,79 @@ from lib.config import (
 )
 
 router = APIRouter()
-single_grid_router = APIRouter()
 
 
-async def _create_export(
-    owner_id: str,
-    domain_id: str,
-    grid_ids: list[str],
-    bands: list[str] | None,
-    expiration_days: int,
-    name: str,
-    description: str,
-    tags: list[str],
-) -> Export:
-    """Shared logic for creating a GeoTIFF export.
+@router.post(
+    "/{format}",
+    response_model=Export,
+    status_code=status.HTTP_201_CREATED,
+    summary="Export a grid",
+)
+async def create_grid_export(
+    request: Request,
+    domain: VerifiedDomain,
+    grid_id: str,
+    format: GridExportFormat,
+    body: Annotated[
+        ExportGridRequest,
+        Body(openapi_examples=CREATE_GRID_EXPORT_OPENAPI_EXAMPLES),
+    ],
+):
+    """Export a grid to the specified format.
 
-    Validates all grids, creates the export document, and enqueues processing.
+    Supported formats: `geotiff`, `zarr` (zipped).
+
+    The grid must belong to this domain and have status `completed`.
+    If `bands` is specified, only those bands are included; otherwise
+    all bands are exported.
+
+    Returns an Export resource with status `pending`. Poll
+    `GET /exports/{export_id}` until status is `completed` to get the
+    signed download URL.
     """
-    for grid_id in grid_ids:
-        _, grid_snapshot = await get_document_async(
-            GRIDS_COLLECTION,
-            grid_id,
-            owner_id=owner_id,
-            domain_id=domain_id,
-            document_status="completed",
-        )
-        grid_data = grid_snapshot.to_dict()
+    owner_id = request.state.id
+    domain_id = domain["id"]
 
-        if bands:
-            validate_grid_has_band(grid_data, grid_id, bands)
+    # Validate grid exists, is owned, belongs to domain, and is completed
+    _, grid_snapshot = await get_document_async(
+        GRIDS_COLLECTION,
+        grid_id,
+        owner_id=owner_id,
+        domain_id=domain_id,
+        document_status="completed",
+    )
+    grid_data = grid_snapshot.to_dict()
 
+    # Validate band subset if provided
+    if body.bands:
+        validate_grid_has_band(grid_data, grid_id, body.bands)
+
+    # Build source metadata
+    source = GridExportSource(
+        name=format.value,
+        grid_id=grid_id,
+        bands=body.bands,
+    )
+
+    # Create export document
     export_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = GeoTiffExportSource(grid_ids=grid_ids, bands=bands)
 
     export_data = {
         "id": export_id,
         "domain_id": domain_id,
-        "name": name,
-        "description": description,
+        "name": body.name,
+        "description": body.description,
         "status": JobStatus.pending.value,
         "progress": None,
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
         "signed_url": None,
-        "expiration_days": expiration_days,
-        "expires_on": request_time + timedelta(days=expiration_days),
+        "expiration_days": body.expiration_days,
+        "expires_on": request_time + timedelta(days=body.expiration_days),
         "error": None,
-        "tags": tags,
+        "tags": body.tags,
         "owner_id": owner_id,
     }
 
@@ -95,82 +114,3 @@ async def _create_export(
     await create_http_task_async(EXPORTER_QUEUE, EXPORTER_SERVICE, export_id)
 
     return Export(**export_data)
-
-
-@router.post(
-    "/geotiff",
-    response_model=Export,
-    status_code=status.HTTP_201_CREATED,
-    summary="Export grids to GeoTIFF",
-)
-async def create_geotiff_export(
-    request: Request,
-    domain: VerifiedDomain,
-    body: Annotated[
-        ExportGeoTiffRequest,
-        Body(openapi_examples=CREATE_GEOTIFF_OPENAPI_EXAMPLES),
-    ],
-):
-    """Export one or more grids to a GeoTIFF file.
-
-    Provide a list of grid IDs in the request body. All grids must belong to
-    this domain and have status `completed`. If `bands` is specified, only
-    those bands are included; otherwise all bands from each grid are exported.
-
-    To export a single grid without specifying its ID in the body, use the
-    per-grid endpoint: `POST /domains/{domain_id}/grids/{grid_id}/exports/geotiff`.
-
-    Returns an Export resource with status `pending`. Poll
-    `GET /exports/{export_id}` until status is `completed` to get the
-    signed download URL.
-    """
-    return await _create_export(
-        owner_id=request.state.id,
-        domain_id=domain["id"],
-        grid_ids=body.grid_ids,
-        bands=body.bands,
-        expiration_days=body.expiration_days,
-        name=body.name,
-        description=body.description,
-        tags=body.tags,
-    )
-
-
-@single_grid_router.post(
-    "/geotiff",
-    response_model=Export,
-    status_code=status.HTTP_201_CREATED,
-    summary="Export a grid to GeoTIFF",
-)
-async def create_single_grid_geotiff_export(
-    request: Request,
-    domain: VerifiedDomain,
-    grid_id: str,
-    body: Annotated[
-        ExportSingleGridGeoTiffRequest,
-        Body(openapi_examples=CREATE_SINGLE_GRID_GEOTIFF_OPENAPI_EXAMPLES),
-    ],
-):
-    """Export a single grid to a GeoTIFF file.
-
-    The grid is identified by the `{grid_id}` path parameter. It must belong
-    to this domain and have status `completed`. If `bands` is specified, only
-    those bands are included; otherwise all bands are exported.
-
-    To export multiple grids at once, use the domain-level endpoint:
-    `POST /domains/{domain_id}/grids/exports/geotiff`.
-
-    Returns an Export resource with status `pending`. Poll
-    `GET /exports/{export_id}` until status is `completed` to get the
-    signed download URL.
-    """
-    return await _create_export(
-        owner_id=request.state.id,
-        domain_id=domain["id"],
-        grid_ids=[grid_id],
-        bands=body.bands,
-        expiration_days=body.expiration_days,
-        name=body.name,
-        description=body.description,
-        tags=body.tags,
-    )

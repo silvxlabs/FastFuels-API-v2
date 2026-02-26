@@ -34,7 +34,9 @@ htmlcov/
 
 # Temporary files
 *.tif
+*.tiff
 *.tif.aux.xml
+*.tiff.aux.xml
 tmp/
 
 /.run/

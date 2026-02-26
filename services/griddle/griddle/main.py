@@ -266,6 +266,9 @@ def process_grid_request(request: Request):
         progress_callback = make_progress_callback(grid_id)
         result = dispatch_handler(grid, domain_gdf, progress_callback)
 
+        # Write back enriched source metadata (e.g., 3DEP tile provenance)
+        update_document(GRIDS_COLLECTION, grid_id, {"source": grid["source"]})
+
         # TODO: Apply modifications if present
         # if grid.get("modifications"):
         #     update_progress(grid_id, "Applying modifications...", 80)

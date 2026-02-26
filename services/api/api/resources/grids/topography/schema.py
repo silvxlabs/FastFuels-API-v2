@@ -3,16 +3,17 @@ api/v2/resources/grids/topography/schema.py
 
 Schema models for the Topography grid product.
 
-Topography data includes elevation, slope, and aspect. Currently sourced
-from LANDFIRE at 30m resolution. Future sources include 3DEP (1m/10m/30m).
+Topography data includes elevation, slope, and aspect. Sourced from
+LANDFIRE at 30m resolution or 3DEP at 1m/10m/30m resolution.
 """
 
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import Literal
 
 from pydantic import Field
 
 from api.resources.grids.providers.landfire import LandfireSource
+from api.resources.grids.providers.threedep import ThreeDepSource
 from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
 
 
@@ -71,6 +72,51 @@ class CreateLandfireTopographyRequest(CreateGridRequestBase):
             TopographyBand.slope,
             TopographyBand.aspect,
         ],
+        min_length=1,
+    )
+
+
+class ThreeDepResolution(IntEnum):
+    """Available resolutions for 3DEP data (meters)."""
+
+    one_meter = 1
+    ten_meter = 10
+    thirty_meter = 30
+
+
+class ThreeDepTopographySource(ThreeDepSource):
+    """Source for 3DEP topographic data.
+
+    Returns continuous elevation (meters), slope (degrees), and/or aspect
+    (degrees) data at user-selected resolution (1m, 10m, or 30m) from USGS
+    3DEP products accessed via AWS S3 COGs.
+    """
+
+    product: Literal["topography"] = "topography"
+    bands: list[TopographyBand]
+    description: Literal["3DEP topographic data (elevation, slope, aspect)"] = (
+        "3DEP topographic data (elevation, slope, aspect)"
+    )
+
+    # Post-processing metadata populated by Griddle after processing
+    tiles: list[str] | None = None
+    tile_source: str | None = None
+    tile_count: int | None = None
+    native_crs: str | None = None
+    acquisition_dates: list[str] | None = None
+
+
+class CreateThreeDepTopographyRequest(CreateGridRequestBase):
+    """Request to create a grid from 3DEP topographic data.
+
+    Returns a grid with one or more continuous bands: elevation (m),
+    slope (degrees), and/or aspect (degrees). Resolution is user-selectable:
+    1m, 10m (default), or 30m.
+    """
+
+    resolution: ThreeDepResolution = ThreeDepResolution.ten_meter
+    bands: list[TopographyBand] = Field(
+        default=[TopographyBand.elevation],
         min_length=1,
     )
 

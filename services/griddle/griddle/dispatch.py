@@ -5,6 +5,7 @@ Routes grid requests to the appropriate handler based on source type.
 """
 
 from collections.abc import Callable
+from datetime import date
 
 import geopandas as gpd
 import xarray as xr
@@ -178,6 +179,20 @@ def handle_chm(
         case "meta":
             dataset, tile_metadata = chm.fetch_meta_chm(domain_gdf, version, progress)
             source["tile_metadata"] = tile_metadata
+            source["attribution"] = {
+                "license_name": "CC-BY-4.0",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "citation": (
+                    f"High Resolution Canopy Height Maps by WRI and Meta was "
+                    f"accessed on {date.today()} from "
+                    f"https://registry.opendata.aws/dataforgood-fb-forests. "
+                    f"Meta and World Resources Institute (WRI) - 2024. "
+                    f"High Resolution Canopy Height Maps (CHM). "
+                    f"Source imagery for CHM \u00a9 2016 Maxar."
+                ),
+                "access_url": "https://registry.opendata.aws/dataforgood-fb-forests",
+                "accessed_on": date.today().isoformat(),
+            }
             return dataset
         case "naip":
             dataset, tile_metadata = chm.fetch_naip_chm(domain_gdf, version, progress)

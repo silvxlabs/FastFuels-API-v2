@@ -4,7 +4,6 @@ Tests for uniform grid handler.
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import geopandas as gpd
@@ -16,8 +15,9 @@ from griddle.handlers.uniform import create_uniform_grid
 from pyproj import CRS
 from shapely.geometry import box
 
-TEST_DATA_DIR = Path(__file__).parent.parent / "data"
-DOMAINS_DIR = TEST_DATA_DIR / "domains"
+from lib.testing import SHARED_TEST_DOMAINS_DIR
+
+DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 
 
 @dataclass

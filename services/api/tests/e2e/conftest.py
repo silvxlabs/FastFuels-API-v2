@@ -14,7 +14,6 @@ test ordering.
 import json
 import logging
 import time
-from pathlib import Path
 
 import gcsfs
 import pytest
@@ -27,19 +26,12 @@ from lib.config import (
     INVENTORIES_BUCKET,
     INVENTORIES_COLLECTION,
 )
+from lib.testing import SHARED_TEST_GRIDS_DIR, SHARED_TEST_INVENTORIES_DIR
 
 logger = logging.getLogger(__name__)
 
-STATIC_GRIDS_DIR = (
-    Path(__file__).resolve().parents[3] / "lib" / "tests" / "static_data" / "grids"
-)
-STATIC_INVENTORIES_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "lib"
-    / "tests"
-    / "static_data"
-    / "inventories"
-)
+STATIC_GRIDS_DIR = SHARED_TEST_GRIDS_DIR
+STATIC_INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
 
 STATIC_PREFIX = "static-test-"
 

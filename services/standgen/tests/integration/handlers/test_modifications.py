@@ -8,7 +8,6 @@ inventory referencing that shared source and verifies the output.
 These tests hit real GCS and Firestore and require valid credentials.
 """
 
-from pathlib import Path
 from uuid import uuid4
 
 import dask.dataframe as dd
@@ -22,6 +21,7 @@ from lib.config import (
 )
 from lib.firestore.documents import delete_document, get_document, set_document
 from lib.gcs.blobs import delete_directory, exists
+from lib.testing import SHARED_TEST_INVENTORIES_DIR
 
 from ..conftest import (
     DOMAINS_DIR,
@@ -33,7 +33,7 @@ from ..conftest import (
 )
 
 STATIC_PIM_GRID = "static-test-blue-mtn-pim-treemap"
-INVENTORIES_DIR = Path(__file__).resolve().parents[2] / "data" / "inventories"
+INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
 
 pytestmark = pytest.mark.parametrize(
     "module_pim_grid", [STATIC_PIM_GRID], indirect=True

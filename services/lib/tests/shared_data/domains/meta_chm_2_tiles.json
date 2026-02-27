@@ -19,7 +19,7 @@
       "id": "0"
     }
   ],
-  "name": "tile-boundary-2",
+  "name": "meta-chm-2-tiles",
   "description": "1km domain spanning 2 Meta CHM tiles (E/W boundary)",
   "crs": {
     "type": "name",
@@ -28,7 +28,7 @@
     }
   },
   "tags": [],
-  "id": "tile_boundary_2_test_domain",
+  "id": "meta_chm_2_tiles_test_domain",
   "created_on": "2026-02-23T00:00:00.000000",
   "modified_on": "2026-02-23T00:00:00.000000"
 }

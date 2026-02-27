@@ -10,7 +10,7 @@ LANDFIRE at 30m resolution or 3DEP at 1m/10m/30m resolution.
 from enum import IntEnum, StrEnum
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.providers.threedep import ThreeDepSource
@@ -19,6 +19,7 @@ from api.resources.grids.schema import (
     BandType,
     CreateGridRequestBase,
     TileMetadata,
+    validate_no_duplicates,
 )
 
 
@@ -80,6 +81,11 @@ class CreateLandfireTopographyRequest(CreateGridRequestBase):
         min_length=1,
     )
 
+    @field_validator("bands")
+    @classmethod
+    def no_duplicate_bands(cls, v: list[TopographyBand]) -> list[TopographyBand]:
+        return validate_no_duplicates(v)
+
 
 class ThreeDepResolution(IntEnum):
     """Available resolutions for 3DEP data (meters)."""
@@ -120,6 +126,11 @@ class CreateThreeDepTopographyRequest(CreateGridRequestBase):
         default=[TopographyBand.elevation],
         min_length=1,
     )
+
+    @field_validator("bands")
+    @classmethod
+    def no_duplicate_bands(cls, v: list[TopographyBand]) -> list[TopographyBand]:
+        return validate_no_duplicates(v)
 
 
 def build_topography_bands(requested: list[TopographyBand]) -> list[Band]:

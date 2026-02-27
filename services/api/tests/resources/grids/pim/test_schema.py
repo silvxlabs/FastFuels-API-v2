@@ -162,6 +162,11 @@ class TestCreateTreeMapRequest:
         with pytest.raises(ValidationError):
             CreateTreeMapRequest(bands=[])
 
+    def test_duplicate_bands_rejected(self):
+        """Duplicate bands are rejected with a validation error."""
+        with pytest.raises(ValidationError):
+            CreateTreeMapRequest(bands=["tm_id", "tm_id"])
+
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""
         request = CreateTreeMapRequest(

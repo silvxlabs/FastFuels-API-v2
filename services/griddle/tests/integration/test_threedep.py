@@ -54,7 +54,8 @@ def _assert_valid_data(ds, band, min_valid_frac=0.95):
 
 def test_topography_10m(griddle_runner):
     """3DEP 10m topography should produce elevation, slope, aspect with valid data."""
-    ds = griddle_runner("blue_mtn.json", "threedep_topography_10m.json")
+    result = griddle_runner("blue_mtn.json", "threedep_topography_10m.json")
+    ds = result.ds
 
     for var_name in ("elevation", "slope", "aspect"):
         assert var_name in ds.data_vars, f"Missing variable: {var_name}"
@@ -82,7 +83,8 @@ def test_topography_10m(griddle_runner):
 
 def test_topography_30m(griddle_runner):
     """3DEP 30m topography should produce elevation with valid data."""
-    ds = griddle_runner("blue_mtn.json", "threedep_topography_30m.json")
+    result = griddle_runner("blue_mtn.json", "threedep_topography_30m.json")
+    ds = result.ds
 
     assert "elevation" in ds.data_vars
     assert ds["elevation"].dims == ("y", "x")
@@ -95,7 +97,8 @@ def test_topography_30m(griddle_runner):
 
 def test_topography_1m_with_coverage(griddle_runner):
     """3DEP 1m topography for a domain with known S1M coverage (Bondurant, WY)."""
-    ds = griddle_runner("bondurant.json", "threedep_topography_1m.json")
+    result = griddle_runner("bondurant.json", "threedep_topography_1m.json")
+    ds = result.ds
 
     assert "elevation" in ds.data_vars
     assert ds["elevation"].dims == ("y", "x")
@@ -106,49 +109,22 @@ def test_topography_1m_with_coverage(griddle_runner):
     assert elev_valid.max() <= 3000
 
 
-def test_tile_metadata_written_to_firestore():
+def test_tile_metadata_written_to_firestore(griddle_runner):
     """After processing, the Firestore source field should contain tile metadata.
 
     This verifies the metadata write-back path: handler returns tile metadata,
     dispatch merges it into the source dict, and main.py writes it to Firestore.
     """
-    from griddle.main import process_grid_request
+    result = griddle_runner("blue_mtn.json", "threedep_topography_10m.json")
 
-    domain_data = load_json(DOMAINS_DIR / "blue_mtn.json")
-    domain_id = f"test-{uuid4().hex}"
-    data = _stringify_coordinates(domain_data)
-    data["id"] = domain_id
-    set_document(DOMAINS_COLLECTION, domain_id, data)
-
-    grid_data = load_json(GRIDS_DIR / "threedep_topography_10m.json")
-    grid_data["domain_id"] = domain_id
-    grid_id = f"test-{uuid4().hex}"
-    grid_data["id"] = grid_id
-    set_document(GRIDS_COLLECTION, grid_id, grid_data)
-
-    try:
-        request = MockRequest(data={"id": grid_id})
-        response, status_code = process_grid_request(request)
-        assert status_code == 200
-
-        _, snapshot = get_document(GRIDS_COLLECTION, grid_id)
-        grid = snapshot.to_dict()
-        assert grid["status"] == "completed"
-
-        source = grid["source"]
-        assert source["tile_count"] is not None and source["tile_count"] >= 1
-        assert isinstance(source["tiles"], list) and len(source["tiles"]) >= 1
-        assert source["native_crs"] is not None
-        assert all(url.endswith(".tif") for url in source["tiles"])
-    finally:
-        from lib.config import GRIDS_BUCKET
-        from lib.gcs.blobs import delete_directory, exists
-
-        gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
-        if exists(gcs_path):
-            delete_directory(gcs_path)
-        delete_document(GRIDS_COLLECTION, grid_id)
-        delete_document(DOMAINS_COLLECTION, domain_id)
+    _, snapshot = get_document(GRIDS_COLLECTION, result.grid_id)
+    grid = snapshot.to_dict()
+    source = grid["source"]
+    tm = source["tile_metadata"]
+    assert tm["tile_count"] >= 1
+    assert isinstance(tm["tiles"], list) and len(tm["tiles"]) >= 1
+    assert tm["native_crs"] is not None
+    assert all(url.endswith(".tif") for url in tm["tiles"])
 
 
 def test_topography_1m_no_coverage():

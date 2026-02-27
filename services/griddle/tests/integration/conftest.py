@@ -7,7 +7,7 @@ Supports two execution modes:
 
 The main fixture is ``griddle_runner``, which handles the full lifecycle:
 Firestore setup -> griddle execution -> polling -> zarr open -> cleanup.
-Tests receive an xarray.Dataset and write their own assertions.
+Tests receive a GriddleResult (ds, grid_id) and write their own assertions.
 """
 
 import asyncio
@@ -15,6 +15,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import NamedTuple
 from uuid import uuid4
 
 import gcsfs
@@ -30,6 +31,12 @@ from lib.config import (
 from lib.firestore.documents import delete_document, get_document, set_document
 from lib.gcs.blobs import delete_directory, exists
 from lib.testing import SHARED_TEST_DOMAINS_DIR, SHARED_TEST_GRIDS_DIR
+
+
+class GriddleResult(NamedTuple):
+    ds: xr.Dataset
+    grid_id: str
+
 
 logger = logging.getLogger(__name__)
 
@@ -186,8 +193,8 @@ def griddle_runner():
     Usage::
 
         def test_something(griddle_runner):
-            ds = griddle_runner("blue_mtn.json", "landfire_fbfm40.json")
-            assert "fbfm" in ds.data_vars
+            result = griddle_runner("blue_mtn.json", "landfire_fbfm40.json")
+            assert "fbfm" in result.ds.data_vars
     """
     domain_ids = []
     grid_ids = []
@@ -198,7 +205,7 @@ def griddle_runner():
         grid_file: str,
         timeout: int = 300,
         source_overrides: dict | None = None,
-    ) -> xr.Dataset:
+    ) -> GriddleResult:
         # Create domain document
         domain_data = load_json(DOMAINS_DIR / domain_file)
         domain_id = f"test-{uuid4().hex}"
@@ -242,7 +249,7 @@ def griddle_runner():
             decode_coords="all",
         )
         datasets.append(ds)
-        return ds
+        return GriddleResult(ds=ds, grid_id=grid_id)
 
     yield _run
 

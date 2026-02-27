@@ -10,7 +10,8 @@ import numpy as np
 
 def test_uniform_fuel_moisture(griddle_runner):
     """Uniform grid should produce constant-value bands."""
-    ds = griddle_runner("blue_mtn.json", "uniform.json", timeout=60)
+    result = griddle_runner("blue_mtn.json", "uniform.json", timeout=60)
+    ds = result.ds
 
     expected = {
         "fuel_moisture.1hr": 6.0,

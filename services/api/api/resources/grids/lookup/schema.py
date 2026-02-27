@@ -12,10 +12,10 @@ Scott-Burgan 40 tables.
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.resources.grids.modifications import GridModification
-from api.resources.grids.schema import Band, BandType
+from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 
 
 class LookupSource(BaseModel):
@@ -80,6 +80,14 @@ class CreateFbfm40LookupRequest(BaseModel):
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
     modifications: list[GridModification] = Field(default_factory=list)
+
+    @field_validator("quantities")
+    @classmethod
+    def no_duplicate_quantities(
+        cls,
+        v: list[Fbfm40LookupQuantity],
+    ) -> list[Fbfm40LookupQuantity]:
+        return validate_no_duplicates(v)
 
 
 FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupQuantity, tuple[BandType, str | None]] = {

@@ -126,6 +126,10 @@ class TestCreateLandfireTopographyRequest:
         with pytest.raises(ValidationError):
             CreateLandfireTopographyRequest(bands=["invalid"])
 
+    def test_duplicate_bands_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireTopographyRequest(bands=["elevation", "elevation"])
+
     def test_full_request_with_all_fields(self):
         request = CreateLandfireTopographyRequest(
             version="2020",
@@ -345,6 +349,10 @@ class TestCreateThreeDepTopographyRequest:
     def test_invalid_band_rejected(self):
         with pytest.raises(ValidationError):
             CreateThreeDepTopographyRequest(bands=["invalid"])
+
+    def test_duplicate_bands_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(bands=["elevation", "elevation"])
 
     def test_full_request_with_all_fields(self):
         request = CreateThreeDepTopographyRequest(

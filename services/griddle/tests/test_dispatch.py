@@ -652,6 +652,38 @@ class TestHandleChm:
         assert "CHM" in call_args[0]
         assert "meta" in call_args[0]
 
+    @patch("griddle.dispatch.chm.fetch_meta_chm")
+    def test_meta_populates_attribution(self, mock_fetch):
+        """handle_chm populates attribution metadata for meta product."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = (MagicMock(), {})
+        progress = MagicMock()
+
+        source = {"product": "meta", "version": "2024"}
+
+        handle_chm(mock_gdf, source, progress)
+
+        assert "attribution" in source
+        attr = source["attribution"]
+        assert attr["license_name"] == "CC-BY-4.0"
+        assert attr["license_url"] == "https://creativecommons.org/licenses/by/4.0/"
+        assert "registry.opendata.aws" in attr["access_url"]
+        assert attr["accessed_on"]  # ISO date string
+        assert "High Resolution Canopy Height Maps" in attr["citation"]
+
+    @patch("griddle.dispatch.chm.fetch_naip_chm")
+    def test_naip_does_not_populate_attribution(self, mock_fetch):
+        """handle_chm does not populate attribution for naip product."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = (MagicMock(), {})
+        progress = MagicMock()
+
+        source = {"product": "naip", "version": "2020"}
+
+        handle_chm(mock_gdf, source, progress)
+
+        assert "attribution" not in source
+
 
 class TestDispatchHandler3dep:
     """Tests for dispatch_handler routing to 3dep."""

@@ -17,7 +17,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
+from api.resources.grids.schema import (
+    Band,
+    BandType,
+    CreateGridRequestBase,
+    validate_no_duplicates,
+)
 
 
 class UniformQuantity(StrEnum):
@@ -138,9 +143,7 @@ class CreateUniformRequest(CreateGridRequestBase):
     @model_validator(mode="after")
     def validate_unique_quantities(self):
         """Ensure no duplicate quantities in bands."""
-        quantities = [b.quantity for b in self.bands]
-        if len(quantities) != len(set(quantities)):
-            raise ValueError("Duplicate quantities are not allowed")
+        validate_no_duplicates([b.quantity for b in self.bands])
         return self
 
 

@@ -15,6 +15,20 @@ from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 CHUNK_SHAPE = [512, 512]
 
 
+def validate_no_duplicates(values: list) -> list:
+    """Raise ValueError if a list contains duplicate entries."""
+    seen = set()
+    duplicates = set()
+    for v in values:
+        if v in seen:
+            duplicates.add(v)
+        seen.add(v)
+    if duplicates:
+        sorted_dupes = sorted(str(d) for d in duplicates)
+        raise ValueError(f"Duplicate values are not allowed: {', '.join(sorted_dupes)}")
+    return values
+
+
 class TileMetadata(BaseModel):
     """Post-processing metadata about source tiles fetched during grid creation."""
 

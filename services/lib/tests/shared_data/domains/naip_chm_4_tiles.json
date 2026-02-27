@@ -8,24 +8,24 @@
         "coordinates": [
           [
             [
-              289412,
-              5197054
+              308742,
+              5200378
             ],
             [
-              291552,
-              5197054
+              310672,
+              5200378
             ],
             [
-              291552,
-              5198900
+              310672,
+              5201948
             ],
             [
-              289412,
-              5198900
+              308742,
+              5201948
             ],
             [
-              289412,
-              5197054
+              308742,
+              5200378
             ]
           ]
         ]
@@ -34,8 +34,8 @@
       "id": "0"
     }
   ],
-  "name": "BLACKFOOT TESTING.",
-  "description": "Testing bounds that cross 2 naip tiles, contain road and water features and 3DEP data.",
+  "name": "naip-chm-4-tiles",
+  "description": "Testing bounds that cross 4 naip tiles, contains road and water features and 3DEP data.",
   "crs": {
     "type": "name",
     "properties": {
@@ -43,7 +43,7 @@
     }
   },
   "tags": [],
-  "id": "blackfoot_test_domain",
+  "id": "naip_chm_4_tiles_test_domain",
   "created_on": "2026-02-23T00:00:00.000000",
   "modified_on": "2026-02-23T00:00:00.000000"
 }

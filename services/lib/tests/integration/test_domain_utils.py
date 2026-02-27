@@ -10,7 +10,6 @@ Requires GCP credentials and Firestore access.
 
 import copy
 import json
-from pathlib import Path
 from uuid import uuid4
 
 import geopandas as gpd
@@ -24,8 +23,9 @@ from lib.firestore.documents import (
     get_document,
     set_document,
 )
+from lib.testing import SHARED_TEST_DOMAINS_DIR
 
-DOMAINS_DIR = Path(__file__).resolve().parents[1] / "static_data" / "domains"
+DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 
 
 def _load_domain_json(filename: str) -> dict:
@@ -96,7 +96,7 @@ class TestFirestoreRoundTrip:
 
     def test_tile_boundary_round_trip(self, firestore_domain):
         """Tile boundary domain (different UTM zone) survives Firestore."""
-        domain_id, _ = firestore_domain("tile_boundary_2.json")
+        domain_id, _ = firestore_domain("meta_chm_2_tiles.json")
 
         _, snapshot = get_document(DOMAINS_COLLECTION, domain_id)
         gdf = parse_domain_gdf(snapshot.to_dict())
@@ -108,9 +108,9 @@ class TestFirestoreRoundTrip:
         assert pytest.approx(x_extent, rel=0.01) == 1000.0
         assert pytest.approx(y_extent, rel=0.01) == 1000.0
 
-    def test_tile_boundary_4_round_trip(self, firestore_domain):
+    def test_meta_chm_4_tiles_round_trip(self, firestore_domain):
         """Four-tile corner domain survives Firestore."""
-        domain_id, _ = firestore_domain("tile_boundary_4.json")
+        domain_id, _ = firestore_domain("meta_chm_4_tiles.json")
 
         _, snapshot = get_document(DOMAINS_COLLECTION, domain_id)
         gdf = parse_domain_gdf(snapshot.to_dict())

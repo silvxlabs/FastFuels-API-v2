@@ -29,12 +29,12 @@ from lib.config import (
 )
 from lib.firestore.documents import delete_document, get_document, set_document
 from lib.gcs.blobs import delete_directory, exists
+from lib.testing import SHARED_TEST_DOMAINS_DIR, SHARED_TEST_GRIDS_DIR
 
 logger = logging.getLogger(__name__)
 
-STATIC_DATA_DIR = Path(__file__).resolve().parents[3] / "lib" / "tests" / "static_data"
-DOMAINS_DIR = STATIC_DATA_DIR / "domains"
-GRIDS_DIR = STATIC_DATA_DIR / "grids"
+DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
+GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 
 
 def load_json(path: Path) -> dict:

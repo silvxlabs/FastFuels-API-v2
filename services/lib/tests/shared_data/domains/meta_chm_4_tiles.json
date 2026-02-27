@@ -7,11 +7,11 @@
         "type": "Polygon",
         "coordinates": [
           [
-            [277733.41, 5186540.95],
-            [278733.41, 5186540.95],
-            [278733.41, 5187540.95],
-            [277733.41, 5187540.95],
-            [277733.41, 5186540.95]
+            [276743.8, 5159747.44],
+            [277743.8, 5159747.44],
+            [277743.8, 5160747.44],
+            [276743.8, 5160747.44],
+            [276743.8, 5159747.44]
           ]
         ]
       },
@@ -19,8 +19,8 @@
       "id": "0"
     }
   ],
-  "name": "tile-boundary-2",
-  "description": "1km domain spanning 2 Meta CHM tiles (E/W boundary)",
+  "name": "meta-chm-4-tiles",
+  "description": "1km domain spanning 4 Meta CHM tiles near Blue Mountain",
   "crs": {
     "type": "name",
     "properties": {
@@ -28,7 +28,7 @@
     }
   },
   "tags": [],
-  "id": "tile_boundary_2_test_domain",
+  "id": "meta_chm_4_tiles_test_domain",
   "created_on": "2026-02-23T00:00:00.000000",
   "modified_on": "2026-02-23T00:00:00.000000"
 }

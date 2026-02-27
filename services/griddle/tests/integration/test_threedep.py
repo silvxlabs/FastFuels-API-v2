@@ -2,8 +2,9 @@
 Integration tests for 3DEP grid processing.
 
 Tests the full griddle pipeline: Firestore setup -> process_grid_request ->
-verify GCS output. Uses the Blue Mountain domain (~1 sq km in Montana)
-and Bondurant domain (~0.25 sq km in Wyoming).
+verify GCS output. Uses the Blue Mountain domain (~1 sq km in Montana),
+Bondurant domain (~0.25 sq km in Wyoming), and multi-tile domains that
+straddle 1-degree tile boundaries in central Montana.
 
 These tests hit real 3DEP COGs via AWS S3 and write to real GCS/Firestore,
 so they require valid credentials and may take a few minutes.
@@ -125,6 +126,135 @@ def test_tile_metadata_written_to_firestore(griddle_runner):
     assert isinstance(tm["tiles"], list) and len(tm["tiles"]) >= 1
     assert tm["native_crs"] is not None
     assert all(url.endswith(".tif") for url in tm["tiles"])
+
+
+def _assert_tile_metadata(grid_id, expected_tile_count):
+    """Read Firestore and assert tile_metadata was written correctly."""
+    _, snapshot = get_document(GRIDS_COLLECTION, grid_id)
+    grid = snapshot.to_dict()
+    tm = grid["source"]["tile_metadata"]
+    assert tm is not None, "tile_metadata should be populated after processing"
+    assert tm["tile_count"] == expected_tile_count
+    assert isinstance(tm["tiles"], list)
+    assert len(tm["tiles"]) == expected_tile_count
+    assert tm["native_crs"] is not None
+    assert all(url.endswith(".tif") for url in tm["tiles"])
+
+
+# Multi-tile tests: arc-second (10m/30m)
+# 10m/30m tiles are 1x1 degree in EPSG:4326. These domains straddle
+# integer degree boundaries to exercise the merge_arrays mosaic path.
+
+
+def test_topography_10m_arc_second_2_tiles(griddle_runner):
+    """3DEP 10m across 2 arc-second tiles: domain straddling latitude 47.0N."""
+    result = griddle_runner("threedep_2_tiles.json", "threedep_topography_10m.json")
+    ds = result.ds
+
+    for var_name in ("elevation", "slope", "aspect"):
+        assert var_name in ds.data_vars, f"Missing variable: {var_name}"
+        assert ds[var_name].dims == ("y", "x")
+
+    assert "32612" in str(ds.rio.crs)
+
+    elev_valid = _assert_valid_data(ds, "elevation")
+    assert elev_valid.min() >= 500
+    assert elev_valid.max() <= 3000
+
+    _assert_valid_data(ds, "slope")
+    _assert_valid_data(ds, "aspect")
+
+    _assert_tile_metadata(result.grid_id, expected_tile_count=2)
+
+
+def test_topography_10m_arc_second_4_tiles(griddle_runner):
+    """3DEP 10m across 4 arc-second tiles: domain straddling lat 47.0N and lon 112.0W."""
+    result = griddle_runner("threedep_4_tiles.json", "threedep_topography_10m.json")
+    ds = result.ds
+
+    for var_name in ("elevation", "slope", "aspect"):
+        assert var_name in ds.data_vars, f"Missing variable: {var_name}"
+        assert ds[var_name].dims == ("y", "x")
+
+    assert "32612" in str(ds.rio.crs)
+
+    elev_valid = _assert_valid_data(ds, "elevation")
+    assert elev_valid.min() >= 500
+    assert elev_valid.max() <= 3000
+
+    _assert_valid_data(ds, "slope")
+    _assert_valid_data(ds, "aspect")
+
+    _assert_tile_metadata(result.grid_id, expected_tile_count=4)
+
+
+def test_topography_30m_arc_second_2_tiles(griddle_runner):
+    """3DEP 30m across 2 arc-second tiles: domain straddling latitude 47.0N."""
+    result = griddle_runner("threedep_2_tiles.json", "threedep_topography_30m.json")
+    ds = result.ds
+
+    assert "elevation" in ds.data_vars
+    assert ds["elevation"].dims == ("y", "x")
+    assert "32612" in str(ds.rio.crs)
+
+    elev_valid = _assert_valid_data(ds, "elevation")
+    assert elev_valid.min() >= 500
+    assert elev_valid.max() <= 3000
+
+    _assert_tile_metadata(result.grid_id, expected_tile_count=2)
+
+
+def test_topography_30m_arc_second_4_tiles(griddle_runner):
+    """3DEP 30m across 4 arc-second tiles: domain straddling lat 47.0N and lon 112.0W."""
+    result = griddle_runner("threedep_4_tiles.json", "threedep_topography_30m.json")
+    ds = result.ds
+
+    assert "elevation" in ds.data_vars
+    assert ds["elevation"].dims == ("y", "x")
+    assert "32612" in str(ds.rio.crs)
+
+    elev_valid = _assert_valid_data(ds, "elevation")
+    assert elev_valid.min() >= 500
+    assert elev_valid.max() <= 3000
+
+    _assert_tile_metadata(result.grid_id, expected_tile_count=4)
+
+
+# Multi-tile tests: S1M (1m)
+# S1M tiles are 10km x 10km in EPSG:6350. This domain straddles a 10km
+# tile boundary near Bondurant, WY to exercise the S1M mosaic path.
+
+
+def test_topography_1m_s1m_2_tiles(griddle_runner):
+    """3DEP 1m across 2 S1M tiles: domain straddling a 10km tile boundary."""
+    result = griddle_runner("threedep_s1m_2_tiles.json", "threedep_topography_1m.json")
+    ds = result.ds
+
+    assert "elevation" in ds.data_vars
+    assert ds["elevation"].dims == ("y", "x")
+    assert "32612" in str(ds.rio.crs)
+
+    elev_valid = _assert_valid_data(ds, "elevation")
+    assert elev_valid.min() >= 1800
+    assert elev_valid.max() <= 3000
+
+    _assert_tile_metadata(result.grid_id, expected_tile_count=2)
+
+
+def test_topography_1m_s1m_4_tiles(griddle_runner):
+    """3DEP 1m across 4 S1M tiles: domain straddling a 10km tile corner."""
+    result = griddle_runner("threedep_s1m_4_tiles.json", "threedep_topography_1m.json")
+    ds = result.ds
+
+    assert "elevation" in ds.data_vars
+    assert ds["elevation"].dims == ("y", "x")
+    assert "32612" in str(ds.rio.crs)
+
+    elev_valid = _assert_valid_data(ds, "elevation")
+    assert elev_valid.min() >= 1800
+    assert elev_valid.max() <= 3500
+
+    _assert_tile_metadata(result.grid_id, expected_tile_count=4)
 
 
 def test_topography_1m_no_coverage():

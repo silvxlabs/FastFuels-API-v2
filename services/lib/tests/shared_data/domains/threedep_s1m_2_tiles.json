@@ -1,0 +1,34 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [521754.19, 4725078.96],
+            [522754.19, 4725078.96],
+            [522754.19, 4726078.96],
+            [521754.19, 4726078.96],
+            [521754.19, 4725078.96]
+          ]
+        ]
+      },
+      "properties": {},
+      "id": "0"
+    }
+  ],
+  "name": "threedep-s1m-2-tiles",
+  "description": "1km domain near Bondurant, WY straddling an S1M 10km tile boundary (N/S boundary between tiles n2280w1200 and n2290w1200)",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:32612"
+    }
+  },
+  "tags": [],
+  "id": "threedep_s1m_2_tiles_test_domain",
+  "created_on": "2026-02-27T00:00:00.000000",
+  "modified_on": "2026-02-27T00:00:00.000000"
+}

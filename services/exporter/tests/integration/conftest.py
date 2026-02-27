@@ -31,23 +31,17 @@ from lib.config import (
 )
 from lib.firestore.documents import delete_document, get_document, set_document
 from lib.gcs.blobs import delete_directory, exists
+from lib.testing import (
+    SHARED_TEST_EXPORTS_DIR,
+    SHARED_TEST_GRIDS_DIR,
+    SHARED_TEST_INVENTORIES_DIR,
+)
 
 logger = logging.getLogger(__name__)
 
-TEST_DATA_DIR = Path(__file__).parent.parent / "data"
-EXPORTS_DIR = TEST_DATA_DIR / "exports"
-
-# Shared test data lives in lib/tests/static_data
-GRIDS_DIR = (
-    Path(__file__).resolve().parents[3] / "lib" / "tests" / "static_data" / "grids"
-)
-INVENTORIES_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "lib"
-    / "tests"
-    / "static_data"
-    / "inventories"
-)
+EXPORTS_DIR = SHARED_TEST_EXPORTS_DIR
+GRIDS_DIR = SHARED_TEST_GRIDS_DIR
+INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
 
 
 def load_json(path: Path) -> dict:

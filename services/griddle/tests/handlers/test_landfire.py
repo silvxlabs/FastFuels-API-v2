@@ -4,7 +4,6 @@ Tests for LANDFIRE handler.
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import geopandas as gpd
@@ -13,8 +12,9 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.landfire import fetch_fbfm40, fetch_topography
 
-TEST_DATA_DIR = Path(__file__).parent.parent / "data"
-DOMAINS_DIR = TEST_DATA_DIR / "domains"
+from lib.testing import SHARED_TEST_DOMAINS_DIR
+
+DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 
 
 @dataclass

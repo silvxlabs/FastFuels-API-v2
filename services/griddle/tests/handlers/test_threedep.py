@@ -6,7 +6,6 @@ Integration tests live in tests/integration/test_threedep.py.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
@@ -29,8 +28,9 @@ from rasterio.transform import from_bounds
 from shapely.geometry import box
 from xarray import DataArray
 
-TEST_DATA_DIR = Path(__file__).parent.parent / "data"
-DOMAINS_DIR = TEST_DATA_DIR / "domains"
+from lib.testing import SHARED_TEST_DOMAINS_DIR
+
+DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 
 
 # Helpers

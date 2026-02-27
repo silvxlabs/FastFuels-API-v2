@@ -9,8 +9,11 @@ These are pure unit tests with no external dependencies.
 import pytest
 from api.resources.grids.chm.schema import (
     CreateMetaChmRequest,
+    CreateNaipChmRequest,
     MetaChmSource,
     MetaChmVersion,
+    NaipChmSource,
+    NaipChmVersion,
     build_chm_bands,
 )
 from api.resources.grids.providers.chm import ChmSource
@@ -168,3 +171,89 @@ class TestChmBands:
         """The band index is 0."""
         bands = build_chm_bands()
         assert bands[0].index == 0
+
+
+class TestNaipChmSource:
+    """Tests for NaipChmSource model."""
+
+    def test_product_is_always_naip(self):
+        """The product field is always 'naip'."""
+        source = NaipChmSource(version="2023")
+        assert source.product == "naip"
+
+    def test_product_cannot_be_overridden(self):
+        """The product field cannot be set to anything other than 'naip'."""
+        with pytest.raises(ValidationError):
+            NaipChmSource(product="other", version="2023")
+
+    def test_name_is_always_chm(self):
+        """The name field is always 'chm'."""
+        source = NaipChmSource(version="2023")
+        assert source.name == "chm"
+
+    def test_description_is_fixed(self):
+        """The description has a fixed value."""
+        source = NaipChmSource(version="2023")
+        assert "NAIP" in source.description
+        assert "0.6m resolution" in source.description
+
+    def test_version_is_required(self):
+        """The version field is required."""
+        with pytest.raises(ValidationError):
+            NaipChmSource()
+
+    def test_invalid_version_rejected(self):
+        """Invalid version string is rejected."""
+        with pytest.raises(ValidationError):
+            NaipChmSource(version="1999")
+
+    def test_model_dump(self):
+        """Model serializes correctly."""
+        source = NaipChmSource(version="2023")
+        data = source.model_dump()
+        assert data["name"] == "chm"
+        assert data["product"] == "naip"
+        assert data["version"] == "2023"
+        assert "description" in data
+
+
+class TestCreateNaipChmRequest:
+    """Tests for CreateNaipChmRequest model."""
+
+    def test_minimal_valid_request(self):
+        """Minimal request with no required body fields."""
+        request = CreateNaipChmRequest()
+        # Assumes you updated the default to 2023 in the schema!
+        assert request.version == "2023"
+        assert request.name == ""
+        assert request.description == ""
+        assert request.tags == []
+        assert request.modifications == []
+
+    def test_version_defaults_to_2023(self):
+        """version defaults to '2023'."""
+        request = CreateNaipChmRequest()
+        assert request.version == "2023"
+
+    def test_invalid_version_rejected(self):
+        """Invalid version string is rejected."""
+        with pytest.raises(ValidationError):
+            CreateNaipChmRequest(version="9999")
+
+    def test_all_versions_accepted(self):
+        """All defined NAIP CHM versions are accepted."""
+        for version in NaipChmVersion:
+            request = CreateNaipChmRequest(version=version.value)
+            assert request.version == version
+
+    def test_full_request_with_all_fields(self):
+        """Full request with all optional fields."""
+        request = CreateNaipChmRequest(
+            version="2023",
+            name="Test NAIP Grid",
+            description="A test grid",
+            tags=["test", "chm", "naip"],
+        )
+        assert request.name == "Test NAIP Grid"
+        assert request.description == "A test grid"
+        assert request.tags == ["test", "chm", "naip"]

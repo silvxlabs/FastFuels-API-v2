@@ -58,3 +58,36 @@ class CreateMetaChmRequest(CreateGridRequestBase):
 def build_chm_bands() -> list[Band]:
     """Build Band objects for CHM. Always returns a single band."""
     return [CHM_BAND]
+
+
+class NaipChmVersion(StrEnum):
+    """Available NAIP CHM data versions (2023)."""
+
+    v2023 = "2023"
+
+
+class NaipChmSource(ChmSource):
+    """Source for NAIP high-resolution canopy height data.
+
+    Returns a continuous canopy height raster at ~0.6m resolution (CONUS).
+    """
+
+    product: Literal["naip"] = "naip"
+    version: NaipChmVersion
+    description: Literal[
+        "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)"
+    ] = "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)"
+
+    # Post-processing metadata populated by Griddle after processing
+    tile_metadata: TileMetadata | None = None
+
+
+class CreateNaipChmRequest(CreateGridRequestBase):
+    """Request to create a grid from NAIP CHM.
+
+    Returns a grid with a single continuous band:
+    - chm: Canopy height in meters
+    """
+
+    # Defaulting to 2023
+    version: NaipChmVersion = NaipChmVersion.v2023

@@ -561,8 +561,15 @@ class TestHandleChm:
     def test_routes_meta_to_handler(self, mock_fetch):
         """handle_chm routes meta product to fetch_meta_chm."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
-        mock_result = MagicMock()
-        mock_fetch.return_value = mock_result
+        mock_dataset = MagicMock()
+        mock_metadata = {
+            "tiles": ["url"],
+            "tile_source": None,
+            "tile_count": 1,
+            "native_crs": "EPSG:32611",
+            "acquisition_dates": None,
+        }
+        mock_fetch.return_value = (mock_dataset, mock_metadata)
         progress = MagicMock()
 
         source = {
@@ -573,12 +580,14 @@ class TestHandleChm:
         result = handle_chm(mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(mock_gdf, "2024", progress)
-        assert result == mock_result
+        assert result == mock_dataset
+        assert source["tile_metadata"] == mock_metadata
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_default_version(self, mock_fetch):
         """handle_chm uses 2024 as default version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta"}  # No version specified
@@ -601,10 +610,37 @@ class TestHandleChm:
         assert exc_info.value.code == "UNKNOWN_PRODUCT"
         assert "unknown_product" in exc_info.value.message
 
+    @patch("griddle.dispatch.chm.fetch_naip_chm")
+    def test_routes_naip_to_handler(self, mock_fetch):
+        """handle_chm routes naip product to fetch_naip_chm."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_dataset = MagicMock()
+        mock_metadata = {
+            "tiles": ["url"],
+            "tile_source": None,
+            "tile_count": 1,
+            "native_crs": "EPSG:32611",
+            "acquisition_dates": None,
+        }
+        mock_fetch.return_value = (mock_dataset, mock_metadata)
+        progress = MagicMock()
+
+        source = {
+            "product": "naip",
+            "version": "2020",
+        }
+
+        result = handle_chm(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(mock_gdf, "2020", progress)
+        assert result == mock_dataset
+        assert source["tile_metadata"] == mock_metadata
+
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_calls_progress_callback(self, mock_fetch):
         """handle_chm reports progress."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta", "version": "2024"}
@@ -673,8 +709,8 @@ class TestHandle3dep:
         assert result == mock_dataset
 
     @patch("griddle.dispatch.threedep.fetch_topography")
-    def test_merges_tile_metadata_into_source(self, mock_fetch):
-        """handle_3dep merges tile metadata into the source dict."""
+    def test_nests_tile_metadata_in_source(self, mock_fetch):
+        """handle_3dep stores tile metadata under source['tile_metadata']."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_dataset = MagicMock()
         mock_metadata = {
@@ -696,9 +732,10 @@ class TestHandle3dep:
 
         handle_3dep(mock_gdf, source, progress)
 
-        assert source["tiles"] == ["https://example.com/tile.tif"]
-        assert source["tile_count"] == 1
-        assert source["native_crs"] == "EPSG:4326"
+        assert source["tile_metadata"] == mock_metadata
+        assert source["tile_metadata"]["tile_count"] == 1
+        assert source["tile_metadata"]["tiles"] == ["https://example.com/tile.tif"]
+        assert source["tile_metadata"]["native_crs"] == "EPSG:4326"
 
     @patch("griddle.dispatch.threedep.fetch_topography")
     def test_default_resolution(self, mock_fetch):

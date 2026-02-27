@@ -11,7 +11,12 @@ from enum import StrEnum
 from typing import Literal
 
 from api.resources.grids.providers.chm import ChmSource
-from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
+from api.resources.grids.schema import (
+    Band,
+    BandType,
+    CreateGridRequestBase,
+    TileMetadata,
+)
 
 
 class MetaChmVersion(StrEnum):
@@ -35,6 +40,9 @@ class MetaChmSource(ChmSource):
     description: Literal["Meta global canopy height model at ~1m resolution"] = (
         "Meta global canopy height model at ~1m resolution"
     )
+
+    # Post-processing metadata populated by Griddle after processing
+    tile_metadata: TileMetadata | None = None
 
 
 class CreateMetaChmRequest(CreateGridRequestBase):

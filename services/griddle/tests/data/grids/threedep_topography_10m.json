@@ -9,11 +9,7 @@
     "resolution": 10,
     "bands": ["elevation", "slope", "aspect"],
     "description": "3DEP topographic data (elevation, slope, aspect)",
-    "tiles": null,
-    "tile_source": null,
-    "tile_count": null,
-    "native_crs": null,
-    "acquisition_dates": null
+    "tile_metadata": null
   },
   "modifications": [],
   "bands": [

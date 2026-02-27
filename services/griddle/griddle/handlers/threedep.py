@@ -11,7 +11,6 @@ All handlers return xr.Dataset where each variable name is a band name.
 import logging
 import math
 from collections.abc import Callable
-from typing import TypedDict
 
 import geopandas as gpd
 import numpy as np
@@ -22,21 +21,7 @@ from rioxarray.merge import merge_arrays
 from xarray import DataArray
 
 from griddle.errors import ProcessingError
-
-
-class TileMetadata(TypedDict):
-    """Metadata about fetched tiles, written back to the source in Firestore.
-
-    Must stay in sync with the optional fields on ThreeDepTopographySource
-    in api/resources/grids/topography/schema.py.
-    """
-
-    tiles: list[str]
-    tile_source: str | None
-    tile_count: int
-    native_crs: str | None
-    acquisition_dates: list[str] | None
-
+from griddle.handlers.tiles import TileMetadata
 
 logger = logging.getLogger(__name__)
 

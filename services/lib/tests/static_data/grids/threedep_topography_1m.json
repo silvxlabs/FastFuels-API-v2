@@ -9,11 +9,7 @@
     "resolution": 1,
     "bands": ["elevation"],
     "description": "3DEP topographic data (elevation) at 1m from S1M",
-    "tiles": null,
-    "tile_source": null,
-    "tile_count": null,
-    "native_crs": null,
-    "acquisition_dates": null
+    "tile_metadata": null
   },
   "modifications": [],
   "bands": [

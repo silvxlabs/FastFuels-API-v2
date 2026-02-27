@@ -13,7 +13,8 @@ import numpy as np
 
 def test_treemap_tm_id(griddle_runner):
     """TreeMap grid with tm_id only should produce a zarr with a tm_id variable."""
-    ds = griddle_runner("blue_mtn.json", "pim_treemap.json")
+    result = griddle_runner("blue_mtn.json", "pim_treemap.json")
+    ds = result.ds
 
     assert "tm_id" in ds.data_vars
     assert "plt_cn" not in ds.data_vars
@@ -29,7 +30,8 @@ def test_treemap_tm_id(griddle_runner):
 
 def test_treemap_both_bands(griddle_runner):
     """TreeMap grid with both bands should produce tm_id and plt_cn variables."""
-    ds = griddle_runner("blue_mtn.json", "pim_treemap_both_bands.json")
+    result = griddle_runner("blue_mtn.json", "pim_treemap_both_bands.json")
+    ds = result.ds
 
     for var_name in ["tm_id", "plt_cn"]:
         assert var_name in ds.data_vars, f"Missing variable: {var_name}"

@@ -15,6 +15,16 @@ from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 CHUNK_SHAPE = [512, 512]
 
 
+class TileMetadata(BaseModel):
+    """Post-processing metadata about source tiles fetched during grid creation."""
+
+    tiles: list[str]
+    tile_source: str | None = None
+    tile_count: int
+    native_crs: str | None = None
+    acquisition_dates: list[str] | None = None
+
+
 class BandType(StrEnum):
     """Type of band data."""
 

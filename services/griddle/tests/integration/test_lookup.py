@@ -15,11 +15,12 @@ import pytest
 )
 def test_fbfm40_lookup(griddle_runner, source_grid):
     """Lookup should produce fuel parameter bands from FBFM40 source grid."""
-    ds = griddle_runner(
+    result = griddle_runner(
         "blue_mtn.json",
         "lookup_fbfm40.json",
         source_overrides={"source_grid_id": source_grid},
     )
+    ds = result.ds
 
     for var in [
         "fuel_load.1hr",

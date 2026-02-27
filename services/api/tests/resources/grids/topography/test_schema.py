@@ -6,7 +6,7 @@ These are pure unit tests with no external dependencies.
 """
 
 import pytest
-from api.resources.grids.schema import BandType
+from api.resources.grids.schema import BandType, TileMetadata
 from api.resources.grids.topography.schema import (
     TOPOGRAPHY_BAND_DEFS,
     CreateLandfireTopographyRequest,
@@ -267,11 +267,7 @@ class TestThreeDepTopographySource:
         source = ThreeDepTopographySource(
             resolution=10, bands=[TopographyBand.elevation]
         )
-        assert source.tiles is None
-        assert source.tile_source is None
-        assert source.tile_count is None
-        assert source.native_crs is None
-        assert source.acquisition_dates is None
+        assert source.tile_metadata is None
 
     def test_model_dump(self):
         source = ThreeDepTopographySource(
@@ -283,24 +279,26 @@ class TestThreeDepTopographySource:
         assert data["product"] == "topography"
         assert data["resolution"] == 10
         assert data["bands"] == ["elevation", "aspect"]
-        assert data["tiles"] is None
+        assert data["tile_metadata"] is None
 
     def test_model_dump_with_metadata(self):
         source = ThreeDepTopographySource(
             resolution=10,
             bands=[TopographyBand.elevation],
-            tiles=["https://example.com/tile.tif"],
-            tile_source="s1m",
-            tile_count=1,
-            native_crs="EPSG:4326",
-            acquisition_dates=["20230515"],
+            tile_metadata=TileMetadata(
+                tiles=["https://example.com/tile.tif"],
+                tile_source="s1m",
+                tile_count=1,
+                native_crs="EPSG:4326",
+                acquisition_dates=["20230515"],
+            ),
         )
         data = source.model_dump()
-        assert data["tiles"] == ["https://example.com/tile.tif"]
-        assert data["tile_source"] == "s1m"
-        assert data["tile_count"] == 1
-        assert data["native_crs"] == "EPSG:4326"
-        assert data["acquisition_dates"] == ["20230515"]
+        assert data["tile_metadata"]["tiles"] == ["https://example.com/tile.tif"]
+        assert data["tile_metadata"]["tile_source"] == "s1m"
+        assert data["tile_metadata"]["tile_count"] == 1
+        assert data["tile_metadata"]["native_crs"] == "EPSG:4326"
+        assert data["tile_metadata"]["acquisition_dates"] == ["20230515"]
 
 
 class TestCreateThreeDepTopographyRequest:

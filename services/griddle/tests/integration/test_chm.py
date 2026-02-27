@@ -59,14 +59,14 @@ def test_meta_chm(griddle_runner):
 
 def test_meta_chm_2_tiles(griddle_runner):
     """Meta CHM across 2 tiles: domain on an E/W tile boundary."""
-    result = griddle_runner("tile_boundary_2.json", "chm_meta.json")
+    result = griddle_runner("meta_chm_2_tiles.json", "chm_meta.json")
     _assert_valid_chm(result.ds, "32612")
     _assert_tile_metadata(result.grid_id, expected_tile_count=2)
 
 
 def test_meta_chm_4_tiles(griddle_runner):
     """Meta CHM across 4 tiles: domain on a tile corner."""
-    result = griddle_runner("tile_boundary_4.json", "chm_meta.json")
+    result = griddle_runner("meta_chm_4_tiles.json", "chm_meta.json")
     _assert_valid_chm(result.ds, "32612")
     _assert_tile_metadata(result.grid_id, expected_tile_count=4)
 
@@ -80,13 +80,13 @@ def test_naip_chm(griddle_runner):
 
 def test_naip_chm_2_tiles(griddle_runner):
     """NAIP CHM across 2 tiles: domain on an E/W tile boundary."""
-    result = griddle_runner("blackfoot.json", "chm_naip.json")
+    result = griddle_runner("naip_chm_2_tiles.json", "chm_naip.json")
     _assert_valid_chm(result.ds, "32612")
     _assert_tile_metadata(result.grid_id, expected_tile_count=2)
 
 
 def test_naip_chm_4_tiles(griddle_runner):
     """NAIP CHM across 4 tiles: domain on a tile corner."""
-    result = griddle_runner("blackfoot_upper.json", "chm_naip.json")
+    result = griddle_runner("naip_chm_4_tiles.json", "chm_naip.json")
     _assert_valid_chm(result.ds, "32612")
     _assert_tile_metadata(result.grid_id, expected_tile_count=4)

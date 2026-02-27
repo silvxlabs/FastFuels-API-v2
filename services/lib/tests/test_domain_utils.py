@@ -8,7 +8,6 @@ objects, multiple features, error handling.
 
 import copy
 import json
-from pathlib import Path
 
 import geopandas as gpd
 import pytest
@@ -18,8 +17,9 @@ from lib.domain_utils import (
     InvalidGeometryError,
     parse_domain_gdf,
 )
+from lib.testing import SHARED_TEST_DOMAINS_DIR
 
-DOMAINS_DIR = Path(__file__).resolve().parent / "static_data" / "domains"
+DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 
 
 def _load_domain_json(filename: str) -> dict:
@@ -85,7 +85,7 @@ class TestWithTileBoundaryDomain:
 
     @pytest.fixture
     def tile_boundary_firestore(self):
-        return _stringify_coordinates(_load_domain_json("tile_boundary_2.json"))
+        return _stringify_coordinates(_load_domain_json("meta_chm_2_tiles.json"))
 
     def test_different_utm_zone(self, tile_boundary_firestore):
         result = parse_domain_gdf(tile_boundary_firestore)

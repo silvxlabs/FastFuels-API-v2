@@ -13,6 +13,9 @@ import tempfile
 
 import numpy as np
 
+from lib.config import GRIDS_COLLECTION
+from lib.firestore.documents import get_document
+
 
 def _assert_valid_chm(ds, expected_crs_code):
     """Shared assertions for CHM output datasets."""
@@ -35,37 +38,55 @@ def _assert_valid_chm(ds, expected_crs_code):
         assert os.path.getsize(tmp.name) > 0
 
 
+def _assert_tile_metadata(grid_id, expected_tile_count):
+    """Read Firestore and assert tile_metadata was written correctly."""
+    _, snapshot = get_document(GRIDS_COLLECTION, grid_id)
+    grid = snapshot.to_dict()
+    tm = grid["source"]["tile_metadata"]
+    assert tm is not None, "tile_metadata should be populated after processing"
+    assert tm["tile_count"] == expected_tile_count
+    assert isinstance(tm["tiles"], list)
+    assert len(tm["tiles"]) == expected_tile_count
+    assert tm["native_crs"] is not None
+
+
 def test_meta_chm(griddle_runner):
     """Meta CHM single-tile: Blue Mountain domain (~1 sq km in Montana)."""
-    ds = griddle_runner("blue_mtn.json", "chm_meta.json")
-    _assert_valid_chm(ds, "32611")
+    result = griddle_runner("blue_mtn.json", "chm_meta.json")
+    _assert_valid_chm(result.ds, "32611")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=1)
 
 
 def test_meta_chm_2_tiles(griddle_runner):
     """Meta CHM across 2 tiles: domain on an E/W tile boundary."""
-    ds = griddle_runner("tile_boundary_2.json", "chm_meta.json")
-    _assert_valid_chm(ds, "32612")
+    result = griddle_runner("tile_boundary_2.json", "chm_meta.json")
+    _assert_valid_chm(result.ds, "32612")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=2)
 
 
 def test_meta_chm_4_tiles(griddle_runner):
     """Meta CHM across 4 tiles: domain on a tile corner."""
-    ds = griddle_runner("tile_boundary_4.json", "chm_meta.json")
-    _assert_valid_chm(ds, "32612")
+    result = griddle_runner("tile_boundary_4.json", "chm_meta.json")
+    _assert_valid_chm(result.ds, "32612")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=4)
 
 
 def test_naip_chm(griddle_runner):
     """NAIP CHM single-tile: Blue Mountain domain (~1 sq km in Montana)."""
-    ds = griddle_runner("blue_mtn.json", "chm_naip.json")
-    _assert_valid_chm(ds, "32611")
+    result = griddle_runner("blue_mtn.json", "chm_naip.json")
+    _assert_valid_chm(result.ds, "32611")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=1)
 
 
 def test_naip_chm_2_tiles(griddle_runner):
     """NAIP CHM across 2 tiles: domain on an E/W tile boundary."""
-    ds = griddle_runner("blackfoot.json", "chm_naip.json")
-    _assert_valid_chm(ds, "32612")
+    result = griddle_runner("blackfoot.json", "chm_naip.json")
+    _assert_valid_chm(result.ds, "32612")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=2)
 
 
 def test_naip_chm_4_tiles(griddle_runner):
     """NAIP CHM across 4 tiles: domain on a tile corner."""
-    ds = griddle_runner("blackfoot_upper.json", "chm_naip.json")
-    _assert_valid_chm(ds, "32612")
+    result = griddle_runner("blackfoot_upper.json", "chm_naip.json")
+    _assert_valid_chm(result.ds, "32612")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=4)

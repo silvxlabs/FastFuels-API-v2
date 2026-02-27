@@ -13,6 +13,7 @@ import xarray as xr
 from rioxarray.merge import merge_arrays
 
 from griddle.errors import ProcessingError
+from griddle.handlers.tiles import TileMetadata
 from lib.config import TABLES_BUCKET
 from lib.raster import RasterConnection
 
@@ -26,7 +27,7 @@ def _process_intersecting_tiles(
     scale_factors: list[float],
     gdal_env: dict[str, str],
     progress: Callable[[str, int | None], None],
-) -> xr.Dataset:
+) -> tuple[xr.Dataset, TileMetadata]:
     """Shared core processing logic for CHM extractions."""
     n_tiles = len(fetch_urls)
     tile_arrays = []
@@ -68,14 +69,22 @@ def _process_intersecting_tiles(
     ds = ds.rio.write_crs(chm_da.rio.crs)
     ds = ds.rio.write_transform(chm_da.rio.transform())
 
-    return ds
+    tile_metadata: TileMetadata = {
+        "tiles": fetch_urls,
+        "tile_source": None,
+        "tile_count": len(fetch_urls),
+        "native_crs": str(chm_da.rio.crs) if chm_da.rio.crs else None,
+        "acquisition_dates": None,
+    }
+
+    return ds, tile_metadata
 
 
 def fetch_meta_chm(
     roi: gpd.GeoDataFrame,
     version: str,
     progress: Callable[[str, int | None], None],
-) -> xr.Dataset:
+) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch Meta global canopy height model data."""
     progress("Loading Meta CHM tile mapping...", 10)
 
@@ -111,7 +120,7 @@ def fetch_naip_chm(
     roi: gpd.GeoDataFrame,
     version: str,
     progress: Callable[[str, int | None], None],
-) -> xr.Dataset:
+) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch NAIP high-resolution canopy height model data."""
     progress("Loading NAIP CHM parquet index...", 10)
 

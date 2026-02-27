@@ -15,11 +15,12 @@ import pytest
 )
 def test_resample_topography(griddle_runner, source_grid):
     """Resample should produce topographic bands at the target resolution."""
-    ds = griddle_runner(
+    result = griddle_runner(
         "blue_mtn.json",
         "resample_bilinear.json",
         source_overrides={"source_grid_id": source_grid},
     )
+    ds = result.ds
 
     for var in ["elevation", "slope", "aspect"]:
         assert var in ds.data_vars, f"Missing variable: {var}"

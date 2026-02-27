@@ -176,9 +176,13 @@ def handle_chm(
 
     match product:
         case "meta":
-            return chm.fetch_meta_chm(domain_gdf, version, progress)
+            dataset, tile_metadata = chm.fetch_meta_chm(domain_gdf, version, progress)
+            source["tile_metadata"] = tile_metadata
+            return dataset
         case "naip":
-            return chm.fetch_naip_chm(domain_gdf, version, progress)
+            dataset, tile_metadata = chm.fetch_naip_chm(domain_gdf, version, progress)
+            source["tile_metadata"] = tile_metadata
+            return dataset
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
@@ -208,7 +212,7 @@ def handle_3dep(
             dataset, tile_metadata = threedep.fetch_topography(
                 domain_gdf, resolution, source["bands"], progress
             )
-            source.update(tile_metadata)
+            source["tile_metadata"] = tile_metadata
             return dataset
         case _:
             raise ProcessingError(

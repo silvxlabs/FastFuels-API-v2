@@ -14,7 +14,12 @@ from pydantic import Field
 
 from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.providers.threedep import ThreeDepSource
-from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
+from api.resources.grids.schema import (
+    Band,
+    BandType,
+    CreateGridRequestBase,
+    TileMetadata,
+)
 
 
 class TopographyBand(StrEnum):
@@ -99,11 +104,7 @@ class ThreeDepTopographySource(ThreeDepSource):
     )
 
     # Post-processing metadata populated by Griddle after processing
-    tiles: list[str] | None = None
-    tile_source: str | None = None
-    tile_count: int | None = None
-    native_crs: str | None = None
-    acquisition_dates: list[str] | None = None
+    tile_metadata: TileMetadata | None = None
 
 
 class CreateThreeDepTopographyRequest(CreateGridRequestBase):

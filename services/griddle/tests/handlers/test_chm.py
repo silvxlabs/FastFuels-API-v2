@@ -85,16 +85,18 @@ class TestFetchMetaChm:
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
-    def test_returns_dataset(self, mock_read_file, mock_raster_cls):
-        """fetch_meta_chm returns an xr.Dataset."""
+    def test_returns_dataset_and_tile_metadata(self, mock_read_file, mock_raster_cls):
+        """fetch_meta_chm returns a (Dataset, TileMetadata) tuple."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
         mock_read_file.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
 
-        assert isinstance(result, xr.Dataset)
+        assert isinstance(ds, xr.Dataset)
+        assert tile_metadata["tile_count"] == 1
+        assert len(tile_metadata["tiles"]) == 1
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
@@ -105,9 +107,9 @@ class TestFetchMetaChm:
         mock_read_file.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
 
-        assert "chm" in result.data_vars
+        assert "chm" in ds.data_vars
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
@@ -118,9 +120,9 @@ class TestFetchMetaChm:
         mock_read_file.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
 
-        np.testing.assert_array_almost_equal(result["chm"].values, chm_values)
+        np.testing.assert_array_almost_equal(ds["chm"].values, chm_values)
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
@@ -131,9 +133,9 @@ class TestFetchMetaChm:
         mock_read_file.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
 
-        assert result.rio.crs == CRS.from_epsg(32611)
+        assert ds.rio.crs == CRS.from_epsg(32611)
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
@@ -144,9 +146,9 @@ class TestFetchMetaChm:
         mock_read_file.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
 
-        assert result["chm"].dims == ("y", "x")
+        assert ds["chm"].dims == ("y", "x")
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
@@ -202,11 +204,9 @@ class TestFetchMetaChm:
         )
         progress = MagicMock()
 
-        # Update to expect the V2-standard ProcessingError
         with pytest.raises(ProcessingError) as exc_info:
             fetch_meta_chm(_make_roi(), "2024", progress)
 
-        # Strictly verify the error code is COVERAGE_ERROR
         assert exc_info.value.code == "COVERAGE_ERROR"
 
     @patch("griddle.handlers.chm.merge_arrays")
@@ -221,17 +221,17 @@ class TestFetchMetaChm:
             geometry=[box(-180, -90, 180, 90), box(-180, -90, 180, 90)],
             crs="EPSG:4326",
         )
-        # merge_arrays returns a DataArray with CRS
         merged_da = _make_mock_raster(chm_values).extract_window.return_value
         merged_da = merged_da.squeeze("band", drop=True)
         mock_merge.return_value = merged_da
         progress = MagicMock()
 
-        result = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
 
         assert mock_raster_cls.call_count == 2
         mock_merge.assert_called_once()
-        assert isinstance(result, xr.Dataset)
+        assert isinstance(ds, xr.Dataset)
+        assert tile_metadata["tile_count"] == 2
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_file")
@@ -247,22 +247,40 @@ class TestFetchMetaChm:
         url = mock_read_file.call_args[0][0]
         assert "Meta2024" in url
 
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm.gpd.read_file")
+    def test_tile_metadata_native_crs(self, mock_read_file, mock_raster_cls):
+        """Tile metadata includes the native CRS from the mosaic."""
+        chm_values = np.array([[10.5]], dtype=np.float32)
+        mock_raster_cls.return_value = _make_mock_raster(chm_values, crs="EPSG:32611")
+        mock_read_file.return_value = _make_tile_mapping()
+        progress = MagicMock()
+
+        _, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
+
+        assert tile_metadata["native_crs"] is not None
+        assert "32611" in tile_metadata["native_crs"]
+
 
 class TestFetchNaipChm:
     """Tests for fetch_naip_chm with chm band."""
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
-    def test_returns_dataset(self, mock_read_parquet, mock_raster_cls):
-        """fetch_naip_chm returns an xr.Dataset."""
+    def test_returns_dataset_and_tile_metadata(
+        self, mock_read_parquet, mock_raster_cls
+    ):
+        """fetch_naip_chm returns a (Dataset, TileMetadata) tuple."""
         raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
         mock_read_parquet.return_value = _make_naip_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_naip_chm(_make_roi(), "2020", progress)
+        ds, tile_metadata = fetch_naip_chm(_make_roi(), "2020", progress)
 
-        assert isinstance(result, xr.Dataset)
+        assert isinstance(ds, xr.Dataset)
+        assert tile_metadata["tile_count"] == 1
+        assert len(tile_metadata["tiles"]) == 1
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
@@ -273,26 +291,24 @@ class TestFetchNaipChm:
         mock_read_parquet.return_value = _make_naip_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_naip_chm(_make_roi(), "2020", progress)
+        ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
 
-        assert "chm" in result.data_vars
+        assert "chm" in ds.data_vars
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
     def test_chm_values_scaled(self, mock_read_parquet, mock_raster_cls):
         """CHM pixel values are correctly divided by the scale factor (100)."""
-        # Raw uint16 values from the NAIP GeoTIFF
         raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
-        # Expected output in meters
         expected_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
 
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
         mock_read_parquet.return_value = _make_naip_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_naip_chm(_make_roi(), "2020", progress)
+        ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
 
-        np.testing.assert_array_almost_equal(result["chm"].values, expected_values)
+        np.testing.assert_array_almost_equal(ds["chm"].values, expected_values)
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
@@ -303,9 +319,9 @@ class TestFetchNaipChm:
         mock_read_parquet.return_value = _make_naip_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_naip_chm(_make_roi(), "2020", progress)
+        ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
 
-        assert result.rio.crs == CRS.from_epsg(32611)
+        assert ds.rio.crs == CRS.from_epsg(32611)
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
@@ -316,9 +332,9 @@ class TestFetchNaipChm:
         mock_read_parquet.return_value = _make_naip_tile_mapping()
         progress = MagicMock()
 
-        result = fetch_naip_chm(_make_roi(), "2020", progress)
+        ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
 
-        assert result["chm"].dims == ("y", "x")
+        assert ds["chm"].dims == ("y", "x")
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
@@ -348,11 +364,9 @@ class TestFetchNaipChm:
 
         fetch_naip_chm(roi, "2020", progress)
 
-        # Ensure bbox was passed in kwargs
         kwargs = mock_read_parquet.call_args[1]
         assert "bbox" in kwargs
 
-        # Verify the bbox matches the reprojected 4326 bounds of the ROI
         roi_4326 = roi.to_crs("EPSG:4326")
         expected_bounds = tuple(roi_4326.total_bounds)
         assert kwargs["bbox"] == expected_bounds
@@ -381,11 +395,9 @@ class TestFetchNaipChm:
         )
         progress = MagicMock()
 
-        # Update to expect the V2-standard ProcessingError
         with pytest.raises(ProcessingError) as exc_info:
             fetch_meta_chm(_make_roi(), "2024", progress)
 
-        # # Strictly verify the error code is COVERAGE_ERROR
         assert exc_info.value.code == "COVERAGE_ERROR"
 
     @patch("griddle.handlers.chm.merge_arrays")
@@ -398,7 +410,6 @@ class TestFetchNaipChm:
         raw_values = np.array([[1050]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
 
-        # Two overlapping tiles
         mock_read_parquet.return_value = gpd.GeoDataFrame(
             {
                 "chm_url": ["http://fake.com/a.tif", "http://fake.com/b.tif"],
@@ -408,19 +419,16 @@ class TestFetchNaipChm:
             crs="EPSG:4326",
         )
 
-        # merge_arrays returns a DataArray with CRS
         merged_da = _make_mock_raster(raw_values).extract_window.return_value
         merged_da = merged_da.squeeze("band", drop=True)
-        # Apply the scale factor to the mock merge output so it matches expected flow
         merged_da = merged_da / 100.0
         mock_merge.return_value = merged_da
 
         progress = MagicMock()
 
-        result = fetch_naip_chm(_make_roi(), "2020", progress)
+        ds, tile_metadata = fetch_naip_chm(_make_roi(), "2020", progress)
 
-        # Assert RasterConnection was instantiated twice
         assert mock_raster_cls.call_count == 2
-        # Assert the merge function was called to join the two tiles
         mock_merge.assert_called_once()
-        assert isinstance(result, xr.Dataset)
+        assert isinstance(ds, xr.Dataset)
+        assert tile_metadata["tile_count"] == 2

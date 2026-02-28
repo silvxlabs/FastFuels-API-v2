@@ -11,10 +11,15 @@ number) as a second band via a lookup from the tree table.
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from api.resources.grids.providers.pim import PimSource
-from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
+from api.resources.grids.schema import (
+    Band,
+    BandType,
+    CreateGridRequestBase,
+    validate_no_duplicates,
+)
 
 
 class TreeMapVersion(StrEnum):
@@ -75,6 +80,11 @@ class CreateTreeMapRequest(CreateGridRequestBase):
         default=[TreeMapBand.tm_id],
         min_length=1,
     )
+
+    @field_validator("bands")
+    @classmethod
+    def no_duplicate_bands(cls, v: list[TreeMapBand]) -> list[TreeMapBand]:
+        return validate_no_duplicates(v)
 
 
 def build_treemap_bands(requested: list[TreeMapBand]) -> list[Band]:

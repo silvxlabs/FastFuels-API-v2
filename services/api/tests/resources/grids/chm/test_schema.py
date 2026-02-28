@@ -8,6 +8,7 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.grids.chm.schema import (
+    Attribution,
     CreateMetaChmRequest,
     CreateNaipChmRequest,
     MetaChmSource,
@@ -83,6 +84,37 @@ class TestMetaChmSource:
         assert data["product"] == "meta"
         assert "description" in data
 
+    def test_attribution_defaults_to_none(self):
+        """Attribution is None by default."""
+        source = MetaChmSource(version="2024")
+        assert source.attribution is None
+
+    def test_attribution_accepted(self):
+        """MetaChmSource accepts an Attribution object."""
+        attr = Attribution(
+            license_name="CC-BY-4.0",
+            license_url="https://creativecommons.org/licenses/by/4.0/",
+            citation="Test citation",
+            access_url="https://example.com",
+            accessed_on="2026-02-27",
+        )
+        source = MetaChmSource(version="2024", attribution=attr)
+        assert source.attribution.license_name == "CC-BY-4.0"
+
+    def test_attribution_serialized_in_model_dump(self):
+        """Attribution is included in model_dump output."""
+        attr = Attribution(
+            license_name="CC-BY-4.0",
+            license_url="https://creativecommons.org/licenses/by/4.0/",
+            citation="Test citation",
+            access_url="https://example.com",
+            accessed_on="2026-02-27",
+        )
+        source = MetaChmSource(version="2024", attribution=attr)
+        data = source.model_dump()
+        assert data["attribution"]["license_name"] == "CC-BY-4.0"
+        assert data["attribution"]["accessed_on"] == "2026-02-27"
+
 
 class TestCreateMetaChmRequest:
     """Tests for CreateMetaChmRequest model."""
@@ -105,6 +137,31 @@ class TestCreateMetaChmRequest:
         assert request.name == "Test Grid"
         assert request.description == "A test grid"
         assert request.tags == ["test", "chm"]
+
+
+class TestAttribution:
+    """Tests for Attribution model."""
+
+    def test_valid_attribution(self):
+        """All fields accepted."""
+        attr = Attribution(
+            license_name="CC-BY-4.0",
+            license_url="https://creativecommons.org/licenses/by/4.0/",
+            citation="Some citation text",
+            access_url="https://example.com",
+            accessed_on="2026-02-27",
+        )
+        assert attr.license_name == "CC-BY-4.0"
+        assert attr.access_url == "https://example.com"
+
+    def test_missing_field_rejected(self):
+        """Missing required field raises ValidationError."""
+        with pytest.raises(ValidationError):
+            Attribution(
+                license_name="CC-BY-4.0",
+                license_url="https://creativecommons.org/licenses/by/4.0/",
+                # missing citation, access_url, accessed_on
+            )
 
 
 class TestChmBands:

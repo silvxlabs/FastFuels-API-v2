@@ -9,6 +9,8 @@ imagery. Single band: canopy height in meters.
 
 from typing import Literal
 
+from pydantic import BaseModel
+
 from api.resources.grids.providers.chm import ChmSource
 from api.resources.grids.schema import (
     Band,
@@ -17,7 +19,18 @@ from api.resources.grids.schema import (
     TileMetadata,
 )
 
+
 CHM_BAND = Band(key="chm", type=BandType.continuous, unit="m", index=0)
+
+
+class Attribution(BaseModel):
+    """License and citation metadata for data compliance."""
+
+    license_name: str
+    license_url: str
+    citation: str
+    access_url: str
+    accessed_on: str
 
 
 class MetaChmSource(ChmSource):
@@ -34,6 +47,7 @@ class MetaChmSource(ChmSource):
 
     # Post-processing metadata populated by Griddle after processing
     tile_metadata: TileMetadata | None = None
+    attribution: Attribution | None = None
 
 
 class CreateMetaChmRequest(CreateGridRequestBase):

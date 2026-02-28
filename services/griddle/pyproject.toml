@@ -6,10 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "functions-framework>=3.10.0",
-    "lib[firestore,gcs,zarr,raster]",
+    "lib[firestore,gcs,zarr,raster,threedep]",
     "pint>=0.24",
     "pyarrow>=18.0.0",
-    "s3fs>=2024.2.0",
 ]
 
 [project.optional-dependencies]

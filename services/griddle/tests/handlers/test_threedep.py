@@ -5,7 +5,6 @@ Pure unit tests — all external dependencies are mocked. No network access.
 Integration tests live in tests/integration/test_threedep.py.
 """
 
-import json
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
@@ -16,22 +15,14 @@ import xarray as xr
 from griddle.errors import ProcessingError
 from griddle.handlers.threedep import (
     _compute_slope_aspect,
-    _discover_s1m_tiles,
-    _discover_tiles_arc_second,
     _fetch_and_mosaic_tiles,
     _meters_to_degrees,
-    _s1m_tile_path,
     _validate_dem_has_data,
     fetch_topography,
 )
 from rasterio.transform import from_bounds
 from shapely.geometry import box
 from xarray import DataArray
-
-from lib.testing import SHARED_TEST_DOMAINS_DIR
-
-DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
-
 
 # Helpers
 
@@ -99,15 +90,6 @@ def _make_roi() -> gpd.GeoDataFrame:
 
 
 # Fixtures
-
-
-@pytest.fixture
-def blue_mtn_roi() -> gpd.GeoDataFrame:
-    """Load Blue Mountain domain as a GeoDataFrame."""
-    with open(DOMAINS_DIR / "blue_mtn.json") as f:
-        domain = json.load(f)
-    crs = domain["crs"]["properties"]["name"]
-    return gpd.GeoDataFrame.from_features(domain["features"], crs=crs)
 
 
 @pytest.fixture
@@ -199,39 +181,6 @@ class TestComputeSlopeAspect:
         assert isinstance(aspect, DataArray)
 
 
-# Tile discovery (pure math)
-
-
-class TestDiscoverTilesArcSecond:
-    """Tile URL construction for 10m/30m (pure math, no network)."""
-
-    def test_single_tile_10m(self, blue_mtn_roi):
-        urls = _discover_tiles_arc_second(blue_mtn_roi, resolution=10)
-        assert len(urls) >= 1
-        assert all("USGS_13_" in url for url in urls)
-
-    def test_single_tile_30m(self, blue_mtn_roi):
-        urls = _discover_tiles_arc_second(blue_mtn_roi, resolution=30)
-        assert len(urls) >= 1
-        assert all("USGS_1_" in url for url in urls)
-
-    def test_url_format_10m(self, blue_mtn_roi):
-        urls = _discover_tiles_arc_second(blue_mtn_roi, resolution=10)
-        for url in urls:
-            assert url.startswith(
-                "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/"
-            )
-            assert url.endswith(".tif")
-
-    def test_url_format_30m(self, blue_mtn_roi):
-        urls = _discover_tiles_arc_second(blue_mtn_roi, resolution=30)
-        for url in urls:
-            assert url.startswith(
-                "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1/"
-            )
-            assert url.endswith(".tif")
-
-
 # Geographic CRS padding conversion
 
 
@@ -277,111 +226,6 @@ class TestMetersToDegrees:
         assert 0.005 < result < 0.02
 
 
-# Tile discovery (mocked S3/GCS)
-
-
-class TestDiscoverS1mTiles:
-    """Mock-based tests for S1M tile discovery."""
-
-    def _make_roi(self):
-        geom = box(-119.0, 37.0, -118.99, 37.01)
-        return gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326")
-
-    @patch("s3fs.S3FileSystem")
-    def test_returns_urls_for_available_tiles(self, mock_fs_class):
-        mock_fs = MagicMock()
-        mock_fs_class.return_value = mock_fs
-        mock_fs.ls.return_value = [
-            "prd-tnm/StagedProducts/Elevation/S1M/n00e00/n123e456/S1M_n123e456_20230515.tif"
-        ]
-        urls, dates = _discover_s1m_tiles(self._make_roi())
-        assert len(urls) >= 1
-        assert urls[0].startswith("https://prd-tnm.s3.amazonaws.com/")
-        assert urls[0].endswith(".tif")
-        assert "20230515" in dates
-
-    @patch("s3fs.S3FileSystem")
-    def test_returns_empty_when_no_tif_files(self, mock_fs_class):
-        mock_fs = MagicMock()
-        mock_fs_class.return_value = mock_fs
-        mock_fs.ls.return_value = [
-            "prd-tnm/StagedProducts/Elevation/S1M/n00e00/n123e456/readme.txt"
-        ]
-        urls, dates = _discover_s1m_tiles(self._make_roi())
-        assert urls == []
-        assert dates == []
-
-    @patch("s3fs.S3FileSystem")
-    def test_returns_empty_on_listing_error(self, mock_fs_class):
-        mock_fs = MagicMock()
-        mock_fs_class.return_value = mock_fs
-        mock_fs.ls.side_effect = Exception("Access denied")
-        urls, dates = _discover_s1m_tiles(self._make_roi())
-        assert urls == []
-        assert dates == []
-
-    @pytest.mark.parametrize(
-        "ty, tx, expected_zone, expected_tile",
-        [
-            # Positive easting (eastern US)
-            (48, 139, "n04e13", "n0490e1390"),
-            (290, 198, "n29e19", "n2910e1980"),
-            # Negative easting, exactly divisible (no floor rounding issue)
-            (227, -120, "n22w12", "n2280w1200"),
-            (239, -110, "n24w11", "n2400w1100"),
-            # Negative easting, NOT exactly divisible (floor rounding edge case)
-            # tx=-25: abs(25)*10000/100000 = 2.5 -> zone w02, NOT w03
-            (90, -25, "n09w02", "n0910w0250"),
-            # tx=-69: abs(69)*10000/100000 = 6.9 -> zone w06, NOT w07
-            (137, -69, "n13w06", "n1380w0690"),
-            # tx=-99: abs(99)*10000/100000 = 9.9 -> zone w09, NOT w10
-            (226, -99, "n22w09", "n2270w0990"),
-            # tx=-121: abs(121)*10000/100000 = 12.1 -> zone w12, NOT w13
-            (227, -121, "n22w12", "n2280w1210"),
-            # Small negative easting near zero
-            (226, -5, "n22w00", "n2270w0050"),
-        ],
-        ids=[
-            "positive-easting",
-            "positive-easting-high",
-            "negative-easting-exact",
-            "negative-easting-exact-2",
-            "negative-easting-w02-not-w03",
-            "negative-easting-w06-not-w07",
-            "negative-easting-w09-not-w10",
-            "negative-easting-w12-not-w13",
-            "negative-easting-near-zero",
-        ],
-    )
-    def test_tile_path(self, ty, tx, expected_zone, expected_tile):
-        """Verify zone and tile directory naming against known S3 paths."""
-        zone, tile_dir = _s1m_tile_path(ty, tx)
-        assert zone == expected_zone
-        assert tile_dir == expected_tile
-
-    @patch("s3fs.S3FileSystem")
-    def test_negative_easting_uses_w_prefix(self, mock_fs_class):
-        """Western US domains have negative Albers eastings -> 'w' prefix in S3 paths."""
-        mock_fs = MagicMock()
-        mock_fs_class.return_value = mock_fs
-        mock_fs.ls.return_value = [
-            "prd-tnm/StagedProducts/Elevation/S1M/n22w12/n2280w1200/S1M_n2280w1200_20250717.tif"
-        ]
-
-        # Bondurant, WY area: Albers coords ~(-1195000, 2275000) -> negative easting
-        geom = box(522800, 4720400, 523300, 4720900)
-        roi = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:32612")
-
-        urls, dates = _discover_s1m_tiles(roi)
-        assert len(urls) >= 1
-
-        # Verify the S3 path used 'w' not 'e' for the zone/tile
-        call_args = mock_fs.ls.call_args[0][0]
-        assert "w" in call_args, (
-            f"Expected 'w' prefix for negative easting, got: {call_args}"
-        )
-
-
 # fetch_topography pipeline (all external calls mocked)
 
 
@@ -389,7 +233,7 @@ class TestFetchTopography:
     """Mock-based tests for the full fetch_topography pipeline."""
 
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
-    @patch("griddle.handlers.threedep._discover_tiles_arc_second")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_elevation_only_returns_dataset(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
         mock_fetch.return_value = _make_mock_dem()
@@ -402,7 +246,7 @@ class TestFetchTopography:
 
     @patch("griddle.handlers.threedep._clip_to_roi", side_effect=lambda da, roi: da)
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
-    @patch("griddle.handlers.threedep._discover_tiles_arc_second")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_slope_aspect_computed(self, mock_discover, mock_fetch, _mock_clip):
         mock_discover.return_value = ["https://example.com/tile.tif"]
         mock_fetch.return_value = _make_mock_dem()
@@ -414,7 +258,7 @@ class TestFetchTopography:
 
     @patch("griddle.handlers.threedep._clip_to_roi", side_effect=lambda da, roi: da)
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
-    @patch("griddle.handlers.threedep._discover_tiles_arc_second")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_all_bands(self, mock_discover, mock_fetch, _mock_clip):
         mock_discover.return_value = ["https://example.com/tile.tif"]
         mock_fetch.return_value = _make_mock_dem()
@@ -426,7 +270,7 @@ class TestFetchTopography:
         assert set(ds.data_vars) == {"elevation", "slope", "aspect"}
 
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
-    @patch("griddle.handlers.threedep._discover_tiles_arc_second")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_returns_tile_metadata(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
         mock_fetch.return_value = _make_mock_dem()
@@ -441,7 +285,7 @@ class TestFetchTopography:
             fetch_topography(_make_roi(), 5, ["elevation"], MagicMock())
         assert exc_info.value.code == "INVALID_RESOLUTION"
 
-    @patch("griddle.handlers.threedep._discover_tiles_arc_second")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_no_tiles_raises(self, mock_discover):
         mock_discover.return_value = []
         with pytest.raises(ProcessingError) as exc_info:
@@ -449,7 +293,7 @@ class TestFetchTopography:
         assert exc_info.value.code == "COVERAGE_ERROR"
 
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
-    @patch("griddle.handlers.threedep._discover_tiles_arc_second")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_progress_called(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
         mock_fetch.return_value = _make_mock_dem()
@@ -460,7 +304,7 @@ class TestFetchTopography:
         assert progress.call_count >= 3
 
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
-    @patch("griddle.handlers.threedep._discover_tiles_arc_second")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_all_nodata_raises_coverage_error(self, mock_discover, mock_fetch):
         """Tiles found but all nodata should raise COVERAGE_ERROR."""
         mock_discover.return_value = ["https://example.com/tile.tif"]

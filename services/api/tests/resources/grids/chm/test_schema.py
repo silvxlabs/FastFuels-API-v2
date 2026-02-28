@@ -11,9 +11,7 @@ from api.resources.grids.chm.schema import (
     CreateMetaChmRequest,
     CreateNaipChmRequest,
     MetaChmSource,
-    MetaChmVersion,
     NaipChmSource,
-    NaipChmVersion,
     build_chm_bands,
 )
 from api.resources.grids.providers.chm import ChmSource
@@ -26,34 +24,28 @@ class TestChmSource:
 
     def test_name_is_always_chm(self):
         """The name field is always 'chm'."""
-        source = ChmSource(product="meta", version="2024")
+        source = ChmSource(product="meta")
         assert source.name == "chm"
 
     def test_name_cannot_be_overridden(self):
         """The name field cannot be set to anything other than 'chm'."""
         with pytest.raises(ValidationError):
-            ChmSource(name="other", product="meta", version="2024")
+            ChmSource(name="other", product="meta")
 
     def test_product_is_required(self):
         """The product field is required."""
         with pytest.raises(ValidationError):
-            ChmSource(version="2024")
-
-    def test_version_is_required(self):
-        """The version field is required."""
-        with pytest.raises(ValidationError):
-            ChmSource(product="meta")
+            ChmSource()
 
     def test_description_defaults_to_empty_string(self):
         """The description field defaults to empty string."""
-        source = ChmSource(product="meta", version="2024")
+        source = ChmSource(product="meta")
         assert source.description == ""
 
     def test_description_can_be_set(self):
         """The description field can be set."""
         source = ChmSource(
             product="meta",
-            version="2024",
             description="Test description",
         )
         assert source.description == "Test description"
@@ -64,42 +56,31 @@ class TestMetaChmSource:
 
     def test_product_is_always_meta(self):
         """The product field is always 'meta'."""
-        source = MetaChmSource(version="2024")
+        source = MetaChmSource()
         assert source.product == "meta"
 
     def test_product_cannot_be_overridden(self):
         """The product field cannot be set to anything other than 'meta'."""
         with pytest.raises(ValidationError):
-            MetaChmSource(product="other", version="2024")
+            MetaChmSource(product="other")
 
     def test_name_is_always_chm(self):
         """The name field is always 'chm'."""
-        source = MetaChmSource(version="2024")
+        source = MetaChmSource()
         assert source.name == "chm"
 
     def test_description_is_fixed(self):
         """The description has a fixed value."""
-        source = MetaChmSource(version="2024")
+        source = MetaChmSource()
         assert "Meta" in source.description
         assert "canopy height" in source.description
 
-    def test_version_is_required(self):
-        """The version field is required."""
-        with pytest.raises(ValidationError):
-            MetaChmSource()
-
-    def test_invalid_version_rejected(self):
-        """Invalid version string is rejected."""
-        with pytest.raises(ValidationError):
-            MetaChmSource(version="9999")
-
     def test_model_dump(self):
         """Model serializes correctly."""
-        source = MetaChmSource(version="2024")
+        source = MetaChmSource()
         data = source.model_dump()
         assert data["name"] == "chm"
         assert data["product"] == "meta"
-        assert data["version"] == "2024"
         assert "description" in data
 
 
@@ -109,32 +90,14 @@ class TestCreateMetaChmRequest:
     def test_minimal_valid_request(self):
         """Minimal request with no required body fields."""
         request = CreateMetaChmRequest()
-        assert request.version == "2024"
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
         assert request.modifications == []
 
-    def test_version_defaults_to_2024(self):
-        """version defaults to '2024'."""
-        request = CreateMetaChmRequest()
-        assert request.version == "2024"
-
-    def test_invalid_version_rejected(self):
-        """Invalid version string is rejected."""
-        with pytest.raises(ValidationError):
-            CreateMetaChmRequest(version="9999")
-
-    def test_all_versions_accepted(self):
-        """All defined Meta CHM versions are accepted."""
-        for version in MetaChmVersion:
-            request = CreateMetaChmRequest(version=version.value)
-            assert request.version == version
-
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""
         request = CreateMetaChmRequest(
-            version="2024",
             name="Test Grid",
             description="A test grid",
             tags=["test", "chm"],
@@ -178,42 +141,25 @@ class TestNaipChmSource:
 
     def test_product_is_always_naip(self):
         """The product field is always 'naip'."""
-        source = NaipChmSource(version="2023")
+        source = NaipChmSource()
         assert source.product == "naip"
-
-    def test_product_cannot_be_overridden(self):
-        """The product field cannot be set to anything other than 'naip'."""
-        with pytest.raises(ValidationError):
-            NaipChmSource(product="other", version="2023")
 
     def test_name_is_always_chm(self):
         """The name field is always 'chm'."""
-        source = NaipChmSource(version="2023")
+        source = NaipChmSource()
         assert source.name == "chm"
 
     def test_description_is_fixed(self):
         """The description has a fixed value."""
-        source = NaipChmSource(version="2023")
+        source = NaipChmSource()
         assert "NAIP" in source.description
         assert "0.6m resolution" in source.description
 
-    def test_version_is_required(self):
-        """The version field is required."""
-        with pytest.raises(ValidationError):
-            NaipChmSource()
-
-    def test_invalid_version_rejected(self):
-        """Invalid version string is rejected."""
-        with pytest.raises(ValidationError):
-            NaipChmSource(version="1999")
-
     def test_model_dump(self):
         """Model serializes correctly."""
-        source = NaipChmSource(version="2023")
+        source = NaipChmSource()
         data = source.model_dump()
-        assert data["name"] == "chm"
         assert data["product"] == "naip"
-        assert data["version"] == "2023"
         assert "description" in data
 
 
@@ -224,32 +170,14 @@ class TestCreateNaipChmRequest:
         """Minimal request with no required body fields."""
         request = CreateNaipChmRequest()
         # Assumes you updated the default to 2023 in the schema!
-        assert request.version == "2023"
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
         assert request.modifications == []
 
-    def test_version_defaults_to_2023(self):
-        """version defaults to '2023'."""
-        request = CreateNaipChmRequest()
-        assert request.version == "2023"
-
-    def test_invalid_version_rejected(self):
-        """Invalid version string is rejected."""
-        with pytest.raises(ValidationError):
-            CreateNaipChmRequest(version="9999")
-
-    def test_all_versions_accepted(self):
-        """All defined NAIP CHM versions are accepted."""
-        for version in NaipChmVersion:
-            request = CreateNaipChmRequest(version=version.value)
-            assert request.version == version
-
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""
         request = CreateNaipChmRequest(
-            version="2023",
             name="Test NAIP Grid",
             description="A test grid",
             tags=["test", "chm", "naip"],

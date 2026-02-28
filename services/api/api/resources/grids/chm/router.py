@@ -70,7 +70,7 @@ async def create_meta_chm(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = MetaChmSource(version=body.version)
+    source = MetaChmSource()
     bands = build_chm_bands()
 
     grid_data = {
@@ -119,8 +119,6 @@ async def create_naip_chm(
     canopy height model at ~0.6m resolution (CONUS).
 
     ## Request Body
-
-    - **version**: (optional) Data version year (2014-2023). Default: "2020".
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
@@ -135,7 +133,7 @@ async def create_naip_chm(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = NaipChmSource(version=body.version)
+    source = NaipChmSource()
     bands = build_chm_bands()
 
     grid_data = {

@@ -19,7 +19,6 @@ from api.resources.grids.schema import (
     TileMetadata,
 )
 
-
 CHM_BAND = Band(key="chm", type=BandType.continuous, unit="m", index=0)
 
 

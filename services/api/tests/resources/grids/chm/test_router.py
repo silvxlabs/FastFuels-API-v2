@@ -36,7 +36,6 @@ class TestCreateMetaChm:
         # Check source
         assert data["source"]["name"] == "chm"
         assert data["source"]["product"] == "meta"
-        assert data["source"]["version"] == "2024"
 
         # Check single continuous band
         assert len(data["bands"]) == 1
@@ -132,7 +131,6 @@ class TestCreateNaipChm:
         # Check source
         assert data["source"]["name"] == "chm"
         assert data["source"]["product"] == "naip"
-        assert data["source"]["version"] == "2023"
 
         # Check single continuous band
         assert len(data["bands"]) == 1

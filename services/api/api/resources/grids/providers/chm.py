@@ -18,5 +18,4 @@ class ChmSource(BaseModel):
 
     name: Literal["chm"] = "chm"
     product: str
-    version: str
     description: str = ""

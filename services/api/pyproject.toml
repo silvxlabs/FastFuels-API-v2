@@ -19,7 +19,7 @@ dependencies = [
     "google-cloud-storage>=3.9.0",
     "google-cloud-tasks>=2.21.0",
     "gunicorn>=25.0.1",
-    "lib",
+    "lib[threedep]",
     "pandas>=3.0.0",
     "pandera>=0.29.0",
     "pint>=0.25.2",

@@ -819,10 +819,9 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "functions-framework" },
-    { name = "lib", extra = ["firestore", "gcs", "raster", "zarr"] },
+    { name = "lib", extra = ["firestore", "gcs", "raster", "threedep", "zarr"] },
     { name = "pint" },
     { name = "pyarrow" },
-    { name = "s3fs" },
 ]
 
 [package.optional-dependencies]
@@ -838,12 +837,11 @@ requires-dist = [
     { name = "functions-framework", specifier = ">=3.10.0" },
     { name = "google-cloud-run", marker = "extra == 'test'", specifier = ">=0.10.0" },
     { name = "google-cloud-tasks", marker = "extra == 'test'", specifier = ">=2.16.0" },
-    { name = "lib", extras = ["firestore", "gcs", "zarr", "raster"], editable = "../lib" },
+    { name = "lib", extras = ["firestore", "gcs", "zarr", "raster", "threedep"], editable = "../lib" },
     { name = "pint", specifier = ">=0.24" },
     { name = "pyarrow", specifier = ">=18.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.5.0" },
-    { name = "s3fs", specifier = ">=2024.2.0" },
 ]
 provides-extras = ["test"]
 
@@ -998,6 +996,10 @@ raster = [
     { name = "rioxarray" },
     { name = "xarray" },
 ]
+threedep = [
+    { name = "geopandas" },
+    { name = "s3fs" },
+]
 zarr = [
     { name = "dask" },
     { name = "gcsfs" },
@@ -1011,17 +1013,19 @@ requires-dist = [
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.2.0" },
     { name = "geopandas", marker = "extra == 'raster'", specifier = ">=1.1.2" },
+    { name = "geopandas", marker = "extra == 'threedep'", specifier = ">=1.1.2" },
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.23.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.9.0" },
     { name = "numpy", marker = "extra == 'raster'", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
     { name = "rioxarray", marker = "extra == 'raster'", specifier = ">=0.21.0" },
+    { name = "s3fs", marker = "extra == 'threedep'", specifier = ">=2024.2.0" },
     { name = "xarray", marker = "extra == 'raster'", specifier = ">=2025.1.0" },
     { name = "xarray", marker = "extra == 'zarr'", specifier = ">=2025.1.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1.5" },
 ]
-provides-extras = ["firestore", "gcs", "zarr", "raster"]
+provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]

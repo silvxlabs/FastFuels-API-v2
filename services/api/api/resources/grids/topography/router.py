@@ -4,11 +4,12 @@ api/v2/resources/grids/topography/router.py
 Router for Topography grid product endpoints.
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, Body, Query, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
@@ -21,12 +22,16 @@ from api.resources.grids.topography.schema import (
     CreateLandfireTopographyRequest,
     CreateThreeDepTopographyRequest,
     LandfireTopographySource,
+    ThreeDepCoverageResponse,
+    ThreeDepResolution,
     ThreeDepTopographySource,
     build_topography_bands,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
+from lib.domain_utils import parse_domain_gdf
+from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
 
 router = APIRouter()
 
@@ -182,3 +187,50 @@ async def create_3dep_topography(
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
 
     return Grid(**grid_data)
+
+
+@router.get(
+    "/3dep/coverage",
+    response_model=ThreeDepCoverageResponse,
+    summary="Check 3DEP tile coverage for a domain",
+)
+async def check_3dep_coverage(
+    domain: VerifiedDomain,
+    resolution: Annotated[
+        ThreeDepResolution,
+        Query(description="3DEP resolution in meters: 1, 10, or 30"),
+    ] = ThreeDepResolution.one_meter,
+):
+    """
+    # Check 3DEP Tile Coverage
+
+    Immediate pre-flight check that reports which 3DEP tiles are available
+    for the domain at the requested resolution. Use this before creating a
+    3DEP grid to avoid waiting for async processing only to discover a
+    coverage gap — especially useful for 1m (S1M) data where coverage is
+    regional.
+
+    ## Query Parameters
+
+    - **resolution**: Resolution in meters: 1, 10, or 30. Default: 1.
+
+    ## Response
+
+    Returns tile availability, count, URLs, and (for 1m) acquisition dates.
+    """
+    roi = parse_domain_gdf(domain)
+
+    if resolution in (10, 30):
+        tile_urls = discover_tiles_arc_second(roi, resolution)
+        acquisition_dates = None
+    else:
+        tile_urls, acquisition_dates = await asyncio.to_thread(discover_s1m_tiles, roi)
+        acquisition_dates = acquisition_dates or None
+
+    return ThreeDepCoverageResponse(
+        resolution=resolution,
+        available=len(tile_urls) > 0,
+        tile_count=len(tile_urls),
+        tiles=tile_urls,
+        acquisition_dates=acquisition_dates,
+    )

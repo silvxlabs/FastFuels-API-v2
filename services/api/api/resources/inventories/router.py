@@ -17,6 +17,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.resources.inventories.chm.router import router as chm_router
 from api.resources.inventories.exports.router import router as exports_router
 from api.resources.inventories.modifications.router import (
     router as modifications_router,
@@ -282,6 +283,7 @@ async def delete_inventory(
 
 
 router.include_router(pim_router, prefix="/pim", tags=["Inventories - PIM"])
+router.include_router(chm_router, prefix="/chm", tags=["Inventories - CHM"])
 router.include_router(
     modifications_router,
     prefix="/{inventory_id}/modifications",

@@ -33,6 +33,12 @@ def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:
     return dd.read_parquet(path)
 
 
+def load_chm_grid(grid_id: str) -> xr.Dataset:
+    """Load a CHM grid's Zarr data from GCS."""
+    path = f"gs://{GRIDS_BUCKET}/{grid_id}"
+    return load_zarr(path)
+
+
 def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     """Write a dask DataFrame to GCS as partitioned Parquet.
 

@@ -31,6 +31,27 @@ def test_pim_dispatch(mock_handle_pim):
     assert "georeference" in result
 
 
+@patch("standgen.handlers.chm.handle_chm")
+def test_chm_dispatch(mock_handle_chm):
+    mock_handle_chm.return_value = {"georeference": {}}
+    inventory = {
+        "source": {
+            "name": "chm",
+            "source_chm_grid_id": "test-grid-id",
+            "algorithm": {"name": "lmf", "min_height": 2.0, "footprint_size": 3},
+        }
+    }
+    mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+    progress = MagicMock()
+
+    result = dispatch_handler(inventory, mock_gdf, progress)
+
+    mock_handle_chm.assert_called_once_with(
+        inventory, inventory["source"], mock_gdf, progress
+    )
+    assert "georeference" in result
+
+
 @patch("standgen.handlers.modifications.handle_modifications")
 def test_modifications_dispatch(mock_handle_modifications):
     mock_handle_modifications.return_value = {"georeference": {}}

@@ -1,0 +1,23 @@
+{
+  "domain_id": "placeholder",
+  "name": "Static Test Blackfoot CHM",
+  "description": "Static grid for integration tests",
+  "status": "completed",
+  "source": {
+    "name": "chm",
+    "product": "naip"
+  },
+  "bands": [
+    {
+      "key": "chm",
+      "type": "continuous",
+      "unit": "m",
+      "index": 0
+    }
+  ],
+  "georeference": {
+    "crs": "EPSG:32611",
+    "bounds": [0, 0, 1000, 1000]
+  },
+  "tags": ["test", "static"]
+}

@@ -11,8 +11,8 @@ focuses on happy paths, example verification, and HTTP-specific concerns.
 
 import pytest
 
-from lib.config import GRIDS_COLLECTION
-from tests.fixtures import make_grid_data
+from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
+from tests.fixtures import make_domain_data, make_grid_data
 
 # Fixtures
 
@@ -119,6 +119,62 @@ class TestGetGrid:
 
         data = response.json()
         assert "owner_id" not in data
+
+
+# GET /domains/-/grids/{grid_id} Tests
+
+
+class TestGetGridWildcard:
+    """Test the GET /domains/-/grids/{grid_id} endpoint."""
+
+    def route(self):
+        return "/domains/-/grids"
+
+    def test_get_existing_grid(self, client, grid_in_firestore, domain_for_testing):
+        """Successfully retrieve a grid using the wildcard domain."""
+        grid_id = grid_in_firestore["id"]
+
+        response = client.get(f"{self.route()}/{grid_id}")
+
+        assert response.status_code == 200
+
+    def test_get_grid_returns_canonical_domain_id(
+        self, client, grid_in_firestore, domain_for_testing
+    ):
+        """Response uses the actual domain_id from the document, not '-'."""
+        grid_id = grid_in_firestore["id"]
+
+        response = client.get(f"{self.route()}/{grid_id}")
+
+        assert response.status_code == 200
+        assert response.json()["domain_id"] == domain_for_testing["id"]
+        assert response.json()["domain_id"] != "-"
+
+    def test_get_nonexistent_grid_returns_404(self, client):
+        """Fetching a non-existent grid returns 404."""
+        fake_grid_id = "00000000000000000000000000000000"
+
+        response = client.get(f"{self.route()}/{fake_grid_id}")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_get_other_users_grid_returns_404(self, client, grid_with_different_owner):
+        """Fetching another user's grid via wildcard returns 404."""
+        grid_id = grid_with_different_owner["id"]
+
+        response = client.get(f"{self.route()}/{grid_id}")
+
+        assert response.status_code == 404
+
+    def test_get_grid_excludes_owner_id(self, client, grid_in_firestore):
+        """Response should not expose the owner_id field."""
+        grid_id = grid_in_firestore["id"]
+
+        response = client.get(f"{self.route()}/{grid_id}")
+
+        assert response.status_code == 200
+        assert "owner_id" not in response.json()
 
 
 # GET /domains/{domain_id}/grids (List) Tests
@@ -418,6 +474,77 @@ class TestListGrids:
         for grid in data["grids"]:
             assert grid["source"]["name"] == "landfire"
             assert grid["source"]["product"] == "fbfm40"
+
+
+# GET /domains/-/grids (Wildcard List) Tests
+
+
+class TestListGridsWildcard:
+    """Test GET /domains/-/grids returns grids across all domains."""
+
+    @pytest.fixture(scope="class")
+    def second_domain_for_wildcard(self, firestore_client):
+        """A second domain owned by test-owner for wildcard list tests."""
+        domain_data = make_domain_data(name="Second Domain for Wildcard Tests")
+        doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+            domain_data["id"]
+        )
+        doc_ref.set(domain_data)
+        yield domain_data
+        doc_ref.delete()
+
+    @pytest.fixture(scope="class")
+    def grids_across_domains(
+        self, firestore_client, domain_for_testing, second_domain_for_wildcard
+    ):
+        """Grids spread across two domains, both owned by test-owner."""
+        grids = []
+        for domain_id in [domain_for_testing["id"], second_domain_for_wildcard["id"]]:
+            grid_data = make_grid_data(domain_id=domain_id, name=f"Grid in {domain_id}")
+            doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+                grid_data["id"]
+            )
+            doc_ref.set(grid_data)
+            grids.append(grid_data)
+        yield grids
+        for grid in grids:
+            firestore_client.collection(GRIDS_COLLECTION).document(grid["id"]).delete()
+
+    def route(self):
+        return "/domains/-/grids"
+
+    def test_wildcard_returns_200(self, client):
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+    def test_wildcard_returns_grids_from_all_domains(
+        self, client, grids_across_domains
+    ):
+        """Grids from multiple domains are all returned."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        grid_ids = [g["id"] for g in response.json()["grids"]]
+        for grid in grids_across_domains:
+            assert grid["id"] in grid_ids
+
+    def test_wildcard_excludes_other_users_grids(
+        self, client, grid_with_different_owner
+    ):
+        """Wildcard list does not return grids owned by other users."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        grid_ids = [g["id"] for g in response.json()["grids"]]
+        assert grid_with_different_owner["id"] not in grid_ids
+
+    def test_wildcard_excludes_owner_id(self, client, grids_across_domains):
+        """Wildcard list does not expose owner_id."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        for grid in response.json()["grids"]:
+            assert "owner_id" not in grid
 
 
 # PATCH /domains/{domain_id}/grids/{grid_id} Tests

@@ -108,7 +108,9 @@ async def list_grids(
     domain_id = domain["id"]
 
     # Build equality filters — domain_id is always present from URL
-    filters = {"domain_id": domain_id}
+    filters = {}
+    if domain_id:
+        filters["domain_id"] = domain_id
     if source:
         filters["source.name"] = source
     if product:
@@ -174,7 +176,7 @@ async def get_grid(
     - **404 Not Found**: The grid does not exist or the user does not have access.
     """
     _, snapshot = await get_document_async(
-        COLLECTION, grid_id, owner_id=request.state.id, domain_id=domain["id"]
+        COLLECTION, grid_id, owner_id=request.state.id, domain_id=domain["id"] or None
     )
     return Grid(**snapshot.to_dict())
 
@@ -224,7 +226,7 @@ async def update_grid(
     Returns the updated grid resource.
     """
     _, snapshot = await get_document_async(
-        COLLECTION, grid_id, owner_id=request.state.id, domain_id=domain["id"]
+        COLLECTION, grid_id, owner_id=request.state.id, domain_id=domain["id"] or None
     )
     grid_data = snapshot.to_dict()
 
@@ -278,7 +280,7 @@ async def delete_grid(
     - **404 Not Found**: The grid does not exist or the user does not have access.
     """
     await get_document_async(
-        COLLECTION, grid_id, owner_id=request.state.id, domain_id=domain["id"]
+        COLLECTION, grid_id, owner_id=request.state.id, domain_id=domain["id"] or None
     )
 
     await delete_document_async(

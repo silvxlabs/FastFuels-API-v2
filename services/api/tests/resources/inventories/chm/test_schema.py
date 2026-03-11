@@ -43,6 +43,11 @@ class TestStemIsolationLmf:
         assert data["min_height"] == 3.0
         assert data["footprint_size"] == 5
 
+    def test_even_footprint_size_rejected(self):
+        """Even footprint_size raises ValidationError."""
+        with pytest.raises(ValidationError, match="must be an odd integer"):
+            StemIsolationLmf(footprint_size=4)
+
 
 class TestChmInventorySource:
     """Tests for ChmInventorySource model."""

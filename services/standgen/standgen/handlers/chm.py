@@ -17,7 +17,7 @@ from standgen.columns import BASE_COLUMNS
 from standgen.errors import ProcessingError
 from standgen.handlers.utils import find_treetops_lmf
 from standgen.modifications import apply_modifications
-from standgen.storage import load_chm_grid, save_parquet
+from standgen.storage import load_grid, save_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def handle_chm(
 
     # Load CHM grid data
     progress("Loading CHM grid data...", 10)
-    grid_ds = load_chm_grid(source_chm_grid_id)
+    grid_ds = load_grid(source_chm_grid_id)
 
     if "chm" not in grid_ds.data_vars:
         raise ProcessingError(
@@ -89,8 +89,6 @@ def handle_chm(
     if treetops_gdf.crs != domain_gdf.crs:
         treetops_gdf = treetops_gdf.to_crs(domain_gdf.crs)
 
-    # Spatially clip the point geometries to the domain polygon
-    treetops_gdf = treetops_gdf.clip(domain_gdf)
 
     logger.info(
         f"Extracted {len(treetops_gdf)} trees from CHM",

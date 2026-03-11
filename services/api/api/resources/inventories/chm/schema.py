@@ -6,7 +6,7 @@ Schema models for CHM extraction inventory creation.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
@@ -24,6 +24,13 @@ class StemIsolationLmf(BaseModel):
         default=3,
         description="Diameter of the circular footprint in pixels. Must be an odd integer.",
     )
+
+    @field_validator("footprint_size")
+    @classmethod
+    def validate_footprint_size_is_odd(cls, v: int) -> int:
+        if v % 2 == 0:
+            raise ValueError("The LMF 'footprint_size' parameter must be an odd integer.")
+        return v
 
 
 # Use an Annotated Union so FastAPI can discriminate between algorithms automatically

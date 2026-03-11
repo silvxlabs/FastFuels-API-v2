@@ -43,8 +43,8 @@ def _process_intersecting_tiles(
             raster = RasterConnection(url, connection_type="rioxarray", cache=True)
             data = raster.extract_window(
                 roi=roi,
-                projection_padding_meters=1200,
-                interpolation_padding_cells=240,
+                projection_padding_meters=64,
+                interpolation_padding_cells=4,
             )
 
             # Squeeze band dimension to satisfy strict 2D requirements

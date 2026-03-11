@@ -16,12 +16,6 @@ from lib.config import DOMAINS_COLLECTION
 @lru(force_asyncio=True, expire=300)
 async def _get_domain(domain_id: str, owner_id: str) -> dict:
     """Cached domain lookup. Returns domain data dict."""
-    if domain_id == "-":
-        dummy_dict = {
-            "id": "",
-            "owner_id": owner_id,
-        }
-        return dummy_dict
     _, snapshot = await get_document_async(DOMAINS_COLLECTION, domain_id, owner_id)
     return snapshot.to_dict()
 

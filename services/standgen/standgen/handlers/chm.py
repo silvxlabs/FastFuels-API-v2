@@ -89,7 +89,6 @@ def handle_chm(
     if treetops_gdf.crs != domain_gdf.crs:
         treetops_gdf = treetops_gdf.to_crs(domain_gdf.crs)
 
-
     logger.info(
         f"Extracted {len(treetops_gdf)} trees from CHM",
         extra={"inventory_id": inventory_id},

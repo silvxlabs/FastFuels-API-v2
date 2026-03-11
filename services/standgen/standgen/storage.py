@@ -13,7 +13,7 @@ from lib.zarr_utils import load_zarr
 logger = logging.getLogger(__name__)
 
 
-def load_pim_grid(grid_id: str) -> xr.Dataset:
+def load_grid(grid_id: str) -> xr.Dataset:
     """Load a PIM grid's Zarr data from GCS."""
     path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     return load_zarr(path)
@@ -31,13 +31,6 @@ def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:
     path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
     logger.info(f"Loading inventory parquet from {path}")
     return dd.read_parquet(path)
-
-
-def load_chm_grid(grid_id: str) -> xr.Dataset:
-    """Load a CHM grid's Zarr data from GCS."""
-    path = f"gs://{GRIDS_BUCKET}/{grid_id}"
-    return load_zarr(path)
-
 
 def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     """Write a dask DataFrame to GCS as partitioned Parquet.

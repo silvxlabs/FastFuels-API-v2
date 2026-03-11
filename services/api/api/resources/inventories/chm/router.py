@@ -110,13 +110,6 @@ async def create_chm_inventory(
             ),
         )
 
-    # Basic parameter validation for LMF
-    if body.algorithm.name == "lmf" and body.algorithm.footprint_size % 2 == 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="The LMF 'footprint_size' parameter must be an odd integer.",
-        )
-
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now()
 

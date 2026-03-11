@@ -29,7 +29,9 @@ class StemIsolationLmf(BaseModel):
     @classmethod
     def validate_footprint_size_is_odd(cls, v: int) -> int:
         if v % 2 == 0:
-            raise ValueError("The LMF 'footprint_size' parameter must be an odd integer.")
+            raise ValueError(
+                "The LMF 'footprint_size' parameter must be an odd integer."
+            )
         return v
 
 

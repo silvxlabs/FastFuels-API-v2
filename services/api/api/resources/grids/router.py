@@ -35,8 +35,105 @@ from api.schema import SortOrder
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 
 router = APIRouter()
+wildcard_router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
+
+
+@wildcard_router.get(
+    "",
+    response_model=ListGridsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List grids across all domains",
+)
+async def list_grids_cross_domain(
+    request: Request,
+    page: int = Query(
+        0,
+        ge=0,
+        description="The page number to retrieve (zero-indexed).",
+    ),
+    size: int = Query(
+        100,
+        ge=1,
+        le=1000,
+        description="The number of grids to retrieve per page.",
+    ),
+    sort_by: GridSortField | None = Query(
+        None,
+        description="The field to sort results by.",
+    ),
+    sort_order: SortOrder | None = Query(
+        None,
+        description="The order to sort results (ascending or descending).",
+    ),
+    source: str | None = Query(
+        None,
+        description="Filter grids by source name (e.g., 'landfire', '3dep').",
+    ),
+    product: str | None = Query(
+        None,
+        description="Filter grids by source product (e.g., 'fbfm40', 'topography'). Requires source filter.",
+    ),
+    tag: str | None = Query(
+        None,
+        description="Filter grids that contain this tag.",
+    ),
+) -> ListGridsResponse:
+    """
+    # List Grids Across All Domains Endpoint
+
+    Retrieves a paginated list of all grids across all domains belonging to the
+    authenticated user.
+
+    ## Query Parameters
+
+    - **page**: (integer, optional) Page number (zero-indexed). Default: 0.
+    - **size**: (integer, optional) Items per page (1-1000). Default: 100.
+    - **sort_by**: (string, optional) Field to sort by: `created_on`, `modified_on`, `name`.
+    - **sort_order**: (string, optional) Sort direction: `ascending`, `descending`.
+    - **source**: (string, optional) Filter grids by source name (e.g., `landfire`, `3dep`).
+    - **product**: (string, optional) Filter grids by source product (e.g., `fbfm40`, `topography`).
+    - **tag**: (string, optional) Filter grids that contain this tag.
+
+    ## Response
+
+    Returns a paginated list of grids with metadata.
+    """
+    owner_id = request.state.id
+
+    filters = {}
+    if source:
+        filters["source.name"] = source
+    if product:
+        filters["source.product"] = product
+
+    array_contains_filters = {}
+    if tag:
+        array_contains_filters["tags"] = tag
+
+    documents, total_count = await list_documents_async(
+        collection=COLLECTION,
+        owner_id=owner_id,
+        page=page,
+        size=size,
+        sort_by=sort_by.value if sort_by else None,
+        sort_order=sort_order.value if sort_order else None,
+        filters=filters if filters else None,
+        array_contains_filters=array_contains_filters
+        if array_contains_filters
+        else None,
+    )
+
+    # Convert Firestore documents to Grid models
+    grids = [Grid(**doc.to_dict()) for doc in documents]
+
+    return ListGridsResponse(
+        grids=grids,
+        current_page=page,
+        page_size=size,
+        total_items=total_count,
+    )
 
 
 @router.get(

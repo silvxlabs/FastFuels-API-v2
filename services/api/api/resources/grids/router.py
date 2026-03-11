@@ -83,7 +83,7 @@ async def list_grids_cross_domain(
     """
     # List Grids Across All Domains Endpoint
 
-    Retrieves a paginated list of all grids within a domain belonging to the
+    Retrieves a paginated list of all grids across all domains belonging to the
     authenticated user.
 
     ## Query Parameters

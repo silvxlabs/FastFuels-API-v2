@@ -40,7 +40,7 @@ uv run --env-file ..\..\.env python -m api.main
 
 ## Testing
 
-**Note:** Before running tests, ensure `INFRA_ENV=prod` is set in your `env` file.
+**Note:** Before running tests, ensure `INFRA_ENV=prod` is set in your `.env` file.
 ```bash
 uv run python -m pytest tests/ -v
 ```

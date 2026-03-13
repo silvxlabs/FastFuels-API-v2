@@ -33,14 +33,19 @@ Requires `GCP_PROJECT`, `GCP_REGION`, and bucket variables. See `.env.example` i
 ```bash
 gcloud auth application-default login
 ```
+**Windows:** Pass the path to your `.env` file explicitly when **running or testing**
+```bash
+uv run --env-file ..\..\.env python -m api.main
+```
 
 ## Testing
 
+**Note:** Before running tests, ensure `INFRA_ENV=prod` is set in your `env` file.
 ```bash
 uv run python -m pytest tests/ -v
 ```
 
-Integration and router tests require the local API server to be running. See [tests/README.md](tests/README.md) for the full testing guide.
+Integration and router tests require the local API server to be running. See [tests/readme.md](tests/README.md) for the full testing guide.
 
 ## Docker
 

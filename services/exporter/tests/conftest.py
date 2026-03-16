@@ -1,18 +1,6 @@
 """Shared fixtures for all exporter tests."""
 
-import sys
-import tempfile
-
 import pytest
-
-if sys.platform == "win32":
-    _original = tempfile.NamedTemporaryFile
-
-    def _patched(*args, **kwargs):
-        kwargs.setdefault("delete", False)
-        return _original(*args, **kwargs)
-
-    tempfile.NamedTemporaryFile = _patched
 
 
 @pytest.fixture(autouse=True, scope="session")

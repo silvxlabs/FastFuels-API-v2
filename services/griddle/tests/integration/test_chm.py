@@ -30,12 +30,13 @@ def _assert_valid_chm(ds, expected_crs_code):
     assert np.nanmin(values) >= 0
 
     # The Exporter Contract: Verify the Dataset can be successfully written to a GeoTIFF
-    with tempfile.NamedTemporaryFile(suffix=".tif") as tmp:
-        ds.rio.to_raster(tmp.name)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "output.tif")
+        ds.rio.to_raster(path)
 
         # Verify the TIFF was actually created and has bytes
-        assert os.path.exists(tmp.name)
-        assert os.path.getsize(tmp.name) > 0
+        assert os.path.exists(path)
+        assert os.path.getsize(path) > 0
 
 
 def _assert_tile_metadata(grid_id, expected_tile_count):

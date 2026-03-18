@@ -13,13 +13,7 @@ Provides shared fixtures:
 import os
 import threading
 
-import gcsfs
-import pytest
-from api.auth import hash_api_key
-from google.cloud import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
-from httpx import Client
-
+# isort: off
 from lib.config import (
     APPLICATIONS_COLLECTION,
     DOMAINS_COLLECTION,
@@ -31,6 +25,15 @@ from lib.config import (
     INVENTORIES_COLLECTION,
     KEYS_COLLECTION,
 )
+
+# isort: on
+import gcsfs
+import pytest
+from api.auth import hash_api_key
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+from httpx import Client
+
 from tests import fixtures
 from tests.fixtures import make_application_data, make_domain_data
 
@@ -207,6 +210,18 @@ def domain_with_different_owner(firestore_client):
         owner_id="different-owner",
         name="Other User's Domain",
     )
+    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+        domain_data["id"]
+    )
+    doc_ref.set(domain_data)
+    yield domain_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def second_domain(firestore_client, test_owner_id):
+    """An extra domain owned by test-owner, for tests that need multiple domains."""
+    domain_data = make_domain_data(name="Extra Domain for Testing")
     doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
         domain_data["id"]
     )

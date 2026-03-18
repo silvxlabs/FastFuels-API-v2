@@ -9,6 +9,9 @@ from api.resources.exports.router import router as exports_router
 from api.resources.grids.router import router as grids_router
 from api.resources.grids.router import wildcard_router as grids_wildcard_router
 from api.resources.inventories.router import router as inventories_router
+from api.resources.inventories.router import (
+    wildcard_router as inventories_wildcard_router,
+)
 from api.resources.keys.router import router as keys_router
 from lib.config import DEPLOYMENT_ENV
 
@@ -62,6 +65,11 @@ api_router.include_router(
 )
 api_router.include_router(
     grids_router, prefix="/domains/{domain_id}/grids", tags=["Grids"]
+)
+api_router.include_router(
+    inventories_wildcard_router,
+    prefix="/domains/-/inventories",
+    tags=["Inventories"],
 )
 api_router.include_router(
     inventories_router,

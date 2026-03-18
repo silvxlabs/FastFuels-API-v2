@@ -33,10 +33,6 @@ Requires `GCP_PROJECT`, `GCP_REGION`, and bucket variables. See `.env.example` i
 ```bash
 gcloud auth application-default login
 ```
-**Windows:** Pass the path to your `.env` file explicitly when **running or testing**
-```bash
-uv run --env-file ..\..\.env python -m api.main
-```
 
 ## Testing
 

@@ -33,8 +33,107 @@ from api.schema import SortOrder
 from lib.config import INVENTORIES_BUCKET, INVENTORIES_COLLECTION
 
 router = APIRouter()
+wildcard_router = APIRouter()
 
 COLLECTION = INVENTORIES_COLLECTION
+
+
+@wildcard_router.get(
+    "",
+    response_model=ListInventoriesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List inventories across all domains",
+)
+async def list_inventories_cross_domain(
+    request: Request,
+    page: int = Query(
+        0,
+        ge=0,
+        description="The page number to retrieve (zero-indexed).",
+    ),
+    size: int = Query(
+        100,
+        ge=1,
+        le=1000,
+        description="The number of inventories to retrieve per page.",
+    ),
+    sort_by: InventorySortField | None = Query(
+        None,
+        description="The field to sort results by.",
+    ),
+    sort_order: SortOrder | None = Query(
+        None,
+        description="The order to sort results (ascending or descending).",
+    ),
+    type: InventoryType | None = Query(
+        None,
+        description="Filter inventories by entity type (e.g., 'tree').",
+    ),
+    source: str | None = Query(
+        None,
+        description="Filter inventories by source name (e.g., 'pim').",
+    ),
+    tag: str | None = Query(
+        None,
+        description="Filter inventories that contain this tag.",
+    ),
+) -> ListInventoriesResponse:
+    """
+    # List Inventories Endpoint
+
+    Retrieves a paginated list of all inventories across all domains belonging to
+    the authenticated user.
+
+    ## Query Parameters
+
+    - **page**: (integer, optional) Page number (zero-indexed). Default: 0.
+    - **size**: (integer, optional) Items per page (1-1000). Default: 100.
+    - **sort_by**: (string, optional) Field to sort by: `created_on`, `modified_on`, `name`.
+    - **sort_order**: (string, optional) Sort direction: `ascending`, `descending`.
+    - **type**: (string, optional) Filter by entity type (e.g., `tree`).
+    - **source**: (string, optional) Filter by source name (e.g., `pim`).
+    - **tag**: (string, optional) Filter inventories that contain this tag.
+
+    ## Response
+
+    Returns a paginated list of inventories with metadata.
+    """
+    owner_id = request.state.id
+
+    # Build equality filters
+    filters = {}
+    if type:
+        filters["type"] = type.value
+    if source:
+        filters["source.name"] = source
+
+    # Build array-contains filters
+    array_contains_filters = {}
+    if tag:
+        array_contains_filters["tags"] = tag
+
+    # Query Firestore
+    documents, total_count = await list_documents_async(
+        collection=COLLECTION,
+        owner_id=owner_id,
+        page=page,
+        size=size,
+        sort_by=sort_by.value if sort_by else None,
+        sort_order=sort_order.value if sort_order else None,
+        filters=filters if filters else None,
+        array_contains_filters=(
+            array_contains_filters if array_contains_filters else None
+        ),
+    )
+
+    inventories = [Inventory(**doc.to_dict()) for doc in documents]
+
+    return ListInventoriesResponse(
+        inventories=inventories,
+        current_page=page,
+        page_size=size,
+        total_items=total_count,
+    )
 
 
 @router.get(

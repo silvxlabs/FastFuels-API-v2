@@ -45,9 +45,9 @@ def pim_grid_for_inventory(firestore_client, domain_for_testing):
 def pim_grid_in_different_domain(firestore_client, second_domain):
     """A completed PIM grid in a different domain than domain_for_testing.
 
-    Same owner (test-owner) but in second_domain_for_inventory. Used to test
-    cross-domain protection: creating an inventory in domain A should reject
-    a source grid that belongs to domain B.
+    Same owner (test-owner) but in second_domain. Used to test cross-domain
+    protection: creating an inventory in domain A should reject a source grid
+    that belongs to domain B.
     """
     grid_data = make_grid_data(
         domain_id=second_domain["id"],

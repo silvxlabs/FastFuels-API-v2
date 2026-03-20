@@ -101,11 +101,11 @@ class Domain(CreateDomainRequestBody):
     """
 
     id: str = Field(None, description="A unique identifier for the domain.")
-    created_on: datetime = Field(
-        ..., description="The date and time the domain was created."
+    created_on: datetime | None = Field(
+        None, description="The date and time the domain was created."
     )
-    modified_on: datetime = Field(
-        ..., description="The date and time the domain was last modified."
+    modified_on: datetime | None = Field(
+        None, description="The date and time the domain was last modified."
     )
 
     @model_validator(mode="before")

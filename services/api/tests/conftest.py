@@ -13,13 +13,7 @@ Provides shared fixtures:
 import os
 import threading
 
-import gcsfs
-import pytest
-from api.auth import hash_api_key
-from google.cloud import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
-from httpx import Client
-
+# isort: off
 from lib.config import (
     APPLICATIONS_COLLECTION,
     DOMAINS_COLLECTION,
@@ -31,6 +25,15 @@ from lib.config import (
     INVENTORIES_COLLECTION,
     KEYS_COLLECTION,
 )
+
+# isort: on
+import gcsfs
+import pytest
+from api.auth import hash_api_key
+from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
+from httpx import Client
+
 from tests import fixtures
 from tests.fixtures import make_application_data, make_domain_data
 

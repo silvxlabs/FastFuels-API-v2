@@ -36,11 +36,12 @@ gcloud auth application-default login
 
 ## Testing
 
+**Note:** Before running tests, ensure `INFRA_ENV=prod` is set in your `.env` file.
 ```bash
 uv run python -m pytest tests/ -v
 ```
 
-Integration and router tests require the local API server to be running. See [tests/README.md](tests/README.md) for the full testing guide.
+Integration and router tests require the local API server to be running. See [tests/readme.md](tests/README.md) for the full testing guide.
 
 ## Docker
 

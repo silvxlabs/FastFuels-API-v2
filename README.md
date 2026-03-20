@@ -35,6 +35,12 @@ From any service directory (e.g. `services/api/`):
 # Install dependencies (creates .venv automatically)
 uv sync
 
+# Activate environment (Windows)
+.venv\Scripts\activate
+
+# Activate environment (Mac/Linux)
+source .venv/bin/activate
+
 # Run a command in the service's virtual environment
 uv run python -m api.main
 

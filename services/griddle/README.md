@@ -34,6 +34,7 @@ Requires `GCP_PROJECT`, `GCP_REGION`, `GRIDS_BUCKET`, and `RASTERS_BUCKET`. See 
 ## Testing
 
 ```bash
+uv sync --extra test
 uv run python -m pytest tests/ -v
 ```
 

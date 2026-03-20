@@ -102,8 +102,8 @@ class Inventory(BaseModel):
         default=None,
         description="Progress info when status is 'running'. Null otherwise.",
     )
-    created_on: datetime
-    modified_on: datetime
+    created_on: datetime | None = None
+    modified_on: datetime | None = None
     source: dict
     modifications: list[InventoryModification] = Field(default_factory=list)
     columns: list[Column] = Field(default_factory=list)

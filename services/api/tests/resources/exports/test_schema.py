@@ -105,17 +105,17 @@ class TestExport:
         with pytest.raises(ValidationError):
             Export(**data)
 
-    def test_created_on_required(self):
+    def test_created_on_defaults_to_none(self):
         data = self._make_export()
         del data["created_on"]
-        with pytest.raises(ValidationError):
-            Export(**data)
+        export = Export(**data)
+        assert export.created_on is None
 
-    def test_modified_on_required(self):
+    def test_modified_on_defaults_to_none(self):
         data = self._make_export()
         del data["modified_on"]
-        with pytest.raises(ValidationError):
-            Export(**data)
+        export = Export(**data)
+        assert export.modified_on is None
 
     def test_name_defaults_to_empty(self):
         data = self._make_export()

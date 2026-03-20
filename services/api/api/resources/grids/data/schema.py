@@ -31,7 +31,7 @@ class GridDataChunkMetadata(BaseModel):
 class GridDataResponse(BaseModel):
     shape: list[int]
     order: Literal["C", "F"]
-    data: list
+    data: list[float | int]
 
 
 def compute_chunk_metadata(

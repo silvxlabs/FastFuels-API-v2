@@ -14,16 +14,14 @@ import json
 import pytest
 
 from lib.config import GRIDS_COLLECTION
+from lib.testing import SHARED_TEST_GRIDS_DIR
 from tests.fixtures import make_grid_data
 
 STATIC_NAME = "static-test-blue-mtn-landfire-fbfm40"
-STATIC_GRIDS_DIR = __import__(
-    "lib.testing", fromlist=["SHARED_TEST_GRIDS_DIR"]
-).SHARED_TEST_GRIDS_DIR
 
 
 def _load_static_template(static_name: str) -> dict:
-    path = STATIC_GRIDS_DIR / f"{static_name}.json"
+    path = SHARED_TEST_GRIDS_DIR / f"{static_name}.json"
     with open(path) as f:
         return json.load(f)
 
@@ -254,6 +252,28 @@ class TestGetGridData:
         url, params = data_route(
             domain_for_testing["id"],
             "00000000000000000000000000000000",
+            band="fbfm",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 404
+
+    def test_grid_wrong_owner_returns_404(
+        self, client, domain_for_testing, grid_with_different_owner
+    ):
+        url, params = data_route(
+            domain_for_testing["id"],
+            grid_with_different_owner["id"],
+            band="fbfm",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 404
+
+    def test_grid_wrong_domain_returns_404(
+        self, client, domain_with_different_owner, static_grid_in_firestore
+    ):
+        url, params = data_route(
+            domain_with_different_owner["id"],
+            STATIC_NAME,
             band="fbfm",
         )
         response = client.get(url, params=params)

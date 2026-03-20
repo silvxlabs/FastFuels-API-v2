@@ -17,7 +17,11 @@ from api.resources.grids.data.schema import (
     compute_chunk_metadata,
 )
 from api.resources.grids.data.zarr import get_grid_array
-from api.resources.grids.utils import validate_grid_has_band
+from api.resources.grids.utils import (
+    validate_grid_has_band,
+    validate_grid_has_chunk_shape,
+    validate_grid_has_georeference,
+)
 from lib.config import GRIDS_COLLECTION
 
 router = APIRouter()
@@ -48,16 +52,13 @@ async def get_chunk_metadata(
     )
     grid_data = snapshot.to_dict()
 
-    georeference = grid_data.get("georeference")
-    chunk_shape = grid_data.get("chunk_shape")
-    if not georeference or not chunk_shape:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Grid {grid_id} is missing georeference or chunk_shape.",
-        )
+    validate_grid_has_georeference(grid_data, grid_id)
+    validate_grid_has_chunk_shape(grid_data, grid_id)
 
     try:
-        return compute_chunk_metadata(georeference, chunk_shape, chunk_index)
+        return compute_chunk_metadata(
+            grid_data["georeference"], grid_data["chunk_shape"], chunk_index
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -97,18 +98,14 @@ async def get_grid_data(
     )
     grid_data = snapshot.to_dict()
 
-    georeference = grid_data.get("georeference")
-    chunk_shape = grid_data.get("chunk_shape")
-    if not georeference or not chunk_shape:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Grid {grid_id} is missing georeference or chunk_shape.",
-        )
-
+    validate_grid_has_georeference(grid_data, grid_id)
+    validate_grid_has_chunk_shape(grid_data, grid_id)
     validate_grid_has_band(grid_data, grid_id, band)
 
     try:
-        meta = compute_chunk_metadata(georeference, chunk_shape, chunk)
+        meta = compute_chunk_metadata(
+            grid_data["georeference"], grid_data["chunk_shape"], chunk
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

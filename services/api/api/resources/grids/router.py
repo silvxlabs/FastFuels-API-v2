@@ -18,6 +18,7 @@ from api.db.documents import (
 )
 from api.dependencies import VerifiedDomain
 from api.resources.grids.chm.router import router as chm_router
+from api.resources.grids.data.router import router as data_router
 from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.lookup.router import router as lookup_router
@@ -386,6 +387,7 @@ async def delete_grid(
     background_tasks.add_task(delete_directory_safe, GRIDS_BUCKET, grid_id)
 
 
+router.include_router(data_router, prefix="/{grid_id}", tags=["Grids - Data"])
 router.include_router(
     grid_exports_router, prefix="/{grid_id}/exports", tags=["Grids - Exports"]
 )

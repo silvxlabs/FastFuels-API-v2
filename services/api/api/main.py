@@ -1,3 +1,4 @@
+import lib.config  # noqa: F401  Ensure .env is loaded before GCP client init
 from api.app import app  # noqa: F401
 
 if __name__ == "__main__":

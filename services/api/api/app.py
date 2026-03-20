@@ -43,6 +43,9 @@ app.add_middleware(
     expose_headers=[
         "Content-Disposition",
         "Transfer-Encoding",
+        "X-Data-Shape",
+        "X-Data-Dtype",
+        "X-Data-Order",
     ],
 )
 

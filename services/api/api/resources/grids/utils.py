@@ -52,3 +52,20 @@ def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:
                 f"The grid must be fully processed before it can be resampled."
             ),
         )
+
+
+def validate_grid_has_chunk_shape(grid_data: dict, grid_id: str) -> None:
+    """Validate that a grid has a chunk_shape.
+
+    Args:
+        grid_data: Grid document data from Firestore.
+        grid_id: Grid ID (for error messages).
+
+    Raises:
+        HTTPException(422): If the grid has no chunk_shape.
+    """
+    if not grid_data.get("chunk_shape"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Grid {grid_id} is missing chunk_shape.",
+        )

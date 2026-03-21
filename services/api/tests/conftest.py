@@ -219,6 +219,18 @@ def domain_with_different_owner(firestore_client):
 
 
 @pytest.fixture(scope="session")
+def second_domain(firestore_client, test_owner_id):
+    """An extra domain owned by test-owner, for tests that need multiple domains."""
+    domain_data = make_domain_data(name="Extra Domain for Testing")
+    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+        domain_data["id"]
+    )
+    doc_ref.set(domain_data)
+    yield domain_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
 def application_for_testing(firestore_client, test_owner_id):
     """An application owned by test-owner, available for any test that needs one."""
     app_data = make_application_data(name="Shared Test Application")

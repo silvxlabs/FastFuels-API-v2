@@ -42,27 +42,15 @@ def pim_grid_for_inventory(firestore_client, domain_for_testing):
 
 
 @pytest.fixture(scope="session")
-def second_domain_for_inventory(firestore_client):
-    """A second domain owned by test-owner, used for cross-domain tests."""
-    domain_data = make_domain_data(name="Second Domain for Inventory Tests")
-    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
-        domain_data["id"]
-    )
-    doc_ref.set(domain_data)
-    yield domain_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def pim_grid_in_different_domain(firestore_client, second_domain_for_inventory):
+def pim_grid_in_different_domain(firestore_client, second_domain):
     """A completed PIM grid in a different domain than domain_for_testing.
 
-    Same owner (test-owner) but in second_domain_for_inventory. Used to test
-    cross-domain protection: creating an inventory in domain A should reject
-    a source grid that belongs to domain B.
+    Same owner (test-owner) but in second_domain. Used to test cross-domain
+    protection: creating an inventory in domain A should reject a source grid
+    that belongs to domain B.
     """
     grid_data = make_grid_data(
-        domain_id=second_domain_for_inventory["id"],
+        domain_id=second_domain["id"],
         name="PIM grid in second domain",
         status="completed",
         source={
@@ -454,6 +442,70 @@ class TestGetInventory:
         response = client.get(f"{self.route(domain_for_testing['id'])}/{inv_id}")
         assert response.status_code == 200
         assert "owner_id" not in response.json()
+
+
+# GET /domains/-/inventories (Wildcard List) Tests
+
+
+class TestListInventoriesWildcard:
+    """Test GET /domains/-/inventories returns inventories across all domains."""
+
+    @pytest.fixture(scope="class")
+    def inventories_across_domains(
+        self, firestore_client, domain_for_testing, second_domain
+    ):
+        """Inventories spread across two domains, both owned by test-owner."""
+        inventories = []
+        for domain_id in [domain_for_testing["id"], second_domain["id"]]:
+            inv_data = make_inventory_data(
+                domain_id=domain_id, name=f"Inventory in {domain_id}"
+            )
+            doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+                inv_data["id"]
+            )
+            doc_ref.set(inv_data)
+            inventories.append(inv_data)
+        yield inventories
+        for inv in inventories:
+            firestore_client.collection(INVENTORIES_COLLECTION).document(
+                inv["id"]
+            ).delete()
+
+    def route(self):
+        return "/domains/-/inventories"
+
+    def test_wildcard_returns_200(self, client):
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+    def test_wildcard_returns_inventories_from_all_domains(
+        self, client, inventories_across_domains
+    ):
+        """Inventories from multiple domains are all returned."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        inv_ids = [i["id"] for i in response.json()["inventories"]]
+        for inv in inventories_across_domains:
+            assert inv["id"] in inv_ids
+
+    def test_wildcard_excludes_other_users_inventories(
+        self, client, inventory_with_different_owner
+    ):
+        """Wildcard list does not return inventories owned by other users."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        inv_ids = [i["id"] for i in response.json()["inventories"]]
+        assert inventory_with_different_owner["id"] not in inv_ids
+
+    def test_wildcard_excludes_owner_id(self, client, inventories_across_domains):
+        """Wildcard list does not expose owner_id."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        for inv in response.json()["inventories"]:
+            assert "owner_id" not in inv
 
 
 # GET /domains/{domain_id}/inventories (List) Tests

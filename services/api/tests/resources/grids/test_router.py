@@ -11,8 +11,8 @@ focuses on happy paths, example verification, and HTTP-specific concerns.
 
 import pytest
 
-from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
-from tests.fixtures import make_domain_data, make_grid_data
+from lib.config import GRIDS_COLLECTION
+from tests.fixtures import make_grid_data
 
 # Fixtures
 
@@ -128,23 +128,10 @@ class TestListGridsWildcard:
     """Test GET /domains/-/grids returns grids across all domains."""
 
     @pytest.fixture(scope="class")
-    def second_domain_for_wildcard(self, firestore_client):
-        """A second domain owned by test-owner for wildcard list tests."""
-        domain_data = make_domain_data(name="Second Domain for Wildcard Tests")
-        doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
-            domain_data["id"]
-        )
-        doc_ref.set(domain_data)
-        yield domain_data
-        doc_ref.delete()
-
-    @pytest.fixture(scope="class")
-    def grids_across_domains(
-        self, firestore_client, domain_for_testing, second_domain_for_wildcard
-    ):
+    def grids_across_domains(self, firestore_client, domain_for_testing, second_domain):
         """Grids spread across two domains, both owned by test-owner."""
         grids = []
-        for domain_id in [domain_for_testing["id"], second_domain_for_wildcard["id"]]:
+        for domain_id in [domain_for_testing["id"], second_domain["id"]]:
             grid_data = make_grid_data(domain_id=domain_id, name=f"Grid in {domain_id}")
             doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
                 grid_data["id"]

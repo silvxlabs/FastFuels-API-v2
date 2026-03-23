@@ -1,9 +1,9 @@
 """
-Integration tests for api/v2/resources/grids/data/router.py
+Integration tests for grid data streaming endpoints.
 
 Tests the grid data streaming endpoints:
   GET /domains/{domain_id}/grids/{grid_id}/chunks/{chunk_index}
-  GET /domains/{domain_id}/grids/{grid_id}/data?band=...
+  GET /domains/{domain_id}/grids/{grid_id}/data/{band}/{chunk_index}
 
 These tests use the static-test-blue-mtn-landfire-fbfm40 fixture which has
 real zarr data on GCS.
@@ -79,8 +79,8 @@ def chunk_route(domain_id, grid_id, chunk_index):
     return f"/domains/{domain_id}/grids/{grid_id}/chunks/{chunk_index}"
 
 
-def data_route(domain_id, grid_id, **params):
-    return f"/domains/{domain_id}/grids/{grid_id}/data", params
+def data_route(domain_id, grid_id, band, chunk_index=0, **params):
+    return f"/domains/{domain_id}/grids/{grid_id}/data/{band}/{chunk_index}", params
 
 
 # GET /domains/{domain_id}/grids/{grid_id}/chunks/{chunk_index}
@@ -152,7 +152,7 @@ class TestGetGridDataChunkMetadata:
         assert response.status_code == 404
 
 
-# GET /domains/{domain_id}/grids/{grid_id}/data
+# GET /domains/{domain_id}/grids/{grid_id}/data/{band}/{chunk_index}
 
 
 class TestGetGridData:
@@ -164,7 +164,6 @@ class TestGetGridData:
             domain_for_testing["id"],
             STATIC_NAME,
             band="fbfm",
-            chunk=0,
             format="json",
         )
         response = client.get(url, params=params)
@@ -195,7 +194,7 @@ class TestGetGridData:
         assert response.headers["X-Data-Shape"] == "47,61"
 
     def test_default_params(self, client, domain_for_testing, static_grid_in_firestore):
-        """Defaults: chunk=0, format=json, order=C."""
+        """Defaults: format=json, order=C."""
         url, params = data_route(domain_for_testing["id"], STATIC_NAME, band="fbfm")
         response = client.get(url, params=params)
         assert response.status_code == 200
@@ -204,14 +203,14 @@ class TestGetGridData:
         assert data["order"] == "C"
         assert data["shape"] == [47, 61]
 
-    def test_missing_band_param_returns_422(
+    def test_missing_band_returns_404(
         self, client, domain_for_testing, static_grid_in_firestore
     ):
-        """Band is required."""
+        """Omitting band from the path returns 404 (no matching route)."""
         response = client.get(
             f"/domains/{domain_for_testing['id']}/grids/{STATIC_NAME}/data"
         )
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_invalid_band_returns_422(
         self, client, domain_for_testing, static_grid_in_firestore
@@ -231,8 +230,8 @@ class TestGetGridData:
         url, params = data_route(
             domain_for_testing["id"],
             STATIC_NAME,
+            chunk_index=99,
             band="fbfm",
-            chunk=99,
         )
         response = client.get(url, params=params)
         assert response.status_code == 422

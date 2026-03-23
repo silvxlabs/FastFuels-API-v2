@@ -68,7 +68,7 @@ def create_uniform_grid(
         if isinstance(value, int):
             data = np.full((height, width), value, dtype=np.int32)
         else:
-            data = np.full((height, width), value, dtype=np.float64)
+            data = np.full((height, width), value, dtype=np.float32)
 
         da = xr.DataArray(
             data,

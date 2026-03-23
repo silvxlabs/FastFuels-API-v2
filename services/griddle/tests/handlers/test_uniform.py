@@ -121,7 +121,7 @@ class TestCreateUniformGrid:
 
         result = create_uniform_grid(roi, bands, 10.0, progress)
 
-        assert result["fuel_load.1hr"].dtype == np.float64
+        assert result["fuel_load.1hr"].dtype == np.float32
 
     def test_crs_set_correctly(self, roi):
         """CRS is written to the dataset via rioxarray."""

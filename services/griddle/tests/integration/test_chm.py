@@ -26,7 +26,7 @@ def _assert_valid_chm(ds, expected_crs_code):
     assert ds.rio.width > 10
 
     values = ds["chm"].values
-    assert values.dtype in (np.float32, np.float64)
+    assert values.dtype == np.float32
     assert np.nanmin(values) >= 0
 
     # The Exporter Contract: Verify the Dataset can be successfully written to a GeoTIFF

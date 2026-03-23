@@ -1,17 +1,15 @@
 """
-Unit tests for api/v2/resources/grids/data/schema.py
-
-Tests compute_chunk_metadata() as a pure function and response models.
+Unit tests for grid data schema models and compute_chunk_metadata().
 """
 
 import pytest
-from api.resources.grids.data.schema import (
+from api.resources.grids.schema import (
     GridDataChunkMetadata,
     GridDataFormat,
     GridDataOrder,
     GridDataResponse,
-    compute_chunk_metadata,
 )
+from api.resources.grids.utils import compute_chunk_metadata, compute_chunk_slices
 
 # Helpers
 
@@ -131,6 +129,84 @@ class TestComputeChunkMetadata:
 
         with pytest.raises(ValueError):
             compute_chunk_metadata(georef, chunk_shape, 1)
+
+
+class TestComputeChunkSlices:
+    """Tests for compute_chunk_slices()."""
+
+    def test_origin_chunk(self):
+        """Chunk at offset (0, 0) produces slices starting at 0."""
+        meta = GridDataChunkMetadata(
+            index=0,
+            shape=(512, 512),
+            offset=(0, 0),
+            transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+        )
+        row_slice, col_slice = compute_chunk_slices(meta)
+        assert row_slice == slice(0, 512)
+        assert col_slice == slice(0, 512)
+
+    def test_offset_chunk(self):
+        """Chunk with non-zero offset produces correctly shifted slices."""
+        meta = GridDataChunkMetadata(
+            index=3,
+            shape=(512, 512),
+            offset=(512, 512),
+            transform=(30.0, 0.0, 515360.0, 0.0, -30.0, 5184640.0),
+        )
+        row_slice, col_slice = compute_chunk_slices(meta)
+        assert row_slice == slice(512, 1024)
+        assert col_slice == slice(512, 1024)
+
+    def test_edge_chunk_smaller_shape(self):
+        """Edge chunk with reduced shape produces shorter slices."""
+        meta = GridDataChunkMetadata(
+            index=1,
+            shape=(512, 288),
+            offset=(0, 512),
+            transform=(30.0, 0.0, 515360.0, 0.0, -30.0, 5200000.0),
+        )
+        row_slice, col_slice = compute_chunk_slices(meta)
+        assert row_slice == slice(0, 512)
+        assert col_slice == slice(512, 800)
+
+    def test_corner_edge_chunk(self):
+        """Bottom-right edge chunk with both dimensions smaller."""
+        meta = GridDataChunkMetadata(
+            index=3,
+            shape=(488, 288),
+            offset=(512, 512),
+            transform=(30.0, 0.0, 515360.0, 0.0, -30.0, 5184640.0),
+        )
+        row_slice, col_slice = compute_chunk_slices(meta)
+        assert row_slice == slice(512, 1000)
+        assert col_slice == slice(512, 800)
+
+    def test_single_chunk_grid(self):
+        """Grid that fits entirely in one chunk."""
+        meta = GridDataChunkMetadata(
+            index=0,
+            shape=(47, 61),
+            offset=(0, 0),
+            transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+        )
+        row_slice, col_slice = compute_chunk_slices(meta)
+        assert row_slice == slice(0, 47)
+        assert col_slice == slice(0, 61)
+
+    def test_roundtrip_with_compute_chunk_metadata(self):
+        """Slices from compute_chunk_slices match the metadata from compute_chunk_metadata."""
+        georef = _georef((1000, 800))
+        chunk_shape = [512, 512]
+
+        for chunk_index in range(4):
+            meta = compute_chunk_metadata(georef, chunk_shape, chunk_index)
+            row_slice, col_slice = compute_chunk_slices(meta)
+
+            assert row_slice.start == meta.offset[0]
+            assert col_slice.start == meta.offset[1]
+            assert row_slice.stop - row_slice.start == meta.shape[0]
+            assert col_slice.stop - col_slice.start == meta.shape[1]
 
 
 class TestResponseModels:

@@ -151,4 +151,4 @@ class InventoryDataResponse(BaseModel):
     partition: int
     num_rows: int
     columns: list[str]
-    data: list
+    data: list[list] | list[dict]

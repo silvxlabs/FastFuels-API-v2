@@ -12,6 +12,7 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     HTTPException,
+    Path,
     Query,
     Request,
     Response,
@@ -473,7 +474,7 @@ async def get_inventory_data(
     request: Request,
     domain: VerifiedDomain,
     inventory_id: str,
-    partition_index: int,
+    partition_index: int = Path(..., ge=0, description="Zero-based partition index."),
     data_format: InventoryDataFormat = Query(
         InventoryDataFormat.json, alias="format", description="Response format."
     ),
@@ -536,7 +537,7 @@ async def get_inventory_data(
             ),
         )
 
-    if partition_index < 0 or partition_index >= meta.num_partitions:
+    if partition_index >= meta.num_partitions:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(

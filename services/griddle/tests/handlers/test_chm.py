@@ -84,12 +84,12 @@ class TestFetchMetaChm:
     """Tests for fetch_meta_chm with chm band."""
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_returns_dataset_and_tile_metadata(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_returns_dataset_and_tile_metadata(self, mock_read_parquet, mock_raster_cls):
         """fetch_meta_chm returns a (Dataset, TileMetadata) tuple."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         ds, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
@@ -99,12 +99,12 @@ class TestFetchMetaChm:
         assert len(tile_metadata["tiles"]) == 1
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_has_chm_variable(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_has_chm_variable(self, mock_read_parquet, mock_raster_cls):
         """Dataset contains a 'chm' variable."""
         chm_values = np.array([[10.5, 20.3]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
@@ -112,12 +112,12 @@ class TestFetchMetaChm:
         assert "chm" in ds.data_vars
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_chm_values_preserved(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_chm_values_preserved(self, mock_read_parquet, mock_raster_cls):
         """CHM pixel values are preserved in the output."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
@@ -125,12 +125,12 @@ class TestFetchMetaChm:
         np.testing.assert_array_almost_equal(ds["chm"].values, chm_values)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_crs_preserved(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_crs_preserved(self, mock_read_parquet, mock_raster_cls):
         """CRS is preserved in the output dataset."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values, crs="EPSG:32611")
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
@@ -138,12 +138,12 @@ class TestFetchMetaChm:
         assert ds.rio.crs == CRS.from_epsg(32611)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_dims_are_y_x(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_dims_are_y_x(self, mock_read_parquet, mock_raster_cls):
         """CHM variable has (y, x) dims."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
@@ -151,12 +151,12 @@ class TestFetchMetaChm:
         assert ds["chm"].dims == ("y", "x")
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_s3_url_constructed_from_tile(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_s3_url_constructed_from_tile(self, mock_read_parquet, mock_raster_cls):
         """Correct S3 URL is constructed from the tile name."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         fetch_meta_chm(_make_roi(), "2024", progress)
@@ -166,12 +166,12 @@ class TestFetchMetaChm:
         assert "test_tile_001.tif" in url
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_aws_no_sign_request_scoped(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_aws_no_sign_request_scoped(self, mock_read_parquet, mock_raster_cls):
         """AWS_NO_SIGN_REQUEST is set during S3 access and restored after."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         os.environ.pop("AWS_NO_SIGN_REQUEST", None)
@@ -181,12 +181,12 @@ class TestFetchMetaChm:
         assert "AWS_NO_SIGN_REQUEST" not in os.environ
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_progress_called(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_progress_called(self, mock_read_parquet, mock_raster_cls):
         """Progress callback is invoked during processing."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         fetch_meta_chm(_make_roi(), "2024", progress)
@@ -194,10 +194,10 @@ class TestFetchMetaChm:
         assert progress.call_count >= 2
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_no_intersecting_tiles_raises(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_no_intersecting_tiles_raises(self, mock_read_parquet, mock_raster_cls):
         """Raises ProcessingError(COVERAGE_ERROR) when no tiles intersect the ROI."""
-        mock_read_file.return_value = gpd.GeoDataFrame(
+        mock_read_parquet.return_value = gpd.GeoDataFrame(
             {"tile": pd.Series([], dtype=str)},
             geometry=[],
             crs="EPSG:4326",
@@ -209,14 +209,25 @@ class TestFetchMetaChm:
 
         assert exc_info.value.code == "COVERAGE_ERROR"
 
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_index_fetch_failure_raises(self, mock_read_parquet):
+        """Raises ProcessingError(INDEX_FETCH_FAILED) when the parquet index cannot be loaded."""
+        mock_read_parquet.side_effect = Exception("Network error")
+        progress = MagicMock()
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_meta_chm(_make_roi(), "2024", progress)
+
+        assert exc_info.value.code == "INDEX_FETCH_FAILED"
+
     @patch("griddle.handlers.chm.merge_arrays")
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_multiple_tiles_merged(self, mock_read_file, mock_raster_cls, mock_merge):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_multiple_tiles_merged(self, mock_read_parquet, mock_raster_cls, mock_merge):
         """Multiple intersecting tiles are fetched and merged."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = gpd.GeoDataFrame(
+        mock_read_parquet.return_value = gpd.GeoDataFrame(
             {"tile": ["tile_a", "tile_b"]},
             geometry=[box(-180, -90, 180, 90), box(-180, -90, 180, 90)],
             crs="EPSG:4326",
@@ -234,26 +245,46 @@ class TestFetchMetaChm:
         assert tile_metadata["tile_count"] == 2
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_tile_map_url_uses_version(self, mock_read_file, mock_raster_cls):
-        """Tile mapping URL includes the version string."""
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_parquet_pushdown_bbox_used(self, mock_read_parquet, mock_raster_cls):
+        """Ensures read_parquet is called with the bbox argument for pushdown filtering."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
+        progress = MagicMock()
+        roi = _make_roi()
+
+        fetch_meta_chm(roi, "2024", progress)
+
+        kwargs = mock_read_parquet.call_args[1]
+        assert "bbox" in kwargs
+
+        roi_4326 = roi.to_crs("EPSG:4326")
+        expected_bounds = tuple(roi_4326.total_bounds)
+        assert kwargs["bbox"] == expected_bounds
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_tile_map_url_uses_version(self, mock_read_parquet, mock_raster_cls):
+        """Parquet index URL includes the version string and .parquet extension."""
+        chm_values = np.array([[10.5]], dtype=np.float32)
+        mock_raster_cls.return_value = _make_mock_raster(chm_values)
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         fetch_meta_chm(_make_roi(), "2024", progress)
 
-        url = mock_read_file.call_args[0][0]
+        url = mock_read_parquet.call_args[0][0]
         assert "Meta2024" in url
+        assert url.endswith(".parquet")
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_tile_metadata_native_crs(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_tile_metadata_native_crs(self, mock_read_parquet, mock_raster_cls):
         """Tile metadata includes the native CRS from the mosaic."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values, crs="EPSG:32611")
-        mock_read_file.return_value = _make_tile_mapping()
+        mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
         _, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
@@ -384,21 +415,34 @@ class TestFetchNaipChm:
 
         assert progress.call_count >= 2
 
-    @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm.gpd.read_file")
-    def test_no_intersecting_tiles_raises(self, mock_read_file, mock_raster_cls):
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_no_intersecting_tiles_raises(self, mock_read_parquet):
         """Raises ProcessingError(COVERAGE_ERROR) when no tiles intersect the ROI."""
-        mock_read_file.return_value = gpd.GeoDataFrame(
-            {"tile": pd.Series([], dtype=str)},
+        mock_read_parquet.return_value = gpd.GeoDataFrame(
+            {
+                "chm_url": pd.Series([], dtype=str),
+                "scale_factor": pd.Series([], dtype=float),
+            },
             geometry=[],
             crs="EPSG:4326",
         )
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_meta_chm(_make_roi(), "2024", progress)
+            fetch_naip_chm(_make_roi(), "2020", progress)
 
         assert exc_info.value.code == "COVERAGE_ERROR"
+
+    @patch("griddle.handlers.chm.gpd.read_parquet")
+    def test_index_fetch_failure_raises(self, mock_read_parquet):
+        """Raises ProcessingError(INDEX_FETCH_FAILED) when the parquet index cannot be loaded."""
+        mock_read_parquet.side_effect = Exception("Network error")
+        progress = MagicMock()
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_naip_chm(_make_roi(), "2020", progress)
+
+        assert exc_info.value.code == "INDEX_FETCH_FAILED"
 
     @patch("griddle.handlers.chm.merge_arrays")
     @patch("griddle.handlers.chm.RasterConnection")

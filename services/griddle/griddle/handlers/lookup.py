@@ -140,7 +140,7 @@ def _load_sb40_table() -> dict[str, np.ndarray]:
 
     # Initialize arrays with zeros (size MAX_FBFM40_KEY + 1 for direct indexing)
     arrays = {
-        col: np.zeros(MAX_FBFM40_KEY + 1, dtype=np.float64) for col in QUANTITY_COLUMNS
+        col: np.zeros(MAX_FBFM40_KEY + 1, dtype=np.float32) for col in QUANTITY_COLUMNS
     }
 
     with open(csv_path, newline="") as f:

@@ -1,5 +1,5 @@
 """
-api/v2/resources/grids/data/zarr.py
+api/v2/resources/grids/cache.py
 
 Cached async zarr group/array access for grid data streaming.
 """

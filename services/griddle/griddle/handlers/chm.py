@@ -64,6 +64,9 @@ def _process_intersecting_tiles(
     else:
         chm_da = merge_arrays(tile_arrays)
 
+    # Ensure float32 to avoid unnecessary float64 memory usage
+    chm_da = chm_da.astype("float32")
+
     # Wrap in xr.Dataset with strict variable naming
     ds = xr.Dataset({"chm": chm_da})
     ds = ds.rio.write_crs(chm_da.rio.crs)

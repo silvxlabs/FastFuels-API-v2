@@ -122,3 +122,33 @@ class ListInventoriesResponse(PaginatedResponse):
     """Paginated response for listing inventories."""
 
     inventories: list[Inventory]
+
+
+class InventoryDataFormat(StrEnum):
+    json = "json"
+    csv = "csv"
+
+
+class InventoryJsonOrientation(StrEnum):
+    split = "split"
+    records = "records"
+
+
+class InventoryPartitionInfo(BaseModel):
+    index: int
+    num_rows: int
+
+
+class InventoryDataMetadata(BaseModel):
+    inventory_id: str
+    num_partitions: int
+    total_rows: int
+    columns: list[str]
+    partitions: list[InventoryPartitionInfo]
+
+
+class InventoryDataResponse(BaseModel):
+    partition: int
+    num_rows: int
+    columns: list[str]
+    data: list

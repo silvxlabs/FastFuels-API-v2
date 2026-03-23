@@ -91,9 +91,7 @@ def fetch_meta_chm(
     """Fetch Meta global canopy height model data."""
     progress("Loading Meta CHM parquet index...", 10)
 
-    meta_index_url = (
-        f"gs://{TABLES_BUCKET}/Meta{version}_chm_index.parquet"
-    )
+    meta_index_url = f"gs://{TABLES_BUCKET}/Meta{version}_chm_index.parquet"
     roi_4326 = roi.to_crs("EPSG:4326")
     bounds = tuple(roi_4326.total_bounds)
 

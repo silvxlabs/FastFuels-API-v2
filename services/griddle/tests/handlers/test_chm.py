@@ -85,7 +85,9 @@ class TestFetchMetaChm:
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
-    def test_returns_dataset_and_tile_metadata(self, mock_read_parquet, mock_raster_cls):
+    def test_returns_dataset_and_tile_metadata(
+        self, mock_read_parquet, mock_raster_cls
+    ):
         """fetch_meta_chm returns a (Dataset, TileMetadata) tuple."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
@@ -223,7 +225,9 @@ class TestFetchMetaChm:
     @patch("griddle.handlers.chm.merge_arrays")
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
-    def test_multiple_tiles_merged(self, mock_read_parquet, mock_raster_cls, mock_merge):
+    def test_multiple_tiles_merged(
+        self, mock_read_parquet, mock_raster_cls, mock_merge
+    ):
         """Multiple intersecting tiles are fetched and merged."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)

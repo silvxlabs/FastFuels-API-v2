@@ -49,6 +49,10 @@ app.add_middleware(
         "X-Data-Shape",
         "X-Data-Dtype",
         "X-Data-Order",
+        "X-Partition-Index",
+        "X-Row-Count",
+        "X-Total-Rows",
+        "X-Num-Partitions",
     ],
 )
 

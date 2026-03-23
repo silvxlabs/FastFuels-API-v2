@@ -14,6 +14,11 @@ from api.resources.inventories.pim.schema import (
 from api.resources.inventories.schema import (
     CreateInventoryRequestBase,
     Inventory,
+    InventoryDataFormat,
+    InventoryDataMetadata,
+    InventoryDataResponse,
+    InventoryJsonOrientation,
+    InventoryPartitionInfo,
     InventorySortField,
     InventoryType,
     ListInventoriesResponse,
@@ -271,3 +276,111 @@ class TestCreatePimInventoryRequest:
     def test_seed_range(self):
         request = CreatePimInventoryRequest(source_pim_grid_id="grid123")
         assert 1 <= request.seed <= 1_000_000_000
+
+
+class TestInventoryDataFormat:
+    def test_json_value(self):
+        assert InventoryDataFormat.json == "json"
+
+    def test_csv_value(self):
+        assert InventoryDataFormat.csv == "csv"
+
+    def test_from_string(self):
+        assert InventoryDataFormat("json") == InventoryDataFormat.json
+        assert InventoryDataFormat("csv") == InventoryDataFormat.csv
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            InventoryDataFormat("parquet")
+
+
+class TestInventoryJsonOrientation:
+    def test_split_value(self):
+        assert InventoryJsonOrientation.split == "split"
+
+    def test_records_value(self):
+        assert InventoryJsonOrientation.records == "records"
+
+    def test_from_string(self):
+        assert InventoryJsonOrientation("split") == InventoryJsonOrientation.split
+        assert InventoryJsonOrientation("records") == InventoryJsonOrientation.records
+
+
+class TestInventoryPartitionInfo:
+    def test_basic(self):
+        p = InventoryPartitionInfo(index=0, num_rows=1000)
+        assert p.index == 0
+        assert p.num_rows == 1000
+
+    def test_serialization(self):
+        p = InventoryPartitionInfo(index=2, num_rows=500)
+        d = p.model_dump()
+        assert d == {"index": 2, "num_rows": 500}
+
+
+class TestInventoryDataMetadata:
+    def test_basic(self):
+        meta = InventoryDataMetadata(
+            inventory_id="abc123",
+            num_partitions=2,
+            total_rows=2000,
+            columns=["x", "y", "dbh"],
+            partitions=[
+                InventoryPartitionInfo(index=0, num_rows=1000),
+                InventoryPartitionInfo(index=1, num_rows=1000),
+            ],
+        )
+        assert meta.inventory_id == "abc123"
+        assert meta.num_partitions == 2
+        assert meta.total_rows == 2000
+        assert meta.columns == ["x", "y", "dbh"]
+        assert len(meta.partitions) == 2
+
+    def test_serialization_round_trip(self):
+        meta = InventoryDataMetadata(
+            inventory_id="test",
+            num_partitions=1,
+            total_rows=100,
+            columns=["x"],
+            partitions=[InventoryPartitionInfo(index=0, num_rows=100)],
+        )
+        d = meta.model_dump()
+        restored = InventoryDataMetadata(**d)
+        assert restored == meta
+
+
+class TestInventoryDataResponse:
+    def test_split_format(self):
+        resp = InventoryDataResponse(
+            partition=0,
+            num_rows=2,
+            columns=["x", "y", "dbh"],
+            data=[[1.0, 2.0, 25.3], [3.0, 4.0, 12.1]],
+        )
+        assert resp.partition == 0
+        assert resp.num_rows == 2
+        assert len(resp.data) == 2
+        assert resp.data[0] == [1.0, 2.0, 25.3]
+
+    def test_records_format(self):
+        resp = InventoryDataResponse(
+            partition=0,
+            num_rows=2,
+            columns=["x", "y", "dbh"],
+            data=[
+                {"x": 1.0, "y": 2.0, "dbh": 25.3},
+                {"x": 3.0, "y": 4.0, "dbh": 12.1},
+            ],
+        )
+        assert resp.num_rows == 2
+        assert resp.data[0]["dbh"] == 25.3
+
+    def test_empty_data(self):
+        resp = InventoryDataResponse(
+            partition=0,
+            num_rows=0,
+            columns=["x", "y"],
+            data=[],
+        )
+        assert resp.num_rows == 0
+        assert resp.data == []

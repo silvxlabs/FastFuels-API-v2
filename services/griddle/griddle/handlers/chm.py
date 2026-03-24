@@ -89,15 +89,23 @@ def fetch_meta_chm(
     progress: Callable[[str, int | None], None],
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch Meta global canopy height model data."""
-    progress("Loading Meta CHM tile mapping...", 10)
+    progress("Loading Meta CHM parquet index...", 10)
 
-    tile_map_url = (
-        f"gs://{TABLES_BUCKET}/Meta{version}_chm_map_from_polygon_to_geotiff.geojson"
-    )
-    tile_polygons = gpd.read_file(tile_map_url)
-
+    meta_index_url = f"gs://{TABLES_BUCKET}/Meta{version}_chm_index.parquet"
     roi_4326 = roi.to_crs("EPSG:4326")
-    intersecting = tile_polygons[tile_polygons.intersects(roi_4326.union_all())]
+    bounds = tuple(roi_4326.total_bounds)
+
+    try:
+        # Spatial pushdown filter
+        intersecting = gpd.read_parquet(meta_index_url, bbox=bounds)
+    except Exception as e:
+        raise ProcessingError(
+            code="INDEX_FETCH_FAILED",
+            message="Failed to load Meta CHM parquet index.",
+            traceback=str(e),
+        )
+
+    intersecting = intersecting[intersecting.intersects(roi_4326.union_all())]
 
     if intersecting.empty:
         raise ProcessingError(

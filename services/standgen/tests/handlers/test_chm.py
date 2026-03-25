@@ -134,7 +134,7 @@ class TestFindTreetopsLmf:
 
 class TestHandleChm:
     @patch("standgen.handlers.chm.get_document")
-    @patch("standgen.handlers.chm.load_chm_grid")
+    @patch("standgen.handlers.chm.load_grid")
     @patch("standgen.handlers.chm.save_parquet")
     @patch("standgen.handlers.chm.find_treetops_lmf")
     def test_successful_handler_execution(
@@ -193,7 +193,7 @@ class TestHandleChm:
         assert exc_info.value.code == "SOURCE_GRID_NOT_FOUND"
 
     @patch("standgen.handlers.chm.get_document")
-    @patch("standgen.handlers.chm.load_chm_grid")
+    @patch("standgen.handlers.chm.load_grid")
     def test_missing_chm_band_raises_processing_error(
         self, mock_load, mock_get, mock_inventory, mock_domain_gdf
     ):
@@ -208,7 +208,7 @@ class TestHandleChm:
         assert exc_info.value.code == "MISSING_BAND"
 
     @patch("standgen.handlers.chm.get_document")
-    @patch("standgen.handlers.chm.load_chm_grid")
+    @patch("standgen.handlers.chm.load_grid")
     def test_unsupported_algorithm_raises_processing_error(
         self, mock_load, mock_get, mock_inventory, mock_domain_gdf
     ):
@@ -225,7 +225,7 @@ class TestHandleChm:
         assert exc_info.value.code == "UNSUPPORTED_ALGORITHM"
 
     @patch("standgen.handlers.chm.get_document")
-    @patch("standgen.handlers.chm.load_chm_grid")
+    @patch("standgen.handlers.chm.load_grid")
     @patch("standgen.handlers.chm.find_treetops_lmf")
     def test_algorithm_value_error_mapped_to_processing_error(
         self, mock_find, mock_load, mock_get, mock_inventory, mock_domain_gdf

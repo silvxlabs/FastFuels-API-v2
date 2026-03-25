@@ -30,6 +30,11 @@ CORS_ORIGINS = {
     ],
 }
 
+
+# Regex for Firebase preview channels: https://silvx-fastfuels--<suffix>.web.app
+preview_origin_regex = r"https://silvx-fastfuels--.*\.web\.app"
+
+
 app = FastAPI(
     title="FastFuels API",
     description="A JSON API for creating, editing, and retrieving 3D fuels data for next generation fire behavior models.",
@@ -40,6 +45,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS.get(DEPLOYMENT_ENV, CORS_ORIGINS["local"]),
+    allow_origin_regex=preview_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

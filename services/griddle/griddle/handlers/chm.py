@@ -20,7 +20,7 @@ from lib.raster import RasterConnection
 META_VERSION_CONFIG = {
     "1": {
         "s3_base": "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm",
-        "tile_index": f"gs://{TABLES_BUCKET}/Meta2024_chm_index.parquet",  # after #134
+        "tile_index": f"gs://{TABLES_BUCKET}/Meta2024_chm_index.parquet",
     },
     "2": {
         "s3_base": "s3://dataforgood-fb-data/forests/v2/global/dinov3_global_chm_v2_ml3/chm",

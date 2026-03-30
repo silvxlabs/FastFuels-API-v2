@@ -14,6 +14,7 @@ EXAMPLE_META_CHM_WITH_METADATA = {
     "name": "Meta canopy height",
     "description": "Global canopy height model for forest inventory",
     "tags": ["chm", "meta"],
+    "version": "2",
 }
 
 CREATE_META_CHM_OPENAPI_EXAMPLES = {
@@ -22,7 +23,7 @@ CREATE_META_CHM_OPENAPI_EXAMPLES = {
         "summary": "Minimal request",
         "description": (
             "Creates a grid with default settings. Returns canopy height "
-            "at ~1m resolution."
+            "at ~1.2m resolution."
         ),
     },
     "with_metadata": {

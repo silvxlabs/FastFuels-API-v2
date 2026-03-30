@@ -7,6 +7,7 @@ These tests make real HTTP requests to the API and interact with Firestore.
 
 import pytest
 from api.resources.grids.pim.examples import ALL_TREEMAP_EXAMPLE_VALUES
+from api.resources.grids.pim.schema import TreeMapVersion
 
 
 class TestCreateTreeMap:
@@ -124,3 +125,12 @@ class TestCreateTreeMap:
         data = response.json()
         assert data["source"]["name"] == "pim"
         assert data["source"]["product"] == "treemap"
+
+    @pytest.mark.parametrize("version", [v.value for v in TreeMapVersion])
+    def test_version_can_be_set(self, client, domain_for_testing, version):
+        """Each valid version creates a grid with the correct version set."""
+        response = client.post(
+            self.route(domain_for_testing["id"]), json={"version": version}
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["version"] == version

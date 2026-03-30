@@ -13,6 +13,33 @@ import xarray as xr
 from griddle.errors import ProcessingError
 from griddle.handlers import chm, landfire, lookup, pim, resample, threedep, uniform
 
+META_CHM_ATTRIBUTION = {
+    "1": {
+        "license_name": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "citation": (
+            "High Resolution Canopy Height Maps by WRI and Meta was "
+            "accessed on {accessed_on} from "
+            "https://registry.opendata.aws/dataforgood-fb-forests. "
+            "Meta and World Resources Institute (WRI) - 2024. "
+            "High Resolution Canopy Height Maps (CHM). "
+            "Source imagery for CHM \u00a9 2016 Maxar."
+        ),
+        "access_url": "https://registry.opendata.aws/dataforgood-fb-forests",
+    },
+    "2": {
+        "license_name": "DINOv3",
+        "license_url": "https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md",
+        "citation": (
+            "Brandt et al. CHMv2: Improvements in Global Canopy Height Mapping using DINOv3."
+            "arXiv:2603.06382."
+            "Data accessed on {accessed_on} from "
+            "https://registry.opendata.aws/dataforgood-fb-forests. "
+        ),
+        "access_url": "https://registry.opendata.aws/dataforgood-fb-forests",
+    },
+}
+
 
 def dispatch_handler(
     grid: dict,
@@ -171,7 +198,7 @@ def handle_chm(
 ) -> xr.Dataset:
     """Handle CHM source grids."""
     product = source["product"]
-    version = source.get("version", "2024")
+    version = source.get("version", "2")
 
     progress(f"Fetching CHM {product} v{version}...", 10)
 
@@ -179,20 +206,13 @@ def handle_chm(
         case "meta":
             dataset, tile_metadata = chm.fetch_meta_chm(domain_gdf, version, progress)
             source["tile_metadata"] = tile_metadata
-            source["attribution"] = {
-                "license_name": "CC-BY-4.0",
-                "license_url": "https://creativecommons.org/licenses/by/4.0/",
-                "citation": (
-                    f"High Resolution Canopy Height Maps by WRI and Meta was "
-                    f"accessed on {date.today()} from "
-                    f"https://registry.opendata.aws/dataforgood-fb-forests. "
-                    f"Meta and World Resources Institute (WRI) - 2024. "
-                    f"High Resolution Canopy Height Maps (CHM). "
-                    f"Source imagery for CHM \u00a9 2016 Maxar."
-                ),
-                "access_url": "https://registry.opendata.aws/dataforgood-fb-forests",
-                "accessed_on": date.today().isoformat(),
-            }
+            attribution = META_CHM_ATTRIBUTION[version].copy()
+            attribution["accessed_on"] = date.today().isoformat()
+            attribution["citation"] = attribution["citation"].format(
+                accessed_on=date.today()
+            )
+            source["attribution"] = attribution
+
             return dataset
         case "naip":
             dataset, tile_metadata = chm.fetch_naip_chm(domain_gdf, version, progress)

@@ -57,28 +57,28 @@ class TestMetaChmSource:
 
     def test_product_is_always_meta(self):
         """The product field is always 'meta'."""
-        source = MetaChmSource()
+        source = MetaChmSource(version="2")
         assert source.product == "meta"
 
     def test_product_cannot_be_overridden(self):
         """The product field cannot be set to anything other than 'meta'."""
         with pytest.raises(ValidationError):
-            MetaChmSource(product="other")
+            MetaChmSource(product="other", version="2")
 
     def test_name_is_always_chm(self):
         """The name field is always 'chm'."""
-        source = MetaChmSource()
+        source = MetaChmSource(version="2")
         assert source.name == "chm"
 
     def test_description_is_fixed(self):
         """The description has a fixed value."""
-        source = MetaChmSource()
+        source = MetaChmSource(version="2")
         assert "Meta" in source.description
         assert "canopy height" in source.description
 
     def test_model_dump(self):
         """Model serializes correctly."""
-        source = MetaChmSource()
+        source = MetaChmSource(version="2")
         data = source.model_dump()
         assert data["name"] == "chm"
         assert data["product"] == "meta"
@@ -86,7 +86,7 @@ class TestMetaChmSource:
 
     def test_attribution_defaults_to_none(self):
         """Attribution is None by default."""
-        source = MetaChmSource(version="2024")
+        source = MetaChmSource(version="2")
         assert source.attribution is None
 
     def test_attribution_accepted(self):
@@ -98,7 +98,7 @@ class TestMetaChmSource:
             access_url="https://example.com",
             accessed_on="2026-02-27",
         )
-        source = MetaChmSource(version="2024", attribution=attr)
+        source = MetaChmSource(version="2", attribution=attr)
         assert source.attribution.license_name == "CC-BY-4.0"
 
     def test_attribution_serialized_in_model_dump(self):
@@ -110,7 +110,7 @@ class TestMetaChmSource:
             access_url="https://example.com",
             accessed_on="2026-02-27",
         )
-        source = MetaChmSource(version="2024", attribution=attr)
+        source = MetaChmSource(version="2", attribution=attr)
         data = source.model_dump()
         assert data["attribution"]["license_name"] == "CC-BY-4.0"
         assert data["attribution"]["accessed_on"] == "2026-02-27"
@@ -126,6 +126,7 @@ class TestCreateMetaChmRequest:
         assert request.description == ""
         assert request.tags == []
         assert request.modifications == []
+        assert request.version == "2"
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""
@@ -133,10 +134,17 @@ class TestCreateMetaChmRequest:
             name="Test Grid",
             description="A test grid",
             tags=["test", "chm"],
+            version="2",
         )
         assert request.name == "Test Grid"
         assert request.description == "A test grid"
         assert request.tags == ["test", "chm"]
+        assert request.version == "2"
+
+    def test_version_can_be_set_to_v1(self):
+        """Version can be explicitly set to v1."""
+        request = CreateMetaChmRequest(version="1")
+        assert request.version == "1"
 
 
 class TestAttribution:

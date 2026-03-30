@@ -17,7 +17,16 @@ from griddle.handlers.tiles import TileMetadata
 from lib.config import TABLES_BUCKET
 from lib.raster import RasterConnection
 
-S3_BASE = "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm"
+META_VERSION_CONFIG = {
+    "1": {
+        "s3_base": "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm",
+        "tile_index": f"gs://{TABLES_BUCKET}/Meta2024_chm_index.parquet",  # after #134
+    },
+    "2": {
+        "s3_base": "s3://dataforgood-fb-data/forests/v2/global/dinov3_global_chm_v2_ml3/chm",
+        "tile_index": f"gs://{TABLES_BUCKET}/Meta_chmv2_index.parquet",
+    },
+}
 NAIP_INDEX_URL = f"gs://{TABLES_BUCKET}/naip_chm_index.parquet"
 
 
@@ -91,7 +100,8 @@ def fetch_meta_chm(
     """Fetch Meta global canopy height model data."""
     progress("Loading Meta CHM parquet index...", 10)
 
-    meta_index_url = f"gs://{TABLES_BUCKET}/Meta{version}_chm_index.parquet"
+    s3_base = META_VERSION_CONFIG[version]["s3_base"]
+    meta_index_url = META_VERSION_CONFIG[version]["tile_index"]
     roi_4326 = roi.to_crs("EPSG:4326")
     bounds = tuple(roi_4326.total_bounds)
 
@@ -115,7 +125,7 @@ def fetch_meta_chm(
         )
 
     # Extract exactly what the helper needs into explicit Python lists
-    fetch_urls = [f"{S3_BASE}/{tile}.tif" for tile in intersecting["tile"]]
+    fetch_urls = [f"{s3_base}/{tile}.tif" for tile in intersecting["tile"]]
     scale_factors = [1.0] * len(fetch_urls)
 
     return _process_intersecting_tiles(

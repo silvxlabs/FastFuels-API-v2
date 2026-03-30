@@ -51,14 +51,14 @@ async def create_meta_chm(
     # Create Meta CHM Grid
 
     Creates a grid with canopy height data from Meta's global canopy height
-    model at ~1m resolution.
+    model at ~1.2m resolution.
 
     ## Request Body
 
-    - **version**: (optional) Data version. Default: "2024".
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
+    - **version**: (optional) Meta CHM version. Default: "2".
 
     ## Response
 
@@ -70,7 +70,7 @@ async def create_meta_chm(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = MetaChmSource()
+    source = MetaChmSource(version=body.version)
     bands = build_chm_bands()
 
     grid_data = {

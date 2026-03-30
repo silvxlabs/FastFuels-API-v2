@@ -43,13 +43,13 @@ class Attribution(BaseModel):
 class MetaChmSource(ChmSource):
     """Source for Meta global canopy height data.
 
-    Returns a continuous canopy height raster at ~1.2m resolution. Each pixel
+    Returns a continuous canopy height raster at ~1m resolution. Each pixel
     contains the estimated canopy height in meters.
     """
 
     product: Literal["meta"] = "meta"
-    description: Literal["Meta global canopy height model at ~1.2m resolution"] = (
-        "Meta global canopy height model at ~1.2m resolution"
+    description: Literal["Meta global canopy height model at ~1m resolution"] = (
+        "Meta global canopy height model at ~1m resolution"
     )
     version: MetaCHMVersion
 

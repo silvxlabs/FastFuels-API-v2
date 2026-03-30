@@ -23,7 +23,7 @@ CREATE_META_CHM_OPENAPI_EXAMPLES = {
         "summary": "Minimal request",
         "description": (
             "Creates a grid with default settings. Returns canopy height "
-            "at ~1.2m resolution."
+            "at ~1m resolution."
         ),
     },
     "with_metadata": {

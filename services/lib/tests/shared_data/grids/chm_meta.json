@@ -7,7 +7,7 @@
     "name": "chm",
     "product": "meta",
     "version": "2",
-    "description": "Meta global canopy height model at ~1.2m resolution"
+    "description": "Meta global canopy height model at ~1m resolution"
   },
   "modifications": [],
   "bands": [

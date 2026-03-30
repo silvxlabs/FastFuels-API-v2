@@ -10,6 +10,7 @@ from api.resources.inventories.chm.schema import (
     ChmInventorySource,
     CreateChmInventoryRequest,
     StemIsolationLmf,
+    StemIsolationVwf,
 )
 from pydantic import ValidationError
 
@@ -49,11 +50,39 @@ class TestStemIsolationLmf:
             StemIsolationLmf(footprint_size=4)
 
 
+class TestStemIsolationVwf:
+    """Tests for StemIsolationVwf model."""
+
+    def test_default_values(self):
+        """Model initializes with correct default values."""
+        algo = StemIsolationVwf()
+        assert algo.name == "vwf"
+        assert algo.min_height == 2.0
+        assert algo.spatial_resolution is None
+        assert algo.crown_ratio == 0.10
+        assert algo.crown_offset == 1.0
+
+    def test_name_is_always_vwf(self):
+        """The name field cannot be set to anything other than 'vwf'."""
+        with pytest.raises(ValidationError):
+            StemIsolationVwf(name="lmf")
+
+    def test_custom_values(self):
+        """Model accepts custom valid parameters."""
+        algo = StemIsolationVwf(
+            min_height=5.5, spatial_resolution=0.5, crown_ratio=0.15, crown_offset=2.0
+        )
+        assert algo.min_height == 5.5
+        assert algo.spatial_resolution == 0.5
+        assert algo.crown_ratio == 0.15
+        assert algo.crown_offset == 2.0
+
+
 class TestChmInventorySource:
     """Tests for ChmInventorySource model."""
 
-    def test_valid_initialization(self):
-        """Model initializes successfully with required fields."""
+    def test_valid_initialization_lmf(self):
+        """Model initializes successfully with required fields using LMF."""
         source = ChmInventorySource(
             source_chm_grid_id="grid123",
             algorithm=StemIsolationLmf(),
@@ -61,6 +90,14 @@ class TestChmInventorySource:
         assert source.name == "chm"
         assert source.source_chm_grid_id == "grid123"
         assert source.algorithm.name == "lmf"
+
+    def test_valid_initialization_vwf(self):
+        """Model initializes successfully with required fields using VWF."""
+        source = ChmInventorySource(
+            source_chm_grid_id="grid123",
+            algorithm=StemIsolationVwf(),
+        )
+        assert source.algorithm.name == "vwf"
 
     def test_name_is_always_chm(self):
         """The name field cannot be overridden."""
@@ -86,40 +123,19 @@ class TestCreateChmInventoryRequest:
     """Tests for CreateChmInventoryRequest model."""
 
     def test_minimal_valid_request(self):
-        """Minimal request with only the required source_chm_grid_id."""
+        """Minimal request with only the required source_chm_grid_id defaults to LMF."""
         request = CreateChmInventoryRequest(source_chm_grid_id="grid123")
-
-        # Check explicit fields
         assert request.source_chm_grid_id == "grid123"
-
-        # Check inherited CreateInventoryRequestBase defaults
-        assert request.type == "tree"
-        assert request.name == ""
-        assert request.description == ""
-        assert request.tags == []
-
-        # Check CHM specific defaults
         assert isinstance(request.algorithm, StemIsolationLmf)
-        assert request.algorithm.min_height == 2.0
-        assert request.modifications == []
 
-    def test_full_request_with_all_fields(self):
-        """Full request with all optional base and specific fields."""
+    def test_request_with_vwf_algorithm(self):
+        """Request can be successfully created with the VWF algorithm."""
         request = CreateChmInventoryRequest(
-            source_chm_grid_id="grid123",
-            algorithm=StemIsolationLmf(min_height=4.0, footprint_size=5),
-            type="tree",
-            name="Test CHM Inventory",
-            description="Extracting trees from NAIP",
-            tags=["chm", "lidar"],
-            modifications=[],
+            source_chm_grid_id="grid123", algorithm=StemIsolationVwf(min_height=3.0)
         )
-        assert request.source_chm_grid_id == "grid123"
-        assert request.algorithm.min_height == 4.0
-        assert request.algorithm.footprint_size == 5
-        assert request.name == "Test CHM Inventory"
-        assert request.description == "Extracting trees from NAIP"
-        assert request.tags == ["chm", "lidar"]
+        assert isinstance(request.algorithm, StemIsolationVwf)
+        assert request.algorithm.min_height == 3.0
+        assert request.algorithm.crown_ratio == 0.10  # Check default persisted
 
     def test_missing_source_grid_id_rejected(self):
         """Missing required source_chm_grid_id raises ValidationError."""

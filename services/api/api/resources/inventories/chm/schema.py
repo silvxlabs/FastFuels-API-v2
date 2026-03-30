@@ -35,9 +35,32 @@ class StemIsolationLmf(BaseModel):
         return v
 
 
-# Use an Annotated Union so FastAPI can discriminate between algorithms automatically
-# if/when we add more (e.g., watershed) in the future.
-StemIsolationAlgorithm = Annotated[StemIsolationLmf, Field(discriminator="name")]
+class StemIsolationVwf(BaseModel):
+    """Parameters for Variable Window Filter (VWF) stem isolation."""
+
+    name: Literal["vwf"] = "vwf"
+    min_height: float = Field(
+        default=2.0,
+        description="Minimum height threshold (in CHM units) for a treetop.",
+    )
+    spatial_resolution: float | None = Field(
+        default=None,
+        description="Spatial resolution of the CHM. If omitted, it will be automatically inferred from the source grid metadata.",
+    )
+    crown_ratio: float = Field(
+        default=0.10,
+        description="Multiplier used to dynamically scale the search window based on pixel height.",
+    )
+    crown_offset: float = Field(
+        default=1.0,
+        description="Constant offset (in meters) added to the dynamic search window.",
+    )
+
+
+# FastAPI will automatically route validation to the correct model based on the "name" field.
+StemIsolationAlgorithm = Annotated[
+    StemIsolationLmf | StemIsolationVwf, Field(discriminator="name")
+]
 
 
 class ChmInventorySource(BaseModel):

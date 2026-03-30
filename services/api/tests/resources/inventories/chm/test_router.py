@@ -294,4 +294,50 @@ class TestCreateChmInventory:
             },
         )
         assert response.status_code == 422
-        assert "must be an odd integer" in response.json()["detail"].lower()
+        assert "must be an odd integer" in str(response.json()["detail"]).lower()
+
+    def test_request_creates_inventory_with_vwf_algorithm(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        """Request with VWF algorithm payload correctly parses and stores parameters."""
+        request_body = {
+            "source_chm_grid_id": chm_grid_for_inventory["id"],
+            "algorithm": {
+                "name": "vwf",
+                "min_height": 5.0,
+                "crown_ratio": 0.15,
+            },
+        }
+
+        response = client.post(self.route(domain_for_testing["id"]), json=request_body)
+        assert response.status_code == 201
+
+        data = response.json()
+        assert data["source"]["algorithm"]["name"] == "vwf"
+        assert data["source"]["algorithm"]["min_height"] == 5.0
+        assert data["source"]["algorithm"]["crown_ratio"] == 0.15
+        assert (
+            data["source"]["algorithm"]["crown_offset"] == 1.0
+        )  # Proves default was set
+
+    def test_invalid_algorithm_name_returns_422(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        """Using an unsupported algorithm name triggers Pydantic discriminator 422 error."""
+        request_body = {
+            "source_chm_grid_id": chm_grid_for_inventory["id"],
+            "algorithm": {
+                "name": "watershed",  # Does not exist in the Annotated Union
+                "min_height": 2.0,
+            },
+        }
+
+        response = client.post(self.route(domain_for_testing["id"]), json=request_body)
+        assert response.status_code == 422
+
+        # FastAPI/Pydantic returns a validation error detailing the discriminator failure
+        detail = response.json()["detail"]
+        assert any(
+            "discriminator" in str(error).lower() or "tag" in str(error).lower()
+            for error in detail
+        )

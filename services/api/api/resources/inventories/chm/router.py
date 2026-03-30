@@ -52,15 +52,14 @@ async def create_chm_inventory(
     Extracts individual tree records from a Canopy Height Model (CHM) grid
     using a specified stem isolation algorithm.
 
-    Currently supports Local Maximum Filtering (LMF), which sweeps a circular
-    window across the CHM to identify treetops based on a minimum height
-    threshold and footprint size.
+    Currently supports two algorithms:
+    1. **Local Maximum Filtering (LMF)**: Sweeps a fixed circular window across the CHM.
+    2. **Variable Window Filtering (VWF)**: Sweeps a dynamic window that scales in size based on the height of the canopy, allowing for better detection of mixed stand structures.
 
     ## Request Body
 
     - **source_chm_grid_id**: (required) ID of a completed CHM grid.
-    - **algorithm**: (optional) Configuration for the stem isolation algorithm.
-      Defaults to LMF with a 2m height threshold and 3px footprint.
+    - **algorithm**: (optional) Configuration for the stem isolation algorithm. Must specify `"name": "lmf"` or `"name": "vwf"`. Defaults to LMF.
     - **type**: (optional) Entity type. Default: ``"tree"``.
     - **name**: (optional) Name for the inventory.
     - **description**: (optional) Description.
@@ -139,9 +138,7 @@ async def create_chm_inventory(
 
     await set_document_async(COLLECTION, inventory_id, inventory_data)
 
-    # # Enqueue task to Standgen for processing
+    # Enqueue task to Standgen for processing
     await create_http_task_async(STANDGEN_QUEUE, STANDGEN_SERVICE, inventory_id)
-
-    return Inventory(**inventory_data)
 
     return Inventory(**inventory_data)

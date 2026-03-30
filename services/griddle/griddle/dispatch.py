@@ -31,8 +31,8 @@ META_CHM_ATTRIBUTION = {
         "license_name": "DINOv3",
         "license_url": "https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md",
         "citation": (
-            "Brandt et al. CHMv2: Improvements in Global Canopy Height Mapping using DINOv3."
-            "arXiv:2603.06382."
+            "Brandt et al. CHMv2: Improvements in Global Canopy Height Mapping using DINOv3. "
+            "arXiv:2603.06382. "
             "Data accessed on {accessed_on} from "
             "https://registry.opendata.aws/dataforgood-fb-forests. "
         ),

@@ -51,7 +51,7 @@ async def create_meta_chm(
     # Create Meta CHM Grid
 
     Creates a grid with canopy height data from Meta's global canopy height
-    model at ~1.2m resolution.
+    model at ~1m resolution.
 
     ## Request Body
 

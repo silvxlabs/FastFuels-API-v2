@@ -8,6 +8,7 @@ to Canopy Height Model grids.
 import logging
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 
 # --- FASTFUELS CORE IMPORTS ---
@@ -140,13 +141,18 @@ def handle_chm(
 
     progress("Formatting inventory attributes...", 70)
 
-    # Lazily assign standard inventory columns without forcing data into memory
+    # Lazily assign standard inventory columns with strict Arrow-compatible types
     ddf = ddf.assign(
-        dbh=None,
+        dbh=np.nan,
         fia_species_code=None,
         fia_status_code=None,
-        crown_ratio=None,
-    )
+        crown_ratio=np.nan,
+    ).astype({
+        "dbh": "float32",
+        "fia_species_code": "string",
+        "fia_status_code": "string",
+        "crown_ratio": "float32"
+    })
 
     # Enforce column schema
     ddf = ddf[[col for col in BASE_COLUMNS if col in ddf.columns]]

@@ -59,6 +59,8 @@ async def create_meta_chm(
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
     - **version**: (optional) Meta CHM version. Default: "2".
+        - **1**: Tolan, J. et al. (2024). Very high resolution canopy height maps from RGB imagery.
+        - **2**: Brandt, J. et al. (2026). CHMv2: Improvements in Global Canopy Height Mapping using DINOv3.
 
     ## Response
 

@@ -5,8 +5,8 @@ Tests the full standgen pipeline: Firestore setup -> process_inventory_request -
 verify GCS parquet output + Firestore georeference. Uses the Blue Mountain
 domain (~1 sq km in Montana) with a static CHM grid.
 
-These tests hit real CHM grids in GCS, run the LMF algorithm, and write
-real parquet to GCS/Firestore.
+These tests hit real CHM grids in GCS, run the stem isolation algorithms (LMF/VWF),
+and write real parquet to GCS/Firestore.
 
 Most tests share a single pipeline run via module-scoped fixtures to avoid
 redundant processing. Additional tests verify algorithm parameter variation.
@@ -15,8 +15,11 @@ redundant processing. Additional tests verify algorithm parameter variation.
 from uuid import uuid4
 
 import dask.dataframe as dd
+import geopandas as gpd
 import pytest
+from shapely.geometry import box
 from standgen.columns import BASE_COLUMNS
+from standgen.storage import load_grid
 
 from lib.config import (
     DEPLOYMENT_ENV,
@@ -29,6 +32,7 @@ from lib.gcs.blobs import delete_directory, exists
 
 from ..conftest import (
     DOMAINS_DIR,
+    GRIDS_COLLECTION,
     INVENTORIES_DIR,
     _poll_for_completion,
     _run_standgen,
@@ -96,7 +100,7 @@ def shared_chm_df(shared_chm_inventory):
     return dd.read_parquet(path).compute()
 
 
-# --- Tests using the shared pipeline run ---
+# --- Tests using the shared pipeline run (Base Data Contracts) ---
 
 
 def test_pipeline_completes(shared_chm_inventory):
@@ -129,21 +133,63 @@ def test_parquet_values_reflect_chm_defaults(shared_chm_df):
     assert df["fia_status_code"].isna().all()
 
 
-def test_tree_coordinates_within_domain(shared_chm_inventory, shared_chm_df):
-    """All tree coordinates should be within or near the domain bounds."""
+def test_tree_coordinates_are_valid_utm(shared_chm_df):
+    """
+    Trees are kept in their native grid bounds to preserve raster co-registration.
+    We verify coordinates are valid UTM numbers, rather than strictly
+    clipping them to the domain boundary.
+    """
     df = shared_chm_df
 
     if len(df) == 0:
         pytest.skip("No trees generated; skipping coordinate validation")
 
-    geo = shared_chm_inventory["georeference"]
-    bounds = geo["bounds"]  # [minx, miny, maxx, maxy]
+    # Verify we aren't at Null Island (0,0) and coordinates are standard UTM scale
+    assert df["x"].min() > 100000, "X coordinates do not look like valid UTM Eastings"
+    assert df["y"].min() > 1000000, "Y coordinates do not look like valid UTM Northings"
 
-    buffer = 10.0  # CHM trees should be strictly within the grid bounds
-    assert df["x"].min() >= bounds[0] - buffer
-    assert df["y"].min() >= bounds[1] - buffer
-    assert df["x"].max() <= bounds[2] + buffer
-    assert df["y"].max() <= bounds[3] + buffer
+    # Ensure there are no NaN values in our spatial columns
+    assert not df["x"].isna().any()
+    assert not df["y"].isna().any()
+
+
+def test_tree_coordinates_within_source_grid_bounds(
+    shared_chm_inventory, shared_chm_df, module_chm_grid
+):
+    """
+    While we don't clip to the domain, trees physically cannot exist
+    outside the spatial bounds of the source CHM raster itself.
+    """
+    df = shared_chm_df
+
+    if len(df) == 0:
+        pytest.skip("No trees generated; skipping coordinate validation")
+
+    # Don't trust the mocked Firestore document!
+    # Load the actual grid from GCS to get its true physical bounds.
+    grid_ds = load_grid(module_chm_grid)
+    chm_da = grid_ds["chm"]
+
+    # Get bounds in the raster's native CRS
+    minx, miny, maxx, maxy = chm_da.rio.bounds()
+    source_crs = chm_da.rio.crs
+
+    # The handler outputs trees in the Domain's CRS. We need to match that.
+    target_crs = shared_chm_inventory["georeference"]["crs"]
+
+    if str(source_crs) != str(target_crs):
+        # Safely reproject the bounding box to match the tree coordinates
+        grid_poly = gpd.GeoSeries([box(minx, miny, maxx, maxy)], crs=source_crs)
+        grid_poly = grid_poly.to_crs(target_crs)
+        minx, miny, maxx, maxy = grid_poly.total_bounds
+
+    # Add a tiny buffer to account for floating point edge-math
+    buffer = 1.0
+
+    assert df["x"].min() >= minx - buffer, "Trees found West of true CHM bounds"
+    assert df["y"].min() >= miny - buffer, "Trees found South of true CHM bounds"
+    assert df["x"].max() <= maxx + buffer, "Trees found East of true CHM bounds"
+    assert df["y"].max() <= maxy + buffer, "Trees found North of true CHM bounds"
 
 
 def test_georeference_structure(shared_chm_inventory):
@@ -169,7 +215,7 @@ def test_georeference_bounds_nonzero(shared_chm_inventory):
     assert y_extent > 100, f"Y extent too small: {y_extent}"
 
 
-# --- Tests that need their own pipeline runs ---
+# --- LMF Algorithm Parameter Variation Tests ---
 
 
 def test_deterministic_lmf_extraction(
@@ -217,4 +263,63 @@ def test_higher_min_height_reduces_tree_count(
     assert count_stricter < count_baseline, (
         f"Stricter min_height ({count_stricter} trees) did not reduce count compared "
         f"to baseline ({count_baseline} trees)"
+    )
+
+
+# --- VWF Algorithm Parameter Variation Tests ---
+
+
+def test_vwf_extraction_completes_and_produces_trees(
+    standgen_runner, module_chm_grid
+):
+    """Running VWF end-to-end dynamically scales windows and produces a valid tree inventory."""
+    inventory_vwf = standgen_runner(
+        "blackfoot.json",
+        "chm_vwf.json",
+        source_chm_grid_id=module_chm_grid,
+    )
+
+    # Verify standard completion flags
+    assert inventory_vwf["status"] == "completed"
+    assert inventory_vwf.get("georeference") is not None
+
+    # Verify the dask pipeline actually saved the data to GCS successfully
+    path = f"gs://{INVENTORIES_BUCKET}/{inventory_vwf['id']}"
+    df = dd.read_parquet(path).compute()
+
+    assert len(df) > 0, "VWF algorithm failed to extract any trees from the grid."
+    assert "height" in df.columns
+    assert df["height"].min() >= 2.0
+
+
+def test_higher_crown_ratio_reduces_tree_count(
+    standgen_runner, module_chm_grid
+):
+    """A larger crown_ratio in VWF creates wider search windows, swallowing adjacent peaks and reducing tree count."""
+
+    # 1. Baseline VWF (Standard 10% ratio loaded natively from the new JSON)
+    inv_base = standgen_runner(
+        "blackfoot.json",
+        "chm_vwf.json",
+        source_chm_grid_id=module_chm_grid,
+    )
+    count_base = len(dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{inv_base['id']}"))
+
+    if count_base == 0:
+        pytest.skip("Baseline grid has 0 trees; cannot test reduction")
+
+    # 2. Stricter VWF (Massive 50% ratio override)
+    inv_wide = standgen_runner(
+        "blackfoot.json",
+        "chm_vwf.json",
+        source_chm_grid_id=module_chm_grid,
+        source_overrides={
+            "algorithm": {"name": "vwf", "min_height": 2.0, "crown_ratio": 0.50, "crown_offset": 1.0}
+        }
+    )
+    count_wide = len(dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{inv_wide['id']}"))
+
+    assert count_wide < count_base, (
+        f"A larger crown ratio ({count_wide} trees) did not reduce the total count compared "
+        f"to baseline VWF ({count_base} trees)."
     )

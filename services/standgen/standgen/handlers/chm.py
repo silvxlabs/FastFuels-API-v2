@@ -147,12 +147,14 @@ def handle_chm(
         fia_species_code=None,
         fia_status_code=None,
         crown_ratio=np.nan,
-    ).astype({
-        "dbh": "float32",
-        "fia_species_code": "string",
-        "fia_status_code": "string",
-        "crown_ratio": "float32"
-    })
+    ).astype(
+        {
+            "dbh": "float32",
+            "fia_species_code": "string",
+            "fia_status_code": "string",
+            "crown_ratio": "float32",
+        }
+    )
 
     # Enforce column schema
     ddf = ddf[[col for col in BASE_COLUMNS if col in ddf.columns]]

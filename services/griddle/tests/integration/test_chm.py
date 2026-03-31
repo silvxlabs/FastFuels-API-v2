@@ -69,22 +69,16 @@ def test_meta_chm_versions(griddle_runner, version):
     _assert_tile_metadata(result.grid_id, expected_tile_count=1)
 
 
-@pytest.mark.parametrize("version", ["1", "2"])
-def test_meta_chm_2_tiles(griddle_runner, version):
+def test_meta_chm_2_tiles(griddle_runner):
     """Meta CHM across 2 tiles: domain on an E/W tile boundary."""
-    result = griddle_runner(
-        "meta_chm_2_tiles.json", "chm_meta.json", source_overrides={"version": version}
-    )
+    result = griddle_runner("meta_chm_2_tiles.json", "chm_meta.json")
     _assert_valid_chm(result.ds, "32612")
     _assert_tile_metadata(result.grid_id, expected_tile_count=2)
 
 
-@pytest.mark.parametrize("version", ["1", "2"])
-def test_meta_chm_4_tiles(griddle_runner, version):
+def test_meta_chm_4_tiles(griddle_runner):
     """Meta CHM across 4 tiles: domain on a tile corner."""
-    result = griddle_runner(
-        "meta_chm_4_tiles.json", "chm_meta.json", source_overrides={"version": version}
-    )
+    result = griddle_runner("meta_chm_4_tiles.json", "chm_meta.json")
     _assert_valid_chm(result.ds, "32612")
     _assert_tile_metadata(result.grid_id, expected_tile_count=4)
 

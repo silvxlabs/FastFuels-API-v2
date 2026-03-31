@@ -12,6 +12,7 @@ import os
 import tempfile
 
 import numpy as np
+import pytest
 
 from lib.config import GRIDS_COLLECTION
 from lib.firestore.documents import get_document
@@ -54,6 +55,16 @@ def _assert_tile_metadata(grid_id, expected_tile_count):
 def test_meta_chm(griddle_runner):
     """Meta CHM single-tile: Blue Mountain domain (~1 sq km in Montana)."""
     result = griddle_runner("blue_mtn.json", "chm_meta.json")
+    _assert_valid_chm(result.ds, "32611")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=1)
+
+
+@pytest.mark.parametrize("version", ["1", "2"])
+def test_meta_chm_versions(griddle_runner, version):
+    """Meta CHM single-tile for each version: Blue Mountain domain."""
+    result = griddle_runner(
+        "blue_mtn.json", "chm_meta.json", source_overrides={"version": version}
+    )
     _assert_valid_chm(result.ds, "32611")
     _assert_tile_metadata(result.grid_id, expected_tile_count=1)
 

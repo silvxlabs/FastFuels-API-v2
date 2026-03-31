@@ -94,7 +94,7 @@ class TestFetchMetaChm:
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
 
         assert isinstance(ds, xr.Dataset)
         assert tile_metadata["tile_count"] == 1
@@ -109,7 +109,7 @@ class TestFetchMetaChm:
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
 
         assert "chm" in ds.data_vars
 
@@ -122,7 +122,7 @@ class TestFetchMetaChm:
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
 
         np.testing.assert_array_almost_equal(ds["chm"].values, chm_values)
 
@@ -135,7 +135,7 @@ class TestFetchMetaChm:
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
 
         assert ds.rio.crs == CRS.from_epsg(32611)
 
@@ -148,23 +148,35 @@ class TestFetchMetaChm:
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
 
         assert ds["chm"].dims == ("y", "x")
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
-    def test_s3_url_constructed_from_tile(self, mock_read_parquet, mock_raster_cls):
-        """Correct S3 URL is constructed from the tile name."""
+    @pytest.mark.parametrize(
+        "version,expected_s3_base",
+        [
+            ("1", "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm/"),
+            (
+                "2",
+                "s3://dataforgood-fb-data/forests/v2/global/dinov3_global_chm_v2_ml3/chm/",
+            ),
+        ],
+    )
+    def test_s3_url_constructed_from_tile(
+        self, mock_read_parquet, mock_raster_cls, version, expected_s3_base
+    ):
+        """Correct S3 URL is constructed from the tile name for each version."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        fetch_meta_chm(_make_roi(), "2024", progress)
+        fetch_meta_chm(_make_roi(), version, progress)
 
         url = mock_raster_cls.call_args[0][0]
-        assert "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm/" in url
+        assert expected_s3_base in url
         assert "test_tile_001.tif" in url
 
     @patch("griddle.handlers.chm.RasterConnection")
@@ -178,7 +190,7 @@ class TestFetchMetaChm:
 
         os.environ.pop("AWS_NO_SIGN_REQUEST", None)
 
-        fetch_meta_chm(_make_roi(), "2024", progress)
+        fetch_meta_chm(_make_roi(), "2", progress)
 
         assert "AWS_NO_SIGN_REQUEST" not in os.environ
 
@@ -191,7 +203,7 @@ class TestFetchMetaChm:
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        fetch_meta_chm(_make_roi(), "2024", progress)
+        fetch_meta_chm(_make_roi(), "2", progress)
 
         assert progress.call_count >= 2
 
@@ -207,7 +219,7 @@ class TestFetchMetaChm:
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_meta_chm(_make_roi(), "2024", progress)
+            fetch_meta_chm(_make_roi(), "2", progress)
 
         assert exc_info.value.code == "COVERAGE_ERROR"
 
@@ -218,7 +230,7 @@ class TestFetchMetaChm:
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_meta_chm(_make_roi(), "2024", progress)
+            fetch_meta_chm(_make_roi(), "2", progress)
 
         assert exc_info.value.code == "INDEX_FETCH_FAILED"
 
@@ -241,7 +253,7 @@ class TestFetchMetaChm:
         mock_merge.return_value = merged_da
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
+        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
 
         assert mock_raster_cls.call_count == 2
         mock_merge.assert_called_once()
@@ -258,7 +270,7 @@ class TestFetchMetaChm:
         progress = MagicMock()
         roi = _make_roi()
 
-        fetch_meta_chm(roi, "2024", progress)
+        fetch_meta_chm(roi, "2", progress)
 
         kwargs = mock_read_parquet.call_args[1]
         assert "bbox" in kwargs
@@ -269,17 +281,26 @@ class TestFetchMetaChm:
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm.gpd.read_parquet")
-    def test_tile_map_url_uses_version(self, mock_read_parquet, mock_raster_cls):
+    @pytest.mark.parametrize(
+        "version,expected_index",
+        [
+            ("1", "Meta2024_chm"),
+            ("2", "Meta_chmv2"),
+        ],
+    )
+    def test_tile_map_url_uses_version(
+        self, mock_read_parquet, mock_raster_cls, version, expected_index
+    ):
         """Parquet index URL includes the version string and .parquet extension."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        fetch_meta_chm(_make_roi(), "2024", progress)
+        fetch_meta_chm(_make_roi(), version, progress)
 
         url = mock_read_parquet.call_args[0][0]
-        assert "Meta2024" in url
+        assert expected_index in url
         assert url.endswith(".parquet")
 
     @patch("griddle.handlers.chm.RasterConnection")
@@ -291,7 +312,7 @@ class TestFetchMetaChm:
         mock_read_parquet.return_value = _make_tile_mapping()
         progress = MagicMock()
 
-        _, tile_metadata = fetch_meta_chm(_make_roi(), "2024", progress)
+        _, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
 
         assert tile_metadata["native_crs"] is not None
         assert "32611" in tile_metadata["native_crs"]

@@ -6,7 +6,7 @@
   "source": {
     "name": "chm",
     "product": "meta",
-    "version": "2024",
+    "version": "2",
     "description": "Meta global canopy height model at ~1m resolution"
   },
   "modifications": [],

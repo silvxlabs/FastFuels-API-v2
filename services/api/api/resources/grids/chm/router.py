@@ -55,10 +55,12 @@ async def create_meta_chm(
 
     ## Request Body
 
-    - **version**: (optional) Data version. Default: "2024".
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
+    - **version**: (optional) Meta CHM version. Default: "2".
+        - **1**: Tolan, J. et al. (2024). Very high resolution canopy height maps from RGB imagery.
+        - **2**: Brandt, J. et al. (2026). CHMv2: Improvements in Global Canopy Height Mapping using DINOv3.
 
     ## Response
 
@@ -70,7 +72,7 @@ async def create_meta_chm(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = MetaChmSource()
+    source = MetaChmSource(version=body.version)
     bands = build_chm_bands()
 
     grid_data = {

@@ -32,7 +32,6 @@ from lib.gcs.blobs import delete_directory, exists
 
 from ..conftest import (
     DOMAINS_DIR,
-    GRIDS_COLLECTION,
     INVENTORIES_DIR,
     _poll_for_completion,
     _run_standgen,
@@ -269,9 +268,7 @@ def test_higher_min_height_reduces_tree_count(
 # --- VWF Algorithm Parameter Variation Tests ---
 
 
-def test_vwf_extraction_completes_and_produces_trees(
-    standgen_runner, module_chm_grid
-):
+def test_vwf_extraction_completes_and_produces_trees(standgen_runner, module_chm_grid):
     """Running VWF end-to-end dynamically scales windows and produces a valid tree inventory."""
     inventory_vwf = standgen_runner(
         "blackfoot.json",
@@ -292,9 +289,7 @@ def test_vwf_extraction_completes_and_produces_trees(
     assert df["height"].min() >= 2.0
 
 
-def test_higher_crown_ratio_reduces_tree_count(
-    standgen_runner, module_chm_grid
-):
+def test_higher_crown_ratio_reduces_tree_count(standgen_runner, module_chm_grid):
     """A larger crown_ratio in VWF creates wider search windows, swallowing adjacent peaks and reducing tree count."""
 
     # 1. Baseline VWF (Standard 10% ratio loaded natively from the new JSON)
@@ -314,8 +309,13 @@ def test_higher_crown_ratio_reduces_tree_count(
         "chm_vwf.json",
         source_chm_grid_id=module_chm_grid,
         source_overrides={
-            "algorithm": {"name": "vwf", "min_height": 2.0, "crown_ratio": 0.50, "crown_offset": 1.0}
-        }
+            "algorithm": {
+                "name": "vwf",
+                "min_height": 2.0,
+                "crown_ratio": 0.50,
+                "crown_offset": 1.0,
+            }
+        },
     )
     count_wide = len(dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{inv_wide['id']}"))
 

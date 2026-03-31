@@ -7,6 +7,7 @@ Meta provides a global canopy height model at ~1m resolution from satellite
 imagery. Single band: canopy height in meters.
 """
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel
@@ -20,6 +21,13 @@ from api.resources.grids.schema import (
 )
 
 CHM_BAND = Band(key="chm", type=BandType.continuous, unit="m", index=0)
+
+
+class MetaCHMVersion(StrEnum):
+    """Available Meta CHM data versions."""
+
+    v1 = "1"
+    v2 = "2"
 
 
 class Attribution(BaseModel):
@@ -43,6 +51,7 @@ class MetaChmSource(ChmSource):
     description: Literal["Meta global canopy height model at ~1m resolution"] = (
         "Meta global canopy height model at ~1m resolution"
     )
+    version: MetaCHMVersion
 
     # Post-processing metadata populated by Griddle after processing
     tile_metadata: TileMetadata | None = None
@@ -55,6 +64,8 @@ class CreateMetaChmRequest(CreateGridRequestBase):
     Returns a grid with a single continuous band:
     - chm: Canopy height in meters
     """
+
+    version: MetaCHMVersion = MetaCHMVersion.v2
 
 
 def build_chm_bands() -> list[Band]:

@@ -7,7 +7,15 @@ Product-specific endpoints (FBFM40, Topography, etc.) are in their respective su
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 
 from api.db.blobs import delete_directory_safe
 from api.db.documents import (
@@ -17,6 +25,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.resources.grids.cache import get_grid_array
 from api.resources.grids.chm.router import router as chm_router
 from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
@@ -25,18 +34,124 @@ from api.resources.grids.pim.router import router as pim_router
 from api.resources.grids.resample.router import router as resample_router
 from api.resources.grids.schema import (
     Grid,
+    GridDataChunkMetadata,
+    GridDataFormat,
+    GridDataOrder,
+    GridDataResponse,
     GridSortField,
     ListGridsResponse,
     UpdateGridRequestBody,
 )
 from api.resources.grids.topography.router import router as topography_router
 from api.resources.grids.uniform.router import router as uniform_router
+from api.resources.grids.utils import (
+    compute_chunk_metadata,
+    compute_chunk_slices,
+    validate_grid_has_band,
+)
 from api.schema import SortOrder
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 
 router = APIRouter()
+wildcard_router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
+
+
+@wildcard_router.get(
+    "",
+    response_model=ListGridsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List grids across all domains",
+)
+async def list_grids_cross_domain(
+    request: Request,
+    page: int = Query(
+        0,
+        ge=0,
+        description="The page number to retrieve (zero-indexed).",
+    ),
+    size: int = Query(
+        100,
+        ge=1,
+        le=1000,
+        description="The number of grids to retrieve per page.",
+    ),
+    sort_by: GridSortField | None = Query(
+        None,
+        description="The field to sort results by.",
+    ),
+    sort_order: SortOrder | None = Query(
+        None,
+        description="The order to sort results (ascending or descending).",
+    ),
+    source: str | None = Query(
+        None,
+        description="Filter grids by source name (e.g., 'landfire', '3dep').",
+    ),
+    product: str | None = Query(
+        None,
+        description="Filter grids by source product (e.g., 'fbfm40', 'topography'). Requires source filter.",
+    ),
+    tag: str | None = Query(
+        None,
+        description="Filter grids that contain this tag.",
+    ),
+) -> ListGridsResponse:
+    """
+    # List Grids Across All Domains Endpoint
+
+    Retrieves a paginated list of all grids across all domains belonging to the
+    authenticated user.
+
+    ## Query Parameters
+
+    - **page**: (integer, optional) Page number (zero-indexed). Default: 0.
+    - **size**: (integer, optional) Items per page (1-1000). Default: 100.
+    - **sort_by**: (string, optional) Field to sort by: `created_on`, `modified_on`, `name`.
+    - **sort_order**: (string, optional) Sort direction: `ascending`, `descending`.
+    - **source**: (string, optional) Filter grids by source name (e.g., `landfire`, `3dep`).
+    - **product**: (string, optional) Filter grids by source product (e.g., `fbfm40`, `topography`).
+    - **tag**: (string, optional) Filter grids that contain this tag.
+
+    ## Response
+
+    Returns a paginated list of grids with metadata.
+    """
+    owner_id = request.state.id
+
+    filters = {}
+    if source:
+        filters["source.name"] = source
+    if product:
+        filters["source.product"] = product
+
+    array_contains_filters = {}
+    if tag:
+        array_contains_filters["tags"] = tag
+
+    documents, total_count = await list_documents_async(
+        collection=COLLECTION,
+        owner_id=owner_id,
+        page=page,
+        size=size,
+        sort_by=sort_by.value if sort_by else None,
+        sort_order=sort_order.value if sort_order else None,
+        filters=filters if filters else None,
+        array_contains_filters=array_contains_filters
+        if array_contains_filters
+        else None,
+    )
+
+    # Convert Firestore documents to Grid models
+    grids = [Grid(**doc.to_dict()) for doc in documents]
+
+    return ListGridsResponse(
+        grids=grids,
+        current_page=page,
+        page_size=size,
+        total_items=total_count,
+    )
 
 
 @router.get(
@@ -287,6 +402,168 @@ async def delete_grid(
     )
 
     background_tasks.add_task(delete_directory_safe, GRIDS_BUCKET, grid_id)
+
+
+@router.get(
+    "/{grid_id}/chunks/{chunk_index}",
+    response_model=GridDataChunkMetadata,
+    status_code=status.HTTP_200_OK,
+    summary="Get chunk metadata",
+)
+async def get_chunk_metadata(
+    request: Request,
+    domain: VerifiedDomain,
+    grid_id: str,
+    chunk_index: int,
+):
+    """
+    # Get Chunk Metadata Endpoint
+
+    Retrieves the shape, pixel offset, and affine transform for a single chunk
+    of a completed grid. This is a lightweight call that performs pure arithmetic
+    on the grid's stored georeference and chunk shape — no raster data is read.
+
+    ## Path Parameters
+
+    - **domain_id**: (string) The domain the grid belongs to.
+    - **grid_id**: (string) The unique identifier of the grid.
+    - **chunk_index**: (integer) Zero-based flat chunk index in row-major order.
+
+    ## Response
+
+    Returns chunk metadata:
+
+    - **index**: The chunk index.
+    - **shape**: (height, width) of the chunk in pixels. Edge chunks may be
+      smaller than the grid's chunk shape.
+    - **offset**: (row, column) pixel offset of the chunk within the full grid.
+    - **transform**: Six-element affine transform for the chunk's spatial extent.
+
+    ## Error Responses
+
+    - **404 Not Found**: The grid does not exist, is not completed, or the user
+      does not have access.
+    - **422 Unprocessable Entity**: The chunk index is out of range.
+    """
+    _, snapshot = await get_document_async(
+        COLLECTION,
+        grid_id,
+        owner_id=request.state.id,
+        domain_id=domain["id"],
+        document_status="completed",
+    )
+    grid_data = snapshot.to_dict()
+
+    try:
+        return compute_chunk_metadata(
+            grid_data["georeference"], grid_data["chunk_shape"], chunk_index
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
+
+@router.get(
+    "/{grid_id}/data/{band}/{chunk_index}",
+    response_model=GridDataResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get band data for a chunk",
+)
+async def get_grid_data(
+    request: Request,
+    domain: VerifiedDomain,
+    grid_id: str,
+    chunk_index: int,
+    band: str,
+    data_format: GridDataFormat = Query(
+        GridDataFormat.json, alias="format", description="Response format."
+    ),
+    order: GridDataOrder = Query(
+        GridDataOrder.C, description="Array memory order for flattening."
+    ),
+):
+    """
+    # Get Grid Data Endpoint
+
+    Reads a single chunk of a single band from a completed grid's Zarr store
+    on GCS. Returns the raster values as either a JSON array or raw binary bytes.
+
+    ## Path Parameters
+
+    - **domain_id**: (string) The domain the grid belongs to.
+    - **grid_id**: (string) The unique identifier of the grid.
+    - **band**: (string) Band key to read (e.g., `elevation`, `fbfm`). Must match
+      a band present in the grid.
+    - **chunk_index**: (integer) Zero-based flat chunk index in row-major order.
+
+    ## Query Parameters
+
+    - **format**: (string, optional) Response format: `json` (default) or `binary`.
+    - **order**: (string, optional) Array memory order for flattening: `C`
+      (row-major, default) or `F` (column-major).
+
+    ## Response
+
+    **JSON format** (`format=json`): Returns shape, order, and a flat list of values.
+
+    **Binary format** (`format=binary`): Returns raw bytes with metadata in headers:
+
+    - `X-Data-Shape`: Comma-separated dimensions (e.g., `47,61`).
+    - `X-Data-Dtype`: NumPy dtype string (e.g., `float32`).
+    - `X-Data-Order`: Memory order used for flattening (`C` or `F`).
+
+    ## Error Responses
+
+    - **404 Not Found**: The grid does not exist, is not completed, or the user
+      does not have access.
+    - **422 Unprocessable Entity**: The requested band does not exist on this
+      grid, or the chunk index is out of range.
+    """
+    _, snapshot = await get_document_async(
+        COLLECTION,
+        grid_id,
+        owner_id=request.state.id,
+        domain_id=domain["id"],
+        document_status="completed",
+    )
+    grid_data = snapshot.to_dict()
+
+    validate_grid_has_band(grid_data, grid_id, band)
+
+    try:
+        meta = compute_chunk_metadata(
+            grid_data["georeference"], grid_data["chunk_shape"], chunk_index
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
+    row_slice, col_slice = compute_chunk_slices(meta)
+
+    array = await get_grid_array(grid_id, band)
+    data = await array.getitem((row_slice, col_slice))
+
+    if data_format == GridDataFormat.binary:
+        raw = data.ravel(order=order.value).tobytes()
+        return Response(
+            content=raw,
+            media_type="application/octet-stream",
+            headers={
+                "X-Data-Shape": ",".join(str(s) for s in data.shape),
+                "X-Data-Dtype": str(data.dtype),
+                "X-Data-Order": order.value,
+            },
+        )
+
+    return GridDataResponse(
+        shape=list(data.shape),
+        order=order.value,
+        data=data.ravel(order=order.value).tolist(),
+    )
 
 
 router.include_router(

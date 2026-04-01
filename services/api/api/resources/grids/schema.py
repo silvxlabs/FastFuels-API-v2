@@ -6,6 +6,7 @@ Core schema models for the Grid resource.
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -133,8 +134,8 @@ class Grid(BaseModel):
         default=None,
         description="Progress info when status is 'running'. Null otherwise.",
     )
-    created_on: datetime
-    modified_on: datetime
+    created_on: datetime | None = None
+    modified_on: datetime | None = None
 
     # Source and lineage (validated by source-specific routers)
     source: dict
@@ -167,3 +168,26 @@ class ListGridsResponse(PaginatedResponse):
     """Paginated response for listing grids."""
 
     grids: list[Grid]
+
+
+class GridDataFormat(StrEnum):
+    json = "json"
+    binary = "binary"
+
+
+class GridDataOrder(StrEnum):
+    C = "C"
+    F = "F"
+
+
+class GridDataChunkMetadata(BaseModel):
+    index: int
+    shape: tuple[int, int]
+    offset: tuple[int, int]
+    transform: tuple[float, float, float, float, float, float]
+
+
+class GridDataResponse(BaseModel):
+    shape: list[int]
+    order: Literal["C", "F"]
+    data: list[float | int]

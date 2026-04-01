@@ -474,15 +474,15 @@ class TestDomain:
         # id defaults to None per Field definition
         assert domain.id is None
 
-    def test_requires_created_on(self, sample_feature_collection):
-        """Should require created_on field."""
-        with pytest.raises(Exception):  # ValidationError
-            Domain(**sample_feature_collection, modified_on=datetime.now())
+    def test_created_on_defaults_to_none(self, sample_feature_collection):
+        """created_on should default to None when not provided."""
+        domain = Domain(**sample_feature_collection, modified_on=datetime.now())
+        assert domain.created_on is None
 
-    def test_requires_modified_on(self, sample_feature_collection):
-        """Should require modified_on field."""
-        with pytest.raises(Exception):  # ValidationError
-            Domain(**sample_feature_collection, created_on=datetime.now())
+    def test_modified_on_defaults_to_none(self, sample_feature_collection):
+        """modified_on should default to None when not provided."""
+        domain = Domain(**sample_feature_collection, created_on=datetime.now())
+        assert domain.modified_on is None
 
 
 # =============================================================================

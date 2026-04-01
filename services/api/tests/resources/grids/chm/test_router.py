@@ -10,6 +10,7 @@ from api.resources.grids.chm.examples import (
     META_CHM_EXAMPLE_VALUES,
     NAIP_CHM_EXAMPLE_VALUES,
 )
+from api.resources.grids.chm.schema import MetaCHMVersion
 
 
 class TestCreateMetaChm:
@@ -32,6 +33,7 @@ class TestCreateMetaChm:
         assert data["name"] == ""
         assert data["description"] == ""
         assert data["tags"] == []
+        assert data["source"]["version"] == "2"
 
         # Check source
         assert data["source"]["name"] == "chm"
@@ -60,6 +62,7 @@ class TestCreateMetaChm:
         assert data["name"] == "Meta canopy height"
         assert data["description"] == "Global canopy height model for inventory"
         assert data["tags"] == ["chm", "meta"]
+        assert data["source"]["version"] == "2"
 
     def test_georeference_is_null_on_creation(self, client, domain_for_testing):
         """Georeference is null until backend populates it."""
@@ -105,6 +108,15 @@ class TestCreateMetaChm:
         data = response.json()
         assert data["source"]["name"] == "chm"
         assert data["source"]["product"] == "meta"
+
+    @pytest.mark.parametrize("version", [v.value for v in MetaCHMVersion])
+    def test_version_can_be_set(self, client, domain_for_testing, version):
+        """Each valid version creates a grid with the correct version set."""
+        response = client.post(
+            self.route(domain_for_testing["id"]), json={"version": version}
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["version"] == version
 
 
 class TestCreateNaipChm:

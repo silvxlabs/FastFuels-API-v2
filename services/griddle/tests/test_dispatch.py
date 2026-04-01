@@ -543,7 +543,7 @@ class TestDispatchHandlerChm:
             "source": {
                 "name": "chm",
                 "product": "meta",
-                "version": "2024",
+                "version": "2",
             },
             "domain_id": "test-domain-id",
         }
@@ -574,18 +574,18 @@ class TestHandleChm:
 
         source = {
             "product": "meta",
-            "version": "2024",
+            "version": "2",
         }
 
         result = handle_chm(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2024", progress)
+        mock_fetch.assert_called_once_with(mock_gdf, "2", progress)
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_default_version(self, mock_fetch):
-        """handle_chm uses 2024 as default version."""
+        """handle_chm uses 2 as default version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
@@ -595,7 +595,7 @@ class TestHandleChm:
         handle_chm(mock_gdf, source, progress)
 
         call_args = mock_fetch.call_args[0]
-        assert call_args[1] == "2024"
+        assert call_args[1] == "2"
 
     def test_unknown_product_raises(self):
         """handle_chm raises ProcessingError for unknown product."""
@@ -643,7 +643,7 @@ class TestHandleChm:
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
-        source = {"product": "meta", "version": "2024"}
+        source = {"product": "meta", "version": "2"}
 
         handle_chm(mock_gdf, source, progress)
 
@@ -653,23 +653,40 @@ class TestHandleChm:
         assert "meta" in call_args[0]
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
-    def test_meta_populates_attribution(self, mock_fetch):
-        """handle_chm populates attribution metadata for meta product."""
+    @pytest.mark.parametrize(
+        "version,expected_license,expected_license_url",
+        [
+            ("1", "CC-BY-4.0", "https://creativecommons.org/licenses/by/4.0/"),
+            (
+                "2",
+                "DINOv3",
+                "https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md",
+            ),
+        ],
+    )
+    def test_meta_populates_attribution(
+        self, mock_fetch, version, expected_license, expected_license_url
+    ):
+        """handle_chm populates attribution for each meta version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
-        source = {"product": "meta", "version": "2024"}
+        source = {"product": "meta", "version": version}
 
         handle_chm(mock_gdf, source, progress)
 
         assert "attribution" in source
         attr = source["attribution"]
-        assert attr["license_name"] == "CC-BY-4.0"
-        assert attr["license_url"] == "https://creativecommons.org/licenses/by/4.0/"
+        assert attr["license_name"] == expected_license
+        assert attr["license_url"] == expected_license_url
         assert "registry.opendata.aws" in attr["access_url"]
         assert attr["accessed_on"]  # ISO date string
-        assert "High Resolution Canopy Height Maps" in attr["citation"]
+        assert (
+            "arXiv:2603.06382" in attr["citation"]
+            if version == "2"
+            else "High Resolution Canopy Height Maps" in attr["citation"]
+        )
 
     @patch("griddle.dispatch.chm.fetch_naip_chm")
     def test_naip_does_not_populate_attribution(self, mock_fetch):

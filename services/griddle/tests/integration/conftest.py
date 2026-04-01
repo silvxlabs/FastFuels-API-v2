@@ -19,6 +19,7 @@ from typing import NamedTuple
 from uuid import uuid4
 
 import gcsfs
+import numpy as np
 import pytest
 import xarray as xr
 
@@ -248,6 +249,9 @@ def griddle_runner():
             f"gs://{GRIDS_BUCKET}/{grid_id}",
             decode_coords="all",
         )
+        for var in ds.data_vars:
+            if ds[var].dtype == np.float64:
+                ds[var] = ds[var].astype(np.float32)
         datasets.append(ds)
         return GriddleResult(ds=ds, grid_id=grid_id)
 

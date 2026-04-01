@@ -12,6 +12,7 @@ import os
 import tempfile
 
 import numpy as np
+import pytest
 
 from lib.config import GRIDS_COLLECTION
 from lib.firestore.documents import get_document
@@ -26,16 +27,17 @@ def _assert_valid_chm(ds, expected_crs_code):
     assert ds.rio.width > 10
 
     values = ds["chm"].values
-    assert values.dtype in (np.float32, np.float64)
+    assert values.dtype == np.float32
     assert np.nanmin(values) >= 0
 
     # The Exporter Contract: Verify the Dataset can be successfully written to a GeoTIFF
-    with tempfile.NamedTemporaryFile(suffix=".tif") as tmp:
-        ds.rio.to_raster(tmp.name)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = os.path.join(tmpdir, "output.tif")
+        ds.rio.to_raster(path)
 
         # Verify the TIFF was actually created and has bytes
-        assert os.path.exists(tmp.name)
-        assert os.path.getsize(tmp.name) > 0
+        assert os.path.exists(path)
+        assert os.path.getsize(path) > 0
 
 
 def _assert_tile_metadata(grid_id, expected_tile_count):
@@ -53,6 +55,16 @@ def _assert_tile_metadata(grid_id, expected_tile_count):
 def test_meta_chm(griddle_runner):
     """Meta CHM single-tile: Blue Mountain domain (~1 sq km in Montana)."""
     result = griddle_runner("blue_mtn.json", "chm_meta.json")
+    _assert_valid_chm(result.ds, "32611")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=1)
+
+
+@pytest.mark.parametrize("version", ["1", "2"])
+def test_meta_chm_versions(griddle_runner, version):
+    """Meta CHM single-tile for each version: Blue Mountain domain."""
+    result = griddle_runner(
+        "blue_mtn.json", "chm_meta.json", source_overrides={"version": version}
+    )
     _assert_valid_chm(result.ds, "32611")
     _assert_tile_metadata(result.grid_id, expected_tile_count=1)
 

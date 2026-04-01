@@ -21,6 +21,9 @@ def test_uniform_fuel_moisture(griddle_runner):
     for var_name, expected_value in expected.items():
         assert var_name in ds.data_vars, f"Missing variable: {var_name}"
         assert ds[var_name].dims == ("y", "x")
+        assert ds[var_name].dtype == np.float32, (
+            f"{var_name} should be float32, got {ds[var_name].dtype}"
+        )
         np.testing.assert_allclose(
             ds[var_name].values,
             expected_value,

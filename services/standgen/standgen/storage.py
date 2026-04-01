@@ -40,7 +40,7 @@ def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     The full DataFrame is never materialized in memory.
     """
     path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-    ddf.to_parquet(path)
+    ddf.to_parquet(path, write_metadata_file=True)
     logger.info(f"Saved inventory data to {path}")
     return path
 

@@ -121,6 +121,64 @@ class TestGetGrid:
         assert "owner_id" not in data
 
 
+# GET /domains/-/grids (Wildcard List) Tests
+
+
+class TestListGridsWildcard:
+    """Test GET /domains/-/grids returns grids across all domains."""
+
+    @pytest.fixture(scope="class")
+    def grids_across_domains(self, firestore_client, domain_for_testing, second_domain):
+        """Grids spread across two domains, both owned by test-owner."""
+        grids = []
+        for domain_id in [domain_for_testing["id"], second_domain["id"]]:
+            grid_data = make_grid_data(domain_id=domain_id, name=f"Grid in {domain_id}")
+            doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+                grid_data["id"]
+            )
+            doc_ref.set(grid_data)
+            grids.append(grid_data)
+        yield grids
+        for grid in grids:
+            firestore_client.collection(GRIDS_COLLECTION).document(grid["id"]).delete()
+
+    def route(self):
+        return "/domains/-/grids"
+
+    def test_wildcard_returns_200(self, client):
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+    def test_wildcard_returns_grids_from_all_domains(
+        self, client, grids_across_domains
+    ):
+        """Grids from multiple domains are all returned."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        grid_ids = [g["id"] for g in response.json()["grids"]]
+        for grid in grids_across_domains:
+            assert grid["id"] in grid_ids
+
+    def test_wildcard_excludes_other_users_grids(
+        self, client, grid_with_different_owner
+    ):
+        """Wildcard list does not return grids owned by other users."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        grid_ids = [g["id"] for g in response.json()["grids"]]
+        assert grid_with_different_owner["id"] not in grid_ids
+
+    def test_wildcard_excludes_owner_id(self, client, grids_across_domains):
+        """Wildcard list does not expose owner_id."""
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        for grid in response.json()["grids"]:
+            assert "owner_id" not in grid
+
+
 # GET /domains/{domain_id}/grids (List) Tests
 
 

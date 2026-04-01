@@ -537,10 +537,10 @@ class TestExportGeopackageIntegration:
         fs = gcsfs.GCSFileSystem()
         import tempfile
 
-        with tempfile.NamedTemporaryFile(suffix=".gpkg") as tmp:
-            with fs.open(gcs_path, "rb") as f:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "output.gpkg")
+            with fs.open(gcs_path, "rb") as f, open(path, "wb") as tmp:
                 tmp.write(f.read())
-            tmp.flush()
-            gdf = gpd.read_file(tmp.name)
+            gdf = gpd.read_file(path)
         assert len(gdf) == 100
         assert gdf.crs is not None

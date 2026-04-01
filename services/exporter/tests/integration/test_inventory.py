@@ -7,6 +7,7 @@ Requires static test data in GCS (created by services/api/tests/e2e/).
 
 import io
 import json
+import os
 import tempfile
 import zipfile
 
@@ -142,11 +143,11 @@ class TestGeopackageExport:
         gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
 
         fs = gcsfs.GCSFileSystem()
-        with tempfile.NamedTemporaryFile(suffix=".gpkg") as tmp:
-            with fs.open(gcs_path, "rb") as f:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "output.gpkg")
+            with fs.open(gcs_path, "rb") as f, open(path, "wb") as tmp:
                 tmp.write(f.read())
-            tmp.flush()
-            gdf = gpd.read_file(tmp.name)
+            gdf = gpd.read_file(path)
 
         assert len(gdf) > 0
         assert gdf.crs is not None

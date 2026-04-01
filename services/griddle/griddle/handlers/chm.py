@@ -17,7 +17,16 @@ from griddle.handlers.tiles import TileMetadata
 from lib.config import TABLES_BUCKET
 from lib.raster import RasterConnection
 
-S3_BASE = "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm"
+META_VERSION_CONFIG = {
+    "1": {
+        "s3_base": "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm",
+        "tile_index": f"gs://{TABLES_BUCKET}/Meta2024_chm_index.parquet",
+    },
+    "2": {
+        "s3_base": "s3://dataforgood-fb-data/forests/v2/global/dinov3_global_chm_v2_ml3/chm",
+        "tile_index": f"gs://{TABLES_BUCKET}/Meta_chmv2_index.parquet",
+    },
+}
 NAIP_INDEX_URL = f"gs://{TABLES_BUCKET}/naip_chm_index.parquet"
 
 
@@ -43,8 +52,8 @@ def _process_intersecting_tiles(
             raster = RasterConnection(url, connection_type="rioxarray", cache=True)
             data = raster.extract_window(
                 roi=roi,
-                projection_padding_meters=1200,
-                interpolation_padding_cells=240,
+                projection_padding_meters=64,
+                interpolation_padding_cells=4,
             )
 
             # Squeeze band dimension to satisfy strict 2D requirements
@@ -63,6 +72,9 @@ def _process_intersecting_tiles(
         chm_da = tile_arrays[0]
     else:
         chm_da = merge_arrays(tile_arrays)
+
+    # Ensure float32 to avoid unnecessary float64 memory usage
+    chm_da = chm_da.astype("float32")
 
     # Wrap in xr.Dataset with strict variable naming
     ds = xr.Dataset({"chm": chm_da})
@@ -86,15 +98,24 @@ def fetch_meta_chm(
     progress: Callable[[str, int | None], None],
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch Meta global canopy height model data."""
-    progress("Loading Meta CHM tile mapping...", 10)
+    progress("Loading Meta CHM parquet index...", 10)
 
-    tile_map_url = (
-        f"gs://{TABLES_BUCKET}/Meta{version}_chm_map_from_polygon_to_geotiff.geojson"
-    )
-    tile_polygons = gpd.read_file(tile_map_url)
-
+    s3_base = META_VERSION_CONFIG[version]["s3_base"]
+    meta_index_url = META_VERSION_CONFIG[version]["tile_index"]
     roi_4326 = roi.to_crs("EPSG:4326")
-    intersecting = tile_polygons[tile_polygons.intersects(roi_4326.union_all())]
+    bounds = tuple(roi_4326.total_bounds)
+
+    try:
+        # Spatial pushdown filter
+        intersecting = gpd.read_parquet(meta_index_url, bbox=bounds)
+    except Exception as e:
+        raise ProcessingError(
+            code="INDEX_FETCH_FAILED",
+            message="Failed to load Meta CHM parquet index.",
+            traceback=str(e),
+        )
+
+    intersecting = intersecting[intersecting.intersects(roi_4326.union_all())]
 
     if intersecting.empty:
         raise ProcessingError(
@@ -104,7 +125,7 @@ def fetch_meta_chm(
         )
 
     # Extract exactly what the helper needs into explicit Python lists
-    fetch_urls = [f"{S3_BASE}/{tile}.tif" for tile in intersecting["tile"]]
+    fetch_urls = [f"{s3_base}/{tile}.tif" for tile in intersecting["tile"]]
     scale_factors = [1.0] * len(fetch_urls)
 
     return _process_intersecting_tiles(

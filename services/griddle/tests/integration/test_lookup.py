@@ -7,6 +7,7 @@ FBFM40 codes to fuel parameters using the SB40 lookup table.
 Requires static test data in GCS (created by services/api/tests/e2e/).
 """
 
+import numpy as np
 import pytest
 
 
@@ -30,5 +31,8 @@ def test_fbfm40_lookup(griddle_runner, source_grid):
     ]:
         assert var in ds.data_vars, f"Missing variable: {var}"
         assert ds[var].dims == ("y", "x")
+        assert ds[var].dtype == np.float32, (
+            f"{var} should be float32, got {ds[var].dtype}"
+        )
 
     assert (ds["fuel_depth"].values >= 0).all()

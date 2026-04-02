@@ -27,8 +27,8 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
-from api.resources.inventories.chm.router import router as chm_router
 from api.resources.inventories.cache import get_inventory_metadata, read_partition
+from api.resources.inventories.chm.router import router as chm_router
 from api.resources.inventories.exports.router import router as exports_router
 from api.resources.inventories.modifications.router import (
     router as modifications_router,

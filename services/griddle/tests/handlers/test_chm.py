@@ -13,7 +13,7 @@ import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.errors import ProcessingError
-from griddle.handlers.chm import fetch_meta_chm, fetch_naip_chm
+from griddle.handlers.chm import _query_tile_index, fetch_meta_chm, fetch_naip_chm
 from rasterio.crs import CRS
 from rasterio.transform import from_bounds
 from shapely.geometry import box
@@ -52,22 +52,6 @@ def _make_mock_raster(chm_values, crs="EPSG:32611"):
     return mock_raster
 
 
-def _make_tile_index_bytes():
-    """Create a parquet index DataFrame covering the globe, serialized to bytes."""
-    df = pd.DataFrame(
-        {
-            "tile": ["test_tile_001"],
-            "bbox_xmin": [-180.0],
-            "bbox_ymin": [-90.0],
-            "bbox_xmax": [180.0],
-            "bbox_ymax": [90.0],
-        }
-    )
-    buf = io.BytesIO()
-    df.to_parquet(buf, index=False)
-    return buf.getvalue()
-
-
 def _make_roi():
     """Create a real GeoDataFrame ROI in a projected CRS."""
     return gpd.GeoDataFrame(
@@ -76,33 +60,207 @@ def _make_roi():
     )
 
 
-def _make_naip_tile_index_bytes():
-    """Create a NAIP parquet index DataFrame covering the globe, serialized to bytes."""
-    df = pd.DataFrame(
+def _make_meta_query_result(tiles=None):
+    """Return a DataFrame mimicking _query_tile_index output for Meta."""
+    if tiles is None:
+        tiles = ["test_tile_001"]
+    return pd.DataFrame(
         {
-            "chm_url": ["http://fake-ntsg-server.com/tile_001.tif"],
-            "scale_factor": [100.0],
-            "bbox_xmin": [-180.0],
-            "bbox_ymin": [-90.0],
-            "bbox_xmax": [180.0],
-            "bbox_ymax": [90.0],
+            "tile": tiles,
+            "bbox_xmin": [-180.0] * len(tiles),
+            "bbox_ymin": [-90.0] * len(tiles),
+            "bbox_xmax": [180.0] * len(tiles),
+            "bbox_ymax": [90.0] * len(tiles),
         }
     )
+
+
+def _make_naip_query_result(urls=None):
+    """Return a DataFrame mimicking _query_tile_index output for NAIP."""
+    if urls is None:
+        urls = ["http://fake-ntsg-server.com/tile_001.tif"]
+    return pd.DataFrame(
+        {
+            "chm_url": urls,
+            "scale_factor": [100.0] * len(urls),
+            "bbox_xmin": [-180.0] * len(urls),
+            "bbox_ymin": [-90.0] * len(urls),
+            "bbox_xmax": [180.0] * len(urls),
+            "bbox_ymax": [90.0] * len(urls),
+        }
+    )
+
+
+def _serialize_df(df: pd.DataFrame) -> bytes:
+    """Serialize a DataFrame to parquet bytes."""
     buf = io.BytesIO()
     df.to_parquet(buf, index=False)
     return buf.getvalue()
+
+
+# -- _query_tile_index tests --------------------------------------------------
+
+
+class TestQueryTileIndex:
+    """Tests for the _query_tile_index helper."""
+
+    @staticmethod
+    def _make_grid_index_bytes() -> bytes:
+        """Create a 4x4 grid of tiles spanning [-2, 2] x [-2, 2]."""
+        rows = []
+        for i in range(4):
+            for j in range(4):
+                x0, y0 = -2 + i, -2 + j
+                rows.append(
+                    {
+                        "tile": f"tile_{i}_{j}",
+                        "bbox_xmin": float(x0),
+                        "bbox_ymin": float(y0),
+                        "bbox_xmax": float(x0 + 1),
+                        "bbox_ymax": float(y0 + 1),
+                    }
+                )
+        return _serialize_df(pd.DataFrame(rows))
+
+    @staticmethod
+    def _make_roi_4326(xmin, ymin, xmax, ymax):
+        return gpd.GeoDataFrame(geometry=[box(xmin, ymin, xmax, ymax)], crs="EPSG:4326")
+
+    @patch("griddle.handlers.chm._fs")
+    def test_single_tile_hit(self, mock_fs):
+        """ROI fully inside one tile returns that tile."""
+        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        roi = self._make_roi_4326(0.2, 0.2, 0.8, 0.8)
+
+        result = _query_tile_index("some/path.parquet", roi)
+
+        assert len(result) >= 1
+        assert "tile_2_2" in result["tile"].values
+
+    @patch("griddle.handlers.chm._fs")
+    def test_multi_tile_hit(self, mock_fs):
+        """ROI spanning tile boundaries returns multiple tiles."""
+        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        roi = self._make_roi_4326(-0.5, -0.5, 0.5, 0.5)
+
+        result = _query_tile_index("some/path.parquet", roi)
+
+        assert len(result) >= 4
+
+    @patch("griddle.handlers.chm._fs")
+    def test_no_hits(self, mock_fs):
+        """ROI outside all tiles returns empty DataFrame."""
+        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        roi = self._make_roi_4326(10, 10, 11, 11)
+
+        result = _query_tile_index("some/path.parquet", roi)
+
+        assert result.empty
+
+    @patch("griddle.handlers.chm._fs")
+    def test_full_coverage(self, mock_fs):
+        """ROI covering all tiles returns all 16."""
+        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        roi = self._make_roi_4326(-3, -3, 3, 3)
+
+        result = _query_tile_index("some/path.parquet", roi)
+
+        assert len(result) == 16
+
+    @patch("griddle.handlers.chm._fs")
+    def test_reprojects_roi_to_4326(self, mock_fs):
+        """ROI in a projected CRS is reprojected to EPSG:4326 for the query."""
+        mock_fs.cat.return_value = _serialize_df(
+            pd.DataFrame(
+                {
+                    "tile": ["global"],
+                    "bbox_xmin": [-180.0],
+                    "bbox_ymin": [-90.0],
+                    "bbox_xmax": [180.0],
+                    "bbox_ymax": [90.0],
+                }
+            )
+        )
+        roi = _make_roi()  # EPSG:32611
+
+        result = _query_tile_index("some/path.parquet", roi)
+
+        assert len(result) == 1
+
+    @patch("griddle.handlers.chm._fs")
+    def test_download_failure_propagates(self, mock_fs):
+        """Exceptions from _fs.cat propagate to the caller."""
+        mock_fs.cat.side_effect = Exception("Network error")
+        roi = self._make_roi_4326(0, 0, 1, 1)
+
+        with pytest.raises(Exception, match="Network error"):
+            _query_tile_index("some/path.parquet", roi)
+
+    @patch("griddle.handlers.chm._fs")
+    def test_bbox_superset_of_intersects(self, mock_fs):
+        """Bbox filtering returns a superset of exact geometry intersects.
+
+        This verifies that using flat bbox columns never misses tiles that
+        a geometry-based intersects() query would find.
+        """
+        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        roi = self._make_roi_4326(-0.5, -0.5, 0.5, 0.5)
+
+        # Optimized result
+        optimized = set(_query_tile_index("some/path.parquet", roi)["tile"])
+
+        # Source/reference result using geopandas intersects
+        rows = []
+        for i in range(4):
+            for j in range(4):
+                x0, y0 = -2 + i, -2 + j
+                rows.append(
+                    {
+                        "tile": f"tile_{i}_{j}",
+                        "geometry": box(x0, y0, x0 + 1, y0 + 1),
+                    }
+                )
+        gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326")
+        source = set(gdf[gdf.intersects(roi.union_all())]["tile"])
+
+        assert source <= optimized
+
+    @patch("griddle.handlers.chm._fs")
+    def test_preserves_data_columns(self, mock_fs):
+        """Non-bbox columns are preserved in the output."""
+        mock_fs.cat.return_value = _serialize_df(
+            pd.DataFrame(
+                {
+                    "chm_url": ["http://example.com/tile.tif"],
+                    "scale_factor": [100.0],
+                    "bbox_xmin": [-180.0],
+                    "bbox_ymin": [-90.0],
+                    "bbox_xmax": [180.0],
+                    "bbox_ymax": [90.0],
+                }
+            )
+        )
+        roi = self._make_roi_4326(0, 0, 1, 1)
+
+        result = _query_tile_index("some/path.parquet", roi)
+
+        assert result.iloc[0]["chm_url"] == "http://example.com/tile.tif"
+        assert result.iloc[0]["scale_factor"] == 100.0
+
+
+# -- fetch_meta_chm tests -----------------------------------------------------
 
 
 class TestFetchMetaChm:
     """Tests for fetch_meta_chm with chm band."""
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_returns_dataset_and_tile_metadata(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_returns_dataset_and_tile_metadata(self, mock_query, mock_raster_cls):
         """fetch_meta_chm returns a (Dataset, TileMetadata) tuple."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         ds, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
@@ -112,12 +270,12 @@ class TestFetchMetaChm:
         assert len(tile_metadata["tiles"]) == 1
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_has_chm_variable(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_has_chm_variable(self, mock_query, mock_raster_cls):
         """Dataset contains a 'chm' variable."""
         chm_values = np.array([[10.5, 20.3]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
@@ -125,12 +283,12 @@ class TestFetchMetaChm:
         assert "chm" in ds.data_vars
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_chm_values_preserved(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_chm_values_preserved(self, mock_query, mock_raster_cls):
         """CHM pixel values are preserved in the output."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
@@ -138,12 +296,12 @@ class TestFetchMetaChm:
         np.testing.assert_array_almost_equal(ds["chm"].values, chm_values)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_crs_preserved(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_crs_preserved(self, mock_query, mock_raster_cls):
         """CRS is preserved in the output dataset."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values, crs="EPSG:32611")
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
@@ -151,12 +309,12 @@ class TestFetchMetaChm:
         assert ds.rio.crs == CRS.from_epsg(32611)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_dims_are_y_x(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_dims_are_y_x(self, mock_query, mock_raster_cls):
         """CHM variable has (y, x) dims."""
         chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
@@ -164,7 +322,7 @@ class TestFetchMetaChm:
         assert ds["chm"].dims == ("y", "x")
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
+    @patch("griddle.handlers.chm._query_tile_index")
     @pytest.mark.parametrize(
         "version,expected_s3_base",
         [
@@ -176,12 +334,12 @@ class TestFetchMetaChm:
         ],
     )
     def test_s3_url_constructed_from_tile(
-        self, mock_fs, mock_raster_cls, version, expected_s3_base
+        self, mock_query, mock_raster_cls, version, expected_s3_base
     ):
         """Correct S3 URL is constructed from the tile name for each version."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         fetch_meta_chm(_make_roi(), version, progress)
@@ -191,12 +349,12 @@ class TestFetchMetaChm:
         assert "test_tile_001.tif" in url
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_aws_no_sign_request_scoped(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_aws_no_sign_request_scoped(self, mock_query, mock_raster_cls):
         """AWS_NO_SIGN_REQUEST is set during S3 access and restored after."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         os.environ.pop("AWS_NO_SIGN_REQUEST", None)
@@ -206,33 +364,22 @@ class TestFetchMetaChm:
         assert "AWS_NO_SIGN_REQUEST" not in os.environ
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_progress_called(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_progress_called(self, mock_query, mock_raster_cls):
         """Progress callback is invoked during processing."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         fetch_meta_chm(_make_roi(), "2", progress)
 
         assert progress.call_count >= 2
 
-    @patch("griddle.handlers.chm._fs")
-    def test_no_intersecting_tiles_raises(self, mock_fs):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_no_intersecting_tiles_raises(self, mock_query):
         """Raises ProcessingError(COVERAGE_ERROR) when no tiles intersect the ROI."""
-        df = pd.DataFrame(
-            {
-                "tile": pd.Series([], dtype=str),
-                "bbox_xmin": pd.Series([], dtype=float),
-                "bbox_ymin": pd.Series([], dtype=float),
-                "bbox_xmax": pd.Series([], dtype=float),
-                "bbox_ymax": pd.Series([], dtype=float),
-            }
-        )
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=False)
-        mock_fs.cat.return_value = buf.getvalue()
+        mock_query.return_value = _make_meta_query_result(tiles=[]).iloc[0:0]
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
@@ -240,10 +387,10 @@ class TestFetchMetaChm:
 
         assert exc_info.value.code == "COVERAGE_ERROR"
 
-    @patch("griddle.handlers.chm._fs")
-    def test_index_fetch_failure_raises(self, mock_fs):
-        """Raises ProcessingError(INDEX_FETCH_FAILED) when the parquet index cannot be loaded."""
-        mock_fs.cat.side_effect = Exception("Network error")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_index_fetch_failure_raises(self, mock_query):
+        """Raises ProcessingError(INDEX_FETCH_FAILED) when the index cannot be loaded."""
+        mock_query.side_effect = Exception("Network error")
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
@@ -253,24 +400,12 @@ class TestFetchMetaChm:
 
     @patch("griddle.handlers.chm.merge_arrays")
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_multiple_tiles_merged(self, mock_fs, mock_raster_cls, mock_merge):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_multiple_tiles_merged(self, mock_query, mock_raster_cls, mock_merge):
         """Multiple intersecting tiles are fetched and merged."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-
-        df = pd.DataFrame(
-            {
-                "tile": ["tile_a", "tile_b"],
-                "bbox_xmin": [-180.0, -180.0],
-                "bbox_ymin": [-90.0, -90.0],
-                "bbox_xmax": [180.0, 180.0],
-                "bbox_ymax": [90.0, 90.0],
-            }
-        )
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=False)
-        mock_fs.cat.return_value = buf.getvalue()
+        mock_query.return_value = _make_meta_query_result(tiles=["tile_a", "tile_b"])
 
         merged_da = _make_mock_raster(chm_values).extract_window.return_value
         merged_da = merged_da.squeeze("band", drop=True)
@@ -285,7 +420,7 @@ class TestFetchMetaChm:
         assert tile_metadata["tile_count"] == 2
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
+    @patch("griddle.handlers.chm._query_tile_index")
     @pytest.mark.parametrize(
         "version,expected_index",
         [
@@ -294,27 +429,27 @@ class TestFetchMetaChm:
         ],
     )
     def test_tile_index_path_uses_version(
-        self, mock_fs, mock_raster_cls, version, expected_index
+        self, mock_query, mock_raster_cls, version, expected_index
     ):
         """Tile index path includes the correct version-specific name."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values)
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         fetch_meta_chm(_make_roi(), version, progress)
 
-        path = mock_fs.cat.call_args[0][0]
+        path = mock_query.call_args[0][0]
         assert expected_index in path
         assert path.endswith("_optimized.parquet")
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_tile_metadata_native_crs(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_tile_metadata_native_crs(self, mock_query, mock_raster_cls):
         """Tile metadata includes the native CRS from the mosaic."""
         chm_values = np.array([[10.5]], dtype=np.float32)
         mock_raster_cls.return_value = _make_mock_raster(chm_values, crs="EPSG:32611")
-        mock_fs.cat.return_value = _make_tile_index_bytes()
+        mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
         _, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
@@ -323,16 +458,19 @@ class TestFetchMetaChm:
         assert "32611" in tile_metadata["native_crs"]
 
 
+# -- fetch_naip_chm tests -----------------------------------------------------
+
+
 class TestFetchNaipChm:
     """Tests for fetch_naip_chm with chm band."""
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_returns_dataset_and_tile_metadata(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_returns_dataset_and_tile_metadata(self, mock_query, mock_raster_cls):
         """fetch_naip_chm returns a (Dataset, TileMetadata) tuple."""
         raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_fs.cat.return_value = _make_naip_tile_index_bytes()
+        mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
         ds, tile_metadata = fetch_naip_chm(_make_roi(), "2020", progress)
@@ -342,12 +480,12 @@ class TestFetchNaipChm:
         assert len(tile_metadata["tiles"]) == 1
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_has_chm_variable(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_has_chm_variable(self, mock_query, mock_raster_cls):
         """Dataset contains a 'chm' variable."""
         raw_values = np.array([[1050, 2030]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_fs.cat.return_value = _make_naip_tile_index_bytes()
+        mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
@@ -355,14 +493,14 @@ class TestFetchNaipChm:
         assert "chm" in ds.data_vars
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_chm_values_scaled(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_chm_values_scaled(self, mock_query, mock_raster_cls):
         """CHM pixel values are correctly divided by the scale factor (100)."""
         raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
         expected_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
 
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_fs.cat.return_value = _make_naip_tile_index_bytes()
+        mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
@@ -370,12 +508,12 @@ class TestFetchNaipChm:
         np.testing.assert_array_almost_equal(ds["chm"].values, expected_values)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_crs_preserved(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_crs_preserved(self, mock_query, mock_raster_cls):
         """CRS is preserved in the output dataset."""
         raw_values = np.array([[1050, 2030]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values, crs="EPSG:32611")
-        mock_fs.cat.return_value = _make_naip_tile_index_bytes()
+        mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
@@ -383,12 +521,12 @@ class TestFetchNaipChm:
         assert ds.rio.crs == CRS.from_epsg(32611)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_dims_are_y_x(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_dims_are_y_x(self, mock_query, mock_raster_cls):
         """CHM variable has (y, x) dims."""
         raw_values = np.array([[1050, 2030]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_fs.cat.return_value = _make_naip_tile_index_bytes()
+        mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
         ds, _ = fetch_naip_chm(_make_roi(), "2020", progress)
@@ -396,12 +534,12 @@ class TestFetchNaipChm:
         assert ds["chm"].dims == ("y", "x")
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_http_url_passed_to_raster_connection(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_http_url_passed_to_raster_connection(self, mock_query, mock_raster_cls):
         """Correct HTTP URL is passed directly to RasterConnection."""
         raw_values = np.array([[1050]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_fs.cat.return_value = _make_naip_tile_index_bytes()
+        mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
         fetch_naip_chm(_make_roi(), "2020", progress)
@@ -410,34 +548,22 @@ class TestFetchNaipChm:
         assert url == "http://fake-ntsg-server.com/tile_001.tif"
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_progress_called(self, mock_fs, mock_raster_cls):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_progress_called(self, mock_query, mock_raster_cls):
         """Progress callback is invoked during processing."""
         raw_values = np.array([[1050]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_fs.cat.return_value = _make_naip_tile_index_bytes()
+        mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
         fetch_naip_chm(_make_roi(), "2020", progress)
 
         assert progress.call_count >= 2
 
-    @patch("griddle.handlers.chm._fs")
-    def test_no_intersecting_tiles_raises(self, mock_fs):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_no_intersecting_tiles_raises(self, mock_query):
         """Raises ProcessingError(COVERAGE_ERROR) when no tiles intersect the ROI."""
-        df = pd.DataFrame(
-            {
-                "chm_url": pd.Series([], dtype=str),
-                "scale_factor": pd.Series([], dtype=float),
-                "bbox_xmin": pd.Series([], dtype=float),
-                "bbox_ymin": pd.Series([], dtype=float),
-                "bbox_xmax": pd.Series([], dtype=float),
-                "bbox_ymax": pd.Series([], dtype=float),
-            }
-        )
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=False)
-        mock_fs.cat.return_value = buf.getvalue()
+        mock_query.return_value = _make_naip_query_result(urls=[]).iloc[0:0]
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
@@ -445,10 +571,10 @@ class TestFetchNaipChm:
 
         assert exc_info.value.code == "COVERAGE_ERROR"
 
-    @patch("griddle.handlers.chm._fs")
-    def test_index_fetch_failure_raises(self, mock_fs):
-        """Raises ProcessingError(INDEX_FETCH_FAILED) when the parquet index cannot be loaded."""
-        mock_fs.cat.side_effect = Exception("Network error")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_index_fetch_failure_raises(self, mock_query):
+        """Raises ProcessingError(INDEX_FETCH_FAILED) when the index cannot be loaded."""
+        mock_query.side_effect = Exception("Network error")
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
@@ -458,25 +584,14 @@ class TestFetchNaipChm:
 
     @patch("griddle.handlers.chm.merge_arrays")
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._fs")
-    def test_multiple_tiles_merged(self, mock_fs, mock_raster_cls, mock_merge):
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_multiple_tiles_merged(self, mock_query, mock_raster_cls, mock_merge):
         """Multiple intersecting tiles are fetched and merged."""
         raw_values = np.array([[1050]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-
-        df = pd.DataFrame(
-            {
-                "chm_url": ["http://fake.com/a.tif", "http://fake.com/b.tif"],
-                "scale_factor": [100.0, 100.0],
-                "bbox_xmin": [-180.0, -180.0],
-                "bbox_ymin": [-90.0, -90.0],
-                "bbox_xmax": [180.0, 180.0],
-                "bbox_ymax": [90.0, 90.0],
-            }
+        mock_query.return_value = _make_naip_query_result(
+            urls=["http://fake.com/a.tif", "http://fake.com/b.tif"]
         )
-        buf = io.BytesIO()
-        df.to_parquet(buf, index=False)
-        mock_fs.cat.return_value = buf.getvalue()
 
         merged_da = _make_mock_raster(raw_values).extract_window.return_value
         merged_da = merged_da.squeeze("band", drop=True)
@@ -491,115 +606,3 @@ class TestFetchNaipChm:
         mock_merge.assert_called_once()
         assert isinstance(ds, xr.Dataset)
         assert tile_metadata["tile_count"] == 2
-
-
-class TestOptimizedIndexCorrectness:
-    """Verify that bbox queries on optimized indexes return a superset of
-    the source GeoParquet intersects() results.
-
-    These tests use small synthetic indexes to validate the filtering logic
-    without hitting GCS.
-    """
-
-    @staticmethod
-    def _source_query(gdf: gpd.GeoDataFrame, roi_4326: gpd.GeoDataFrame) -> set[str]:
-        """Query using the original GeoParquet approach: bbox pushdown + intersects."""
-        bounds = tuple(roi_4326.total_bounds)
-        # Simulate gpd.read_parquet bbox pre-filter
-        xmin, ymin, xmax, ymax = bounds
-        pre = gdf.cx[xmin:xmax, ymin:ymax]
-        # Then exact intersects
-        return set(pre[pre.intersects(roi_4326.union_all())].index)
-
-    @staticmethod
-    def _optimized_query(df: pd.DataFrame, roi_4326: gpd.GeoDataFrame) -> set:
-        """Query using the optimized flat-bbox approach."""
-        xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
-        mask = (
-            (df["bbox_xmax"] >= xmin_q)
-            & (df["bbox_xmin"] <= xmax_q)
-            & (df["bbox_ymax"] >= ymin_q)
-            & (df["bbox_ymin"] <= ymax_q)
-        )
-        return set(df[mask].index)
-
-    @staticmethod
-    def _make_grid_index() -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
-        """Create a 4x4 grid of tiles spanning [-2, 2] x [-2, 2]."""
-        tiles = []
-        for i in range(4):
-            for j in range(4):
-                x0, y0 = -2 + i, -2 + j
-                tiles.append(
-                    {
-                        "tile": f"tile_{i}_{j}",
-                        "geometry": box(x0, y0, x0 + 1, y0 + 1),
-                    }
-                )
-        gdf = gpd.GeoDataFrame(tiles, crs="EPSG:4326")
-        # Optimized version with flat bbox columns
-        bounds = gdf.geometry.bounds
-        df = pd.DataFrame(
-            {
-                "tile": gdf["tile"],
-                "bbox_xmin": bounds["minx"].values,
-                "bbox_ymin": bounds["miny"].values,
-                "bbox_xmax": bounds["maxx"].values,
-                "bbox_ymax": bounds["maxy"].values,
-            }
-        )
-        return gdf, df
-
-    def test_single_tile_hit(self):
-        """ROI fully inside one tile — both methods return it."""
-        gdf, df = self._make_grid_index()
-        roi = gpd.GeoDataFrame(geometry=[box(0.2, 0.2, 0.8, 0.8)], crs="EPSG:4326")
-
-        source = self._source_query(gdf, roi)
-        optimized = self._optimized_query(df, roi)
-
-        assert source
-        assert source <= optimized
-
-    def test_multi_tile_hit(self):
-        """ROI spanning tile boundaries — optimized is a superset."""
-        gdf, df = self._make_grid_index()
-        roi = gpd.GeoDataFrame(geometry=[box(-0.5, -0.5, 0.5, 0.5)], crs="EPSG:4326")
-
-        source = self._source_query(gdf, roi)
-        optimized = self._optimized_query(df, roi)
-
-        assert len(source) >= 4
-        assert source <= optimized
-
-    def test_no_hits(self):
-        """ROI outside all tiles — both methods return empty."""
-        gdf, df = self._make_grid_index()
-        roi = gpd.GeoDataFrame(geometry=[box(10, 10, 11, 11)], crs="EPSG:4326")
-
-        source = self._source_query(gdf, roi)
-        optimized = self._optimized_query(df, roi)
-
-        assert source == set()
-        assert optimized == set()
-
-    def test_edge_touch(self):
-        """ROI touching tile edges — optimized is a superset."""
-        gdf, df = self._make_grid_index()
-        roi = gpd.GeoDataFrame(geometry=[box(0, 0, 0, 0)], crs="EPSG:4326")
-
-        source = self._source_query(gdf, roi)
-        optimized = self._optimized_query(df, roi)
-
-        assert source <= optimized
-
-    def test_full_coverage(self):
-        """ROI covering all tiles — both return all."""
-        gdf, df = self._make_grid_index()
-        roi = gpd.GeoDataFrame(geometry=[box(-3, -3, 3, 3)], crs="EPSG:4326")
-
-        source = self._source_query(gdf, roi)
-        optimized = self._optimized_query(df, roi)
-
-        assert source == optimized
-        assert len(source) == 16

@@ -35,6 +35,26 @@ NAIP_INDEX_PATH = f"{TABLES_BUCKET}/naip_chm_index_optimized.parquet"
 _fs = gcsfs.GCSFileSystem()
 
 
+def _query_tile_index(index_path: str, roi: gpd.GeoDataFrame) -> pd.DataFrame:
+    """Download a tile index and return rows whose bbox intersects the ROI.
+
+    The index is a plain parquet with flat bbox columns (bbox_xmin, bbox_ymin,
+    bbox_xmax, bbox_ymax) produced by scripts/optimize_tile_index.py.
+    """
+    roi_4326 = roi.to_crs("EPSG:4326")
+    xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
+
+    raw = _fs.cat(index_path)
+    df = pd.read_parquet(io.BytesIO(raw))
+    mask = (
+        (df["bbox_xmax"] >= xmin_q)
+        & (df["bbox_xmin"] <= xmax_q)
+        & (df["bbox_ymax"] >= ymin_q)
+        & (df["bbox_ymin"] <= ymax_q)
+    )
+    return df[mask]
+
+
 def _process_intersecting_tiles(
     roi: gpd.GeoDataFrame,
     fetch_urls: list[str],
@@ -105,25 +125,13 @@ def fetch_meta_chm(
     """Fetch Meta global canopy height model data."""
     progress("Loading Meta CHM parquet index...", 10)
 
-    s3_base = META_VERSION_CONFIG[version]["s3_base"]
-    tile_index = META_VERSION_CONFIG[version]["tile_index"]
-    roi_4326 = roi.to_crs("EPSG:4326")
-    xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
-
+    config = META_VERSION_CONFIG[version]
     try:
-        raw = _fs.cat(tile_index)
-        df = pd.read_parquet(io.BytesIO(raw))
-        mask = (
-            (df["bbox_xmax"] >= xmin_q)
-            & (df["bbox_xmin"] <= xmax_q)
-            & (df["bbox_ymax"] >= ymin_q)
-            & (df["bbox_ymin"] <= ymax_q)
-        )
-        intersecting = df[mask]
+        intersecting = _query_tile_index(config["tile_index"], roi)
     except Exception as e:
         raise ProcessingError(
             code="INDEX_FETCH_FAILED",
-            message="Failed to load Meta CHM parquet index.",
+            message="Failed to load Meta CHM file index.",
             traceback=str(e),
         )
 
@@ -134,8 +142,7 @@ def fetch_meta_chm(
             suggestion="The domain may be outside the dataset coverage area.",
         )
 
-    # Extract exactly what the helper needs into explicit Python lists
-    fetch_urls = [f"{s3_base}/{tile}.tif" for tile in intersecting["tile"]]
+    fetch_urls = [f"{config['s3_base']}/{tile}.tif" for tile in intersecting["tile"]]
     scale_factors = [1.0] * len(fetch_urls)
 
     return _process_intersecting_tiles(
@@ -155,23 +162,12 @@ def fetch_naip_chm(
     """Fetch NAIP high-resolution canopy height model data."""
     progress("Loading NAIP CHM parquet index...", 10)
 
-    roi_4326 = roi.to_crs("EPSG:4326")
-    xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
-
     try:
-        raw = _fs.cat(NAIP_INDEX_PATH)
-        df = pd.read_parquet(io.BytesIO(raw))
-        mask = (
-            (df["bbox_xmax"] >= xmin_q)
-            & (df["bbox_xmin"] <= xmax_q)
-            & (df["bbox_ymax"] >= ymin_q)
-            & (df["bbox_ymin"] <= ymax_q)
-        )
-        intersecting = df[mask]
+        intersecting = _query_tile_index(NAIP_INDEX_PATH, roi)
     except Exception as e:
         raise ProcessingError(
             code="INDEX_FETCH_FAILED",
-            message="Failed to load NAIP CHM parquet index.",
+            message="Failed to load NAIP CHM file index.",
             traceback=str(e),
         )
 

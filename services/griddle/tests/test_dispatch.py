@@ -632,7 +632,7 @@ class TestHandleChm:
 
         result = handle_chm(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2020", progress)
+        mock_fetch.assert_called_once_with(mock_gdf, progress)
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
 

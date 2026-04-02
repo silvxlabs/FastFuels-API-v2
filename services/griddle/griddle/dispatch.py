@@ -215,7 +215,7 @@ def handle_chm(
 
             return dataset
         case "naip":
-            dataset, tile_metadata = chm.fetch_naip_chm(domain_gdf, version, progress)
+            dataset, tile_metadata = chm.fetch_naip_chm(domain_gdf, progress)
             source["tile_metadata"] = tile_metadata
             return dataset
         case _:

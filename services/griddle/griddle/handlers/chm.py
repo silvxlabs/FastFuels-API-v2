@@ -156,7 +156,6 @@ def fetch_meta_chm(
 
 def fetch_naip_chm(
     roi: gpd.GeoDataFrame,
-    version: str,
     progress: Callable[[str, int | None], None],
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch NAIP high-resolution canopy height model data."""

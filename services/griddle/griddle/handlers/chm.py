@@ -6,6 +6,8 @@ All handlers return xr.Dataset where each variable name is a band name.
 """
 
 import io
+import logging
+import traceback
 from collections.abc import Callable
 
 import gcsfs
@@ -139,10 +141,12 @@ def fetch_meta_chm(
     try:
         intersecting = _query_tile_index(config["tile_index"], roi)
     except Exception as e:
+        tb = traceback.format_exc()
+        logging.getLogger(__name__).error("Meta CHM index lookup failed: %s\n%s", e, tb)
         raise ProcessingError(
             code="INDEX_FETCH_FAILED",
             message="Failed to load Meta CHM file index.",
-            traceback=str(e),
+            traceback=tb,
         )
 
     if intersecting.empty:
@@ -174,10 +178,12 @@ def fetch_naip_chm(
     try:
         intersecting = _query_tile_index(NAIP_INDEX_PATH, roi)
     except Exception as e:
+        tb = traceback.format_exc()
+        logging.getLogger(__name__).error("NAIP CHM index lookup failed: %s\n%s", e, tb)
         raise ProcessingError(
             code="INDEX_FETCH_FAILED",
             message="Failed to load NAIP CHM file index.",
-            traceback=str(e),
+            traceback=tb,
         )
 
     if intersecting.empty:

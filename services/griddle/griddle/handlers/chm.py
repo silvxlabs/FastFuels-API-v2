@@ -34,8 +34,6 @@ META_VERSION_CONFIG = {
 }
 NAIP_INDEX_PATH = f"{TABLES_BUCKET}/naip_chm_index_optimized.parquet"
 
-_fs = gcsfs.GCSFileSystem()
-
 # Reduce HTTP round trips when opening remote COGs.
 # See: https://gdal.org/en/stable/user/configoptions.html
 _GDAL_COG_CONFIG = {
@@ -57,7 +55,8 @@ def _query_tile_index(index_path: str, roi: gpd.GeoDataFrame) -> pd.DataFrame:
     roi_4326 = roi.to_crs("EPSG:4326")
     xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
 
-    raw = _fs.cat(index_path)
+    fs = gcsfs.GCSFileSystem()
+    raw = fs.cat(index_path)
     df = pd.read_parquet(io.BytesIO(raw))
     mask = (
         (df["bbox_xmax"] >= xmin_q)

@@ -34,6 +34,17 @@ NAIP_INDEX_PATH = f"{TABLES_BUCKET}/naip_chm_index_optimized.parquet"
 
 _fs = gcsfs.GCSFileSystem()
 
+# Reduce HTTP round trips when opening remote COGs.
+# See: https://gdal.org/en/stable/user/configoptions.html
+_GDAL_COG_CONFIG = {
+    "GDAL_DISABLE_READDIR_ON_OPEN": "YES",
+    "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif",
+    "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES": "YES",
+    "VSI_CACHE": "TRUE",
+    "VSI_CACHE_SIZE": "5000000",
+    "GDAL_INGESTED_BYTES_AT_OPEN": "32768",
+}
+
 
 def _query_tile_index(index_path: str, roi: gpd.GeoDataFrame) -> pd.DataFrame:
     """Download a tile index and return rows whose bbox intersects the ROI.
@@ -66,8 +77,7 @@ def _process_intersecting_tiles(
     n_tiles = len(fetch_urls)
     tile_arrays = []
 
-    # Apply the specific GDAL environment variables (e.g., AWS auth bypass)
-    with rasterio.Env(**gdal_env):
+    with rasterio.Env(**_GDAL_COG_CONFIG, **gdal_env):
         for i, (url, scale) in enumerate(zip(fetch_urls, scale_factors)):
             progress(
                 f"Fetching CHM tile {i + 1}/{n_tiles}...",

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_grid(grid_id: str) -> xr.Dataset:
-    """Load a PIM grid's Zarr data from GCS."""
+    """Load a grid's Zarr data from GCS."""
     path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     return load_zarr(path)
 

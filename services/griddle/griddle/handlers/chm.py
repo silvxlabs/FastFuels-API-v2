@@ -5,9 +5,12 @@ Pure functions that fetch CHM data for a domain extent.
 All handlers return xr.Dataset where each variable name is a band name.
 """
 
+import io
 from collections.abc import Callable
 
+import gcsfs
 import geopandas as gpd
+import pandas as pd
 import rasterio
 import xarray as xr
 from rioxarray.merge import merge_arrays
@@ -20,14 +23,16 @@ from lib.raster import RasterConnection
 META_VERSION_CONFIG = {
     "1": {
         "s3_base": "s3://dataforgood-fb-data/forests/v1/alsgedi_global_v6_float/chm",
-        "tile_index": f"gs://{TABLES_BUCKET}/Meta2024_chm_index.parquet",
+        "tile_index": f"{TABLES_BUCKET}/Meta2024_chm_index_optimized.parquet",
     },
     "2": {
         "s3_base": "s3://dataforgood-fb-data/forests/v2/global/dinov3_global_chm_v2_ml3/chm",
-        "tile_index": f"gs://{TABLES_BUCKET}/Meta_chmv2_index.parquet",
+        "tile_index": f"{TABLES_BUCKET}/Meta_chmv2_index_optimized.parquet",
     },
 }
-NAIP_INDEX_URL = f"gs://{TABLES_BUCKET}/naip_chm_index.parquet"
+NAIP_INDEX_PATH = f"{TABLES_BUCKET}/naip_chm_index_optimized.parquet"
+
+_fs = gcsfs.GCSFileSystem()
 
 
 def _process_intersecting_tiles(
@@ -101,21 +106,26 @@ def fetch_meta_chm(
     progress("Loading Meta CHM parquet index...", 10)
 
     s3_base = META_VERSION_CONFIG[version]["s3_base"]
-    meta_index_url = META_VERSION_CONFIG[version]["tile_index"]
+    tile_index = META_VERSION_CONFIG[version]["tile_index"]
     roi_4326 = roi.to_crs("EPSG:4326")
-    bounds = tuple(roi_4326.total_bounds)
+    xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
 
     try:
-        # Spatial pushdown filter
-        intersecting = gpd.read_parquet(meta_index_url, bbox=bounds)
+        raw = _fs.cat(tile_index)
+        df = pd.read_parquet(io.BytesIO(raw))
+        mask = (
+            (df["bbox_xmax"] >= xmin_q)
+            & (df["bbox_xmin"] <= xmax_q)
+            & (df["bbox_ymax"] >= ymin_q)
+            & (df["bbox_ymin"] <= ymax_q)
+        )
+        intersecting = df[mask]
     except Exception as e:
         raise ProcessingError(
             code="INDEX_FETCH_FAILED",
             message="Failed to load Meta CHM parquet index.",
             traceback=str(e),
         )
-
-    intersecting = intersecting[intersecting.intersects(roi_4326.union_all())]
 
     if intersecting.empty:
         raise ProcessingError(
@@ -146,19 +156,24 @@ def fetch_naip_chm(
     progress("Loading NAIP CHM parquet index...", 10)
 
     roi_4326 = roi.to_crs("EPSG:4326")
-    bounds = tuple(roi_4326.total_bounds)
+    xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
 
     try:
-        # Spatial pushdown filter
-        intersecting = gpd.read_parquet(NAIP_INDEX_URL, bbox=bounds)
+        raw = _fs.cat(NAIP_INDEX_PATH)
+        df = pd.read_parquet(io.BytesIO(raw))
+        mask = (
+            (df["bbox_xmax"] >= xmin_q)
+            & (df["bbox_xmin"] <= xmax_q)
+            & (df["bbox_ymax"] >= ymin_q)
+            & (df["bbox_ymin"] <= ymax_q)
+        )
+        intersecting = df[mask]
     except Exception as e:
         raise ProcessingError(
             code="INDEX_FETCH_FAILED",
             message="Failed to load NAIP CHM parquet index.",
             traceback=str(e),
         )
-
-    intersecting = intersecting[intersecting.intersects(roi_4326.union_all())]
 
     if intersecting.empty:
         raise ProcessingError(

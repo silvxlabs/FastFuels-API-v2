@@ -126,10 +126,10 @@ class TestQueryTileIndex:
     def _make_roi_4326(xmin, ymin, xmax, ymax):
         return gpd.GeoDataFrame(geometry=[box(xmin, ymin, xmax, ymax)], crs="EPSG:4326")
 
-    @patch("griddle.handlers.chm._fs")
-    def test_single_tile_hit(self, mock_fs):
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_single_tile_hit(self, mock_fs_cls):
         """ROI fully inside one tile returns that tile."""
-        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        mock_fs_cls.return_value.cat.return_value = self._make_grid_index_bytes()
         roi = self._make_roi_4326(0.2, 0.2, 0.8, 0.8)
 
         result = _query_tile_index("some/path.parquet", roi)
@@ -137,40 +137,40 @@ class TestQueryTileIndex:
         assert len(result) >= 1
         assert "tile_2_2" in result["tile"].values
 
-    @patch("griddle.handlers.chm._fs")
-    def test_multi_tile_hit(self, mock_fs):
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_multi_tile_hit(self, mock_fs_cls):
         """ROI spanning tile boundaries returns multiple tiles."""
-        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        mock_fs_cls.return_value.cat.return_value = self._make_grid_index_bytes()
         roi = self._make_roi_4326(-0.5, -0.5, 0.5, 0.5)
 
         result = _query_tile_index("some/path.parquet", roi)
 
         assert len(result) >= 4
 
-    @patch("griddle.handlers.chm._fs")
-    def test_no_hits(self, mock_fs):
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_no_hits(self, mock_fs_cls):
         """ROI outside all tiles returns empty DataFrame."""
-        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        mock_fs_cls.return_value.cat.return_value = self._make_grid_index_bytes()
         roi = self._make_roi_4326(10, 10, 11, 11)
 
         result = _query_tile_index("some/path.parquet", roi)
 
         assert result.empty
 
-    @patch("griddle.handlers.chm._fs")
-    def test_full_coverage(self, mock_fs):
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_full_coverage(self, mock_fs_cls):
         """ROI covering all tiles returns all 16."""
-        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        mock_fs_cls.return_value.cat.return_value = self._make_grid_index_bytes()
         roi = self._make_roi_4326(-3, -3, 3, 3)
 
         result = _query_tile_index("some/path.parquet", roi)
 
         assert len(result) == 16
 
-    @patch("griddle.handlers.chm._fs")
-    def test_reprojects_roi_to_4326(self, mock_fs):
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_reprojects_roi_to_4326(self, mock_fs_cls):
         """ROI in a projected CRS is reprojected to EPSG:4326 for the query."""
-        mock_fs.cat.return_value = _serialize_df(
+        mock_fs_cls.return_value.cat.return_value = _serialize_df(
             pd.DataFrame(
                 {
                     "tile": ["global"],
@@ -187,23 +187,23 @@ class TestQueryTileIndex:
 
         assert len(result) == 1
 
-    @patch("griddle.handlers.chm._fs")
-    def test_download_failure_propagates(self, mock_fs):
-        """Exceptions from _fs.cat propagate to the caller."""
-        mock_fs.cat.side_effect = Exception("Network error")
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_download_failure_propagates(self, mock_fs_cls):
+        """Exceptions from fs.cat propagate to the caller."""
+        mock_fs_cls.return_value.cat.side_effect = Exception("Network error")
         roi = self._make_roi_4326(0, 0, 1, 1)
 
         with pytest.raises(Exception, match="Network error"):
             _query_tile_index("some/path.parquet", roi)
 
-    @patch("griddle.handlers.chm._fs")
-    def test_bbox_superset_of_intersects(self, mock_fs):
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_bbox_superset_of_intersects(self, mock_fs_cls):
         """Bbox filtering returns a superset of exact geometry intersects.
 
         This verifies that using flat bbox columns never misses tiles that
         a geometry-based intersects() query would find.
         """
-        mock_fs.cat.return_value = self._make_grid_index_bytes()
+        mock_fs_cls.return_value.cat.return_value = self._make_grid_index_bytes()
         roi = self._make_roi_4326(-0.5, -0.5, 0.5, 0.5)
 
         # Optimized result
@@ -225,10 +225,10 @@ class TestQueryTileIndex:
 
         assert source <= optimized
 
-    @patch("griddle.handlers.chm._fs")
-    def test_preserves_data_columns(self, mock_fs):
+    @patch("griddle.handlers.chm.gcsfs.GCSFileSystem")
+    def test_preserves_data_columns(self, mock_fs_cls):
         """Non-bbox columns are preserved in the output."""
-        mock_fs.cat.return_value = _serialize_df(
+        mock_fs_cls.return_value.cat.return_value = _serialize_df(
             pd.DataFrame(
                 {
                     "chm_url": ["http://example.com/tile.tif"],

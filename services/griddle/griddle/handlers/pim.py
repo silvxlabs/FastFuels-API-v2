@@ -7,7 +7,6 @@ All handlers return xr.Dataset where each variable name is a band name.
 
 from collections.abc import Callable
 
-import gcsfs
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -15,8 +14,6 @@ import xarray as xr
 
 from lib.config import RASTERS_BUCKET, TABLES_BUCKET
 from lib.raster import RasterConnection
-
-_fs = gcsfs.GCSFileSystem()
 
 # Column names vary by TreeMap version
 TREEMAP_COLUMNS = {

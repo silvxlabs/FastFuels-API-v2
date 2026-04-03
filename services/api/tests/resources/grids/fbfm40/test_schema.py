@@ -115,9 +115,14 @@ class TestCreateLandfireFbfm40Request:
         assert request.version == "2022"
 
     def test_version_can_be_overridden(self):
-        """version can be set to a different value."""
+        """version can be set to a different valid value."""
         request = CreateLandfireFbfm40Request(version="2020")
         assert request.version == "2020"
+
+    def test_invalid_version_rejected(self):
+        """version must be a valid LANDFIRE FBFM40 version."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(version="2021")
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""

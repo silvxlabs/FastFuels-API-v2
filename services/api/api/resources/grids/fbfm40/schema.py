@@ -8,10 +8,20 @@ resolution from LANDFIRE. To convert codes to fuel parameters (fuel loads,
 SAV, depth), use the /grids/lookup/fbfm40 endpoint.
 """
 
+from enum import StrEnum
 from typing import Literal
 
 from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
+
+
+class LandfireFbfm40Version(StrEnum):
+    """Available LANDFIRE FBFM40 data versions."""
+
+    v2019 = "2019"
+    v2020 = "2020"
+    v2022 = "2022"
+    v2023 = "2023"
 
 
 class LandfireFbfm40Source(LandfireSource):
@@ -34,7 +44,7 @@ class CreateLandfireFbfm40Request(CreateGridRequestBase):
     To convert codes to fuel parameters, use /grids/lookup/fbfm40.
     """
 
-    version: str = "2022"
+    version: LandfireFbfm40Version = LandfireFbfm40Version.v2022
 
 
 FBFM40_BAND = Band(key="fbfm", type=BandType.categorical, unit=None, index=0)

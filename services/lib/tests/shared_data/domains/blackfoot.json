@@ -34,7 +34,7 @@
       "id": "0"
     }
   ],
-  "name": "Making balckfoot static data",
+  "name": "Making blackfoot static data",
   "description": "Domain near the Blackfoot River containing 3DEP, road, and water features.",
   "crs": {
     "type": "name",

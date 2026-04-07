@@ -370,6 +370,35 @@ class TestCreateDomainRequestBody:
         with pytest.raises(Exception):  # ValidationError
             CreateDomainRequestBody(type="Invalid", features=[])
 
+    def test_pad_to_resolution_default_none(self, sample_feature_collection):
+        """pad_to_resolution should default to None."""
+        body = CreateDomainRequestBody(**sample_feature_collection)
+        assert body.pad_to_resolution is None
+
+    def test_pad_to_resolution_accepts_positive(self, sample_feature_collection):
+        """pad_to_resolution should accept positive values."""
+        body = CreateDomainRequestBody(
+            **sample_feature_collection, pad_to_resolution=30
+        )
+        assert body.pad_to_resolution == 30
+
+    def test_pad_to_resolution_accepts_float(self, sample_feature_collection):
+        """pad_to_resolution should accept float values."""
+        body = CreateDomainRequestBody(
+            **sample_feature_collection, pad_to_resolution=0.5
+        )
+        assert body.pad_to_resolution == 0.5
+
+    def test_pad_to_resolution_rejects_zero(self, sample_feature_collection):
+        """pad_to_resolution should reject zero (gt=0 constraint)."""
+        with pytest.raises(Exception):  # ValidationError
+            CreateDomainRequestBody(**sample_feature_collection, pad_to_resolution=0)
+
+    def test_pad_to_resolution_rejects_negative(self, sample_feature_collection):
+        """pad_to_resolution should reject negative values."""
+        with pytest.raises(Exception):  # ValidationError
+            CreateDomainRequestBody(**sample_feature_collection, pad_to_resolution=-1)
+
 
 # =============================================================================
 # UpdateDomainRequestBody Tests
@@ -425,6 +454,10 @@ class TestUpdateDomainRequestBody:
         """Should accept empty list for tags."""
         body = UpdateDomainRequestBody(tags=[])
         assert body.tags == []
+
+    def test_pad_to_resolution_not_in_update_model(self):
+        """pad_to_resolution is immutable; UpdateDomainRequestBody should not have it."""
+        assert "pad_to_resolution" not in UpdateDomainRequestBody.model_fields
 
     def test_model_dump_exclude_none(self):
         """model_dump with exclude_none should only include provided fields."""
@@ -621,3 +654,57 @@ class TestRoundTrip:
 
         assert domain.id == "test-domain-id"
         assert domain.name == "Test Domain"
+
+    def test_two_feature_round_trip_with_pad_to_resolution(
+        self, sample_polygon_coordinates
+    ):
+        """A two-feature domain with bbox and pad_to_resolution should round-trip."""
+        data = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": sample_polygon_coordinates,
+                    },
+                    "properties": {"name": "domain"},
+                },
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": sample_polygon_coordinates,
+                    },
+                    "properties": {"name": "input"},
+                },
+            ],
+            "bbox": [0.0, 0.0, 1.0, 1.0],
+            "pad_to_resolution": 30,
+            "id": "test-padded-domain",
+            "name": "Padded Test Domain",
+            "description": "Round-trip test for two-feature padded domain",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
+        }
+
+        original = Domain(**data)
+        firestore_data = original.model_dump(context={"for_firestore": True})
+
+        # Coordinates should be stringified for Firestore
+        assert isinstance(firestore_data["features"][0]["geometry"]["coordinates"], str)
+        assert isinstance(firestore_data["features"][1]["geometry"]["coordinates"], str)
+
+        # bbox should be a 4-tuple/list of floats (not stringified)
+        assert tuple(firestore_data["bbox"]) == (0.0, 0.0, 1.0, 1.0)
+        assert firestore_data["pad_to_resolution"] == 30
+
+        # Round-trip back
+        restored = Domain(**firestore_data)
+
+        assert restored.id == "test-padded-domain"
+        assert restored.pad_to_resolution == 30
+        assert tuple(restored.bbox) == (0.0, 0.0, 1.0, 1.0)
+        assert len(restored.features) == 2
+        assert restored.features[0].properties["name"] == "domain"
+        assert restored.features[1].properties["name"] == "input"

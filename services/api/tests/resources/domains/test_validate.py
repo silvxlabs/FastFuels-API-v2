@@ -15,8 +15,10 @@ import pytest
 from api.resources.domains.validate import (
     MAX_DOMAIN_AREA_SQ_METERS,
     DomainValidationResult,
+    build_domain_features,
     estimate_utm_crs,
     is_crs_geographic,
+    pad_bounds_to_resolution,
     parse_geojson_to_gdf,
     validate_area_within_limits,
     validate_crs,
@@ -511,6 +513,7 @@ class TestDomainValidationResult:
         """Should store all provided attributes."""
         crs = CRS("EPSG:32610")
         features = [{"type": "Feature", "geometry": {}, "properties": {}}]
+        bbox = (0.0, 0.0, 1000.0, 1000.0)
 
         result = DomainValidationResult(
             gdf=valid_polygon_gdf,
@@ -518,6 +521,7 @@ class TestDomainValidationResult:
             utm_crs=crs,
             area=1000000.0,
             features=features,
+            bbox=bbox,
         )
 
         assert result.gdf is valid_polygon_gdf
@@ -525,6 +529,7 @@ class TestDomainValidationResult:
         assert result.utm_crs == crs
         assert result.area == 1000000.0
         assert result.features == features
+        assert result.bbox == bbox
 
     def test_utm_crs_can_be_none(self, valid_polygon_gdf):
         """utm_crs can be None when input was already projected."""
@@ -534,9 +539,147 @@ class TestDomainValidationResult:
             utm_crs=None,
             area=1000000.0,
             features=[],
+            bbox=(0.0, 0.0, 1000.0, 1000.0),
         )
 
         assert result.utm_crs is None
+
+
+# =============================================================================
+# pad_bounds_to_resolution Tests
+# =============================================================================
+
+
+class TestPadBoundsToResolution:
+    def test_basic_snapping(self):
+        """Should floor mins and ceil maxs to nearest resolution multiple."""
+        result = pad_bounds_to_resolution(10.5, 20.3, 30.7, 40.9, 10)
+        assert result == (10.0, 20.0, 40.0, 50.0)
+
+    def test_already_aligned_bounds_unchanged(self):
+        """Bounds already on a resolution boundary should not move."""
+        result = pad_bounds_to_resolution(10.0, 20.0, 30.0, 40.0, 10)
+        assert result == (10.0, 20.0, 30.0, 40.0)
+
+    def test_blue_mountain_padded_to_30m(self):
+        """Real-world Blue Mountain coordinates padded to 30m."""
+        result = pad_bounds_to_resolution(
+            720227.9398802927,
+            5189763.323999467,
+            721533.6406826023,
+            5190645.048516054,
+            30,
+        )
+        assert result == (720210, 5189760, 721560, 5190660)
+
+    def test_negative_coords(self):
+        """Should handle negative coordinates correctly (e.g., EPSG:5070)."""
+        result = pad_bounds_to_resolution(-1500.5, -1500.7, -1000.3, -1000.1, 100)
+        assert result == (-1600.0, -1600.0, -1000.0, -1000.0)
+
+    def test_fractional_resolution(self):
+        """Should work with fractional resolution (e.g., 0.5m)."""
+        result = pad_bounds_to_resolution(10.3, 20.7, 30.1, 40.9, 0.5)
+        assert result == (10.0, 20.5, 30.5, 41.0)
+
+    def test_large_resolution(self):
+        """Should work with large resolution (e.g., 100m)."""
+        result = pad_bounds_to_resolution(1.0, 2.0, 99.0, 101.0, 100)
+        assert result == (0.0, 0.0, 100.0, 200.0)
+
+
+# =============================================================================
+# build_domain_features Tests
+# =============================================================================
+
+
+class TestBuildDomainFeatures:
+    @pytest.fixture
+    def projected_gdf(self):
+        """A simple rectangular polygon in UTM (EPSG:32611)."""
+        polygon = Polygon(
+            [
+                (720228.0, 5189763.0),
+                (721534.0, 5189763.0),
+                (721534.0, 5190645.0),
+                (720228.0, 5190645.0),
+                (720228.0, 5189763.0),
+            ]
+        )
+        return GeoDataFrame(geometry=[polygon], crs="EPSG:32611")
+
+    def test_returns_two_features_without_padding(self, projected_gdf):
+        """Without padding, returns one 'domain' and one 'input' feature."""
+        features, bbox = build_domain_features(projected_gdf, pad_to_resolution=None)
+
+        assert len(features) == 2
+        assert features[0]["properties"]["name"] == "domain"
+        assert features[1]["properties"]["name"] == "input"
+
+    def test_domain_feature_is_first(self, projected_gdf):
+        """The 'domain' feature should be at index 0."""
+        features, _ = build_domain_features(projected_gdf)
+        assert features[0]["properties"]["name"] == "domain"
+
+    def test_domain_bbox_equals_input_bounds_without_padding(self, projected_gdf):
+        """Without padding, domain feature bbox should equal input polygon bounds."""
+        features, bbox = build_domain_features(projected_gdf, pad_to_resolution=None)
+
+        expected_bounds = tuple(projected_gdf.total_bounds)
+        assert bbox == expected_bounds
+
+        # Verify the domain feature geometry matches the bbox
+        domain_coords = features[0]["geometry"]["coordinates"][0]
+        domain_xs = [c[0] for c in domain_coords]
+        domain_ys = [c[1] for c in domain_coords]
+        assert (
+            min(domain_xs),
+            min(domain_ys),
+            max(domain_xs),
+            max(domain_ys),
+        ) == expected_bounds
+
+    def test_padding_snaps_domain_bbox(self, projected_gdf):
+        """With padding, domain feature bbox should be snapped to resolution."""
+        features, bbox = build_domain_features(projected_gdf, pad_to_resolution=30)
+
+        # Original bounds: (720228, 5189763, 721534, 5190645)
+        # Padded to 30: (720210, 5189760, 721560, 5190660)
+        assert bbox == (720210, 5189760, 721560, 5190660)
+
+    def test_padding_does_not_change_input_geometry(self, projected_gdf):
+        """The 'input' feature geometry should be unchanged by padding."""
+        features, _ = build_domain_features(projected_gdf, pad_to_resolution=30)
+
+        input_coords = features[1]["geometry"]["coordinates"][0]
+        original_coords = list(projected_gdf.geometry.iloc[0].exterior.coords)
+        assert len(input_coords) == len(original_coords)
+
+    def test_domain_feature_bbox_equals_returned_bbox(self, projected_gdf):
+        """The 'domain' feature's geometry bounds must equal the returned bbox tuple."""
+        features, bbox = build_domain_features(projected_gdf, pad_to_resolution=30)
+
+        domain_coords = features[0]["geometry"]["coordinates"][0]
+        domain_xs = [c[0] for c in domain_coords]
+        domain_ys = [c[1] for c in domain_coords]
+        assert (min(domain_xs), min(domain_ys), max(domain_xs), max(domain_ys)) == bbox
+
+    def test_multi_polygon_input_all_tagged_input(self):
+        """If user submits multiple polygons, all are tagged 'input'."""
+        polygon1 = Polygon([(0, 0), (100, 0), (100, 100), (0, 100), (0, 0)])
+        polygon2 = Polygon([(200, 200), (300, 200), (300, 300), (200, 300), (200, 200)])
+        gdf = GeoDataFrame(geometry=[polygon1, polygon2], crs="EPSG:32611")
+
+        features, bbox = build_domain_features(gdf, pad_to_resolution=None)
+
+        # 1 domain + 2 inputs
+        assert len(features) == 3
+        assert features[0]["properties"]["name"] == "domain"
+        assert features[1]["properties"]["name"] == "input"
+        assert features[2]["properties"]["name"] == "input"
+
+        # Domain bbox encompasses both input polygons
+        assert bbox == (0.0, 0.0, 300.0, 300.0)
 
 
 # =============================================================================
@@ -610,24 +753,104 @@ class TestValidateDomain:
         assert result.crs.to_epsg() == 32611
 
     def test_returns_features_list(self, valid_polygon_geojson):
-        """Should return features as a list of dicts."""
+        """Should return two features: 'domain' (bbox) and 'input' (polygon)."""
         result = validate_domain(valid_polygon_geojson)
 
         assert isinstance(result.features, list)
-        assert len(result.features) == 1
-        assert result.features[0]["type"] == "Feature"
-        assert "geometry" in result.features[0]
-        assert "properties" in result.features[0]
+        assert len(result.features) == 2
+        for feature in result.features:
+            assert feature["type"] == "Feature"
+            assert "geometry" in feature
+            assert "properties" in feature
+
+        names = [f["properties"]["name"] for f in result.features]
+        assert names == ["domain", "input"]
 
     def test_features_are_projected(self, valid_polygon_geojson):
-        """Features should contain projected coordinates."""
+        """All features should contain projected coordinates."""
         result = validate_domain(valid_polygon_geojson)
 
         # Original coordinates were around -121, 38 (WGS84)
         # UTM coordinates should be much larger (hundreds of thousands)
-        coords = result.features[0]["geometry"]["coordinates"][0][0]
-        assert abs(coords[0]) > 1000  # UTM easting
-        assert abs(coords[1]) > 1000  # UTM northing
+        for feature in result.features:
+            coords = feature["geometry"]["coordinates"][0][0]
+            assert abs(coords[0]) > 1000  # UTM easting
+            assert abs(coords[1]) > 1000  # UTM northing
+
+    def test_pad_to_resolution_snaps_domain_feature_bbox(self, utm_polygon_geojson):
+        """pad_to_resolution should snap the domain feature bbox."""
+        utm_polygon_geojson["pad_to_resolution"] = 30
+        result = validate_domain(utm_polygon_geojson)
+
+        # The bbox tuple should be snapped to multiples of 30
+        minx, miny, maxx, maxy = result.bbox
+        assert minx % 30 == 0
+        assert miny % 30 == 0
+        assert maxx % 30 == 0
+        assert maxy % 30 == 0
+
+        # The "domain" feature's geometry should match the padded bbox
+        domain_feature = result.features[0]
+        assert domain_feature["properties"]["name"] == "domain"
+        domain_coords = domain_feature["geometry"]["coordinates"][0]
+        domain_xs = [c[0] for c in domain_coords]
+        domain_ys = [c[1] for c in domain_coords]
+        assert (
+            min(domain_xs),
+            min(domain_ys),
+            max(domain_xs),
+            max(domain_ys),
+        ) == result.bbox
+
+    def test_pad_to_resolution_none_equivalent_to_unpadded(self, utm_polygon_geojson):
+        """Omitting pad_to_resolution should produce a tight bbox."""
+        result = validate_domain(utm_polygon_geojson)
+
+        # bbox should equal the gdf's total_bounds (the polygon's tight bbox)
+        expected = tuple(result.gdf.total_bounds)
+        assert result.bbox == expected
+
+    def test_validate_domain_returns_bbox(self, valid_polygon_geojson):
+        """validate_domain should return a bbox tuple in the result."""
+        result = validate_domain(valid_polygon_geojson)
+
+        assert result.bbox is not None
+        assert len(result.bbox) == 4
+        # bbox is in projected CRS so values should be large (UTM meters)
+        assert all(abs(x) > 1000 for x in result.bbox)
+
+    def test_padded_area_validates_against_padded_extent(self):
+        """Area validation should use the padded extent, not the unpadded one.
+
+        A polygon whose unpadded bbox is just under 16 sq km but whose padded
+        bbox exceeds 16 sq km should be rejected.
+        """
+        # Bbox: 3950 x 4050 = 15,997,500 sq m (under)
+        # Padded to 100m: 4000 x 4100 = 16,400,000 sq m (over)
+        polygon = Polygon(
+            [
+                (500000, 5000000),
+                (503950, 5000000),
+                (503950, 5004050),
+                (500000, 5004050),
+                (500000, 5000000),
+            ]
+        )
+        gdf = GeoDataFrame(geometry=[polygon], crs="EPSG:32611")
+        geojson = json.loads(gdf.to_json())
+        geojson["crs"] = {"type": "name", "properties": {"name": "EPSG:32611"}}
+
+        # Without padding it should pass
+        result = validate_domain(geojson)
+        assert result.area < MAX_DOMAIN_AREA_SQ_METERS
+
+        # With padding to 100m it should fail
+        geojson["pad_to_resolution"] = 100
+        with pytest.raises(HTTPException) as exc:
+            validate_domain(geojson)
+
+        assert exc.value.status_code == 422
+        assert "16 square kilometers" in exc.value.detail
 
     def test_defaults_to_epsg_4326_when_no_crs(self):
         """Should default to EPSG:4326 when CRS not specified."""
@@ -676,7 +899,9 @@ class TestValidateDomainRealData:
         assert result.utm_crs is not None
         assert result.area > 0
         assert result.crs.to_epsg() in [32611, 32612]
-        assert len(result.features) > 0
+        assert len(result.features) == 2
+        names = [f["properties"]["name"] for f in result.features]
+        assert names == ["domain", "input"]
 
     def test_point_zero_area_raises_422(self, point_geojson):
         """Point geometry should fail with zero area."""

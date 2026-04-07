@@ -93,6 +93,17 @@ class CreateDomainRequestBody(FeatureCollection):
     tags: list[str] | None = Field(
         [], max_length=50, description="A list of tags associated with the domain."
     )
+    pad_to_resolution: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "Optional resolution in meters to snap the domain bounding box to. "
+            "When set, the bounding box (the 'domain' feature) is snapped outward "
+            "to the nearest multiple of this value. Grids whose resolutions divide "
+            "evenly into this value will produce identical, aligned footprints on "
+            "this domain."
+        ),
+    )
 
 
 class Domain(CreateDomainRequestBody):

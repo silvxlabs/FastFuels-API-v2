@@ -118,6 +118,12 @@ async def create_domain(
       - **properties**: (object) Contains the CRS details.
         - **name**: (string) The CRS identifier, e.g., "EPSG:4326", "EPSG:5070",
           or URN format "urn:ogc:def:crs:EPSG::32611".
+    - **pad_to_resolution**: (number) Optional resolution in meters to snap the
+      domain bounding box to. When set, the bounding box (the "domain" feature)
+      is snapped outward to the nearest multiple of this value. Grids whose
+      resolutions divide evenly into this value will produce identical, aligned
+      footprints on this domain. Useful for compositional workflows where
+      multiple grids at different resolutions need to share an extent.
 
     ## Response
 
@@ -131,7 +137,15 @@ async def create_domain(
     - **modified_on**: (datetime) When the domain was last modified.
     - **tags**: (array) The tags associated with the domain.
     - **crs**: (object) The coordinate reference system (always projected).
-    - **features**: (array) The domain geometry features.
+    - **features**: (array) Two named features:
+      - **`name: "domain"`** — A polygon covering the working extent (bounding
+        box of the input, possibly padded). This is what griddle, standgen,
+        and exporter use as the authoritative spatial extent.
+      - **`name: "input"`** — The user's original projected geometry, preserved
+        for visualization and reference.
+    - **bbox**: (array) Standard GeoJSON bbox `[minx, miny, maxx, maxy]` in the
+      domain's projected CRS. Equals the bounds of the "domain" feature.
+    - **pad_to_resolution**: (number, optional) The padding value, if set.
 
     ## CRS Handling
 
@@ -150,8 +164,10 @@ async def create_domain(
 
     1. **CRS Validation**: Must be a valid EPSG code or URN format.
     2. **Area Validation**: Geometry must have non-zero area (no points or lines).
-    3. **Size Limit**: Total area must be less than 16 square kilometers.
-    4. **Location**: Geometry must be entirely within CONUS (Continental US).
+    3. **Location**: Geometry must be entirely within CONUS (Continental US).
+       Validated against the original input polygon (not the padded bbox).
+    4. **Size Limit**: The working extent (possibly padded bbox) must be less
+       than 16 square kilometers.
 
     ## Important Notes
 
@@ -159,8 +175,10 @@ async def create_domain(
        FeatureCollection input, not individual Feature objects. Wrap single
        features in a FeatureCollection.
 
-    2. **Multiple Features**: When multiple features are provided, all geometries
-       are included in the domain.
+    2. **Two-Feature Output**: The created domain stores two named features:
+       a "domain" feature (bounding box, the working extent used by all
+       downstream services) and an "input" feature (the user's original
+       polygon, preserved for visualization).
 
     3. **Projection**: Geographic coordinates are always projected to a suitable
        UTM zone for accurate area calculations and grid operations.
@@ -196,6 +214,8 @@ async def create_domain(
             "properties": {"name": str(validation_result.crs)},
         },
         "features": validation_result.features,
+        "bbox": list(validation_result.bbox),
+        "pad_to_resolution": body.pad_to_resolution,
     }
 
     domain = Domain(**domain_data)

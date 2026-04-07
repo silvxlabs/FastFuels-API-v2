@@ -93,7 +93,17 @@ class TestCreateDomainExamples:
         assert "modified_on" in data
         assert data["type"] == "FeatureCollection"
         assert "features" in data
-        assert len(data["features"]) > 0
+
+        # Two-feature response: "domain" (working extent) and "input" (original polygon)
+        assert len(data["features"]) >= 2
+        names = [f["properties"]["name"] for f in data["features"]]
+        assert "domain" in names
+        assert "input" in names
+
+        # bbox field should be populated and equal the "domain" feature's bounds
+        assert "bbox" in data
+        assert data["bbox"] is not None
+        assert len(data["bbox"]) == 4
 
         # Name and description should match input
         assert data["name"] == example_value.get("name", "")
@@ -188,6 +198,79 @@ class TestCreateDomainFromFiles:
         assert response_body["tags"] == ["test", "integration", "v2"]
 
         DOMAINS.append(response_body)
+
+    def test_pad_to_resolution_snaps_domain_bbox(self, client):
+        """pad_to_resolution=30 should snap the 'domain' feature bbox to multiples of 30."""
+        with open(DATA_DIR / "blue_mountain_feature_4326.geojson") as f:
+            feature = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [feature]
+                if feature.get("type") == "Feature"
+                else feature.get("features", [])
+            ),
+            "name": "Padded Domain",
+            "pad_to_resolution": 30,
+        }
+
+        response = client.post("/domains", json=request_body)
+
+        assert response.status_code == 201
+        data = response.json()
+
+        # Response should echo pad_to_resolution
+        assert data["pad_to_resolution"] == 30
+
+        # Two features: domain + input
+        assert len(data["features"]) == 2
+        names = [f["properties"]["name"] for f in data["features"]]
+        assert names == ["domain", "input"]
+
+        # bbox field should be present and snapped to multiples of 30
+        assert data["bbox"] is not None
+        for value in data["bbox"]:
+            assert value % 30 == 0, f"bbox value {value} is not a multiple of 30"
+
+        # The "domain" feature's geometry should match the bbox
+        domain_feature = data["features"][0]
+        assert domain_feature["properties"]["name"] == "domain"
+        coords = domain_feature["geometry"]["coordinates"][0]
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        assert (min(xs), min(ys), max(xs), max(ys)) == tuple(data["bbox"])
+
+        DOMAINS.append(data)
+
+    def test_pad_to_resolution_none_omitted_from_response(self, client):
+        """When pad_to_resolution is not provided, it should be omitted from the response."""
+        with open(DATA_DIR / "blue_mountain_feature_4326.geojson") as f:
+            feature = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [feature]
+                if feature.get("type") == "Feature"
+                else feature.get("features", [])
+            ),
+            "name": "Unpadded Domain",
+        }
+
+        response = client.post("/domains", json=request_body)
+
+        assert response.status_code == 201
+        data = response.json()
+
+        # response_model_exclude_none should drop pad_to_resolution when None
+        assert "pad_to_resolution" not in data
+
+        # Should still have two features and bbox
+        assert len(data["features"]) == 2
+        assert "bbox" in data
+
+        DOMAINS.append(data)
 
 
 class TestCreateDomainValidationErrors:
@@ -285,6 +368,64 @@ class TestCreateDomainValidationErrors:
 
         assert response.status_code == 422
         assert "Invalid CRS" in response.json()["detail"]
+
+    def test_pad_to_resolution_zero_returns_422(self, client):
+        """pad_to_resolution=0 should return 422 (gt=0 constraint)."""
+        request_body = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.0, 46.8],
+                                [-114.01, 46.8],
+                                [-114.01, 46.79],
+                                [-114.0, 46.79],
+                                [-114.0, 46.8],
+                            ]
+                        ],
+                    },
+                }
+            ],
+            "pad_to_resolution": 0,
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+
+    def test_pad_to_resolution_negative_returns_422(self, client):
+        """pad_to_resolution=-1 should return 422 (gt=0 constraint)."""
+        request_body = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.0, 46.8],
+                                [-114.01, 46.8],
+                                [-114.01, 46.79],
+                                [-114.0, 46.79],
+                                [-114.0, 46.8],
+                            ]
+                        ],
+                    },
+                }
+            ],
+            "pad_to_resolution": -1,
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
 
 
 class TestGetDomain:

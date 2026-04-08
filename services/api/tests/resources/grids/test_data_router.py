@@ -95,14 +95,13 @@ class TestGetGridDataChunkMetadata:
         assert response.status_code == 200
 
         data = response.json()
+        georef = static_grid_in_firestore["georeference"]
+        # Static fixture fits in a single chunk (chunk_shape is 512×512), so
+        # chunk 0 covers the entire grid.
         assert data["index"] == 0
-        # static fixture shape is (47, 61), chunk_shape [512, 512]
-        # entire grid fits in one chunk
-        assert data["shape"] == [47, 61]
+        assert data["shape"] == list(georef["shape"])
         assert data["offset"] == [0, 0]
         assert len(data["transform"]) == 6
-        # transform should match the grid's transform
-        georef = static_grid_in_firestore["georeference"]
         for i in range(6):
             assert data["transform"][i] == pytest.approx(georef["transform"][i])
 
@@ -170,10 +169,11 @@ class TestGetGridData:
         assert response.status_code == 200
 
         data = response.json()
-        assert data["shape"] == [47, 61]
+        expected_shape = list(static_grid_in_firestore["georeference"]["shape"])
+        assert data["shape"] == expected_shape
         assert data["order"] == "C"
         assert isinstance(data["data"], list)
-        assert len(data["data"]) == 47 * 61
+        assert len(data["data"]) == expected_shape[0] * expected_shape[1]
 
     def test_binary_format_returns_200(
         self, client, domain_for_testing, static_grid_in_firestore
@@ -191,7 +191,10 @@ class TestGetGridData:
         assert "X-Data-Shape" in response.headers
         assert "X-Data-Dtype" in response.headers
         assert response.headers["X-Data-Order"] == "C"
-        assert response.headers["X-Data-Shape"] == "47,61"
+        expected_shape = static_grid_in_firestore["georeference"]["shape"]
+        assert response.headers["X-Data-Shape"] == ",".join(
+            str(s) for s in expected_shape
+        )
 
     def test_default_params(self, client, domain_for_testing, static_grid_in_firestore):
         """Defaults: format=json, order=C."""
@@ -201,7 +204,7 @@ class TestGetGridData:
 
         data = response.json()
         assert data["order"] == "C"
-        assert data["shape"] == [47, 61]
+        assert data["shape"] == list(static_grid_in_firestore["georeference"]["shape"])
 
     def test_missing_band_returns_404(
         self, client, domain_for_testing, static_grid_in_firestore

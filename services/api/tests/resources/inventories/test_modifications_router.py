@@ -535,7 +535,7 @@ class TestPimWithModifications:
     """Test that the PIM endpoint accepts the new modifications field."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/inventories/pim"
+        return f"/domains/{domain_id}/inventories/tree/pim"
 
     def test_pim_with_modifications(
         self, client, domain_for_testing, pim_grid_for_inventory

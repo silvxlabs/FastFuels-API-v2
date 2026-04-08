@@ -1,16 +1,12 @@
 """
 Unit tests for api/v2/resources/inventories/schema.py
-and api/v2/resources/inventories/pim/schema.py
+and api/v2/resources/inventories/tree/pim/schema.py
 
 Tests the Inventory schema models, enums, and PIM source models.
 These are pure unit tests with no external dependencies.
 """
 
 import pytest
-from api.resources.inventories.pim.schema import (
-    CreatePimInventoryRequest,
-    PimInventorySource,
-)
 from api.resources.inventories.schema import (
     CreateInventoryRequestBase,
     Inventory,
@@ -24,6 +20,10 @@ from api.resources.inventories.schema import (
     ListInventoriesResponse,
     PointProcess,
     UpdateInventoryRequestBody,
+)
+from api.resources.inventories.tree.pim.schema import (
+    CreatePimInventoryRequest,
+    PimInventorySource,
 )
 from pydantic import ValidationError
 

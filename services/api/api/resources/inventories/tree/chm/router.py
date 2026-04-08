@@ -1,5 +1,5 @@
 """
-api/v2/resources/inventories/chm/router.py
+api/v2/resources/inventories/tree/chm/router.py
 
 Router for CHM extraction inventory creation.
 """
@@ -12,12 +12,12 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.resources.inventories.chm.examples import CREATE_CHM_OPENAPI_EXAMPLES
-from api.resources.inventories.chm.schema import (
+from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
+from api.resources.inventories.tree.chm.examples import CREATE_CHM_OPENAPI_EXAMPLES
+from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
     CreateChmInventoryRequest,
 )
-from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (

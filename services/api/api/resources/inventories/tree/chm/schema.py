@@ -1,5 +1,5 @@
 """
-api/v2/resources/inventories/chm/schema.py
+api/v2/resources/inventories/tree/chm/schema.py
 
 Schema models for CHM extraction inventory creation.
 """

@@ -1,5 +1,5 @@
 """
-api/v2/resources/inventories/chm/examples.py
+api/v2/resources/inventories/tree/chm/examples.py
 
 Example request bodies for CHM inventory endpoints.
 

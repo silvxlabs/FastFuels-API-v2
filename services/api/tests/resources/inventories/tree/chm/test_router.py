@@ -1,12 +1,12 @@
 """
-Integration tests for api/v2/resources/inventories/chm/router.py
+Integration tests for api/v2/resources/inventories/tree/chm/router.py
 
 Tests the CHM extraction inventory creation endpoint.
 These tests make real HTTP requests to the API and interact with Firestore and Cloud Tasks.
 """
 
 import pytest
-from api.resources.inventories.chm.examples import ALL_CHM_EXAMPLE_VALUES
+from api.resources.inventories.tree.chm.examples import ALL_CHM_EXAMPLE_VALUES
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from tests.fixtures import make_domain_data, make_grid_data
@@ -74,10 +74,10 @@ def second_domain_for_inventory(firestore_client):
 
 
 class TestCreateChmInventory:
-    """Test the POST /domains/{domain_id}/inventories/chm endpoint."""
+    """Test the POST /domains/{domain_id}/inventories/tree/chm endpoint."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/inventories/chm"
+        return f"/domains/{domain_id}/inventories/tree/chm"
 
     def test_minimal_request_creates_inventory(
         self, client, domain_for_testing, chm_grid_for_inventory

@@ -1,12 +1,12 @@
 """
-Unit tests for api/v2/resources/inventories/chm/schema.py
+Unit tests for api/v2/resources/inventories/tree/chm/schema.py
 
 Tests the CHM inventory extraction schema models and validation.
 These are pure unit tests with no external dependencies.
 """
 
 import pytest
-from api.resources.inventories.chm.schema import (
+from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
     CreateChmInventoryRequest,
     StemIsolationLmf,

@@ -53,7 +53,7 @@ def test_create_blue_mtn_pim_inventory(
     create_static_inventory_fixture(
         client=client,
         domain_id=blue_mountain_domain["id"],
-        endpoint="/inventories/pim",
+        endpoint="/inventories/tree/pim",
         body={
             "source_pim_grid_id": "static-test-blue-mtn-pim-treemap",
         },

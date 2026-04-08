@@ -14,7 +14,11 @@ import json
 from pathlib import Path
 
 import pytest
-from api.resources.domains.examples import ALL_EXAMPLE_VALUES
+from api.resources.domains.examples import (
+    ALL_EXAMPLE_VALUES,
+    EXAMPLE_PADDED,
+    EXAMPLE_WGS84_DEFAULT,
+)
 from google.cloud import firestore
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
@@ -271,6 +275,136 @@ class TestCreateDomainFromFiles:
         assert "bbox" in data
 
         DOMAINS.append(data)
+
+
+class TestPreviewDomain:
+    """Test the POST /domains/preview endpoint.
+
+    Preview runs the same validation + projection pipeline as create but
+    returns id="preview" and never writes to Firestore.
+    """
+
+    route = "/domains/preview"
+
+    def test_preview_returns_200(self, client):
+        """Preview returns 200 (not 201 — nothing is created)."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+
+    def test_preview_id_is_preview(self, client):
+        """Preview response always has id='preview'."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+        assert response.json()["id"] == "preview"
+
+    def test_preview_returns_two_features(self, client):
+        """Preview returns the two-feature FeatureCollection (domain + input)."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert len(data["features"]) == 2
+        names = [f["properties"]["name"] for f in data["features"]]
+        assert "domain" in names
+        assert "input" in names
+
+    def test_preview_returns_bbox(self, client):
+        """Preview response includes a valid 4-element bbox."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "bbox" in data
+        assert len(data["bbox"]) == 4
+
+    def test_preview_pad_to_resolution_honored(self, client):
+        """pad_to_resolution snaps the domain bbox in preview, same as create."""
+        response = client.post(self.route, json=EXAMPLE_PADDED)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["pad_to_resolution"] == 30
+        for value in data["bbox"]:
+            assert value % 30 == 0, f"bbox value {value} is not a multiple of 30"
+
+    def test_preview_no_document_written(self, client, firestore_client):
+        """Preview must not create any Firestore document."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+        assert response.status_code == 200
+
+        doc = firestore_client.collection(DOMAINS_COLLECTION).document("preview").get()
+        assert not doc.exists
+
+    def test_preview_zero_area_returns_422(self, client):
+        """Point geometry (zero area) propagates as 422."""
+        with open(DATA_DIR / "point.geojson") as f:
+            point = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [point] if point.get("type") == "Feature" else point.get("features", [])
+            ),
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+        assert "area greater than zero" in response.json()["detail"]
+
+    def test_preview_outside_conus_returns_422(self, client):
+        """Domain outside CONUS propagates as 422."""
+        with open(DATA_DIR / "polygon_in_alaska.geojson") as f:
+            alaska = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [alaska]
+                if alaska.get("type") == "Feature"
+                else alaska.get("features", [])
+            ),
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+        assert "within CONUS" in response.json()["detail"]
+
+    def test_preview_invalid_crs_returns_422(self, client):
+        """Invalid CRS propagates as 422."""
+        request_body = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.0, 46.8],
+                                [-114.01, 46.8],
+                                [-114.01, 46.79],
+                                [-114.0, 46.79],
+                                [-114.0, 46.8],
+                            ]
+                        ],
+                    },
+                }
+            ],
+            "crs": {"type": "name", "properties": {"name": "INVALID:CRS"}},
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+        assert "Invalid CRS" in response.json()["detail"]
 
 
 class TestCreateDomainValidationErrors:

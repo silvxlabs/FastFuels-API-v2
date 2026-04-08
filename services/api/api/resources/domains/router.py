@@ -233,6 +233,74 @@ async def create_domain(
     return domain
 
 
+@router.post(
+    "/preview",
+    response_model=Domain,
+    status_code=status.HTTP_200_OK,
+    summary="Preview a domain without persisting it",
+    response_model_exclude_none=True,
+)
+async def preview_domain(
+    body: Annotated[
+        CreateDomainRequestBody,
+        Body(openapi_examples=CREATE_DOMAIN_OPENAPI_EXAMPLES),
+    ],
+):
+    """
+    # Preview Domain Endpoint
+
+    Runs the same validation and projection pipeline as `POST /v2/domains` but
+    returns the resulting `Domain` resource without writing to Firestore. Use
+    this to let users inspect the projected, padded bounding box before committing
+    to a create.
+
+    ## Request Body
+
+    Identical to `POST /v2/domains`. See that endpoint for full documentation.
+
+    ## Response
+
+    Returns the same `Domain` response model as create, with:
+
+    - **id**: Always `"preview"` — not a real domain identifier.
+    - **created_on** / **modified_on**: Set to the current request time (not persisted).
+    - **features**: Two named features — `"domain"` (working extent) and `"input"`
+      (original polygon), identical to what create would return.
+    - **bbox**: Bounding box of the `"domain"` feature.
+    - **crs**: Projected CRS, identical to what create would return.
+
+    ## Error Responses
+
+    Same 422 error responses as `POST /v2/domains`:
+
+    - "Invalid CRS '{crs}'. Must be a valid authority string (e.g., 'EPSG:4326')."
+    - "Invalid geometry. The feature must have an area greater than zero."
+    - "Invalid spatial extent. Area must be less than 16 square kilometers."
+    - "Invalid spatial extent. The domain must be entirely within CONUS."
+    """
+    validation_result = validate_domain(body.model_dump())
+
+    request_time = datetime.now()
+    domain_data = {
+        "type": "FeatureCollection",
+        "id": "preview",
+        "name": body.name,
+        "description": body.description,
+        "created_on": request_time,
+        "modified_on": request_time,
+        "tags": body.tags,
+        "crs": {
+            "type": "name",
+            "properties": {"name": str(validation_result.crs)},
+        },
+        "features": validation_result.features,
+        "bbox": list(validation_result.bbox),
+        "pad_to_resolution": body.pad_to_resolution,
+    }
+
+    return Domain(**domain_data)
+
+
 @router.get(
     "",
     response_model=ListDomainsResponse,

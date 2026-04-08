@@ -471,7 +471,7 @@ wheels = [
 
 [[package]]
 name = "fastfuels-core"
-version = "0.7.0"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dask", extra = ["dataframe"] },
@@ -487,9 +487,9 @@ dependencies = [
     { name = "shapely" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/96/ed59ff7b41e16b07d23b3a2fcb2e096b49e8162a5be52c3aef3dfbf7967c/fastfuels_core-0.7.0.tar.gz", hash = "sha256:b1efdc80d82b927f20dd211958419bdfc5d077506c18b8bd5546fbd18efa776c", size = 311371, upload-time = "2026-02-24T17:02:15.886Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/a7/d4dad7ad97016aa9dbdbc18107eb210e50b5304509cbf3a217ec018eaf3f/fastfuels_core-0.9.0.tar.gz", hash = "sha256:2a8eb4f7ac9de1b773b71837b3365472966acd6652d0eeecc9b0d3a22a52c9c7", size = 323733, upload-time = "2026-03-27T19:16:13.51Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/6e/bb86838afb702b5b2fdc196315d65b17d9178fdc86bc3cb56e61105e3f0e/fastfuels_core-0.7.0-py3-none-any.whl", hash = "sha256:e053b0bc59a7dd02ac917575b901db29833a59630fe2c7b090e69136d3f8da1d", size = 150394, upload-time = "2026-02-24T17:02:14.54Z" },
+    { url = "https://files.pythonhosted.org/packages/50/1f/4a9d77224da87e48339d18b615fe009e75b22172d7f979c1e85ae2a32efc/fastfuels_core-0.9.0-py3-none-any.whl", hash = "sha256:233894e81a50a5d1f0ac00044c498bcb974700e7bbf2bd393d9836ba1cdfbd18", size = 153178, upload-time = "2026-03-27T19:16:12.177Z" },
 ]
 
 [[package]]
@@ -1058,17 +1058,19 @@ requires-dist = [
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.2.0" },
     { name = "geopandas", marker = "extra == 'raster'", specifier = ">=1.1.2" },
+    { name = "geopandas", marker = "extra == 'threedep'", specifier = ">=1.1.2" },
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.23.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.9.0" },
     { name = "numpy", marker = "extra == 'raster'", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
     { name = "rioxarray", marker = "extra == 'raster'", specifier = ">=0.21.0" },
+    { name = "s3fs", marker = "extra == 'threedep'", specifier = ">=2024.2.0" },
     { name = "xarray", marker = "extra == 'raster'", specifier = ">=2025.1.0" },
     { name = "xarray", marker = "extra == 'zarr'", specifier = ">=2025.1.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1.5" },
 ]
-provides-extras = ["firestore", "gcs", "zarr", "raster"]
+provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]

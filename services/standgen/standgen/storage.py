@@ -13,8 +13,8 @@ from lib.zarr_utils import load_zarr
 logger = logging.getLogger(__name__)
 
 
-def load_pim_grid(grid_id: str) -> xr.Dataset:
-    """Load a PIM grid's Zarr data from GCS."""
+def load_grid(grid_id: str) -> xr.Dataset:
+    """Load a grid's Zarr data from GCS."""
     path = f"gs://{GRIDS_BUCKET}/{grid_id}"
     return load_zarr(path)
 

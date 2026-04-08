@@ -23,7 +23,7 @@ from standgen.columns import (
 )
 from standgen.errors import ProcessingError
 from standgen.modifications import apply_modifications
-from standgen.storage import load_pim_grid, load_tree_table, save_parquet
+from standgen.storage import load_grid, load_tree_table, save_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def handle_pim(
 
     # Load PIM grid data
     progress("Loading PIM grid data...", 10)
-    grid_ds = load_pim_grid(source_pim_grid_id)
+    grid_ds = load_grid(source_pim_grid_id)
 
     # Validate required band exists in grid
     if plot_id_band not in grid_ds.data_vars:

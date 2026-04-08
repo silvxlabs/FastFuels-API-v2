@@ -36,7 +36,11 @@ from api.resources.domains.schema import (
     ListDomainsResponse,
     UpdateDomainRequestBody,
 )
-from api.resources.domains.validate import validate_domain
+from api.resources.domains.validate import (
+    reproject_features,
+    validate_crs,
+    validate_domain,
+)
 from lib.config import (
     DOMAINS_COLLECTION,
     GRIDS_BUCKET,
@@ -299,6 +303,65 @@ async def preview_domain(
     }
 
     return Domain(**domain_data)
+
+
+@router.post(
+    "/reproject",
+    response_model=CreateDomainRequestBody,
+    status_code=status.HTTP_200_OK,
+    summary="Reproject a FeatureCollection to a target CRS",
+    response_model_exclude_none=True,
+)
+async def reproject_domain(
+    body: CreateDomainRequestBody,
+    target_epsg: int = Query(..., description="EPSG code of the target CRS."),
+):
+    """
+    # Reproject Domain Endpoint
+
+    Stateless utility that reprojects a GeoJSON `FeatureCollection` from one
+    coordinate reference system to another. No resource is created; the
+    reprojected `FeatureCollection` is returned immediately.
+
+    ## Query Parameters
+
+    - **target_epsg**: (integer, required) EPSG code of the target CRS
+      (e.g., `4326` for WGS84, `32611` for UTM zone 11N).
+
+    ## Request Body
+
+    A GeoJSON `FeatureCollection`. The source CRS is read from the
+    `crs.properties.name` field if present; otherwise EPSG:4326 is assumed.
+
+    ## Response
+
+    Returns the reprojected `FeatureCollection` with:
+
+    - **features**: All input features reprojected to the target CRS, with
+      original feature properties preserved.
+    - **crs**: Set to the target EPSG code.
+
+    ## Error Responses
+
+    - **422**: Invalid source CRS, invalid target EPSG, or geometry that
+      cannot be reprojected.
+    """
+    source_crs = validate_crs(body.crs.properties.name)
+    target_crs = validate_crs(f"EPSG:{target_epsg}")
+
+    features = [feat.model_dump() for feat in body.features]
+    reprojected = reproject_features(features, source_crs, target_crs)
+
+    return CreateDomainRequestBody(
+        **{
+            "type": "FeatureCollection",
+            "features": reprojected,
+            "name": body.name,
+            "description": body.description,
+            "tags": body.tags,
+            "crs": {"type": "name", "properties": {"name": f"EPSG:{target_epsg}"}},
+        }
+    )
 
 
 @router.get(

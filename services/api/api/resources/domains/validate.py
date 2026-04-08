@@ -265,6 +265,38 @@ def build_domain_features(
     return [domain_feature, *input_features], (minx, miny, maxx, maxy)
 
 
+def reproject_features(
+    features: list[dict],
+    source_crs: CRS,
+    target_crs: CRS,
+) -> list[dict]:
+    """Reproject a list of GeoJSON features from source CRS to target CRS.
+
+    Args:
+        features: List of GeoJSON Feature dicts with geometry and properties.
+        source_crs: The source pyproj CRS.
+        target_crs: The target pyproj CRS.
+
+    Returns:
+        List of reprojected GeoJSON Feature dicts with original properties preserved.
+
+    Raises:
+        HTTPException: 422 if reprojection fails.
+    """
+    try:
+        gdf = gpd.GeoDataFrame.from_features(features, crs=source_crs)
+        gdf = gdf.to_crs(target_crs)
+        return json.loads(gdf.to_json())["features"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("Failed to reproject features: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Failed to reproject geometry.",
+        )
+
+
 class DomainValidationResult:
     """Result of domain validation containing processed geometry data.
 

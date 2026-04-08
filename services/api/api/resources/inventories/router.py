@@ -45,6 +45,7 @@ from api.resources.inventories.schema import (
     ListInventoriesResponse,
     UpdateInventoryRequestBody,
 )
+from api.resources.inventories.tree.router import router as tree_router
 from api.schema import SortOrder
 from lib.config import INVENTORIES_BUCKET, INVENTORIES_COLLECTION
 
@@ -590,6 +591,7 @@ async def get_inventory_data(
 
 
 router.include_router(pim_router, prefix="/pim", tags=["Inventories - PIM"])
+router.include_router(tree_router, prefix="/tree")
 router.include_router(
     modifications_router,
     prefix="/{inventory_id}/modifications",

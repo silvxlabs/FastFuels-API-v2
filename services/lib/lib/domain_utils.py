@@ -22,6 +22,12 @@ class InvalidGeometryError(Exception):
 def parse_domain_gdf(domain_data: dict) -> gpd.GeoDataFrame:
     """Parse a domain document dict into a GeoDataFrame.
 
+    Loads all features in the FeatureCollection. For v2 domains this is the
+    "domain" working-extent rectangle plus the "input" polygon; the bbox
+    rectangle contains the input polygon by construction, so
+    ``gdf.total_bounds`` equals the working extent (possibly snapped to
+    ``pad_to_resolution``) without any filtering.
+
     Pure function — no I/O. The caller is responsible for loading the
     domain document from Firestore and handling DocumentNotFoundError.
 

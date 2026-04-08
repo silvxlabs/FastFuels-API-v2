@@ -97,13 +97,11 @@ def _poll_for_completion(
 def _save_json_template(grid: dict, static_name: str) -> None:
     """Save a completed grid document as a JSON template for griddle tests.
 
-    Skips writing if the file already exists to avoid noisy diffs when
-    re-running e2e tests without meaningful changes.
+    Always overwrites so the template stays consistent with the regenerated
+    zarr in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS), so
+    repeated runs against unchanged griddle output produce identical files.
     """
     out_path = STATIC_GRIDS_DIR / f"{static_name}.json"
-    if out_path.exists():
-        logger.info(f"JSON template already exists, skipping: {out_path}")
-        return
     template = {k: v for k, v in grid.items() if k not in STRIP_FIELDS}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
@@ -266,13 +264,10 @@ def _poll_inventory_for_completion(
 def _save_inventory_json_template(inventory: dict, static_name: str) -> None:
     """Save a completed inventory document as a JSON template.
 
-    Skips writing if the file already exists to avoid noisy diffs when
-    re-running e2e tests without meaningful changes.
+    Always overwrites so the template stays consistent with the regenerated
+    parquet in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS).
     """
     out_path = STATIC_INVENTORIES_DIR / f"{static_name}.json"
-    if out_path.exists():
-        logger.info(f"Inventory JSON template already exists, skipping: {out_path}")
-        return
     template = {k: v for k, v in inventory.items() if k not in STRIP_FIELDS}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:

@@ -103,14 +103,14 @@ def inventory_with_different_owner(firestore_client, domain_with_different_owner
     doc_ref.delete()
 
 
-# POST /domains/{domain_id}/inventories/pim Tests
+# POST /domains/{domain_id}/inventories/tree/pim Tests
 
 
 class TestCreatePimInventory:
-    """Test the POST /domains/{domain_id}/inventories/pim endpoint."""
+    """Test the POST /domains/{domain_id}/inventories/tree/pim endpoint."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/inventories/pim"
+        return f"/domains/{domain_id}/inventories/tree/pim"
 
     @pytest.mark.xfail(reason="Standgen Cloud Run service not yet deployed")
     def test_minimal_request_creates_inventory(

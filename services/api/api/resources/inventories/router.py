@@ -32,7 +32,6 @@ from api.resources.inventories.exports.router import router as exports_router
 from api.resources.inventories.modifications.router import (
     router as modifications_router,
 )
-from api.resources.inventories.pim.router import router as pim_router
 from api.resources.inventories.schema import (
     Inventory,
     InventoryDataFormat,
@@ -590,7 +589,6 @@ async def get_inventory_data(
     )
 
 
-router.include_router(pim_router, prefix="/pim", tags=["Inventories - PIM"])
 router.include_router(tree_router, prefix="/tree")
 router.include_router(
     modifications_router,

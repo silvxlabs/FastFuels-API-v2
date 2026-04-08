@@ -1,17 +1,7 @@
 {
-  "modifications": [],
-  "status": "completed",
-  "chunk_shape": [
-    512,
-    512
-  ],
-  "progress": {
-    "message": "Complete",
-    "percent": 100
-  },
   "source": {
-    "version": "2020",
     "description": "LANDFIRE topographic data (elevation, slope, aspect)",
+    "version": "2020",
     "bands": [
       "elevation",
       "slope",
@@ -20,30 +10,18 @@
     "name": "landfire",
     "product": "topography"
   },
-  "bands": [
-    {
-      "unit": "m",
-      "key": "elevation",
-      "type": "continuous",
-      "index": 0
-    },
-    {
-      "unit": "degrees",
-      "key": "slope",
-      "type": "continuous",
-      "index": 1
-    },
-    {
-      "unit": "degrees",
-      "key": "aspect",
-      "type": "continuous",
-      "index": 2
-    }
-  ],
-  "name": "",
-  "description": "",
+  "status": "completed",
+  "modifications": [],
   "tags": [],
+  "progress": {
+    "percent": 100,
+    "message": "Complete"
+  },
   "georeference": {
+    "shape": [
+      47,
+      60
+    ],
     "transform": [
       29.945424601110094,
       0.0,
@@ -52,10 +30,32 @@
       -29.94542460111172,
       5190913.867581626
     ],
-    "shape": [
-      47,
-      60
-    ],
     "crs": "EPSG:32611"
-  }
+  },
+  "name": "",
+  "chunk_shape": [
+    512,
+    512
+  ],
+  "description": "",
+  "bands": [
+    {
+      "type": "continuous",
+      "index": 0,
+      "unit": "m",
+      "key": "elevation"
+    },
+    {
+      "type": "continuous",
+      "index": 1,
+      "unit": "degrees",
+      "key": "slope"
+    },
+    {
+      "type": "continuous",
+      "index": 2,
+      "unit": "degrees",
+      "key": "aspect"
+    }
+  ]
 }

@@ -34,7 +34,7 @@ class TestHandleLandfire:
 
         result = handle_landfire(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2022")
+        mock_fetch.assert_called_once_with(mock_gdf, "2022", remove_non_burnable=None)
         assert result == mock_result
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")

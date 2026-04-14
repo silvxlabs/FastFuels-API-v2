@@ -9,6 +9,7 @@ dependencies = [
     "lib[firestore,gcs,zarr,raster,threedep]",
     "pint>=0.24",
     "pyarrow>=18.0.0",
+    "scipy>=1.14",
 ]
 
 [project.optional-dependencies]

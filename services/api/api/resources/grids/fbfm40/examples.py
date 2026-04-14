@@ -17,6 +17,11 @@ EXAMPLE_FBFM40_WITH_METADATA = {
     "version": "2022",
 }
 
+EXAMPLE_FBFM40_REMOVE_NON_BURNABLE = {
+    "name": "FBFM40 with non-burnable removal",
+    "remove_non_burnable": ["NB1", "NB2", "NB8", "NB9"],
+}
+
 CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_FBFM40_MINIMAL,
@@ -35,9 +40,21 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
             "maintaining multiple grids for scenario comparison."
         ),
     },
+    "remove_non_burnable": {
+        "value": EXAMPLE_FBFM40_REMOVE_NON_BURNABLE,
+        "summary": "Remove non-burnable blocks",
+        "description": (
+            "Removes coarse 30m-resolution non-burnable blocks (urban, snow/ice, "
+            "water, bare ground) by replacing them with the most frequent "
+            "neighboring burnable fuel model. This clears the way for masking "
+            "in high-resolution 1-2m road, water, and building features from "
+            "sources such as OpenStreetMap."
+        ),
+    },
 }
 
 ALL_FBFM40_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_FBFM40_MINIMAL),
     ("with_metadata", EXAMPLE_FBFM40_WITH_METADATA),
+    ("remove_non_burnable", EXAMPLE_FBFM40_REMOVE_NON_BURNABLE),
 ]

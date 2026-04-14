@@ -357,7 +357,7 @@ def validate_domain(geojson: dict) -> DomainValidationResult:
     # 2. Extract and validate CRS from geojson
     crs_name = geojson.get("crs", {}).get("properties", {}).get("name", DEFAULT_CRS)
     crs = validate_crs(crs_name)
-    gdf = gdf.set_crs(crs)
+    gdf = gdf.set_crs(crs, allow_override=True)
 
     # 3. Handle CRS and projection
     utm_crs = None

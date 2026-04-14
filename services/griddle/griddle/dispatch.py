@@ -98,7 +98,10 @@ def handle_landfire(
 
     match product:
         case "fbfm40":
-            return landfire.fetch_fbfm40(domain_gdf, version)
+            remove_non_burnable = source.get("remove_non_burnable")
+            return landfire.fetch_fbfm40(
+                domain_gdf, version, remove_non_burnable=remove_non_burnable
+            )
         case "topography":
             return landfire.fetch_topography(
                 domain_gdf, version, source["bands"], progress

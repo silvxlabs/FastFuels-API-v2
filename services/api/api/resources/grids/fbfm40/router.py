@@ -72,7 +72,10 @@ async def create_landfire_fbfm40(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = LandfireFbfm40Source(version=body.version)
+    source = LandfireFbfm40Source(
+        version=body.version,
+        remove_non_burnable=body.remove_non_burnable,
+    )
 
     grid_data = {
         "id": grid_id,

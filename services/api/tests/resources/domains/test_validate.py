@@ -694,6 +694,7 @@ class TestValidateDomain:
 
         assert isinstance(result, DomainValidationResult)
         assert result.utm_crs is not None
+        assert result.utm_crs.to_epsg() == 32610  # -121.5, 38.5 -> UTM 10N
         assert result.area > 0
         assert isinstance(result.features, list)
         assert len(result.features) > 0
@@ -743,6 +744,8 @@ class TestValidateDomain:
         result = validate_domain(valid_polygon_geojson)
 
         assert result.utm_crs is not None
+        assert result.utm_crs.to_epsg() == 32610  # -121.5, 38.5 -> UTM 10N
+        assert result.crs == result.utm_crs
         assert not result.crs.is_geographic
 
     def test_preserves_projected_crs(self, utm_polygon_geojson):
@@ -879,8 +882,56 @@ class TestValidateDomain:
 
         result = validate_domain(geojson)
 
-        # Should have projected to UTM (meaning it treated input as geographic)
+        # Should have treated as EPSG:4326 and projected to UTM 10N
         assert result.utm_crs is not None
+        assert result.utm_crs.to_epsg() == 32610
+        assert result.crs == result.utm_crs
+
+    def test_geojson_with_ogc_crs84_matches_epsg_4326(self):
+        """OGC:CRS84 should produce identical results to EPSG:4326.
+
+        gpd.read_file sets the GeoDataFrame CRS to OGC:CRS84 from the GeoJSON
+        crs field. A subsequent set_crs() with the parsed pyproj CRS must not
+        fail due to CRS84 vs EPSG:4326 axis-order mismatch, and the result
+        must be equivalent to submitting the same geometry as EPSG:4326.
+        """
+        coords = [
+            [-81.72, 32.04],
+            [-81.71, 32.04],
+            [-81.71, 32.05],
+            [-81.72, 32.05],
+            [-81.72, 32.04],
+        ]
+        feature = {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {"type": "Polygon", "coordinates": [coords]},
+        }
+
+        crs84_geojson = {
+            "type": "FeatureCollection",
+            "crs": {
+                "type": "name",
+                "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"},
+            },
+            "features": [feature],
+        }
+        epsg4326_geojson = make_feature_collection([feature], crs="EPSG:4326")
+
+        crs84_result = validate_domain(crs84_geojson)
+        epsg4326_result = validate_domain(epsg4326_geojson)
+
+        # Both should be treated as geographic and projected to UTM 17N
+        assert crs84_result.utm_crs is not None
+        assert crs84_result.utm_crs.to_epsg() == 32617  # -81.7, 32.0 -> UTM 17N
+        assert crs84_result.utm_crs == epsg4326_result.utm_crs
+        assert crs84_result.crs == epsg4326_result.crs
+
+        # Areas should be identical
+        assert crs84_result.area == pytest.approx(epsg4326_result.area)
+
+        # Bboxes should be identical
+        assert crs84_result.bbox == epsg4326_result.bbox
 
 
 # =============================================================================

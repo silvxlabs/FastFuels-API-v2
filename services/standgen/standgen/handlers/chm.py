@@ -8,7 +8,6 @@ to Canopy Height Model grids.
 import logging
 
 import geopandas as gpd
-import numpy as np
 import pandas as pd
 
 # --- FASTFUELS CORE IMPORTS ---
@@ -19,7 +18,6 @@ from fastfuels_core.itd.local_maxima_filter import (
 
 from lib.config import GRIDS_COLLECTION
 from lib.firestore import DocumentNotFoundError, get_document
-from standgen.columns import BASE_COLUMNS
 from standgen.errors import ProcessingError
 from standgen.modifications import apply_modifications
 from standgen.storage import load_grid, save_parquet
@@ -138,26 +136,6 @@ def handle_chm(
     logger.info(
         f"Extracted {tree_count} trees from CHM", extra={"inventory_id": inventory_id}
     )
-
-    progress("Formatting inventory attributes...", 70)
-
-    # Lazily assign standard inventory columns with strict Arrow-compatible types
-    ddf = ddf.assign(
-        dbh=np.nan,
-        fia_species_code=None,
-        fia_status_code=None,
-        crown_ratio=np.nan,
-    ).astype(
-        {
-            "dbh": "float32",
-            "fia_species_code": "string",
-            "fia_status_code": "string",
-            "crown_ratio": "float32",
-        }
-    )
-
-    # Enforce column schema
-    ddf = ddf[[col for col in BASE_COLUMNS if col in ddf.columns]]
 
     modifications = inventory.get("modifications", [])
     if modifications:

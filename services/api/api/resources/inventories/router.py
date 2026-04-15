@@ -579,7 +579,7 @@ async def get_inventory_data(
     if json_orientation == InventoryJsonOrientation.records:
         data = df.to_dict(orient="records")
     else:
-        data = df.values.tolist()
+        data = df.to_dict(orient="split")["data"]
 
     return InventoryDataResponse(
         partition=partition_index,

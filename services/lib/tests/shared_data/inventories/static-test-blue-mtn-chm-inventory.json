@@ -9,10 +9,13 @@
     "crs": "EPSG:32611"
   },
   "source": {
-    "seed": 239337021,
-    "point_process": "inhomogeneous_poisson",
-    "source_pim_grid_id": "static-test-blue-mtn-pim-treemap",
-    "name": "pim"
+    "name": "chm",
+    "source_chm_grid_id": "static-test-blue-mtn-naip-chm",
+    "algorithm": {
+      "footprint_size": 3,
+      "min_height": 2.0,
+      "name": "lmf"
+    }
   },
   "type": "tree",
   "name": "",

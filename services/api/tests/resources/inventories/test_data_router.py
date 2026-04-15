@@ -17,7 +17,8 @@ from lib.config import INVENTORIES_COLLECTION
 from lib.testing import SHARED_TEST_INVENTORIES_DIR
 from tests.fixtures import make_inventory_data
 
-STATIC_NAME = "static-test-blue-mtn-pim-inventory"
+STATIC_PIM_INVENTORY = "static-test-blue-mtn-pim-inventory"
+STATIC_CHM_INVENTORY = "static-test-blue-mtn-chm-inventory"
 
 
 def _load_static_template(static_name: str) -> dict:
@@ -32,11 +33,30 @@ def _load_static_template(static_name: str) -> dict:
 @pytest.fixture(scope="session")
 def static_inventory_in_firestore(firestore_client, test_owner_id, domain_for_testing):
     """Register the static PIM inventory fixture as a Firestore doc."""
-    template = _load_static_template(STATIC_NAME)
-    template["id"] = STATIC_NAME
+    template = _load_static_template(STATIC_PIM_INVENTORY)
+    template["id"] = STATIC_PIM_INVENTORY
     template["owner_id"] = test_owner_id
     template["domain_id"] = domain_for_testing["id"]
-    doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(STATIC_NAME)
+    doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+        STATIC_PIM_INVENTORY
+    )
+    doc_ref.set(template)
+    yield template
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def static_chm_inventory_in_firestore(
+    firestore_client, test_owner_id, domain_for_testing
+):
+    """Register the static CHM inventory fixture as a Firestore doc."""
+    template = _load_static_template(STATIC_CHM_INVENTORY)
+    template["id"] = STATIC_CHM_INVENTORY
+    template["owner_id"] = test_owner_id
+    template["domain_id"] = domain_for_testing["id"]
+    doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+        STATIC_CHM_INVENTORY
+    )
     doc_ref.set(template)
     yield template
     doc_ref.delete()
@@ -96,11 +116,13 @@ class TestGetInventoryDataMetadata:
     def test_returns_200(
         self, client, domain_for_testing, static_inventory_in_firestore
     ):
-        response = client.get(metadata_route(domain_for_testing["id"], STATIC_NAME))
+        response = client.get(
+            metadata_route(domain_for_testing["id"], STATIC_PIM_INVENTORY)
+        )
         assert response.status_code == 200
 
         data = response.json()
-        assert data["inventory_id"] == STATIC_NAME
+        assert data["inventory_id"] == STATIC_PIM_INVENTORY
         assert data["num_partitions"] >= 1
         assert data["total_rows"] > 0
         assert isinstance(data["columns"], list)
@@ -146,7 +168,7 @@ class TestGetInventoryDataMetadata:
         self, client, domain_with_different_owner, static_inventory_in_firestore
     ):
         response = client.get(
-            metadata_route(domain_with_different_owner["id"], STATIC_NAME)
+            metadata_route(domain_with_different_owner["id"], STATIC_PIM_INVENTORY)
         )
         assert response.status_code == 404
 
@@ -160,7 +182,7 @@ class TestGetInventoryData:
     ):
         """Default JSON split response."""
         url, params = data_route(
-            domain_for_testing["id"], STATIC_NAME, 0, format="json"
+            domain_for_testing["id"], STATIC_PIM_INVENTORY, 0, format="json"
         )
         response = client.get(url, params=params)
         assert response.status_code == 200
@@ -178,7 +200,7 @@ class TestGetInventoryData:
         """JSON records orientation."""
         url, params = data_route(
             domain_for_testing["id"],
-            STATIC_NAME,
+            STATIC_PIM_INVENTORY,
             0,
             format="json",
             json_orientation="records",
@@ -194,7 +216,9 @@ class TestGetInventoryData:
         self, client, domain_for_testing, static_inventory_in_firestore
     ):
         """CSV response with metadata headers."""
-        url, params = data_route(domain_for_testing["id"], STATIC_NAME, 0, format="csv")
+        url, params = data_route(
+            domain_for_testing["id"], STATIC_PIM_INVENTORY, 0, format="csv"
+        )
         response = client.get(url, params=params)
         assert response.status_code == 200
         assert "text/csv" in response.headers["content-type"]
@@ -209,7 +233,7 @@ class TestGetInventoryData:
         """Request only specific columns."""
         url, params = data_route(
             domain_for_testing["id"],
-            STATIC_NAME,
+            STATIC_PIM_INVENTORY,
             0,
             format="json",
             columns="x,y,dbh",
@@ -224,7 +248,7 @@ class TestGetInventoryData:
     def test_partition_out_of_range_returns_422(
         self, client, domain_for_testing, static_inventory_in_firestore
     ):
-        url, params = data_route(domain_for_testing["id"], STATIC_NAME, 9999)
+        url, params = data_route(domain_for_testing["id"], STATIC_PIM_INVENTORY, 9999)
         response = client.get(url, params=params)
         assert response.status_code == 422
 
@@ -233,7 +257,7 @@ class TestGetInventoryData:
     ):
         url, params = data_route(
             domain_for_testing["id"],
-            STATIC_NAME,
+            STATIC_PIM_INVENTORY,
             0,
             columns="x,nonexistent_col",
         )
@@ -276,8 +300,50 @@ class TestGetInventoryData:
     ):
         url, params = data_route(
             domain_with_different_owner["id"],
-            STATIC_NAME,
+            STATIC_PIM_INVENTORY,
             0,
         )
         response = client.get(url, params=params)
         assert response.status_code == 404
+
+
+class TestGetChmInventoryData:
+    """Tests for CHM inventory data serialization.
+
+    CHM inventories created via ITD may contain nullable string columns
+    with pd.NA values. These tests verify the data endpoint correctly
+    serializes that data without errors.
+    """
+
+    def test_json_split_returns_200(
+        self, client, domain_for_testing, static_chm_inventory_in_firestore
+    ):
+        """Default split orientation serializes without pd.NA errors."""
+        url, params = data_route(
+            domain_for_testing["id"], STATIC_CHM_INVENTORY, 0, format="json"
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["num_rows"] > 0
+        assert isinstance(data["data"], list)
+        assert isinstance(data["data"][0], list)
+
+    def test_json_records_returns_200(
+        self, client, domain_for_testing, static_chm_inventory_in_firestore
+    ):
+        """Records orientation serializes without pd.NA errors."""
+        url, params = data_route(
+            domain_for_testing["id"],
+            STATIC_CHM_INVENTORY,
+            0,
+            format="json",
+            json_orientation="records",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["num_rows"] > 0
+        assert isinstance(data["data"][0], dict)

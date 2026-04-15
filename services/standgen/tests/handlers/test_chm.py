@@ -126,7 +126,7 @@ class TestHandleChm:
         saved_ddf = args[1]
 
         assert isinstance(saved_ddf, dd.DataFrame)
-        assert "dbh" in saved_ddf.columns
+        assert sorted(saved_ddf.columns.tolist()) == ["height", "x", "y"]
         assert result["georeference"]["crs"] == "EPSG:32610"
 
     @patch("standgen.handlers.chm.get_document")

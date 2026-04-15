@@ -18,7 +18,6 @@ import dask.dataframe as dd
 import geopandas as gpd
 import pytest
 from shapely.geometry import box
-from standgen.columns import BASE_COLUMNS
 from standgen.storage import load_grid
 
 from lib.config import (
@@ -110,12 +109,12 @@ def test_pipeline_completes(shared_chm_inventory):
 
 
 def test_parquet_has_correct_columns(shared_chm_df):
-    """Output parquet should have exactly the base columns."""
-    assert sorted(shared_chm_df.columns.tolist()) == sorted(BASE_COLUMNS)
+    """Output parquet should have exactly the ITD output columns."""
+    assert sorted(shared_chm_df.columns.tolist()) == sorted(["x", "y", "height"])
 
 
-def test_parquet_values_reflect_chm_defaults(shared_chm_df):
-    """CHM logic populates height/coords, but leaves other attributes null."""
+def test_parquet_values_are_valid(shared_chm_df):
+    """CHM logic populates height and coordinates with valid values."""
     df = shared_chm_df
 
     if len(df) == 0:
@@ -124,12 +123,6 @@ def test_parquet_values_reflect_chm_defaults(shared_chm_df):
     # Height should be valid and positive
     assert df["height"].min() > 0
     assert df["height"].max() < 150  # reasonable upper bound for trees
-
-    # The fields we intentionally set to None in the handler should be null/NaN
-    assert df["dbh"].isna().all()
-    assert df["crown_ratio"].isna().all()
-    assert df["fia_species_code"].isna().all()
-    assert df["fia_status_code"].isna().all()
 
 
 def test_tree_coordinates_are_valid_utm(shared_chm_df):

@@ -63,6 +63,35 @@ def test_create_blue_mtn_pim_inventory(
 
 
 @pytest.mark.dependency()
+def test_create_blue_mtn_naip_chm(create_static_fixture, client, blue_mountain_domain):
+    """Create static NAIP CHM fixture on Blue Mountain domain."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/chm/naip",
+        body={},
+        static_name="static-test-blue-mtn-naip-chm",
+    )
+
+
+@pytest.mark.dependency(depends=["test_create_blue_mtn_naip_chm"])
+def test_create_blue_mtn_chm_inventory(
+    create_static_inventory_fixture, client, blue_mountain_domain
+):
+    """Create static CHM inventory fixture on Blue Mountain domain."""
+    create_static_inventory_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/inventories/tree/chm",
+        body={
+            "source_chm_grid_id": "static-test-blue-mtn-naip-chm",
+        },
+        static_name="static-test-blue-mtn-chm-inventory",
+        grid_dependency="static-test-blue-mtn-naip-chm",
+    )
+
+
+@pytest.mark.dependency()
 def test_create_blue_mtn_landfire_topography(
     create_static_fixture, client, blue_mountain_domain
 ):

@@ -155,9 +155,11 @@ class Grid(BaseModel):
     )
 
     # Storage
-    chunk_shape: tuple[int, int] | None = Field(
+    chunk_shape: tuple[int, int] | tuple[int, int, int] | None = Field(
         default=None,
-        description="Zarr chunk shape (height, width).",
+        description=(
+            "Zarr chunk shape. 2D grids: (height, width). 3D grids: (z, height, width)."
+        ),
     )
 
     # User organization

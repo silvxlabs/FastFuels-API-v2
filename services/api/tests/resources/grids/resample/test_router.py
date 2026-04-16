@@ -87,6 +87,45 @@ def grid_in_different_domain(firestore_client, second_domain):
     doc_ref.delete()
 
 
+@pytest.fixture(scope="session")
+def complete_3d_grid(firestore_client, domain_for_testing):
+    """A complete 3D grid (tree/inventory-style) — cannot be resampled."""
+    grid_data = make_grid_data(
+        domain_id=domain_for_testing["id"],
+        name="Complete 3D grid for resample guard tests",
+        status="completed",
+        source={
+            "name": "inventory",
+            "product": "tree",
+            "description": "3D tree fuel grid from tree inventory voxelization",
+            "source_inventory_id": "test-source-inv",
+            "resolution": [2.0, 2.0, 1.0],
+            "bands": ["bulk_density.foliage"],
+            "crown_profile_model": "purves",
+            "biomass_model": "nsvb",
+        },
+        bands=[
+            {
+                "key": "bulk_density.foliage",
+                "type": "continuous",
+                "unit": "kg/m³",
+                "index": 0,
+            },
+        ],
+        georeference={
+            "crs": "EPSG:32611",
+            "transform": (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0),
+            "shape": (40, 500, 500),
+            "z_resolution": 1.0,
+            "z_origin": 0.0,
+        },
+    )
+    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
+    doc_ref.set(grid_data)
+    yield grid_data
+    doc_ref.delete()
+
+
 class TestCreateResample:
     """Test the POST /domains/{domain_id}/grids/resample endpoint."""
 
@@ -291,6 +330,21 @@ class TestCreateResample:
 
         assert response.status_code == 422
         assert "nonexistent_band" in response.json()["detail"].lower()
+
+    def test_3d_source_grid_returns_422(
+        self, client, domain_for_testing, complete_3d_grid
+    ):
+        """Resampling a 3D grid is not supported — must 422 before enqueue."""
+        route = f"/domains/{domain_for_testing['id']}/grids/resample"
+        request_body = {
+            "source_grid_id": complete_3d_grid["id"],
+            "resolution": 2.0,
+        }
+
+        response = client.post(route, json=request_body)
+
+        assert response.status_code == 422
+        assert "3d" in response.json()["detail"].lower()
 
     def test_invalid_resolution_returns_422(
         self, client, domain_for_testing, complete_grid

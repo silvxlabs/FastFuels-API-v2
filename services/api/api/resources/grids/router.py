@@ -43,6 +43,7 @@ from api.resources.grids.schema import (
     UpdateGridRequestBody,
 )
 from api.resources.grids.topography.router import router as topography_router
+from api.resources.grids.tree.router import router as tree_router
 from api.resources.grids.uniform.router import router as uniform_router
 from api.resources.grids.utils import (
     compute_chunk_metadata,
@@ -577,4 +578,5 @@ router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
 router.include_router(chm_router, prefix="/chm", tags=["Grids - CHM"])
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
+router.include_router(tree_router, prefix="/tree")
 router.include_router(uniform_router, prefix="/uniform", tags=["Grids - Uniform"])

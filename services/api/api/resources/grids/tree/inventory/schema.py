@@ -94,9 +94,9 @@ class CreateTreeInventoryRequest(BaseModel):
     moisture_model: MoistureModel | None = Field(
         default=None,
         description=(
-            "Live fuel moisture model. Required only when fuel_moisture.live "
-            "is in bands. Defaults to uniform live=100.0 when fuel_moisture.live "
-            "is requested without an explicit model. Silently ignored otherwise."
+            "Live fuel moisture model. Applied only when fuel_moisture.live "
+            "is in bands — defaults to uniform live=100.0 in that case. "
+            "Silently dropped if supplied when fuel_moisture.live is absent."
         ),
     )
 
@@ -107,14 +107,18 @@ class CreateTreeInventoryRequest(BaseModel):
 
     @model_validator(mode="after")
     def resolve_conditional_defaults(self) -> Self:
-        # Auto-populate moisture_model with the uniform default when
-        # fuel_moisture.live is requested without an explicit model.
-        if TreeBand.fuel_moisture_live in self.bands and self.moisture_model is None:
-            self.moisture_model = UniformMoistureModel()
+        # moisture_model is only meaningful when fuel_moisture.live is in
+        # bands. Populate the uniform default when the band is requested
+        # without a model; drop any supplied model when the band is absent
+        # so the stored source reflects only what was actually applied.
+        if TreeBand.fuel_moisture_live in self.bands:
+            if self.moisture_model is None:
+                self.moisture_model = UniformMoistureModel()
+        else:
+            self.moisture_model = None
 
-        # biomass_column is only meaningful when biomass_model == "inventory".
-        # Silently drop it for other biomass models so it isn't stored in the
-        # source model and cause confusion during reproducibility checks.
+        # Same pattern for biomass_column: only meaningful when biomass
+        # is read from an inventory column, dropped otherwise.
         if self.biomass_model != BiomassModel.inventory:
             self.biomass_column = None
 

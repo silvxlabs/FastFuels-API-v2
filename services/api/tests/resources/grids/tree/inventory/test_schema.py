@@ -202,14 +202,14 @@ class TestCreateTreeInventoryRequest:
         assert req.moisture_model.method == "uniform"
         assert req.moisture_model.live == 75.0
 
-    def test_moisture_model_without_fuel_moisture_band_stays_as_given(self):
-        """Pydantic doesn't strip the model even when fuel_moisture.live is absent."""
+    def test_moisture_model_stripped_when_fuel_moisture_band_absent(self):
+        """moisture_model is dropped if fuel_moisture.live is not requested."""
         req = CreateTreeInventoryRequest(
             **self._minimal(
                 moisture_model={"method": "uniform", "live": 50.0},
             )
         )
-        assert req.moisture_model.live == 50.0
+        assert req.moisture_model is None
 
     def test_moisture_model_invalid_method_rejected(self):
         with pytest.raises(ValidationError):

@@ -10,7 +10,7 @@ request schemas live under the source sub-packages (e.g. `tree/inventory/`).
 """
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -91,7 +91,7 @@ class UniformMoistureModel(BaseModel):
     )
 
 
-MoistureModel = Annotated[UniformMoistureModel, Field(discriminator="method")]
+MoistureModel = UniformMoistureModel
 
 
 def build_tree_bands(requested: list[TreeBand]) -> list[Band]:

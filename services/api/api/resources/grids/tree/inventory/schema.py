@@ -7,9 +7,9 @@ A tree inventory is voxelized onto a 3D grid using species-specific crown
 profile models and biomass models to produce per-voxel fuel properties.
 """
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PositiveFloat, field_validator, model_validator
 
 from api.resources.grids.schema import validate_no_duplicates
 from api.resources.grids.tree.schema import (
@@ -19,6 +19,8 @@ from api.resources.grids.tree.schema import (
     TreeBand,
     UniformMoistureModel,
 )
+
+Resolution3D = tuple[PositiveFloat, PositiveFloat, PositiveFloat]
 
 
 class TreeInventorySource(BaseModel):
@@ -35,7 +37,7 @@ class TreeInventorySource(BaseModel):
     )
 
     source_inventory_id: str
-    resolution: tuple[float, float, float] = Field(
+    resolution: Resolution3D = Field(
         description="Voxel resolution (x, y, z) in meters.",
     )
     bands: list[TreeBand]
@@ -66,7 +68,7 @@ class CreateTreeInventoryRequest(BaseModel):
     source_inventory_id: str = Field(
         description="ID of a completed tree inventory to voxelize.",
     )
-    resolution: tuple[float, float, float] = Field(
+    resolution: Resolution3D = Field(
         description="Voxel resolution (x, y, z) in meters.",
     )
     bands: list[TreeBand] = Field(
@@ -98,24 +100,13 @@ class CreateTreeInventoryRequest(BaseModel):
         ),
     )
 
-    @field_validator("resolution")
-    @classmethod
-    def validate_resolution_positive(
-        cls, v: tuple[float, float, float]
-    ) -> tuple[float, float, float]:
-        if any(component <= 0 for component in v):
-            raise ValueError(
-                "All resolution components must be positive (x, y, z > 0)."
-            )
-        return v
-
     @field_validator("bands")
     @classmethod
     def no_duplicate_bands(cls, v: list[TreeBand]) -> list[TreeBand]:
         return validate_no_duplicates(v)
 
     @model_validator(mode="after")
-    def resolve_conditional_defaults(self) -> "CreateTreeInventoryRequest":
+    def resolve_conditional_defaults(self) -> Self:
         # Auto-populate moisture_model with the uniform default when
         # fuel_moisture.live is requested without an explicit model.
         if TreeBand.fuel_moisture_live in self.bands and self.moisture_model is None:

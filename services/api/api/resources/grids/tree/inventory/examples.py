@@ -9,87 +9,101 @@ These examples are used in:
 domain_id comes from the URL path parameter, not the request body.
 """
 
-# Standard QUIC-Fire inputs (all defaults).
-EXAMPLE_STANDARD_QF = {
-    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
-    "bands": [
-        "bulk_density.foliage",
-        "fuel_moisture.live",
-        "savr.foliage",
-        "spcd",
-    ],
-}
-
-# Minimal — just foliage density.
+# Minimum request — only required fields.
 EXAMPLE_MINIMAL = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
     "bands": ["bulk_density.foliage"],
 }
 
-# FDS high-resolution with volume fraction.
-EXAMPLE_FDS_HIGH_RES = {
-    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [1.0, 1.0, 0.5],
-    "bands": [
-        "bulk_density.foliage",
-        "savr.foliage",
-        "fuel_moisture.live",
-        "volume_fraction",
-    ],
-    "crown_profile_model": "beta",
-    "biomass_model": "jenkins",
-    "moisture_model": {"method": "uniform", "live": 97.0},
-}
-
-# With tree linkage for downstream analysis.
-EXAMPLE_WITH_TREE_LINKAGE = {
+# Explicit bands list.
+EXAMPLE_WITH_BANDS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
     "bands": [
         "bulk_density.foliage",
+        "fuel_moisture.live",
+        "savr.foliage",
         "spcd",
         "tree_id",
         "volume_fraction",
     ],
 }
 
+# Moisture model configured explicitly.
+EXAMPLE_WITH_MOISTURE_MODEL = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": [2.0, 2.0, 1.0],
+    "bands": ["bulk_density.foliage", "fuel_moisture.live"],
+    "moisture_model": {"method": "uniform", "live": 75.0},
+}
+
+# Non-default crown profile and biomass models.
+EXAMPLE_WITH_ALTERNATE_MODELS = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": [2.0, 2.0, 1.0],
+    "bands": ["bulk_density.foliage"],
+    "crown_profile_model": "beta",
+    "biomass_model": "jenkins",
+}
+
 CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
-    "standard_qf": {
-        "value": EXAMPLE_STANDARD_QF,
-        "summary": "Standard QUIC-Fire inputs (all defaults)",
-        "description": (
-            "Voxelizes a tree inventory with default models (purves crown "
-            "profile, nsvb biomass) into the bands QUIC-Fire needs."
-        ),
-    },
     "minimal": {
         "value": EXAMPLE_MINIMAL,
-        "summary": "Minimal — just foliage bulk density",
-        "description": "Voxelizes a tree inventory to a single foliage bulk density band.",
-    },
-    "fds_high_res": {
-        "value": EXAMPLE_FDS_HIGH_RES,
-        "summary": "FDS high-resolution with volume fraction",
+        "summary": "Minimum request",
         "description": (
-            "High-resolution voxelization with beta crown profile and Jenkins "
-            "biomass. Includes volume_fraction for diagnosing crown overlap."
+            "Voxelizes a tree inventory with all defaults. Produces a single "
+            "`bulk_density.foliage` band (kg/m³) at 2 m × 2 m × 1 m voxel "
+            "resolution using the Purves crown profile and NSVB biomass "
+            "models. Use this when you only need foliage mass per voxel."
         ),
     },
-    "with_tree_linkage": {
-        "value": EXAMPLE_WITH_TREE_LINKAGE,
-        "summary": "With tree linkage for analysis",
+    "with_bands": {
+        "value": EXAMPLE_WITH_BANDS,
+        "summary": "Request every available band",
         "description": (
-            "Includes spcd and tree_id so voxels can be traced back to the "
-            "source inventory records."
+            "Produces all six tree-grid bands: `bulk_density.foliage`, "
+            "`fuel_moisture.live`, `savr.foliage`, `spcd`, `tree_id`, and "
+            "`volume_fraction`. `fuel_moisture.live` defaults to a uniform "
+            "100% because no `moisture_model` is provided. `spcd` and "
+            "`tree_id` record which species and inventory record occupy "
+            "each voxel (tallest tree wins when crowns overlap). "
+            "`volume_fraction` sums per-tree crown occupancy and exceeds "
+            "1.0 where crowns overlap — useful for diagnosing dense canopy."
+        ),
+    },
+    "with_moisture_model": {
+        "value": EXAMPLE_WITH_MOISTURE_MODEL,
+        "summary": "Configure live fuel moisture",
+        "description": (
+            "Sets live fuel moisture to a uniform 75% across the grid. "
+            "Supply `moisture_model` whenever you request "
+            "`fuel_moisture.live` and the default of 100% is not "
+            "appropriate for your scenario (e.g., late-season or "
+            "fire-weather conditions). Only the `uniform` method is "
+            "available today; additional methods will appear as new "
+            "`method` values."
+        ),
+    },
+    "alternate_models": {
+        "value": EXAMPLE_WITH_ALTERNATE_MODELS,
+        "summary": "Override crown-profile and biomass models",
+        "description": (
+            "Switches from the default Purves crown profile to the Beta "
+            "profile (Ferrarese et al. 2015, 10 Jenkins species groups) and "
+            "from NSVB biomass to Jenkins biomass (Jenkins et al. 2003). "
+            "Use these alternates when your species composition is not "
+            "well-represented by Purves/NSVB or when you need continuity "
+            "with prior FastFuels outputs. Set `biomass_model` to "
+            '`"inventory"` and supply `biomass_column` to read biomass '
+            "directly from an inventory column instead of modeling it."
         ),
     },
 }
 
 ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
-    ("standard_qf", EXAMPLE_STANDARD_QF),
     ("minimal", EXAMPLE_MINIMAL),
-    ("fds_high_res", EXAMPLE_FDS_HIGH_RES),
-    ("with_tree_linkage", EXAMPLE_WITH_TREE_LINKAGE),
+    ("with_bands", EXAMPLE_WITH_BANDS),
+    ("with_moisture_model", EXAMPLE_WITH_MOISTURE_MODEL),
+    ("alternate_models", EXAMPLE_WITH_ALTERNATE_MODELS),
 ]

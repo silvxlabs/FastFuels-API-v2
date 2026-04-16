@@ -419,6 +419,20 @@ class TestCreateTreeInventoryGrid:
             "live": 100.0,
         }
 
+    def test_moisture_model_stripped_when_fuel_moisture_band_absent(
+        self, client, domain_for_testing, tree_inventory_for_voxelization
+    ):
+        """moisture_model should be stripped when fuel_moisture.live is not requested."""
+        body = {
+            "source_inventory_id": tree_inventory_for_voxelization["id"],
+            "resolution": [2.0, 2.0, 1.0],
+            "bands": ["bulk_density.foliage"],
+            "moisture_model": {"method": "uniform", "live": 50.0},
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201
+        assert response.json()["source"]["moisture_model"] is None
+
     def test_biomass_column_scrubbed_for_non_inventory_biomass(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):

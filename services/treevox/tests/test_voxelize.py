@@ -1,0 +1,670 @@
+"""Unit tests for treevox.voxelize — pure compute layer.
+
+All tests mock fastfuels_core so they run without heavy data loading.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import numpy as np
+import pandas as pd
+import pytest
+from treevox import voxelize
+
+# Fixtures
+
+
+def fake_domain(minx=0.0, miny=0.0, maxx=100.0, maxy=100.0, crs="EPSG:32610"):
+    """Minimal domain stand-in with `total_bounds` and `crs`."""
+    return SimpleNamespace(
+        total_bounds=np.array([minx, miny, maxx, maxy]),
+        crs=crs,
+    )
+
+
+def fake_tree_df(
+    n: int = 3,
+    species=131,
+    status=1,
+    dbh=20.0,
+    height=15.0,
+    crown_ratio=0.4,
+    xs=None,
+    ys=None,
+) -> pd.DataFrame:
+    xs = xs if xs is not None else np.linspace(10, 90, n)
+    ys = ys if ys is not None else np.linspace(10, 90, n)
+    return pd.DataFrame(
+        {
+            "x": xs,
+            "y": ys,
+            "fia_species_code": [species] * n,
+            "fia_status_code": [status] * n,
+            "dbh": [dbh] * n,
+            "height": [height] * n,
+            "crown_ratio": [crown_ratio] * n,
+        }
+    )
+
+
+def base_source_config():
+    return {
+        "resolution": (1.0, 1.0, 1.0),
+        "crown_profile_model": "purves",
+        "biomass_model": "nsvb",
+        "biomass_column": None,
+        "moisture_model": {"method": "uniform", "live": 100.0},
+    }
+
+
+# compute_grid_dimensions
+
+
+class TestComputeGridDimensions:
+    def test_resolution_snap_no_extra_padding(self):
+        """Domain 0..100 at 1m resolution: bounds already aligned, no extra padding."""
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 100, 100),
+            fake_tree_df(height=10.0),
+            (1.0, 1.0, 1.0),
+        )
+        assert dims["nx"] == 100
+        assert dims["ny"] == 100
+        assert dims["nz"] == 10
+        assert dims["x_origin"] == 0.0
+        assert dims["y_origin"] == 100.0
+
+    def test_non_aligned_bounds_snap_outward(self):
+        """Domain 0.5..99.5 at 1m resolution snaps to 0..100."""
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0.5, 0.5, 99.5, 99.5),
+            fake_tree_df(height=5.0),
+            (1.0, 1.0, 1.0),
+        )
+        assert dims["x_origin"] == 0.0
+        assert dims["y_origin"] == 100.0
+        assert dims["nx"] == 100
+        assert dims["ny"] == 100
+
+    def test_coarser_resolution_snap(self):
+        """Domain 0..100 at 3m resolution snaps to 0..102."""
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 100, 100),
+            fake_tree_df(height=9.0),
+            (3.0, 3.0, 3.0),
+        )
+        assert dims["x_origin"] == 0.0
+        assert dims["y_origin"] == 102.0
+        assert dims["nx"] == 34
+        assert dims["ny"] == 34
+        assert dims["nz"] == 3
+
+    def test_empty_df_uses_vr_as_max_height(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 10, 10), pd.DataFrame(), (1.0, 1.0, 2.0)
+        )
+        assert dims["nz"] == 1
+
+    def test_anisotropic_resolution_rejected(self):
+        with pytest.raises(voxelize.InvalidResolutionError, match="Anisotropic"):
+            voxelize.compute_grid_dimensions(
+                fake_domain(0, 0, 10, 10),
+                fake_tree_df(),
+                (1.0, 2.0, 1.0),
+            )
+
+    def test_zero_resolution_rejected(self):
+        with pytest.raises(voxelize.InvalidResolutionError):
+            voxelize.compute_grid_dimensions(
+                fake_domain(0, 0, 10, 10), fake_tree_df(), (0.0, 0.0, 1.0)
+            )
+
+    def test_coord_arrays_are_cell_centers(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 10, 10), fake_tree_df(height=5.0), (1.0, 1.0, 1.0)
+        )
+        assert dims["x_coords"][0] == pytest.approx(0.5)
+        assert dims["y_coords"][0] == pytest.approx(9.5)
+        assert dims["z_coords"][0] == pytest.approx(0.5)
+
+    def test_returns_georeference_fields(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 10, 20), fake_tree_df(height=5.0), (1.0, 1.0, 1.0)
+        )
+        assert dims["z_origin"] == 0.0
+        assert dims["vr"] == 1.0
+        assert len(dims["transform"]) == 6
+        assert dims["crs"] == "EPSG:32610"
+
+
+# build_tree
+
+
+class TestBuildTree:
+    def _row(self, **overrides):
+        data = {
+            "fia_species_code": 131,
+            "fia_status_code": 1,
+            "dbh": 20.0,
+            "height": 15.0,
+            "crown_ratio": 0.4,
+            "x": 5.0,
+            "y": 5.0,
+        }
+        data.update(overrides)
+        return pd.Series(data)
+
+    def test_maps_v2_columns_to_tree_kwargs(self):
+        tree = voxelize.build_tree(self._row(), base_source_config())
+        assert tree.species_code == 131
+        assert tree.status_code == 1
+        assert tree.diameter == 20.0
+        assert tree.height == 15.0
+        assert tree.crown_ratio == 0.4
+        assert tree.x == 5.0
+        assert tree.y == 5.0
+
+    @pytest.mark.parametrize("model", ["purves", "beta"])
+    def test_crown_profile_model_is_honored(self, model):
+        cfg = base_source_config()
+        cfg["crown_profile_model"] = model
+        tree = voxelize.build_tree(self._row(), cfg)
+        assert tree._crown_profile_model_type == model
+
+    @pytest.mark.parametrize(
+        "api_model,ff_model",
+        [("nsvb", "NSVB"), ("jenkins", "jenkins"), ("inventory", "NSVB")],
+    )
+    def test_biomass_model_mapping(self, api_model, ff_model):
+        cfg = base_source_config()
+        cfg["biomass_model"] = api_model
+        if api_model == "inventory":
+            cfg["biomass_column"] = "fuel_load"
+            row = self._row(fuel_load=42.0)
+        else:
+            row = self._row()
+        tree = voxelize.build_tree(row, cfg)
+        assert tree._biomass_allometry_model_type in ("NSVB", "jenkins")
+
+    def test_inventory_biomass_reads_column_as_crown_fuel_load(self):
+        cfg = base_source_config()
+        cfg["biomass_model"] = "inventory"
+        cfg["biomass_column"] = "my_load"
+        row = self._row(my_load=42.0)
+        tree = voxelize.build_tree(row, cfg)
+        assert tree._crown_fuel_load_override == 42.0
+
+    def test_non_inventory_does_not_read_column(self):
+        cfg = base_source_config()  # nsvb
+        row = self._row()
+        tree = voxelize.build_tree(row, cfg)
+        assert tree._crown_fuel_load_override is None
+
+
+# compute_cache_keys
+
+
+class TestComputeCacheKeys:
+    def test_identical_trees_share_key(self):
+        df = fake_tree_df(n=5, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        keys = voxelize.compute_cache_keys(df)
+        assert keys.nunique() == 1
+
+    def test_different_species_different_keys(self):
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [131, 202],
+                "fia_status_code": [1, 1],
+                "dbh": [20.0, 20.0],
+                "height": [15.0, 15.0],
+                "crown_ratio": [0.4, 0.4],
+                "x": [1, 2],
+                "y": [1, 2],
+            }
+        )
+        keys = voxelize.compute_cache_keys(df)
+        assert keys.nunique() == 2
+
+    def test_bin_boundary_equality(self):
+        """height=1.0 and 1.9 land in the same bin at HEIGHT_BIN_M=1."""
+        df = fake_tree_df(n=2, height=1.0)
+        df.loc[1, "height"] = 1.9
+        keys = voxelize.compute_cache_keys(df)
+        assert keys.nunique() == 1
+
+    def test_bin_boundary_differentiation(self):
+        """height=1.0 vs 2.0 land in different bins."""
+        df = fake_tree_df(n=2, height=1.0)
+        df.loc[1, "height"] = 2.0
+        keys = voxelize.compute_cache_keys(df)
+        assert keys.nunique() == 2
+
+
+# calculate_arrays_to_cache
+
+
+class TestCalculateArraysToCache:
+    def test_zero_voxels_returns_one(self):
+        assert voxelize.calculate_arrays_to_cache(0, 10) == 1
+
+    def test_capped_by_tree_frequency(self):
+        assert voxelize.calculate_arrays_to_cache(10000, 2) == 2
+
+    def test_capped_by_max_cache(self):
+        assert voxelize.calculate_arrays_to_cache(10**8, 10**6, max_cache=100) == 100
+
+    def test_scales_with_voxels(self):
+        a = voxelize.calculate_arrays_to_cache(10, 1000)
+        b = voxelize.calculate_arrays_to_cache(1000, 1000)
+        assert b > a
+
+
+# assign_trees_to_chunks
+
+
+class TestAssignTreesToChunks:
+    def test_chunks_are_correct(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 100, 100), fake_tree_df(height=10.0), (1.0, 1.0, 1.0)
+        )
+        df = fake_tree_df(
+            n=4,
+            xs=[5.0, 55.0, 55.0, 5.0],
+            ys=[5.0, 55.0, 5.0, 55.0],
+        )
+        out = voxelize.assign_trees_to_chunks(
+            df,
+            dims["x_origin"],
+            dims["y_origin"],
+            dims["hr"],
+            dims["nx"],
+            dims["ny"],
+            chunk_xy=50,
+        )
+        assert "row_chunk" in out.columns
+        assert "col_chunk" in out.columns
+        assert len(out) == 4
+
+    def test_sort_puts_tallest_last_within_chunk(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 100, 100), fake_tree_df(height=30.0), (1.0, 1.0, 1.0)
+        )
+        df = fake_tree_df(
+            n=3,
+            xs=[10, 20, 30],
+            ys=[10, 20, 30],
+        )
+        df["height"] = [30.0, 10.0, 20.0]
+        out = voxelize.assign_trees_to_chunks(
+            df,
+            dims["x_origin"],
+            dims["y_origin"],
+            dims["hr"],
+            dims["nx"],
+            dims["ny"],
+            chunk_xy=200,
+        )
+        assert list(out["height"]) == [10.0, 20.0, 30.0]
+
+
+# batch_union_slices and chunk_slice
+
+
+class TestBatchUnionSlices:
+    def test_single_chunk_includes_halo(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 2000, 2000), fake_tree_df(height=10.0), (1.0, 1.0, 1.0)
+        )
+        y, x = voxelize.batch_union_slices(
+            [(1, 1)], dims["ny"], dims["nx"], chunk_xy=100, overlap_cells=10
+        )
+        assert y.start == 90
+        assert y.stop == 210
+        assert x.start == 90
+        assert x.stop == 210
+
+    def test_clamped_at_grid_edge(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 100, 100), fake_tree_df(height=10.0), (1.0, 1.0, 1.0)
+        )
+        y, x = voxelize.batch_union_slices(
+            [(0, 0)], dims["ny"], dims["nx"], chunk_xy=50, overlap_cells=10
+        )
+        assert y.start == 0
+        assert x.start == 0
+
+    def test_union_of_multiple_chunks(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 2000, 2000), fake_tree_df(height=10.0), (1.0, 1.0, 1.0)
+        )
+        y, x = voxelize.batch_union_slices(
+            [(0, 0), (1, 1)], dims["ny"], dims["nx"], chunk_xy=100, overlap_cells=10
+        )
+        assert y.start == 0
+        assert y.stop == 210
+        assert x.start == 0
+        assert x.stop == 210
+
+    def test_empty_batch_raises(self):
+        with pytest.raises(ValueError):
+            voxelize.batch_union_slices([], 100, 100, chunk_xy=50)
+
+
+class TestChunkSlice:
+    def test_matches_union_of_one(self):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 2000, 2000), fake_tree_df(height=10.0), (1.0, 1.0, 1.0)
+        )
+        ny, nx = dims["ny"], dims["nx"]
+        s_y, s_x = voxelize.chunk_slice((1, 1), ny, nx, chunk_xy=100, overlap_cells=10)
+        u_y, u_x = voxelize.batch_union_slices(
+            [(1, 1)], ny, nx, chunk_xy=100, overlap_cells=10
+        )
+        assert (s_y.start, s_y.stop) == (u_y.start, u_y.stop)
+        assert (s_x.start, s_x.stop) == (u_x.start, u_x.stop)
+
+
+# build_chunk_cache (mocked fastfuels-core)
+
+
+class TestBuildChunkCache:
+    def test_empty_df_returns_empty_cache(self):
+        empty = pd.DataFrame(
+            {
+                "fia_species_code": [],
+                "fia_status_code": [],
+                "dbh": [],
+                "height": [],
+                "crown_ratio": [],
+                "x": [],
+                "y": [],
+                "_cache_key": [],
+            }
+        )
+        result = voxelize.build_chunk_cache(
+            empty, 1.0, 1.0, base_source_config(), np.random.default_rng(0)
+        )
+        assert result == {}
+
+    def test_one_entry_per_cache_key(self, monkeypatch):
+        canopy = np.ones((2, 3, 3))
+
+        monkeypatch.setattr(
+            voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
+        )
+        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+
+        class FakeVT:
+            def __init__(self, tree, mask, hr, vr):
+                self.mask = mask
+
+            def distribute_biomass(self):
+                return self.mask * 1.0
+
+        monkeypatch.setattr(voxelize, "VoxelizedTree", FakeVT)
+
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [131, 131, 202],
+                "fia_status_code": [1, 1, 1],
+                "dbh": [20.0, 20.0, 20.0],
+                "height": [15.0, 15.0, 15.0],
+                "crown_ratio": [0.4, 0.4, 0.4],
+                "x": [1, 2, 3],
+                "y": [1, 2, 3],
+            }
+        )
+        df["_cache_key"] = voxelize.compute_cache_keys(df)
+
+        cache = voxelize.build_chunk_cache(
+            df, 1.0, 1.0, base_source_config(), np.random.default_rng(0)
+        )
+
+        assert len(cache) == df["_cache_key"].nunique()
+        for key, arrays in cache.items():
+            assert len(arrays) >= 1
+            assert all(a.shape == canopy.shape for a in arrays)
+
+
+# voxelize_chunk (mocked cache)
+
+
+class TestVoxelizeChunk:
+    def _dims_and_buffers(
+        self,
+        keys=(
+            "volume_fraction",
+            "bulk_density.foliage",
+            "spcd",
+            "tree_id",
+            "savr.foliage",
+            "fuel_moisture.live",
+        ),
+    ):
+        dims = voxelize.compute_grid_dimensions(
+            fake_domain(0, 0, 20, 20), fake_tree_df(height=30.0), (1.0, 1.0, 1.0)
+        )
+        buffers = {}
+        from treevox.storage import BAND_SPECS
+
+        for k in keys:
+            dtype, fill = BAND_SPECS[k]
+            buffers[k] = np.full(
+                (dims["nz"], dims["ny"], dims["nx"]), fill, dtype=dtype
+            )
+        return dims, buffers
+
+    def _one_tree_df(self, species=131, x=15, y=15, height=3.0, tree_id=0):
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [species],
+                "fia_status_code": [1],
+                "dbh": [20.0],
+                "height": [height],
+                "crown_ratio": [0.5],
+                "x": [x],
+                "y": [y],
+                "tree_id": [tree_id],
+            }
+        )
+        df["_cache_key"] = 0
+        return df
+
+    def _deterministic_cache(self, shape=(2, 3, 3), value=1.0):
+        return {0: [np.full(shape, value, dtype="float32")]}
+
+    def test_single_tree_populates_all_requested_bands(self):
+        dims, buffers = self._dims_and_buffers()
+        df = self._one_tree_df()
+        cache = self._deterministic_cache()
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            cache,
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+        assert buffers["volume_fraction"].sum() > 0
+        assert buffers["bulk_density.foliage"].sum() > 0
+        assert (buffers["spcd"] == 131).any()
+        assert (buffers["tree_id"] == 0).any()
+        assert buffers["fuel_moisture.live"].max() == 100.0
+        assert buffers["savr.foliage"].max() > 0
+
+    def test_overwrite_bands_take_taller_trees_value(self):
+        """Trees are sorted height-ASC before dispatch; last writer = tallest."""
+        dims, buffers = self._dims_and_buffers(keys=("spcd", "tree_id"))
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [131, 202],
+                "fia_status_code": [1, 1],
+                "dbh": [20.0, 20.0],
+                "height": [5.0, 10.0],
+                "crown_ratio": [0.5, 0.5],
+                "x": [15.0, 15.0],
+                "y": [15.0, 15.0],
+                "tree_id": [0, 1],
+                "_cache_key": [0, 0],
+            }
+        )
+        cache = self._deterministic_cache()
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            cache,
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+        assert (buffers["spcd"] == 202).any()
+        assert (buffers["tree_id"] == 1).any()
+
+    def test_accumulative_bands_sum_across_trees(self):
+        dims, buffers = self._dims_and_buffers(
+            keys=("volume_fraction", "bulk_density.foliage")
+        )
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [131, 131],
+                "fia_status_code": [1, 1],
+                "dbh": [20.0, 20.0],
+                "height": [5.0, 5.0],
+                "crown_ratio": [0.5, 0.5],
+                "x": [15.0, 15.0],
+                "y": [15.0, 15.0],
+                "tree_id": [0, 1],
+                "_cache_key": [0, 0],
+            }
+        )
+        cache = self._deterministic_cache(shape=(2, 3, 3), value=1.0)
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            cache,
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+        assert buffers["volume_fraction"].max() == pytest.approx(2.0)
+        assert buffers["bulk_density.foliage"].max() == pytest.approx(2.0)
+
+    def test_subset_of_bands_only(self):
+        dims, buffers = self._dims_and_buffers(keys=("volume_fraction",))
+        df = self._one_tree_df()
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            self._deterministic_cache(),
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+        assert buffers["volume_fraction"].sum() > 0
+        assert list(buffers.keys()) == ["volume_fraction"]
+
+    def test_fuel_moisture_uses_source_config_value(self):
+        dims, buffers = self._dims_and_buffers(keys=("fuel_moisture.live",))
+        df = self._one_tree_df()
+        cfg = base_source_config()
+        cfg["moisture_model"] = {"method": "uniform", "live": 75.0}
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            self._deterministic_cache(),
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            cfg,
+            np.random.default_rng(0),
+        )
+        assert buffers["fuel_moisture.live"].max() == 75.0
+
+    def test_empty_trees_leaves_buffers_untouched(self):
+        dims, buffers = self._dims_and_buffers(keys=("volume_fraction",))
+        voxelize.voxelize_chunk(
+            pd.DataFrame(
+                {
+                    "fia_species_code": [],
+                    "fia_status_code": [],
+                    "dbh": [],
+                    "height": [],
+                    "crown_ratio": [],
+                    "x": [],
+                    "y": [],
+                    "tree_id": [],
+                    "_cache_key": [],
+                }
+            ),
+            buffers,
+            {},
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+        assert buffers["volume_fraction"].sum() == 0
+
+    def test_tree_outside_chunk_is_skipped(self):
+        dims, buffers = self._dims_and_buffers(keys=("volume_fraction",))
+        df = self._one_tree_df(x=1000.0, y=1000.0)
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            self._deterministic_cache(),
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+        assert buffers["volume_fraction"].sum() == 0
+
+    def test_tree_near_edge_gets_clipped(self):
+        dims, buffers = self._dims_and_buffers(keys=("volume_fraction",))
+        df = self._one_tree_df(x=dims["x_origin"] + 1.0, y=dims["y_origin"] - 1.0)
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            self._deterministic_cache(shape=(2, 3, 3)),
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+        assert buffers["volume_fraction"].sum() > 0

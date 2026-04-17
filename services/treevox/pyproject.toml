@@ -1,0 +1,28 @@
+[project]
+name = "treevox"
+version = "0.1.0"
+description = "Voxelize tree inventories into 3D canopy fuel grids"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "functions-framework>=3.10.0",
+    "lib[firestore,gcs,zarr,raster]",
+    "fastfuels-core",
+    "pyarrow>=18.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.2",
+    "pytest-xdist>=3.5.0",
+    "google-cloud-tasks>=2.16.0",
+    "google-cloud-run>=0.10.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests requiring network access (deselect with '-m \"not integration\"')",
+]
+
+[tool.uv.sources]
+lib = { path = "../lib", editable = true }

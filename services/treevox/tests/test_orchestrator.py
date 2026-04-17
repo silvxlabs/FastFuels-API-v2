@@ -117,15 +117,18 @@ class TestPickWorkerCount:
 
 
 class TestLoadInventoryDataframe:
-    @patch("treevox.orchestrator.download_inventory")
-    def test_filters_to_live_and_assigns_tree_ids(self, mock_download):
-        mock_download.return_value = pd.DataFrame(
+    """`read_inventory` pushes `fia_status_code == 1` into the parquet read,
+    so the mocked return values here already contain only live trees."""
+
+    @patch("treevox.orchestrator.read_inventory")
+    def test_drops_null_rows_and_assigns_tree_ids(self, mock_read):
+        mock_read.return_value = pd.DataFrame(
             {
                 "x": [1.0, 2.0],
                 "y": [1.0, 2.0],
                 "fia_species_code": [131, 131],
-                "fia_status_code": [1, 2],  # one live, one dead
-                "dbh": [20.0, 20.0],
+                "fia_status_code": [1, 1],
+                "dbh": [20.0, None],  # second row dropped by drop_null_rows
                 "height": [15.0, 15.0],
                 "crown_ratio": [0.4, 0.4],
             }
@@ -135,15 +138,15 @@ class TestLoadInventoryDataframe:
         assert len(df) == 1
         assert list(df["tree_id"]) == [0]
 
-    @patch("treevox.orchestrator.download_inventory")
-    def test_empty_after_filter_raises_empty_inventory(self, mock_download):
-        mock_download.return_value = pd.DataFrame(
+    @patch("treevox.orchestrator.read_inventory")
+    def test_empty_after_filter_raises_empty_inventory(self, mock_read):
+        mock_read.return_value = pd.DataFrame(
             {
                 "x": [1.0],
                 "y": [1.0],
                 "fia_species_code": [131],
-                "fia_status_code": [2],  # dead → filtered out
-                "dbh": [20.0],
+                "fia_status_code": [1],
+                "dbh": [None],  # the only row is null → drops to empty
                 "height": [15.0],
                 "crown_ratio": [0.4],
             }
@@ -243,8 +246,19 @@ class TestBuildPayloads:
             }
         )
 
+        chunk_indices = df_prepared.groupby(
+            ["row_chunk", "col_chunk"], sort=False
+        ).indices
         payloads = orchestrator._build_payloads(
-            batch, union_ds, union_y, union_x, df_prepared, layout, grid["source"], "g1"
+            batch,
+            union_ds,
+            union_y,
+            union_x,
+            df_prepared,
+            chunk_indices,
+            layout,
+            grid["source"],
+            "g1",
         )
         assert len(payloads) == 1
         p = payloads[0]
@@ -276,17 +290,17 @@ class TestVoxelizeInventoryFlow:
     @patch("treevox.orchestrator.storage.masked_merge")
     @patch("treevox.orchestrator.storage.read_union")
     @patch("treevox.orchestrator.storage.init_store")
-    @patch("treevox.orchestrator.download_inventory")
+    @patch("treevox.orchestrator.read_inventory")
     def test_happy_path_calls_expected_stages(
         self,
-        mock_download,
+        mock_read_inv,
         mock_init,
         mock_read,
         mock_merge,
         mock_write,
         mock_consolidate,
     ):
-        mock_download.return_value = _sample_df(height=5.0)
+        mock_read_inv.return_value = _sample_df(height=5.0)
         ds = xr.Dataset(
             {
                 "volume_fraction": (
@@ -335,15 +349,15 @@ class TestVoxelizeInventoryFlow:
         assert any("Initializing" in m for m in msgs)
         assert any("Finalizing" in m for m in msgs)
 
-    @patch("treevox.orchestrator.download_inventory")
-    def test_empty_inventory_raises(self, mock_download):
-        mock_download.return_value = pd.DataFrame(
+    @patch("treevox.orchestrator.read_inventory")
+    def test_empty_inventory_raises(self, mock_read_inv):
+        mock_read_inv.return_value = pd.DataFrame(
             {
                 "x": [1.0],
                 "y": [1.0],
                 "fia_species_code": [131],
-                "fia_status_code": [2],  # dead → filtered out
-                "dbh": [20.0],
+                "fia_status_code": [1],
+                "dbh": [None],  # null → dropped by drop_null_rows → empty
                 "height": [15.0],
                 "crown_ratio": [0.4],
             }
@@ -357,17 +371,17 @@ class TestVoxelizeInventoryFlow:
     @patch("treevox.orchestrator.storage.masked_merge")
     @patch("treevox.orchestrator.storage.read_union")
     @patch("treevox.orchestrator.storage.init_store")
-    @patch("treevox.orchestrator.download_inventory")
+    @patch("treevox.orchestrator.read_inventory")
     def test_worker_error_surfaces_as_voxelization_failed(
         self,
-        mock_download,
+        mock_read_inv,
         mock_init,
         mock_read,
         mock_merge,
         mock_write,
         mock_consolidate,
     ):
-        mock_download.return_value = _sample_df(height=5.0)
+        mock_read_inv.return_value = _sample_df(height=5.0)
         mock_read.return_value = xr.Dataset(
             {
                 "volume_fraction": (
@@ -397,7 +411,7 @@ class TestPersistentPool:
     @patch("treevox.orchestrator.storage.masked_merge")
     @patch("treevox.orchestrator.storage.read_union")
     @patch("treevox.orchestrator.storage.init_store")
-    @patch("treevox.orchestrator.download_inventory")
+    @patch("treevox.orchestrator.read_inventory")
     def test_pool_instantiated_exactly_once(
         self,
         mock_download,

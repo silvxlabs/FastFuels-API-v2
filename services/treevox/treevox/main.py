@@ -113,6 +113,8 @@ def process_grid_request(request: Request):
     try:
         domain_gdf = load_domain(grid["domain_id"])
         progress_callback = make_progress_callback(grid_id)
+
+        # This is where we run the actual process
         result = dispatch_handler(grid, domain_gdf, progress_callback)
 
         update_document(GRIDS_COLLECTION, grid_id, {"chunk_shape": result.chunk_shape})

@@ -17,7 +17,6 @@ import logging
 import math
 import multiprocessing
 import os
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -27,7 +26,7 @@ import pandas as pd
 from treevox import storage, voxelize
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
-from treevox.inventory_io import assign_tree_ids, download_inventory, filter_live
+from treevox.inventory_io import assign_tree_ids, drop_null_rows, read_inventory
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +88,15 @@ def _pick_worker_count() -> int:
 def _load_inventory_dataframe(
     source: dict, progress: Callable[[str, int | None], None]
 ) -> pd.DataFrame:
-    """Download the parquet, filter to live trees, and assign tree IDs."""
+    """Read the parquet from GCS, filter to live trees, and assign tree IDs.
+
+    Reads directly from GCS (no tmpfile staging) with column projection and a
+    `fia_status_code == 1` predicate pushdown — see `read_inventory`.
+    """
     progress("Loading inventory...", 5)
-    with tempfile.TemporaryDirectory() as tmp:
-        df = download_inventory(source["source_inventory_id"], tmp)
-    df = filter_live(df, source.get("biomass_column"))
+    biomass_column = source.get("biomass_column")
+    df = read_inventory(source["source_inventory_id"], biomass_column)
+    df = drop_null_rows(df, biomass_column)
     df = assign_tree_ids(df)
     if df.empty:
         raise ProcessingError(
@@ -122,6 +125,7 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
     requested_keys = [b["key"] for b in grid["bands"]]
     hr = dims["hr"]
     nx, ny, nz = dims["nx"], dims["ny"], dims["nz"]
+    # TODO: This looks off
     chunk_xy = min(max(1, int(voxelize.CHUNK_LENGTH_METERS / hr)), nx, ny)
     chunk_shape: tuple[int, int, int] = (nz, chunk_xy, chunk_xy)
 
@@ -143,9 +147,13 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
 
 
 def _prepare_tree_chunks(df: pd.DataFrame, layout: GridLayout) -> pd.DataFrame:
-    """Attach cache keys and assign each tree to its (row_chunk, col_chunk)."""
-    df = df.copy()
-    df["_cache_key"] = voxelize.compute_cache_keys(df)
+    """Attach cache keys and assign each tree to its (row_chunk, col_chunk).
+
+    Uses `DataFrame.assign` to add `_cache_key` without a full block-manager
+    copy of the caller's frame; `assign_trees_to_chunks` then returns a fresh
+    sorted DataFrame so the caller's input is never mutated.
+    """
+    df = df.assign(_cache_key=voxelize.compute_cache_keys(df))
     df = voxelize.assign_trees_to_chunks(
         df,
         layout.dims["x_origin"],
@@ -164,6 +172,7 @@ def _build_payloads(
     union_y: slice,
     union_x: slice,
     df: pd.DataFrame,
+    chunk_indices: dict,
     layout: GridLayout,
     source_config: dict,
     grid_id: str,
@@ -172,6 +181,11 @@ def _build_payloads(
 
     Each payload carries numpy buffers and scalar grid params only (no xarray
     or custom objects) so it pickles cheaply into spawned workers.
+
+    `chunk_indices` maps `(row, col) -> np.ndarray[int64]` of row positions
+    into `df` (built once in `_run_voxelization_batches` via
+    `df.groupby([...]).indices`). We look up each chunk's trees in O(k)
+    instead of materializing a full-length boolean mask per chunk per batch.
     """
     dims = layout.dims
     ny, nx, nz = dims["ny"], dims["nx"], dims["nz"]
@@ -206,7 +220,8 @@ def _build_payloads(
                 buf = resized
             buffers[key] = buf
 
-        trees_in_chunk = df[(df["row_chunk"] == row) & (df["col_chunk"] == col)]
+        indices = chunk_indices.get((row, col))
+        trees_in_chunk = df.iloc[indices] if indices is not None else df.iloc[0:0]
         rng_seed = abs(hash((grid_id, row, col))) & 0xFFFFFFFF
 
         payloads.append(
@@ -233,6 +248,7 @@ def _process_batch(
     pool,
     batch: list[tuple[int, int]],
     df: pd.DataFrame,
+    chunk_indices: dict,
     layout: GridLayout,
     source: dict,
     grid_id: str,
@@ -253,7 +269,7 @@ def _process_batch(
     )
 
     payloads = _build_payloads(
-        batch, union_ds, union_y, union_x, df, layout, source, grid_id
+        batch, union_ds, union_y, union_x, df, chunk_indices, layout, source, grid_id
     )
     results = pool.map(worker_run, payloads)
 
@@ -278,7 +294,14 @@ def _run_voxelization_batches(
     path: str,
     progress: Callable[[str, int | None], None],
 ) -> None:
-    """Create one persistent Pool and drive every batch through `_process_batch`."""
+    """Create one persistent Pool and drive every batch through `_process_batch`.
+
+    `chunk_indices` is precomputed once via `groupby(...).indices` so each
+    chunk lookup in `_build_payloads` is O(k) instead of allocating a
+    full-length boolean mask per chunk per batch.
+    """
+    chunk_indices = df.groupby(["row_chunk", "col_chunk"], sort=False).indices
+
     num_workers = _pick_worker_count()
     batch_size = max(1, num_workers)
     num_batches = max(1, int(math.ceil(len(layout.chunk_locations) / batch_size)))
@@ -291,7 +314,9 @@ def _run_voxelization_batches(
             batch = layout.chunk_locations[i * batch_size : (i + 1) * batch_size]
             if not batch:
                 continue
-            _process_batch(pool, batch, df, layout, source, grid_id, path)
+            _process_batch(
+                pool, batch, df, chunk_indices, layout, source, grid_id, path
+            )
             pct = 15 + int(75 * (i + 1) / num_batches)
             progress(f"Voxelizing batch {i + 1}/{num_batches}...", pct)
 

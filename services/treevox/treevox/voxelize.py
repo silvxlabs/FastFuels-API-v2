@@ -69,13 +69,13 @@ def compute_grid_dimensions(
         )
     hr = hr_x
 
-    minx, miny, maxx, maxy = domain_gdf.total_bounds
+    domain_minx, domain_miny, domain_maxx, domain_maxy = domain_gdf.total_bounds
 
     # Snap bounds outward to the nearest multiple of hr.
-    minx = math.floor(minx / hr) * hr
-    miny = math.floor(miny / hr) * hr
-    maxx = math.ceil(maxx / hr) * hr
-    maxy = math.ceil(maxy / hr) * hr
+    minx = math.floor(domain_minx / hr) * hr
+    miny = math.floor(domain_miny / hr) * hr
+    maxx = math.ceil(domain_maxx / hr) * hr
+    maxy = math.ceil(domain_maxy / hr) * hr
 
     nx = max(1, int(round((maxx - minx) / hr)))
     ny = max(1, int(round((maxy - miny) / hr)))
@@ -198,18 +198,22 @@ def assign_trees_to_chunks(
     this is how overwrite-style bands (spcd, tree_id, savr, fuel_moisture)
     achieve the "tallest tree wins" overlap policy documented on the API.
     """
-    out = df.copy()
-    col_cell = np.floor((out["x"].to_numpy() - x_origin) / hr).astype("int64")
-    row_cell = np.floor((y_origin - out["y"].to_numpy()) / hr).astype("int64")
+    col_cell = np.floor((df["x"].to_numpy() - x_origin) / hr).astype("int64")
+    row_cell = np.floor((y_origin - df["y"].to_numpy()) / hr).astype("int64")
     col_cell = np.clip(col_cell, 0, nx - 1)
     row_cell = np.clip(row_cell, 0, ny - 1)
 
-    out["row_chunk"] = row_cell // chunk_xy
-    out["col_chunk"] = col_cell // chunk_xy
+    # assign() produces a new frame that shares existing columns' data; the
+    # only materializing copy happens inside sort_values below.
+    out = df.assign(
+        row_chunk=row_cell // chunk_xy,
+        col_chunk=col_cell // chunk_xy,
+    )
     out = out.sort_values(
         by=["row_chunk", "col_chunk", "height"],
         kind="stable",
-    ).reset_index(drop=True)
+        ignore_index=True,
+    )
     return out
 
 

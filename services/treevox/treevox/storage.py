@@ -64,6 +64,13 @@ def init_store(
     written — data is filled in later via region writes. The resulting store
     can be opened and written to in parallel from disjoint regions.
 
+    Writes consolidated metadata (`.zmetadata`) as part of this single call.
+    That lets subsequent `open_zarr(consolidated=True)` fetch one small file
+    instead of listing the store prefix and fetching per-variable `.zarray` /
+    `.zattrs` on every batch — a major win on GCS where small-op latency
+    dominates. Region writes during the batch loop only touch data chunks, so
+    the consolidated metadata stays valid for the whole job.
+
     Coords: z, y, x (cell-center arrays), plus `spatial_ref` added by
     rioxarray. These become index coordinates and are protected from overwrite
     on subsequent region writes.
@@ -91,7 +98,7 @@ def init_store(
     ds.attrs["transform"] = [hr, 0.0, x_origin, 0.0, -hr, y_origin]
     ds.attrs["z_origin"] = float(z_origin)
     ds.attrs["z_resolution"] = float(vr)
-    ds.to_zarr(path, mode="w", compute=False, encoding=encoding, consolidated=False)
+    ds.to_zarr(path, mode="w", compute=False, encoding=encoding, consolidated=True)
 
 
 def read_union(path: str, y_slice: slice, x_slice: slice) -> xr.Dataset:
@@ -99,10 +106,12 @@ def read_union(path: str, y_slice: slice, x_slice: slice) -> xr.Dataset:
 
     Workers receive numpy arrays, never lazy dask xarray. The caller asserts
     `not ds.chunks` before splitting into payloads.
+
+    Uses `consolidated=True` because `init_store` writes consolidated
+    metadata at job start — one `.zmetadata` GET per batch instead of a
+    directory listing + per-variable `.zarray`/`.zattrs` fetches.
     """
-    ds = xr.open_zarr(path, consolidated=False).isel(y=y_slice, x=x_slice).load()
-    # Drop dask chunk metadata now that data is materialized; otherwise
-    # downstream `.values` calls trigger recompute paths.
+    ds = xr.open_zarr(path, consolidated=True).isel(y=y_slice, x=x_slice).load()
     return ds
 
 
@@ -168,10 +177,12 @@ def masked_merge(
 
 
 def consolidate_metadata(path: str) -> None:
-    """Consolidate zarr metadata — called once after all batches succeed.
+    """Reconsolidate zarr metadata for an existing store.
 
-    Never called mid-job; stale consolidated metadata on a partially-written
-    store would mislead readers after a failure.
+    Not used in the normal voxelization flow — `init_store` already writes
+    consolidated metadata, and region writes during the batch loop only touch
+    data chunks, so `.zmetadata` stays valid for the whole job. Exposed for
+    ad-hoc reconsolidation if the schema is ever mutated after init.
     """
     zarr.consolidate_metadata(path)
 

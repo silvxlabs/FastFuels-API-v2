@@ -1,4 +1,52 @@
 {
+  "name": "",
+  "status": "completed",
+  "description": "",
+  "error": null,
+  "modifications": [],
+  "tags": [],
+  "columns": [
+    {
+      "key": "x",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "y",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "fia_species_code",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "key": "fia_status_code",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "key": "dbh",
+      "type": "continuous",
+      "unit": "cm"
+    },
+    {
+      "key": "height",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "crown_ratio",
+      "type": "continuous",
+      "unit": null
+    }
+  ],
+  "progress": {
+    "percent": 100,
+    "message": "Complete"
+  },
+  "type": "tree",
   "georeference": {
     "bounds": [
       720227.9398802927,
@@ -9,57 +57,9 @@
     "crs": "EPSG:32611"
   },
   "source": {
-    "seed": 239337021,
-    "point_process": "inhomogeneous_poisson",
+    "name": "pim",
     "source_pim_grid_id": "static-test-blue-mtn-pim-treemap",
-    "name": "pim"
-  },
-  "type": "tree",
-  "name": "",
-  "columns": [
-    {
-      "type": "continuous",
-      "unit": "m",
-      "key": "x"
-    },
-    {
-      "type": "continuous",
-      "unit": "m",
-      "key": "y"
-    },
-    {
-      "type": "categorical",
-      "unit": null,
-      "key": "fia_species_code"
-    },
-    {
-      "type": "categorical",
-      "unit": null,
-      "key": "fia_status_code"
-    },
-    {
-      "type": "continuous",
-      "unit": "cm",
-      "key": "dbh"
-    },
-    {
-      "type": "continuous",
-      "unit": "m",
-      "key": "height"
-    },
-    {
-      "type": "continuous",
-      "unit": null,
-      "key": "crown_ratio"
-    }
-  ],
-  "progress": {
-    "percent": 100,
-    "message": "Complete"
-  },
-  "description": "",
-  "tags": [],
-  "modifications": [],
-  "status": "completed",
-  "error": null
+    "seed": 898870608,
+    "point_process": "inhomogeneous_poisson"
+  }
 }

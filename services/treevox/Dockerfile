@@ -18,4 +18,10 @@ ENV FUNCTION_SOURCE=treevox/main.py
 ENV FUNCTION_SIGNATURE_TYPE=http
 ENV CPL_MACHINE_IS_GCE=YES
 
+# Silence gRPC's atfork warnings; multiprocessing.Pool(spawn) triggers the
+# fork hook on worker startup and would otherwise spam "fork_posix.cc" /
+# "ev_poll_posix.cc" lines into the logs.
+ENV GRPC_VERBOSITY=ERROR
+ENV GRPC_ENABLE_FORK_SUPPORT=0
+
 ENTRYPOINT ["uv", "run", "functions-framework"]

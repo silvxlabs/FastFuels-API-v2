@@ -33,6 +33,11 @@ from treevox.firestore_io import (
 )
 from treevox.orchestrator import dispatch_handler
 
+# GRPC_VERBOSITY and GRPC_ENABLE_FORK_SUPPORT are set before this module
+# imports via the Dockerfile (production) and services/treevox/conftest.py
+# (tests). They silence gRPC's atfork warnings that would otherwise spam
+# "fork_posix.cc" / "ev_poll_posix.cc" when the multiprocessing Pool spawns.
+
 
 class StructuredLogHandler(logging.Handler):
     """JSON log handler for Cloud Logging; carries grid_id / domain_id via extra."""
@@ -53,9 +58,16 @@ class StructuredLogHandler(logging.Handler):
         print(json.dumps(log_entry), file=sys.stderr)
 
 
+# Attach the handler to the package logger so descendant modules
+# (treevox.orchestrator, treevox.storage, …) inherit it without each
+# needing its own handler.
+_pkg_logger = logging.getLogger("treevox")
+_pkg_logger.setLevel(logging.INFO)
+if not any(isinstance(h, StructuredLogHandler) for h in _pkg_logger.handlers):
+    _pkg_logger.addHandler(StructuredLogHandler())
+_pkg_logger.propagate = False
+
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.addHandler(StructuredLogHandler())
 
 
 UNEXPECTED_FAILURE_MESSAGE = (

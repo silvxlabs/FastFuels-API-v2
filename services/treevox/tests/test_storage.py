@@ -114,6 +114,13 @@ class TestInitStore:
         requested_bands_present = set(ds.data_vars) & set(storage.BAND_SPECS)
         assert requested_bands_present == {"volume_fraction"}
 
+    def test_writes_consolidated_metadata(self, tmp_path):
+        """init_store must write `.zmetadata` so subsequent reads can use
+        `consolidated=True` without a directory listing per batch."""
+        path = _init(tmp_path, keys=("volume_fraction",))
+        ds = xr.open_zarr(path, consolidated=True)
+        assert "volume_fraction" in ds.data_vars
+
 
 # read_union
 

@@ -17,8 +17,9 @@ import logging
 import math
 import multiprocessing
 import os
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -32,6 +33,23 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_WORKERS = 4
 WORKER_MEMORY_ESTIMATE_BYTES = 500 * 1024 * 1024  # ~500 MB budget per worker
+
+
+@dataclass
+class BatchStats:
+    """Per-job accumulator for timings and counts — mirrors v1's stats dict.
+
+    Times are wall-clock seconds aggregated across batches. `num_trees` sums
+    the tree count processed in each chunk's worker; `empty_chunks` counts
+    chunks with zero trees dispatched (those still do a union read/write).
+    """
+
+    read_time: float = 0.0
+    process_time: float = 0.0
+    write_time: float = 0.0
+    num_trees: int = 0
+    empty_chunks: int = 0
+    per_batch: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -136,6 +154,13 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
     chunk_locations = sorted(
         [(r, c) for r in range(num_row_chunks) for c in range(num_col_chunks)],
         key=lambda loc: (loc[0] // 2, loc[1] // 2, loc[0], loc[1]),
+    )
+    logger.info(
+        f"Grid dimensions: {nz}x{ny}x{nx} (z, y, x); "
+        f"chunk_xy={chunk_xy} ({num_row_chunks}x{num_col_chunks} chunks, "
+        f"{num_row_chunks * num_col_chunks} total); "
+        f"hr={hr}m, vr={dims['vr']}m",
+        extra={"grid_id": grid["id"]},
     )
     return GridLayout(
         dims=dims,
@@ -247,14 +272,21 @@ def _build_payloads(
 def _process_batch(
     pool,
     batch: list[tuple[int, int]],
+    batch_idx: int,
+    num_batches: int,
     df: pd.DataFrame,
     chunk_indices: dict,
     layout: GridLayout,
     source: dict,
     grid_id: str,
     path: str,
-) -> None:
-    """Run one batch: union-read → split payloads → pool.map → merge → write."""
+) -> dict:
+    """Run one batch: union-read → split payloads → pool.map → merge → write.
+
+    Logs three per-batch phase timings (read / process / write) and one
+    line per chunk with worker pid + tree count — matches v1's log shape
+    so profiling across versions is directly comparable.
+    """
     dims = layout.dims
     union_y, union_x = voxelize.batch_union_slices(
         batch,
@@ -263,15 +295,28 @@ def _process_batch(
         layout.chunk_xy,
         overlap_cells=voxelize.OVERLAP_CELLS,
     )
+
+    read_start = time.monotonic()
     union_ds = storage.read_union(path, union_y, union_x)
     assert not union_ds.chunks, (
         "read_union must materialize — workers cannot receive lazy dask arrays"
+    )
+    read_time = time.monotonic() - read_start
+    logger.info(
+        f"Combined reading of batch {batch_idx}/{num_batches} completed in "
+        f"{read_time:.2f}s",
+        extra={"grid_id": grid_id},
     )
 
     payloads = _build_payloads(
         batch, union_ds, union_y, union_x, df, chunk_indices, layout, source, grid_id
     )
+    num_trees = sum(len(p["trees"]) for p in payloads)
+    empty_chunks = sum(1 for p in payloads if len(p["trees"]) == 0)
+
+    process_start = time.monotonic()
     results = pool.map(worker_run, payloads)
+    process_time = time.monotonic() - process_start
 
     for r in results:
         if "error" in r:
@@ -281,9 +326,36 @@ def _process_batch(
                 suggestion="Check service logs for the worker traceback.",
                 traceback=r["error"],
             )
+        logger.info(
+            f"Process {r.get('pid', '?')}: chunk {r['chunk_location']} with "
+            f"{r.get('num_trees', 0)} trees completed in "
+            f"{r.get('process_time_s', 0.0):.2f}s",
+            extra={"grid_id": grid_id},
+        )
+    logger.info(
+        f"Parallel processing of batch {batch_idx}/{num_batches} completed in "
+        f"{process_time:.2f}s",
+        extra={"grid_id": grid_id},
+    )
 
+    write_start = time.monotonic()
     merged = storage.masked_merge(union_ds, results, union_y, union_x)
     storage.write_union(path, merged, union_y, union_x)
+    write_time = time.monotonic() - write_start
+    logger.info(
+        f"Combined writing of batch {batch_idx}/{num_batches} completed in "
+        f"{write_time:.2f}s",
+        extra={"grid_id": grid_id},
+    )
+
+    return {
+        "read_time": read_time,
+        "process_time": process_time,
+        "write_time": write_time,
+        "num_trees": num_trees,
+        "empty_chunks": empty_chunks,
+        "num_chunks": len(batch),
+    }
 
 
 def _run_voxelization_batches(
@@ -293,19 +365,31 @@ def _run_voxelization_batches(
     grid_id: str,
     path: str,
     progress: Callable[[str, int | None], None],
-) -> None:
+) -> BatchStats:
     """Create one persistent Pool and drive every batch through `_process_batch`.
 
     `chunk_indices` is precomputed once via `groupby(...).indices` so each
     chunk lookup in `_build_payloads` is O(k) instead of allocating a
     full-length boolean mask per chunk per batch.
+
+    Returns accumulated `BatchStats` for the whole voxelization job so the
+    caller can log totals. Per-batch timings are also logged as they happen.
     """
     chunk_indices = df.groupby(["row_chunk", "col_chunk"], sort=False).indices
 
     num_workers = _pick_worker_count()
     batch_size = max(1, num_workers)
-    num_batches = max(1, int(math.ceil(len(layout.chunk_locations) / batch_size)))
+    total_chunks = len(layout.chunk_locations)
+    num_batches = max(1, int(math.ceil(total_chunks / batch_size)))
     ctx = multiprocessing.get_context("spawn")
+
+    logger.info(
+        f"Processing {total_chunks} chunks in {num_batches} batches with "
+        f"{num_workers} parallel workers (batch_size={batch_size})",
+        extra={"grid_id": grid_id},
+    )
+
+    stats = BatchStats()
 
     # One Pool for all batches — per-batch spawning would re-import
     # fastfuels_core N times and dominate wall time.
@@ -314,11 +398,35 @@ def _run_voxelization_batches(
             batch = layout.chunk_locations[i * batch_size : (i + 1) * batch_size]
             if not batch:
                 continue
-            _process_batch(
-                pool, batch, df, chunk_indices, layout, source, grid_id, path
+
+            logger.info(
+                f"Starting batch {i + 1}/{num_batches} with {len(batch)} chunks",
+                extra={"grid_id": grid_id},
             )
+            batch_stats = _process_batch(
+                pool,
+                batch,
+                i + 1,
+                num_batches,
+                df,
+                chunk_indices,
+                layout,
+                source,
+                grid_id,
+                path,
+            )
+
+            stats.read_time += batch_stats["read_time"]
+            stats.process_time += batch_stats["process_time"]
+            stats.write_time += batch_stats["write_time"]
+            stats.num_trees += batch_stats["num_trees"]
+            stats.empty_chunks += batch_stats["empty_chunks"]
+            stats.per_batch.append(batch_stats)
+
             pct = 15 + int(75 * (i + 1) / num_batches)
             progress(f"Voxelizing batch {i + 1}/{num_batches}...", pct)
+
+    return stats
 
 
 def _build_voxelization_result(layout: GridLayout, path: str) -> VoxelizationResult:
@@ -359,7 +467,17 @@ def voxelize_inventory(
     source = grid["source"]
     path = storage.gcs_path(grid_id)
 
+    job_start = time.monotonic()
+    logger.info(
+        f"Starting voxelization for grid {grid_id}",
+        extra={"grid_id": grid_id},
+    )
+
     df = _load_inventory_dataframe(source, progress)
+    logger.info(
+        f"Inventory loaded: {len(df)} trees",
+        extra={"grid_id": grid_id},
+    )
 
     progress("Computing grid extent...", 10)
     layout = _plan_grid_layout(grid, domain_gdf, df)
@@ -379,10 +497,26 @@ def voxelize_inventory(
     )
 
     df = _prepare_tree_chunks(df, layout)
-    _run_voxelization_batches(df, layout, source, grid_id, path, progress)
+    stats = _run_voxelization_batches(df, layout, source, grid_id, path, progress)
 
     progress("Finalizing...", 95)
-    storage.consolidate_metadata(path)
+    # Metadata was consolidated at init_store time; region writes during the
+    # batch loop only modify data chunks, so no reconsolidation is needed.
+
+    total_time = time.monotonic() - job_start
+    total_chunks = len(layout.chunk_locations)
+    phase_total = stats.read_time + stats.process_time + stats.write_time
+    extra = {"grid_id": grid_id}
+    logger.info(f"Read time: {stats.read_time:.2f} seconds", extra=extra)
+    logger.info(f"Processing time: {stats.process_time:.2f} seconds", extra=extra)
+    logger.info(f"Write time: {stats.write_time:.2f} seconds", extra=extra)
+    logger.info(f"Total trees processed: {stats.num_trees}", extra=extra)
+    logger.info(
+        f"Empty chunks: {stats.empty_chunks} out of {total_chunks}", extra=extra
+    )
+    logger.info(f"Total phase time: {phase_total:.2f} seconds", extra=extra)
+    logger.info(f"Voxelization job completed in {total_time:.2f} seconds", extra=extra)
+
     return _build_voxelization_result(layout, path)
 
 

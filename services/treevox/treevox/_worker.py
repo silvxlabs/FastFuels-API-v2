@@ -10,6 +10,8 @@ treevox.main. Workers receive numpy arrays + plain dicts and return the same.
 
 from __future__ import annotations
 
+import os
+import time
 import traceback
 
 import numpy as np
@@ -38,11 +40,14 @@ def run(payload: dict) -> dict:
       rng_seed: int seed for deterministic stochastic sampling
 
     Returns on success:
-      {chunk_location, buffers, y_slice, x_slice}
+      {chunk_location, buffers, y_slice, x_slice, pid, num_trees,
+       process_time_s}
     Returns on exception (never raises — orchestrator surfaces via
     ProcessingError(VOXELIZATION_FAILED)):
       {chunk_location, error}
     """
+    start = time.monotonic()
+    num_trees = len(payload["trees"])
     try:
         rng = np.random.default_rng(payload["rng_seed"])
         cache = build_chunk_cache(
@@ -70,6 +75,9 @@ def run(payload: dict) -> dict:
             "buffers": payload["buffers"],
             "y_slice": payload["y_slice"],
             "x_slice": payload["x_slice"],
+            "pid": os.getpid(),
+            "num_trees": num_trees,
+            "process_time_s": time.monotonic() - start,
         }
     except Exception as e:
         return {

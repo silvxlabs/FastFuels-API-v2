@@ -343,7 +343,9 @@ class TestVoxelizeInventoryFlow:
         assert isinstance(result, VoxelizationResult)
         assert len(result.chunk_shape) == 3
         assert mock_init.call_count == 1
-        mock_consolidate.assert_called_once()
+        # init_store writes consolidated metadata directly (via
+        # to_zarr(consolidated=True)); no separate end-of-job call.
+        mock_consolidate.assert_not_called()
         msgs = [m for m, _ in progress_calls]
         assert any("Loading" in m for m in msgs)
         assert any("Initializing" in m for m in msgs)

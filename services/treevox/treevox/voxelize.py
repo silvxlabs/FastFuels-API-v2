@@ -286,17 +286,36 @@ def build_chunk_cache(
 
     for cache_key, group in trees_in_chunk.groupby("_cache_key", sort=False):
         first_row = group.iloc[0]
-        tree = build_tree(first_row, source_config)
-        canopy_mask = discretize_crown_profile(tree, hr, vr)
+        try:
+            tree = build_tree(first_row, source_config)
+            canopy_mask = discretize_crown_profile(tree, hr, vr)
+        except Exception:
+            # Degenerate tree (e.g. allometric failure) — skip entry, like v1.
+            continue
         nonzero = int(np.count_nonzero(canopy_mask))
+        if nonzero == 0:
+            # Empty crown — no voxels to distribute biomass into.
+            continue
         num_to_cache = calculate_arrays_to_cache(nonzero, len(group))
         arrays: list[np.ndarray] = []
         for _ in range(num_to_cache):
             seed = int(rng.integers(1, 2**31 - 1))
-            sampled = sample_occupied_cells(canopy_mask, alpha=0.5, beta=0.5, seed=seed)
-            vt = VoxelizedTree(tree, sampled, hr, vr)
-            arrays.append(vt.distribute_biomass())
-        cache[int(cache_key)] = arrays
+            try:
+                sampled = sample_occupied_cells(
+                    canopy_mask, alpha=0.5, beta=0.5, seed=seed
+                )
+                vt = VoxelizedTree(tree, sampled, hr, vr)
+                biomass = vt.distribute_biomass()
+            except Exception:
+                continue
+            # Guard against divide-by-zero in VoxelizedTree.distribute_biomass
+            # (foliage_biomass / 0 volume -> inf/nan). Replace non-finite with
+            # 0 so downstream accumulation never contaminates the zarr store.
+            if not np.all(np.isfinite(biomass)):
+                biomass = np.nan_to_num(biomass, nan=0.0, posinf=0.0, neginf=0.0)
+            arrays.append(biomass)
+        if arrays:
+            cache[int(cache_key)] = arrays
     return cache
 
 

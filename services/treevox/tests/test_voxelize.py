@@ -668,3 +668,371 @@ class TestVoxelizeChunk:
             np.random.default_rng(0),
         )
         assert buffers["volume_fraction"].sum() > 0
+
+
+# Geometric placement helpers
+
+
+class TestTreeCellIndices:
+    def test_stem_at_origin_maps_to_cell_zero(self):
+        assert voxelize._tree_cell_indices(
+            x=0.0, y=100.0, x_origin=0.0, y_origin=100.0, hr=1.0
+        ) == (0, 0)
+
+    def test_cell_east_of_origin(self):
+        assert voxelize._tree_cell_indices(
+            x=1.5, y=100.0, x_origin=0.0, y_origin=100.0, hr=1.0
+        ) == (1, 0)
+
+    def test_cell_south_of_origin(self):
+        """y_origin is the NORTH edge; rows increase southward."""
+        assert voxelize._tree_cell_indices(
+            x=0.0, y=98.5, x_origin=0.0, y_origin=100.0, hr=1.0
+        ) == (0, 1)
+
+    def test_stem_on_boundary_lands_in_higher_index_cell(self):
+        """Floor rounds exactly-on-boundary stems into the east/south cell."""
+        assert voxelize._tree_cell_indices(
+            x=1.0, y=99.0, x_origin=0.0, y_origin=100.0, hr=1.0
+        ) == (1, 1)
+
+    def test_coarser_resolution(self):
+        assert voxelize._tree_cell_indices(
+            x=6.0, y=94.0, x_origin=0.0, y_origin=100.0, hr=3.0
+        ) == (2, 2)
+
+    def test_stem_west_of_origin_returns_negative(self):
+        """Clamping is the caller's job — the helper is pure coord math."""
+        col, row = voxelize._tree_cell_indices(
+            x=-0.5, y=100.0, x_origin=0.0, y_origin=100.0, hr=1.0
+        )
+        assert col == -1
+        assert row == 0
+
+    def test_stem_north_of_origin_returns_negative_row(self):
+        _, row = voxelize._tree_cell_indices(
+            x=0.0, y=100.5, x_origin=0.0, y_origin=100.0, hr=1.0
+        )
+        assert row == -1
+
+
+class TestClip1D:
+    def test_fully_inside(self):
+        buf, src = voxelize._clip_1d(start=2, span=3, dim=10)
+        assert (buf.start, buf.stop) == (2, 5)
+        assert (src.start, src.stop) == (0, 3)
+
+    def test_overhang_left(self):
+        buf, src = voxelize._clip_1d(start=-2, span=5, dim=10)
+        assert (buf.start, buf.stop) == (0, 3)
+        assert (src.start, src.stop) == (2, 5)
+
+    def test_overhang_right(self):
+        buf, src = voxelize._clip_1d(start=8, span=5, dim=10)
+        assert (buf.start, buf.stop) == (8, 10)
+        assert (src.start, src.stop) == (0, 2)
+
+    def test_fully_outside_left(self):
+        assert voxelize._clip_1d(start=-5, span=3, dim=10) is None
+
+    def test_fully_outside_right(self):
+        assert voxelize._clip_1d(start=10, span=3, dim=10) is None
+
+    def test_touching_zero_edge_exactly(self):
+        """span=5 starting at -5 → end=0 → fully outside (half-open)."""
+        assert voxelize._clip_1d(start=-5, span=5, dim=10) is None
+
+    def test_touching_dim_edge_exactly(self):
+        """start=dim is fully outside; start=dim-1 keeps one cell."""
+        assert voxelize._clip_1d(start=10, span=5, dim=10) is None
+        buf, src = voxelize._clip_1d(start=9, span=5, dim=10)
+        assert (buf.start, buf.stop) == (9, 10)
+        assert (src.start, src.stop) == (0, 1)
+
+    def test_span_exceeds_dim_both_sides(self):
+        """span=20 starting at -5 against dim=10 → [0, 10) from src[5:15)."""
+        buf, src = voxelize._clip_1d(start=-5, span=20, dim=10)
+        assert (buf.start, buf.stop) == (0, 10)
+        assert (src.start, src.stop) == (5, 15)
+
+    def test_slices_preserve_array_write_equivalence(self):
+        """buf[buf_slice] = src[src_slice] yields the expected buffer state."""
+        buf = np.zeros(10, dtype="int32")
+        src = np.arange(5, dtype="int32")  # [0, 1, 2, 3, 4]
+        result = voxelize._clip_1d(start=-2, span=5, dim=10)
+        assert result is not None
+        buf_slice, src_slice = result
+        buf[buf_slice] = src[src_slice]
+        # src[2:5] = [2, 3, 4] lands in buf[0:3].
+        assert list(buf) == [2, 3, 4, 0, 0, 0, 0, 0, 0, 0]
+
+
+class TestPlaceBiomass:
+    def _args(self, **overrides):
+        defaults = dict(
+            abs_col=10,
+            abs_row=10,
+            chunk_x_start=0,
+            chunk_y_start=0,
+            crown_base_height=3.0,
+            biomass_shape=(4, 3, 3),  # (nz, ny, nx)
+            buffer_shape=(10, 20, 20),
+            vr=1.0,
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_centered_fully_inside(self):
+        placement = voxelize._place_biomass(**self._args())
+        assert placement is not None
+        buf_slices, src_slices = placement
+        # crown_base_height=3.0 / vr=1.0 → z starts at 3, span 4 → buf z=[3,7)
+        assert (buf_slices[0].start, buf_slices[0].stop) == (3, 7)
+        # row_cell=10, b_ny=3, ny//2=1 → y_start=9, span 3 → buf y=[9,12)
+        assert (buf_slices[1].start, buf_slices[1].stop) == (9, 12)
+        # col_cell=10, b_nx=3, nx//2=1 → x_start=9, span 3 → buf x=[9,12)
+        assert (buf_slices[2].start, buf_slices[2].stop) == (9, 12)
+        # fully inside → src slices are full-span
+        assert all(s.start == 0 for s in src_slices)
+
+    def test_overhang_north(self):
+        """abs_row near 0 → crown overhangs the north (y=0) edge."""
+        placement = voxelize._place_biomass(
+            **self._args(abs_row=0, biomass_shape=(4, 5, 5))
+        )
+        assert placement is not None
+        buf_slices, src_slices = placement
+        # row_cell=0, b_ny=5, ny//2=2 → y_start=-2 → buf y=[0,3), src y=[2,5)
+        assert (buf_slices[1].start, buf_slices[1].stop) == (0, 3)
+        assert (src_slices[1].start, src_slices[1].stop) == (2, 5)
+
+    def test_overhang_south(self):
+        placement = voxelize._place_biomass(
+            **self._args(abs_row=19, biomass_shape=(4, 5, 5), buffer_shape=(10, 20, 20))
+        )
+        assert placement is not None
+        buf_slices, src_slices = placement
+        # row_cell=19, b_ny=5, ny//2=2 → y_start=17, y_end=22 → buf y=[17,20), src y=[0,3)
+        assert (buf_slices[1].start, buf_slices[1].stop) == (17, 20)
+        assert (src_slices[1].start, src_slices[1].stop) == (0, 3)
+
+    def test_overhang_west(self):
+        placement = voxelize._place_biomass(
+            **self._args(abs_col=0, biomass_shape=(4, 5, 5))
+        )
+        assert placement is not None
+        buf_slices, src_slices = placement
+        assert (buf_slices[2].start, buf_slices[2].stop) == (0, 3)
+        assert (src_slices[2].start, src_slices[2].stop) == (2, 5)
+
+    def test_overhang_east(self):
+        placement = voxelize._place_biomass(
+            **self._args(abs_col=19, biomass_shape=(4, 5, 5))
+        )
+        assert placement is not None
+        buf_slices, src_slices = placement
+        assert (buf_slices[2].start, buf_slices[2].stop) == (17, 20)
+        assert (src_slices[2].start, src_slices[2].stop) == (0, 3)
+
+    def test_overhang_top(self):
+        """Crown extends above nz: z_end > nz."""
+        placement = voxelize._place_biomass(
+            **self._args(crown_base_height=8.0, biomass_shape=(4, 3, 3))
+        )
+        assert placement is not None
+        buf_slices, src_slices = placement
+        # z_start=8, span=4 → z_end=12 > nz=10 → buf z=[8,10), src z=[0,2)
+        assert (buf_slices[0].start, buf_slices[0].stop) == (8, 10)
+        assert (src_slices[0].start, src_slices[0].stop) == (0, 2)
+
+    def test_overhang_bottom_negative_crown_base(self):
+        """Crown bottom negative (shouldn't happen physically, but test math)."""
+        placement = voxelize._place_biomass(
+            **self._args(crown_base_height=-2.0, biomass_shape=(4, 3, 3))
+        )
+        assert placement is not None
+        buf_slices, src_slices = placement
+        # z_start=-2, span=4 → z_end=2 → buf z=[0,2), src z=[2,4)
+        assert (buf_slices[0].start, buf_slices[0].stop) == (0, 2)
+        assert (src_slices[0].start, src_slices[0].stop) == (2, 4)
+
+    def test_corner_overhang_two_faces(self):
+        """NW corner: overhangs both north AND west simultaneously."""
+        placement = voxelize._place_biomass(
+            **self._args(abs_row=0, abs_col=0, biomass_shape=(4, 5, 5))
+        )
+        assert placement is not None
+        buf_slices, src_slices = placement
+        assert (buf_slices[1].start, buf_slices[1].stop) == (0, 3)
+        assert (src_slices[1].start, src_slices[1].stop) == (2, 5)
+        assert (buf_slices[2].start, buf_slices[2].stop) == (0, 3)
+        assert (src_slices[2].start, src_slices[2].stop) == (2, 5)
+
+    def test_fully_outside_returns_none(self):
+        """Stem far east of buffer → None."""
+        placement = voxelize._place_biomass(**self._args(abs_col=100))
+        assert placement is None
+
+    def test_fully_below_buffer_returns_none(self):
+        """Crown entirely above nz → None."""
+        placement = voxelize._place_biomass(**self._args(crown_base_height=100.0))
+        assert placement is None
+
+    def test_chunk_offset_translates_coords(self):
+        """Non-zero chunk_{x,y}_start shifts stem into local frame."""
+        placement = voxelize._place_biomass(
+            **self._args(
+                abs_col=110,
+                abs_row=110,
+                chunk_x_start=100,
+                chunk_y_start=100,
+                biomass_shape=(4, 3, 3),
+            )
+        )
+        assert placement is not None
+        buf_slices, _ = placement
+        # local col = 110-100 = 10 → x_start = 10 - 1 = 9
+        assert (buf_slices[1].start, buf_slices[1].stop) == (9, 12)
+        assert (buf_slices[2].start, buf_slices[2].stop) == (9, 12)
+
+    def test_vr_scales_z_placement(self):
+        """crown_base_height / vr → z_start."""
+        placement = voxelize._place_biomass(
+            **self._args(crown_base_height=6.0, vr=2.0, biomass_shape=(2, 3, 3))
+        )
+        assert placement is not None
+        buf_slices, _ = placement
+        # z_start = int(6.0 / 2.0) = 3
+        assert buf_slices[0].start == 3
+
+
+class TestApplyBands:
+    def _buffers(self, keys, shape=(4, 4, 4)):
+        from treevox.storage import BAND_SPECS
+
+        return {
+            k: np.full(shape, BAND_SPECS[k][1], dtype=BAND_SPECS[k][0]) for k in keys
+        }
+
+    def _full_slice(self, shape):
+        return tuple(slice(0, n) for n in shape)
+
+    def test_volume_fraction_accumulates_from_mask(self):
+        shape = (2, 3, 3)
+        bufs = self._buffers(("volume_fraction",), shape=shape)
+        biomass = np.ones(shape, dtype="float32")
+        voxelize._apply_bands(
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            species_code=131,
+            foliage_sav=2000.0,
+            tree_id=7,
+            moisture_value=100.0,
+        )
+        assert bufs["volume_fraction"].sum() == biomass.size
+
+    def test_volume_fraction_zero_biomass_does_nothing(self):
+        shape = (2, 3, 3)
+        bufs = self._buffers(("volume_fraction",), shape=shape)
+        biomass = np.zeros(shape, dtype="float32")
+        voxelize._apply_bands(
+            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+        )
+        assert bufs["volume_fraction"].sum() == 0
+
+    def test_bulk_density_sums_biomass(self):
+        shape = (2, 3, 3)
+        bufs = self._buffers(("bulk_density.foliage",), shape=shape)
+        biomass = np.full(shape, 0.5, dtype="float32")
+        voxelize._apply_bands(
+            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+        )
+        assert bufs["bulk_density.foliage"].sum() == pytest.approx(0.5 * biomass.size)
+
+    def test_overwrite_bands_written_where_mask_nonzero(self):
+        shape = (2, 3, 3)
+        bufs = self._buffers(
+            ("savr.foliage", "fuel_moisture.live", "spcd", "tree_id"), shape=shape
+        )
+        biomass = np.zeros(shape, dtype="float32")
+        biomass[0, 1, 1] = 1.0  # single voxel
+
+        voxelize._apply_bands(
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            species_code=131,
+            foliage_sav=2000.0,
+            tree_id=7,
+            moisture_value=100.0,
+        )
+        assert bufs["savr.foliage"][0, 1, 1] == 2000.0
+        assert bufs["fuel_moisture.live"][0, 1, 1] == 100.0
+        assert bufs["spcd"][0, 1, 1] == 131
+        assert bufs["tree_id"][0, 1, 1] == 7
+        # fill values preserved elsewhere
+        assert bufs["spcd"].sum() == 131
+        assert (bufs["tree_id"] == -1).sum() == biomass.size - 1
+
+    def test_overwrite_second_tree_replaces_first(self):
+        """Last-writer-wins semantics for overwrite bands."""
+        shape = (1, 2, 2)
+        bufs = self._buffers(("spcd", "tree_id"), shape=shape)
+        biomass = np.ones(shape, dtype="float32")
+
+        voxelize._apply_bands(
+            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+        )
+        voxelize._apply_bands(
+            bufs, self._full_slice(shape), biomass, 202, 2500.0, 1, 100.0
+        )
+        assert (bufs["spcd"] == 202).all()
+        assert (bufs["tree_id"] == 1).all()
+
+    def test_accumulate_second_tree_sums_with_first(self):
+        shape = (1, 2, 2)
+        bufs = self._buffers(("volume_fraction", "bulk_density.foliage"), shape=shape)
+        biomass = np.ones(shape, dtype="float32")
+
+        voxelize._apply_bands(
+            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+        )
+        voxelize._apply_bands(
+            bufs, self._full_slice(shape), biomass, 202, 2500.0, 1, 100.0
+        )
+        assert (bufs["volume_fraction"] == 2.0).all()
+        assert (bufs["bulk_density.foliage"] == 2.0).all()
+
+    def test_subset_of_bands_only_touches_those(self):
+        """A caller requesting just volume_fraction shouldn't error on missing keys."""
+        shape = (1, 2, 2)
+        bufs = self._buffers(("volume_fraction",), shape=shape)
+        biomass = np.ones(shape, dtype="float32")
+        voxelize._apply_bands(
+            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+        )
+        assert list(bufs.keys()) == ["volume_fraction"]
+        assert bufs["volume_fraction"].sum() == biomass.size
+
+    def test_partial_slice_only_writes_within(self):
+        """buf_slices narrower than buf shape → only that region is touched."""
+        bufs = self._buffers(("spcd",), shape=(2, 4, 4))
+        biomass = np.ones((2, 2, 2), dtype="float32")
+        sub = (slice(0, 2), slice(1, 3), slice(1, 3))
+
+        voxelize._apply_bands(
+            bufs,
+            sub,
+            biomass,
+            species_code=131,
+            foliage_sav=0,
+            tree_id=0,
+            moisture_value=None,
+        )
+        # Inside sub: written to 131.
+        assert (bufs["spcd"][sub] == 131).all()
+        # Outside sub: untouched (fill value 0 per BAND_SPECS).
+        mask = np.ones(bufs["spcd"].shape, dtype=bool)
+        mask[sub] = False
+        assert (bufs["spcd"][mask] == 0).all()

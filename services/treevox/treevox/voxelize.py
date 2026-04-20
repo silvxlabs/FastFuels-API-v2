@@ -322,6 +322,98 @@ def build_chunk_cache(
 # Per-chunk voxelization
 
 
+def _tree_cell_indices(
+    x: float, y: float, x_origin: float, y_origin: float, hr: float
+) -> tuple[int, int]:
+    """World coords → absolute (col, row) cell indices.
+
+    `y_origin` is the NORTH edge of the grid; rows increase southward. Uses
+    floor so a stem exactly on a cell boundary lands in the cell to the
+    east/south (the half-open [start, start+hr) convention).
+    """
+    abs_col = int(math.floor((x - x_origin) / hr))
+    abs_row = int(math.floor((y_origin - y) / hr))
+    return abs_col, abs_row
+
+
+def _clip_1d(start: int, span: int, dim: int) -> tuple[slice, slice] | None:
+    """Clip a placement [start, start+span) against a buffer [0, dim).
+
+    Returns (buffer_slice, source_slice) where source_slice indexes into the
+    unclipped biomass array, or None if the placement is entirely outside.
+    """
+    end = start + span
+    if end <= 0 or start >= dim:
+        return None
+    return (
+        slice(max(0, start), min(dim, end)),
+        slice(max(0, -start), span - max(0, end - dim)),
+    )
+
+
+def _place_biomass(
+    abs_col: int,
+    abs_row: int,
+    chunk_x_start: int,
+    chunk_y_start: int,
+    crown_base_height: float,
+    biomass_shape: tuple[int, int, int],
+    buffer_shape: tuple[int, int, int],
+    vr: float,
+) -> tuple[tuple[slice, slice, slice], tuple[slice, slice, slice]] | None:
+    """Compute (buffer_slices, source_slices) for placing a biomass array
+    into a chunk buffer.
+
+    The biomass array is placed with its horizontal center at the stem cell
+    and its vertical bottom at crown_base_height, then clipped against the
+    chunk buffer's (nz, ny, nx) shape. Returns None if fully outside.
+    """
+    b_nz, b_ny, b_nx = biomass_shape
+    nz, ny_chunk, nx_chunk = buffer_shape
+
+    col_cell = abs_col - chunk_x_start
+    row_cell = abs_row - chunk_y_start
+
+    z = _clip_1d(int(crown_base_height / vr), b_nz, nz)
+    y = _clip_1d(row_cell - b_ny // 2, b_ny, ny_chunk)
+    x = _clip_1d(col_cell - b_nx // 2, b_nx, nx_chunk)
+    if z is None or y is None or x is None:
+        return None
+    return (z[0], y[0], x[0]), (z[1], y[1], x[1])
+
+
+def _apply_bands(
+    buffers: dict[str, np.ndarray],
+    buf_slices: tuple[slice, slice, slice],
+    biomass_clip: np.ndarray,
+    species_code: int,
+    foliage_sav: float,
+    tree_id: int,
+    moisture_value: float | None,
+) -> None:
+    """Accumulate or overwrite one tree's contribution into the chunk buffers.
+
+    Accumulate: volume_fraction, bulk_density.foliage.
+    Overwrite:  savr.foliage, fuel_moisture.live, spcd, tree_id — rely on the
+    caller iterating trees height-ASC so the tallest tree's value wins.
+    """
+    mask = biomass_clip > 0
+    for key, buf in buffers.items():
+        region = buf[buf_slices]
+        if key == "volume_fraction":
+            region += mask.astype(buf.dtype)
+        elif key == "bulk_density.foliage":
+            region += biomass_clip.astype(buf.dtype)
+        elif key == "savr.foliage":
+            region[mask] = foliage_sav
+        elif key == "fuel_moisture.live":
+            region[mask] = moisture_value
+        elif key == "spcd":
+            region[mask] = species_code
+        elif key == "tree_id":
+            region[mask] = tree_id
+
+
 def voxelize_chunk(
     trees_in_chunk: pd.DataFrame,
     buffers: dict[str, np.ndarray],
@@ -352,86 +444,42 @@ def voxelize_chunk(
     if "fuel_moisture.live" in buffers:
         moisture_value = float(source_config["moisture_model"]["live"])
 
-    nz, ny_chunk, nx_chunk = next(iter(buffers.values())).shape
+    buffer_shape = next(iter(buffers.values())).shape
 
     for _, row in trees_in_chunk.iterrows():
-        cache_key = int(row["_cache_key"])
-        cached_list = cache.get(cache_key)
+        cached_list = cache.get(int(row["_cache_key"]))
         if not cached_list:
             continue
-
         biomass_array = (
             cached_list[0]
             if len(cached_list) == 1
             else cached_list[int(rng.integers(len(cached_list)))]
         )
 
-        # Absolute cell indices of the tree's stem.
-        abs_col = int(math.floor((float(row["x"]) - x_origin) / hr))
-        abs_row = int(math.floor((y_origin - float(row["y"])) / hr))
-
-        # Translate to buffer-local indices.
-        col_cell = abs_col - chunk_x_start
-        row_cell = abs_row - chunk_y_start
-
-        # Place the biomass array with its center at (row_cell, col_cell).
-        b_nz, b_ny, b_nx = biomass_array.shape
-        row_start = row_cell - b_ny // 2
-        row_end = row_start + b_ny
-        col_start = col_cell - b_nx // 2
-        col_end = col_start + b_nx
-
-        # Height placement: crown_base_height -> height in vertical cells.
         tree = build_tree(row, source_config)
-        height_start = int(tree.crown_base_height / vr)
-        height_end = height_start + b_nz
-
-        # Clip to buffer bounds (z, y, x).
-        z_src_start = max(0, -height_start)
-        z_src_end = b_nz - max(0, height_end - nz)
-        y_src_start = max(0, -row_start)
-        y_src_end = b_ny - max(0, row_end - ny_chunk)
-        x_src_start = max(0, -col_start)
-        x_src_end = b_nx - max(0, col_end - nx_chunk)
-
-        # If any slice collapses, the tree is entirely outside the buffer.
-        if (
-            z_src_end <= z_src_start
-            or y_src_end <= y_src_start
-            or x_src_end <= x_src_start
-        ):
+        abs_col, abs_row = _tree_cell_indices(
+            float(row["x"]), float(row["y"]), x_origin, y_origin, hr
+        )
+        placement = _place_biomass(
+            abs_col,
+            abs_row,
+            chunk_x_start,
+            chunk_y_start,
+            tree.crown_base_height,
+            biomass_array.shape,
+            buffer_shape,
+            vr,
+        )
+        if placement is None:
             continue
 
-        biomass_clip = biomass_array[
-            z_src_start:z_src_end,
-            y_src_start:y_src_end,
-            x_src_start:x_src_end,
-        ]
-
-        buf_z = slice(max(0, height_start), min(nz, height_end))
-        buf_y = slice(max(0, row_start), min(ny_chunk, row_end))
-        buf_x = slice(max(0, col_start), min(nx_chunk, col_end))
-
-        mask = biomass_clip > 0
-
-        for key, buf in buffers.items():
-            if key == "volume_fraction":
-                buf[buf_z, buf_y, buf_x] += (biomass_clip > 0).astype(buf.dtype)
-            elif key == "bulk_density.foliage":
-                buf[buf_z, buf_y, buf_x] += biomass_clip.astype(buf.dtype)
-            elif key == "savr.foliage":
-                region = buf[buf_z, buf_y, buf_x]
-                region[mask] = tree.foliage_sav
-                buf[buf_z, buf_y, buf_x] = region
-            elif key == "fuel_moisture.live":
-                region = buf[buf_z, buf_y, buf_x]
-                region[mask] = moisture_value
-                buf[buf_z, buf_y, buf_x] = region
-            elif key == "spcd":
-                region = buf[buf_z, buf_y, buf_x]
-                region[mask] = tree.species_code
-                buf[buf_z, buf_y, buf_x] = region
-            elif key == "tree_id":
-                region = buf[buf_z, buf_y, buf_x]
-                region[mask] = int(row["tree_id"])
-                buf[buf_z, buf_y, buf_x] = region
+        buf_slices, src_slices = placement
+        _apply_bands(
+            buffers,
+            buf_slices,
+            biomass_array[src_slices],
+            tree.species_code,
+            tree.foliage_sav,
+            int(row["tree_id"]),
+            moisture_value,
+        )

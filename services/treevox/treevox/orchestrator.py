@@ -18,11 +18,13 @@ import math
 import multiprocessing
 import os
 import time
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from treevox import storage, voxelize
 from treevox._worker import run as worker_run
@@ -191,6 +193,179 @@ def _prepare_tree_chunks(df: pd.DataFrame, layout: GridLayout) -> pd.DataFrame:
     return df
 
 
+def _chunk_relative_slices(
+    chunk_y: slice,
+    chunk_x: slice,
+    union_y: slice,
+    union_x: slice,
+) -> tuple[slice, slice]:
+    """Translate a chunk's absolute grid slices into union-relative indices.
+
+    Inputs
+    ------
+    chunk_y, chunk_x
+        Absolute y/x cell-index ranges for one chunk's halo-extended region
+        in the full grid. Produced by `voxelize.chunk_slice`. E.g. for chunk
+        (1, 0) at chunk_xy=1000 with 10-cell overlap: `slice(990, 2010)`.
+    union_y, union_x
+        Absolute y/x cell-index ranges for the halo-extended union covering
+        every chunk in the current batch. Produced by
+        `voxelize.batch_union_slices`. Guaranteed by construction to contain
+        every chunk in the batch (the union is the outer bound of those
+        chunks' halos).
+
+    What it does
+    ------------
+    Subtracts `union.start` from both endpoints of the chunk slice on each
+    axis, producing slices that can index directly into the numpy array that
+    `storage.read_union` materialized for this union region.
+
+    Validates the containment invariant (chunk ⊆ union). If it fails, the
+    upstream `chunk_slice` and `batch_union_slices` implementations have
+    drifted apart — there is no correct numpy slice to return, so we raise
+    rather than silently produce a negative-start slice that numpy would
+    turn into an empty array.
+
+    Output
+    ------
+    `(rel_y, rel_x)`: slices into the union's numpy buffer. Each has
+    `stop - start == chunk.stop - chunk.start`, so indexing preserves the
+    chunk's halo-extended shape. Example: chunk=(990, 2010), union=(0, 2010)
+    → `rel_y = slice(990, 2010)`.
+    """
+    if chunk_y.start < union_y.start or chunk_y.stop > union_y.stop:
+        raise ProcessingError(
+            code="BATCH_SLICE_MISMATCH",
+            message=(
+                f"Chunk y-slice {chunk_y} is not contained within union "
+                f"y-slice {union_y}. chunk_slice and batch_union_slices "
+                f"must share the same overlap_cells value."
+            ),
+        )
+    if chunk_x.start < union_x.start or chunk_x.stop > union_x.stop:
+        raise ProcessingError(
+            code="BATCH_SLICE_MISMATCH",
+            message=(
+                f"Chunk x-slice {chunk_x} is not contained within union "
+                f"x-slice {union_x}."
+            ),
+        )
+    return (
+        slice(chunk_y.start - union_y.start, chunk_y.stop - union_y.start),
+        slice(chunk_x.start - union_x.start, chunk_x.stop - union_x.start),
+    )
+
+
+def _materialize_chunk_buffer(
+    union_ds: xr.Dataset,
+    key: str,
+    rel_y: slice,
+    rel_x: slice,
+    expected_shape: tuple[int, int, int],
+) -> np.ndarray:
+    """Extract one band's slice from the union Dataset as a writable numpy buffer.
+
+    Inputs
+    ------
+    union_ds
+        In-memory xarray Dataset produced by `storage.read_union` — one
+        variable per requested band, each shaped `(nz, union_y_span,
+        union_x_span)`. Already `.load()`-ed (not lazy dask). Values reflect
+        current on-disk state so prior-batch writes carry forward into this
+        chunk's halo.
+    key
+        Band name matching a key in `storage.BAND_SPECS`
+        (e.g. `"volume_fraction"`, `"tree_id"`). Determines output dtype
+        and fill value.
+    rel_y, rel_x
+        Slices into `union_ds`'s numpy arrays covering this chunk's halo,
+        from `_chunk_relative_slices`.
+    expected_shape
+        `(nz, chunk_y_span, chunk_x_span)` — the exact shape the worker
+        expects for its chunk buffer. Derived from `chunk_y.stop -
+        chunk_y.start` etc. in the caller.
+
+    What it does
+    ------------
+    Slices the band variable out of `union_ds`, copies it into a fresh array
+    coerced to the band's declared dtype from `BAND_SPECS` (so workers
+    receive e.g. `int32` for `tree_id` even if the stored zarr variable drifts).
+    When the slice's shape differs from `expected_shape`:
+
+    - **smaller** on any axis (can happen at grid edges where the union was
+      clipped at the boundary): pad the trailing cells with the band's fill
+      value up to `expected_shape` and log a warning. Pad direction matters —
+      only the trailing positions are padded so the chunk's origin cell
+      remains aligned with the union's origin.
+    - **larger** on any axis: raise `ProcessingError(UNION_SHAPE_MISMATCH)`.
+      A larger slice means `_chunk_relative_slices` returned indices wider
+      than `expected_shape`, which would require `chunk_slice` to be
+      inconsistent with itself. Silently truncating would discard real data.
+
+    Output
+    ------
+    `np.ndarray` of exactly `expected_shape` with the band's declared dtype.
+    Writable (workers mutate in place). Cells outside the union-overlap
+    region (for edge chunks) carry the band's fill value.
+    """
+    dtype, fill = storage.BAND_SPECS[key]
+    existing = union_ds[key].values[:, rel_y, rel_x]
+    buf = np.array(existing, dtype=dtype, copy=True)
+    if buf.shape == expected_shape:
+        return buf
+
+    for axis, (got, want) in enumerate(zip(buf.shape, expected_shape)):
+        if got > want:
+            raise ProcessingError(
+                code="UNION_SHAPE_MISMATCH",
+                message=(
+                    f"Band {key!r} union slice shape {buf.shape} exceeds "
+                    f"expected chunk shape {expected_shape} on axis {axis}; "
+                    f"refusing to truncate."
+                ),
+            )
+
+    logger.warning(
+        f"Band {key!r} union slice shape {buf.shape} smaller than expected "
+        f"{expected_shape}; padding trailing cells with fill={fill!r}."
+    )
+    padded = np.full(expected_shape, fill, dtype=dtype)
+    padded[: buf.shape[0], : buf.shape[1], : buf.shape[2]] = buf
+    return padded
+
+
+def _chunk_rng_seed(grid_id: str, row: int, col: int) -> int:
+    """Deterministic 32-bit seed for one chunk's stochastic sampling.
+
+    Inputs
+    ------
+    grid_id
+        Firestore document ID of the grid being voxelized (e.g.
+        `"abc-def-123"`). Uniquely identifies one job — different jobs
+        produce different seed spaces so repeated runs don't accidentally
+        share RNG state.
+    row, col
+        Chunk row/column indices within the grid.
+
+    What it does
+    ------------
+    Combines the three components into a stable 32-bit integer via
+    `zlib.crc32`. Unlike Python's built-in `hash()`, CRC32 is NOT affected
+    by `PYTHONHASHSEED` randomization — the output is bit-identical across
+    Python invocations, Cloud Function cold starts, and machine/platform
+    boundaries. This is the one-line fix for the latent non-determinism in
+    the previous `hash((grid_id, row, col))` formulation.
+
+    Output
+    ------
+    `int` in `[0, 2^32)`. Passed to `np.random.default_rng(seed=...)` inside
+    the worker. The same `(grid_id, row, col)` triple always produces the
+    same seed, so re-running a job yields bit-identical voxelized output
+    (given the same inventory).
+    """
+    return zlib.crc32(f"{grid_id}:{row}:{col}".encode())
+
+
 def _build_payloads(
     batch: list[tuple[int, int]],
     union_ds,
@@ -222,32 +397,19 @@ def _build_payloads(
         chunk_y, chunk_x = voxelize.chunk_slice(
             (row, col), ny, nx, layout.chunk_xy, overlap_cells=voxelize.OVERLAP_CELLS
         )
-        # Relative slice into the union buffer.
-        rel_y = slice(chunk_y.start - union_y.start, chunk_y.stop - union_y.start)
-        rel_x = slice(chunk_x.start - union_x.start, chunk_x.stop - union_x.start)
-
-        buffers: dict = {}
-        for key in layout.requested_keys:
-            dtype, fill = storage.BAND_SPECS[key]
-            expected_shape = (
-                nz,
-                chunk_y.stop - chunk_y.start,
-                chunk_x.stop - chunk_x.start,
-            )
-            existing = union_ds[key].values[:, rel_y, rel_x]
-            buf = np.array(existing, dtype=dtype, copy=True)
-            if buf.shape != expected_shape:
-                resized = np.full(expected_shape, fill, dtype=dtype)
-                z_n = min(expected_shape[0], buf.shape[0])
-                y_n = min(expected_shape[1], buf.shape[1])
-                x_n = min(expected_shape[2], buf.shape[2])
-                resized[:z_n, :y_n, :x_n] = buf[:z_n, :y_n, :x_n]
-                buf = resized
-            buffers[key] = buf
+        rel_y, rel_x = _chunk_relative_slices(chunk_y, chunk_x, union_y, union_x)
+        expected_shape = (
+            nz,
+            chunk_y.stop - chunk_y.start,
+            chunk_x.stop - chunk_x.start,
+        )
+        buffers = {
+            key: _materialize_chunk_buffer(union_ds, key, rel_y, rel_x, expected_shape)
+            for key in layout.requested_keys
+        }
 
         indices = chunk_indices.get((row, col))
         trees_in_chunk = df.iloc[indices] if indices is not None else df.iloc[0:0]
-        rng_seed = abs(hash((grid_id, row, col))) & 0xFFFFFFFF
 
         payloads.append(
             {
@@ -263,7 +425,7 @@ def _build_payloads(
                 "chunk_x_start": chunk_x.start,
                 "y_slice": chunk_y,
                 "x_slice": chunk_x,
-                "rng_seed": int(rng_seed),
+                "rng_seed": _chunk_rng_seed(grid_id, row, col),
             }
         )
     return payloads

@@ -281,6 +281,296 @@ class TestBuildPayloads:
         assert "volume_fraction" in p["buffers"]
 
 
+# _chunk_relative_slices, _materialize_chunk_buffer, _chunk_rng_seed
+
+
+class TestChunkRelativeSlices:
+    def test_single_chunk_union_matches_chunk(self):
+        """Union equals chunk halo → rel slices start at 0."""
+        rel_y, rel_x = orchestrator._chunk_relative_slices(
+            slice(990, 2010),
+            slice(990, 2010),
+            slice(990, 2010),
+            slice(990, 2010),
+        )
+        assert (rel_y.start, rel_y.stop) == (0, 1020)
+        assert (rel_x.start, rel_x.stop) == (0, 1020)
+
+    def test_second_chunk_offset_from_union_origin(self):
+        """A chunk whose halo starts 1000 cells into the union → rel.start=1000."""
+        rel_y, rel_x = orchestrator._chunk_relative_slices(
+            chunk_y=slice(1000, 2010),
+            chunk_x=slice(0, 1010),
+            union_y=slice(0, 2010),
+            union_x=slice(0, 1010),
+        )
+        assert (rel_y.start, rel_y.stop) == (1000, 2010)
+        assert (rel_x.start, rel_x.stop) == (0, 1010)
+
+    def test_chunk_span_preserved(self):
+        """rel.stop - rel.start == chunk.stop - chunk.start on each axis."""
+        rel_y, rel_x = orchestrator._chunk_relative_slices(
+            slice(500, 750),
+            slice(100, 200),
+            slice(0, 1000),
+            slice(0, 500),
+        )
+        assert rel_y.stop - rel_y.start == 250
+        assert rel_x.stop - rel_x.start == 100
+
+    def test_chunk_y_before_union_raises(self):
+        with pytest.raises(ProcessingError) as exc:
+            orchestrator._chunk_relative_slices(
+                slice(-5, 100),
+                slice(0, 100),
+                slice(0, 200),
+                slice(0, 200),
+            )
+        assert exc.value.code == "BATCH_SLICE_MISMATCH"
+        assert "y-slice" in exc.value.message
+
+    def test_chunk_y_extends_past_union_raises(self):
+        with pytest.raises(ProcessingError) as exc:
+            orchestrator._chunk_relative_slices(
+                slice(0, 300),
+                slice(0, 100),
+                slice(0, 200),
+                slice(0, 200),
+            )
+        assert exc.value.code == "BATCH_SLICE_MISMATCH"
+
+    def test_chunk_x_out_of_bounds_raises(self):
+        """Containment is enforced on x-axis too."""
+        with pytest.raises(ProcessingError) as exc:
+            orchestrator._chunk_relative_slices(
+                slice(0, 100),
+                slice(-1, 100),
+                slice(0, 200),
+                slice(0, 200),
+            )
+        assert exc.value.code == "BATCH_SLICE_MISMATCH"
+        assert "x-slice" in exc.value.message
+
+
+class TestMaterializeChunkBuffer:
+    def _union(self, shape=(2, 20, 20), keys=("volume_fraction", "tree_id")):
+        data_vars = {}
+        for k in keys:
+            dtype, fill = orchestrator.storage.BAND_SPECS[k]
+            data_vars[k] = (("z", "y", "x"), np.full(shape, fill, dtype=dtype))
+        return xr.Dataset(data_vars)
+
+    def test_shape_match_returns_coerced_copy(self):
+        """Slice matches expected_shape → plain copy with band dtype."""
+        union = self._union()
+        buf = orchestrator._materialize_chunk_buffer(
+            union,
+            "volume_fraction",
+            rel_y=slice(5, 15),
+            rel_x=slice(5, 15),
+            expected_shape=(2, 10, 10),
+        )
+        assert buf.shape == (2, 10, 10)
+        assert buf.dtype == np.float32
+        # Independent buffer — mutations do not propagate back to union.
+        buf[0, 0, 0] = 1.0
+        assert union["volume_fraction"].values[0, 5, 5] == 0.0
+
+    def test_band_dtype_takes_precedence(self):
+        """Output dtype comes from BAND_SPECS, not from the union variable."""
+        union = xr.Dataset(
+            {
+                "tree_id": (
+                    ("z", "y", "x"),
+                    np.full((2, 10, 10), -1, dtype="int64"),  # mismatched dtype
+                )
+            }
+        )
+        buf = orchestrator._materialize_chunk_buffer(
+            union,
+            "tree_id",
+            rel_y=slice(0, 10),
+            rel_x=slice(0, 10),
+            expected_shape=(2, 10, 10),
+        )
+        assert buf.dtype == np.int32
+        assert (buf == -1).all()
+
+    def test_fill_values_preserved_on_slice(self):
+        """tree_id cells carry fill=-1 after slice/copy."""
+        union = self._union(keys=("tree_id",))
+        buf = orchestrator._materialize_chunk_buffer(
+            union,
+            "tree_id",
+            rel_y=slice(0, 5),
+            rel_x=slice(0, 5),
+            expected_shape=(2, 5, 5),
+        )
+        assert (buf == -1).all()
+
+    def test_smaller_slice_pads_with_fill_and_warns(self):
+        """Union slice smaller than expected → trailing cells filled, warning logged.
+
+        Uses a direct logger mock rather than caplog because the treevox
+        package logger sets `propagate=False` in main.py, so warnings don't
+        bubble to pytest's root-level caplog handler once main is imported.
+        """
+        union = self._union(shape=(2, 10, 10), keys=("volume_fraction",))
+        with patch.object(orchestrator, "logger") as mock_logger:
+            buf = orchestrator._materialize_chunk_buffer(
+                union,
+                "volume_fraction",
+                rel_y=slice(0, 10),
+                rel_x=slice(0, 10),
+                expected_shape=(2, 12, 12),
+            )
+        assert buf.shape == (2, 12, 12)
+        # Leading cells copied; trailing cells filled with 0.0.
+        assert (buf[:, :10, :10] == 0.0).all()
+        assert (buf[:, 10:, :] == 0.0).all()
+        mock_logger.warning.assert_called_once()
+        assert "smaller than expected" in mock_logger.warning.call_args[0][0]
+
+    def test_padding_uses_band_specific_fill(self):
+        """tree_id pads with -1, not 0."""
+        union = self._union(shape=(2, 10, 10), keys=("tree_id",))
+        buf = orchestrator._materialize_chunk_buffer(
+            union,
+            "tree_id",
+            rel_y=slice(0, 10),
+            rel_x=slice(0, 10),
+            expected_shape=(2, 12, 12),
+        )
+        assert (buf[:, 10:, :] == -1).all()
+        assert (buf[:, :, 10:] == -1).all()
+
+    def test_larger_slice_raises_union_shape_mismatch(self):
+        """Union slice larger than expected → refuse to truncate."""
+        union = self._union(shape=(2, 20, 20), keys=("volume_fraction",))
+        with pytest.raises(ProcessingError) as exc:
+            orchestrator._materialize_chunk_buffer(
+                union,
+                "volume_fraction",
+                rel_y=slice(0, 15),
+                rel_x=slice(0, 15),
+                expected_shape=(2, 10, 10),
+            )
+        assert exc.value.code == "UNION_SHAPE_MISMATCH"
+        assert "refusing to truncate" in exc.value.message
+
+
+class TestChunkRngSeed:
+    def test_same_inputs_produce_same_seed(self):
+        a = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
+        b = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
+        assert a == b
+
+    def test_different_row_col_produce_different_seeds(self):
+        base = orchestrator._chunk_rng_seed("grid-abc", 0, 0)
+        assert base != orchestrator._chunk_rng_seed("grid-abc", 0, 1)
+        assert base != orchestrator._chunk_rng_seed("grid-abc", 1, 0)
+
+    def test_different_grid_id_produces_different_seed(self):
+        assert orchestrator._chunk_rng_seed("grid-a", 0, 0) != (
+            orchestrator._chunk_rng_seed("grid-b", 0, 0)
+        )
+
+    def test_seed_is_uint32_range(self):
+        for r, c in [(0, 0), (999, 999), (-1, -1)]:
+            seed = orchestrator._chunk_rng_seed("grid-xyz", r, c)
+            assert 0 <= seed < 2**32
+
+    def test_deterministic_across_python_processes(self):
+        """CRC32-based seed must NOT depend on PYTHONHASHSEED.
+
+        Spawns a fresh Python process with a random hash seed and checks
+        that it computes the same value. Guards against regressing to
+        `hash()`-based derivation.
+        """
+        import subprocess
+        import sys
+
+        expected = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
+        script = (
+            "from treevox.orchestrator import _chunk_rng_seed; "
+            "print(_chunk_rng_seed('grid-abc', 3, 7))"
+        )
+        env = dict(os.environ, PYTHONHASHSEED="random")
+        out = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=True,
+        )
+        assert int(out.stdout.strip()) == expected
+
+    def test_feeds_default_rng_without_error(self):
+        """The seed is accepted by `np.random.default_rng`."""
+        seed = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
+        rng = np.random.default_rng(seed)
+        assert rng.random() is not None
+
+
+# _build_payloads (integration with helpers)
+
+
+class TestBuildPayloadsZeroTrees:
+    def test_chunk_with_no_trees_gets_empty_frame_with_schema(self):
+        """groupby().indices omits empty chunks → df.iloc[0:0] preserves columns."""
+        df = _sample_df(n=1, height=5.0)
+        grid = _base_grid()
+        layout = orchestrator._plan_grid_layout(grid, _fake_domain(), df)
+        # Mirror _load_inventory_dataframe's tree_id assignment so the test
+        # frame has the same schema real workers receive.
+        df = orchestrator.assign_tree_ids(df)
+        df_prepared = orchestrator._prepare_tree_chunks(df, layout)
+
+        batch = [layout.chunk_locations[0]]
+        dims = layout.dims
+        chunk_y, chunk_x = orchestrator.voxelize.chunk_slice(
+            batch[0],
+            dims["ny"],
+            dims["nx"],
+            layout.chunk_xy,
+            overlap_cells=orchestrator.voxelize.OVERLAP_CELLS,
+        )
+        union_ds = xr.Dataset(
+            {
+                "volume_fraction": (
+                    ("z", "y", "x"),
+                    np.zeros(
+                        (
+                            dims["nz"],
+                            chunk_y.stop - chunk_y.start,
+                            chunk_x.stop - chunk_x.start,
+                        ),
+                        dtype="float32",
+                    ),
+                )
+            }
+        )
+        # Empty chunk_indices dict — simulates a chunk whose (row, col) has no
+        # trees, which is the `chunk_indices.get(...) is None` branch.
+        chunk_indices: dict = {}
+
+        payloads = orchestrator._build_payloads(
+            batch,
+            union_ds,
+            chunk_y,
+            chunk_x,
+            df_prepared,
+            chunk_indices,
+            layout,
+            grid["source"],
+            "g1",
+        )
+        assert len(payloads) == 1
+        assert len(payloads[0]["trees"]) == 0
+        for col in ("fia_species_code", "dbh", "height", "tree_id", "_cache_key"):
+            assert col in payloads[0]["trees"].columns
+
+
 # Full-flow integration tests for voxelize_inventory with mocks.
 
 

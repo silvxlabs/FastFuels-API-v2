@@ -431,6 +431,64 @@ class TestBuildChunkCache:
             assert entry.foliage_sav > 0
             assert entry.crown_base_height >= 0
 
+    def test_biomass_column_flows_to_tree_crown_fuel_load(self, monkeypatch):
+        """`biomass_model="inventory"` + `biomass_column` → Tree's crown_fuel_load.
+
+        `build_tree` alone reading the column is covered by TestBuildTree; this
+        asserts build_chunk_cache plumbs the source config through so the
+        bin-representative Tree gets the right crown_fuel_load at cache-build
+        time. Regression guard for wiring bugs between the orchestrator, cache
+        builder, and build_tree.
+        """
+        canopy = np.ones((2, 3, 3))
+        monkeypatch.setattr(
+            voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
+        )
+        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+
+        class FakeVT:
+            def __init__(self, tree, mask, hr, vr):
+                self.tree = tree
+                self.mask = mask
+
+            def distribute_biomass(self):
+                return self.mask * 1.0
+
+        monkeypatch.setattr(voxelize, "VoxelizedTree", FakeVT)
+
+        built_trees: list = []
+        real_build_tree = voxelize.build_tree
+
+        def spying_build_tree(row, source_config):
+            tree = real_build_tree(row, source_config)
+            built_trees.append(tree)
+            return tree
+
+        monkeypatch.setattr(voxelize, "build_tree", spying_build_tree)
+
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [131],
+                "fia_status_code": [1],
+                "dbh": [20.0],
+                "height": [15.0],
+                "crown_ratio": [0.4],
+                "x": [1.0],
+                "y": [1.0],
+                "my_fuel_load": [42.0],
+            }
+        )
+        df["_cache_key"] = voxelize.compute_cache_keys(df)
+
+        cfg = base_source_config()
+        cfg["biomass_model"] = "inventory"
+        cfg["biomass_column"] = "my_fuel_load"
+
+        voxelize.build_chunk_cache(df, 1.0, 1.0, cfg, np.random.default_rng(0))
+
+        assert len(built_trees) == 1
+        assert built_trees[0]._crown_fuel_load_override == 42.0
+
 
 # voxelize_chunk (mocked cache)
 

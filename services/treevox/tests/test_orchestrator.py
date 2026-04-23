@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 import xarray as xr
 from treevox import orchestrator
+from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
 from treevox.orchestrator import (
     DEFAULT_MAX_WORKERS,
@@ -793,3 +794,234 @@ class TestPersistentPool:
 
             assert fake_ctx.Pool.call_count == 1
             assert fake_pool.map.call_count > 1
+
+
+# End-to-end halo + masked_merge exercise for one batch.
+#
+# Runs the per-batch pipeline _build_payloads → _worker.run → masked_merge
+# in-process (no Pool, no GCS). This is the main architectural invariant
+# of v2 — trees near a chunk seam must render into the neighbor's halo
+# and the merge must stitch those halo cells back into the union so the
+# eventual zarr write covers both chunks. Unit-level because pure compute.
+
+
+class TestHaloMergeAcrossChunks:
+    def _patch_fastfuels(self, monkeypatch, biomass_shape=(2, 5, 5), biomass_value=1.0):
+        """Replace fastfuels-core with deterministic stand-ins.
+
+        Same pattern as TestBuildChunkCache — we care about the halo
+        plumbing, not fastfuels internals.
+        """
+        from treevox import voxelize as vmod
+
+        mask = np.ones(biomass_shape, dtype="float32")
+
+        def fake_build_tree(row, source_config):
+            return SimpleNamespace(
+                crown_base_height=1.0,
+                foliage_sav=2000.0,
+                species_code=131,
+            )
+
+        class FakeVT:
+            def __init__(self, tree, sampled, hr, vr):
+                self._mask = sampled
+
+            def distribute_biomass(self):
+                return self._mask * biomass_value
+
+        monkeypatch.setattr(vmod, "build_tree", fake_build_tree)
+        monkeypatch.setattr(
+            vmod, "discretize_crown_profile", lambda *a, **kw: mask.copy()
+        )
+        monkeypatch.setattr(vmod, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(vmod, "VoxelizedTree", FakeVT)
+
+    def _build_union(self, layout, batch, keys):
+        """Build an all-fill union Dataset covering the batch's halo."""
+        from treevox import storage
+
+        union_y, union_x = orchestrator.voxelize.batch_union_slices(
+            batch,
+            layout.dims["ny"],
+            layout.dims["nx"],
+            layout.chunk_xy,
+            overlap_cells=orchestrator.voxelize.OVERLAP_CELLS,
+        )
+        span_y = union_y.stop - union_y.start
+        span_x = union_x.stop - union_x.start
+        data_vars = {}
+        for k in keys:
+            dtype, fill = storage.BAND_SPECS[k]
+            data_vars[k] = (
+                ("z", "y", "x"),
+                np.full((layout.dims["nz"], span_y, span_x), fill, dtype=dtype),
+            )
+        return xr.Dataset(data_vars), union_y, union_x
+
+    def _tiny_domain(self, nx=40, ny=20):
+        return SimpleNamespace(
+            total_bounds=np.array([0.0, 0.0, float(nx), float(ny)]),
+            crs="EPSG:32610",
+        )
+
+    def _grid(self, bands, seed=42):
+        return {
+            "id": "g-halo",
+            "domain_id": "d1",
+            "source": {
+                "name": "inventory",
+                "source_inventory_id": "inv1",
+                "resolution": (1.0, 1.0, 1.0),
+                "crown_profile_model": "purves",
+                "biomass_model": "nsvb",
+                "biomass_column": None,
+                "moisture_model": {"method": "uniform", "live": 100.0},
+                "seed": seed,
+            },
+            "bands": [{"key": k} for k in bands],
+        }
+
+    def _force_chunk_xy(self, monkeypatch, chunk_xy=20):
+        """Shrink CHUNK_LENGTH_METERS so the planner picks the size we want.
+
+        `_plan_grid_layout` derives chunk_xy from CHUNK_LENGTH_METERS / hr,
+        clamped to (nx, ny). At hr=1 we want chunk_xy=20 → two chunks on a
+        40-wide grid.
+        """
+        monkeypatch.setattr(orchestrator.voxelize, "CHUNK_LENGTH_METERS", chunk_xy)
+
+    def test_tree_at_seam_writes_into_neighbor_halo_and_merges(self, monkeypatch):
+        """Tree stem in chunk (0,0), crown spills east across the seam at col=20.
+
+        With biomass_shape=(2, 5, 5), a stem at col=19 fills cols [17, 22).
+        Cols [20, 22) lie in chunk (0,1)'s native territory but are written
+        by chunk (0,0)'s halo-extended buffer. After masked_merge, the union
+        must carry biomass continuously across the seam.
+        """
+        self._patch_fastfuels(monkeypatch, biomass_shape=(2, 5, 5), biomass_value=1.0)
+        self._force_chunk_xy(monkeypatch, chunk_xy=20)
+
+        # One tree at x=19.5 → cell col=19 → col_chunk=0 (west of seam).
+        df = pd.DataFrame(
+            {
+                "x": [19.5],
+                "y": [10.0],
+                "fia_species_code": [131],
+                "fia_status_code": [1],
+                "dbh": [20.0],
+                "height": [5.0],
+                "crown_ratio": [0.5],
+            }
+        )
+        grid = self._grid(bands=["volume_fraction"])
+        layout = orchestrator._plan_grid_layout(grid, self._tiny_domain(), df)
+        assert layout.chunk_xy == 20
+        assert len(layout.chunk_locations) == 2  # (0,0) and (0,1)
+
+        df = orchestrator.assign_tree_ids(df)
+        df = orchestrator._prepare_tree_chunks(df, layout)
+        assert df["col_chunk"].iloc[0] == 0  # stem firmly in chunk (0,0)
+
+        batch = [(0, 0), (0, 1)]
+        union_ds, union_y, union_x = self._build_union(
+            layout, batch, ["volume_fraction"]
+        )
+        chunk_indices = df.groupby(["row_chunk", "col_chunk"], sort=False).indices
+
+        payloads = orchestrator._build_payloads(
+            batch,
+            union_ds,
+            union_y,
+            union_x,
+            df,
+            chunk_indices,
+            layout,
+            grid["source"],
+            grid["id"],
+        )
+        assert len(payloads) == 2
+        payload_by_loc = {p["chunk_location"]: p for p in payloads}
+        # Chunk (0,0) gets the tree; chunk (0,1) gets nothing.
+        assert len(payload_by_loc[(0, 0)]["trees"]) == 1
+        assert len(payload_by_loc[(0, 1)]["trees"]) == 0
+
+        results = [worker_run(p) for p in payloads]
+        assert all("error" not in r for r in results), [
+            r.get("error") for r in results if "error" in r
+        ]
+
+        # Chunk (0,0)'s buffer: cols 17..22 in absolute coords. chunk_x_start=0
+        # (no western halo at the grid edge), so buffer-local cols match absolute.
+        vf_00 = results[0]["buffers"]["volume_fraction"]
+        # Writes into the native region.
+        assert vf_00[:, :, 17:20].sum() > 0
+        # Writes into the east halo (absolute cols 20, 21 lie in chunk (0,1)'s
+        # native territory but we expect them here thanks to the halo).
+        assert vf_00[:, :, 20:22].sum() > 0, (
+            "Tree's crown did not render into chunk (0,0)'s east halo — "
+            "either the halo isn't being honored or _place_biomass clipped it."
+        )
+
+        # Chunk (0,1)'s buffer is empty because it had no trees assigned.
+        vf_01 = results[1]["buffers"]["volume_fraction"]
+        assert vf_01.sum() == 0
+
+        # Masked merge stitches chunk (0,0)'s halo cells into the union.
+        merged = orchestrator.storage.masked_merge(union_ds, results, union_y, union_x)
+        vf_merged = merged["volume_fraction"].values
+        # Continuous biomass across the seam at col=20 — no zero column.
+        for col in range(17, 22):
+            assert vf_merged[:, :, col].sum() > 0, (
+                f"Column {col} is zero in the merged union — the halo/merge "
+                f"path dropped cells that chunk (0,0) wrote."
+            )
+        # And only those columns were touched.
+        assert vf_merged[:, :, :17].sum() == 0
+        assert vf_merged[:, :, 22:].sum() == 0
+
+    def test_halo_carries_overwrite_band_across_seam(self, monkeypatch):
+        """Same geometry, checking an overwrite band (spcd).
+
+        Catches any regression where overwrite-band halo cells get lost by a
+        mask that only triggers on accumulate-band values.
+        """
+        self._patch_fastfuels(monkeypatch, biomass_shape=(2, 5, 5), biomass_value=1.0)
+        self._force_chunk_xy(monkeypatch, chunk_xy=20)
+
+        df = pd.DataFrame(
+            {
+                "x": [19.5],
+                "y": [10.0],
+                "fia_species_code": [131],
+                "fia_status_code": [1],
+                "dbh": [20.0],
+                "height": [5.0],
+                "crown_ratio": [0.5],
+            }
+        )
+        grid = self._grid(bands=["spcd"])
+        layout = orchestrator._plan_grid_layout(grid, self._tiny_domain(), df)
+        df = orchestrator.assign_tree_ids(df)
+        df = orchestrator._prepare_tree_chunks(df, layout)
+
+        batch = [(0, 0), (0, 1)]
+        union_ds, union_y, union_x = self._build_union(layout, batch, ["spcd"])
+        chunk_indices = df.groupby(["row_chunk", "col_chunk"], sort=False).indices
+        payloads = orchestrator._build_payloads(
+            batch,
+            union_ds,
+            union_y,
+            union_x,
+            df,
+            chunk_indices,
+            layout,
+            grid["source"],
+            grid["id"],
+        )
+        results = [worker_run(p) for p in payloads]
+        merged = orchestrator.storage.masked_merge(union_ds, results, union_y, union_x)
+        spcd = merged["spcd"].values
+        # Species code present on both sides of the seam.
+        assert (spcd[:, :, 17:20] == 131).any()
+        assert (spcd[:, :, 20:22] == 131).any()

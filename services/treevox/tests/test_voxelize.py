@@ -422,9 +422,14 @@ class TestBuildChunkCache:
         )
 
         assert len(cache) == df["_cache_key"].nunique()
-        for key, arrays in cache.items():
-            assert len(arrays) >= 1
-            assert all(a.shape == canopy.shape for a in arrays)
+        for _, entry in cache.items():
+            assert isinstance(entry, voxelize.CacheEntry)
+            assert len(entry.biomass_arrays) >= 1
+            assert all(a.shape == canopy.shape for a in entry.biomass_arrays)
+            # bin-representative attrs populated from the first-row Tree
+            assert entry.species_code in {131, 202}
+            assert entry.foliage_sav > 0
+            assert entry.crown_base_height >= 0
 
 
 # voxelize_chunk (mocked cache)
@@ -471,8 +476,22 @@ class TestVoxelizeChunk:
         df["_cache_key"] = 0
         return df
 
-    def _deterministic_cache(self, shape=(2, 3, 3), value=1.0):
-        return {0: [np.full(shape, value, dtype="float32")]}
+    def _deterministic_cache(
+        self,
+        shape=(2, 3, 3),
+        value=1.0,
+        crown_base_height=1.5,
+        foliage_sav=1600.0,
+        species_code=131,
+    ):
+        return {
+            0: voxelize.CacheEntry(
+                biomass_arrays=[np.full(shape, value, dtype="float32")],
+                crown_base_height=crown_base_height,
+                foliage_sav=foliage_sav,
+                species_code=species_code,
+            )
+        }
 
     def test_single_tree_populates_all_requested_bands(self):
         dims, buffers = self._dims_and_buffers()
@@ -499,7 +518,11 @@ class TestVoxelizeChunk:
         assert buffers["savr.foliage"].max() > 0
 
     def test_overwrite_bands_take_taller_trees_value(self):
-        """Trees are sorted height-ASC before dispatch; last writer = tallest."""
+        """Trees are sorted height-ASC before dispatch; last writer = tallest.
+
+        Two species → two cache_keys (as `compute_cache_keys` would produce),
+        each with its own species_code in the cache entry.
+        """
         dims, buffers = self._dims_and_buffers(keys=("spcd", "tree_id"))
         df = pd.DataFrame(
             {
@@ -511,10 +534,24 @@ class TestVoxelizeChunk:
                 "x": [15.0, 15.0],
                 "y": [15.0, 15.0],
                 "tree_id": [0, 1],
-                "_cache_key": [0, 0],
+                "_cache_key": [0, 1],
             }
         )
-        cache = self._deterministic_cache()
+        arr = np.ones((2, 3, 3), dtype="float32")
+        cache = {
+            0: voxelize.CacheEntry(
+                biomass_arrays=[arr],
+                crown_base_height=1.5,
+                foliage_sav=1600.0,
+                species_code=131,
+            ),
+            1: voxelize.CacheEntry(
+                biomass_arrays=[arr],
+                crown_base_height=1.5,
+                foliage_sav=1600.0,
+                species_code=202,
+            ),
+        }
         voxelize.voxelize_chunk(
             df,
             buffers,

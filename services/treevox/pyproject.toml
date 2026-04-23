@@ -26,3 +26,9 @@ markers = [
 
 [tool.uv.sources]
 lib = { path = "../lib", editable = true }
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.8",
+    "pyvista>=0.47.3",
+]

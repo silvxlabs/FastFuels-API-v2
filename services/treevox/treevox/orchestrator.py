@@ -526,7 +526,7 @@ def _process_batch(
                 traceback=r["error"],
             )
         logger.info(
-            f"Process {r.get('pid', '?')}: chunk {r['chunk_location']} with "
+            f"Process {r.get('pid', '?')}: batch {batch_idx}, chunk {r['chunk_location']} with "
             f"{r.get('num_trees', 0)} trees completed in "
             f"{r.get('process_time_s', 0.0):.2f}s",
             extra={"grid_id": grid_id},

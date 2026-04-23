@@ -126,6 +126,7 @@ async def create_tree_inventory_grid(
         biomass_model=body.biomass_model,
         biomass_column=body.biomass_column,
         moisture_model=body.moisture_model,
+        seed=body.seed,
     )
     bands = build_tree_bands(body.bands)
 

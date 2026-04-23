@@ -47,6 +47,14 @@ EXAMPLE_WITH_ALTERNATE_MODELS = {
     "biomass_model": "jenkins",
 }
 
+# Pinned seed for reproducible voxelization.
+EXAMPLE_WITH_SEED = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": [2.0, 2.0, 1.0],
+    "bands": ["bulk_density.foliage"],
+    "seed": 42,
+}
+
 CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_MINIMAL,
@@ -99,6 +107,17 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "directly from an inventory column instead of modeling it."
         ),
     },
+    "with_seed": {
+        "value": EXAMPLE_WITH_SEED,
+        "summary": "Pin the random seed for reproducibility",
+        "description": (
+            "Supplies an explicit `seed` so repeated voxelizations of this "
+            "inventory at this resolution produce bit-identical output. "
+            "The seed is persisted on the grid document; omit it to have "
+            "the API generate and persist one for you (re-runs are still "
+            "deterministic against the stored seed)."
+        ),
+    },
 }
 
 ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
@@ -106,4 +125,5 @@ ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
     ("with_bands", EXAMPLE_WITH_BANDS),
     ("with_moisture_model", EXAMPLE_WITH_MOISTURE_MODEL),
     ("alternate_models", EXAMPLE_WITH_ALTERNATE_MODELS),
+    ("with_seed", EXAMPLE_WITH_SEED),
 ]

@@ -24,12 +24,47 @@ from fastfuels_core.voxelization import (
 
 @dataclass(frozen=True)
 class CacheEntry:
-    """Per-chunk cache entry for one group of morphologically equivalent trees.
+    """One equivalence class of morphologically-identical trees, pre-voxelized.
 
-    `biomass_arrays` are the pre-sampled realizations. The remaining fields
-    carry the bin-representative tree's placement attrs — every tree sharing
-    this `_cache_key` uses these values, so `build_tree` runs once per group
-    instead of once per tree during chunk rendering.
+    Fields
+    ------
+    biomass_arrays
+        List of 3D numpy arrays — each a `(nz, ny, nx)` canopy biomass
+        realization in kg/m³ sampled from the bin-representative tree's
+        crown profile. Shape is consistent across the list (determined by
+        the tree's crown dimensions + voxel resolution). Length varies by
+        bin: scales with canopy volume and tree frequency via
+        `calculate_arrays_to_cache`, capped at `MAX_BIOMASS_ARRAY_CACHE`.
+        When a tree in this bin is rendered, `voxelize_chunk` picks one of
+        these arrays uniformly at random.
+    crown_base_height
+        Meters above ground where the bin-representative tree's crown
+        starts. Used by `_place_biomass` to position the biomass array
+        vertically in the chunk buffer.
+    foliage_sav
+        Surface-area-to-volume ratio for foliage (1/m). Derived by
+        fastfuels-core from the bin-representative tree's species. Written
+        verbatim into the `savr.foliage` band for every voxel the tree
+        occupies.
+    species_code
+        FIA species code (int). Written verbatim into the `spcd` band.
+
+    Scope
+    -----
+    One entry is created per unique `_cache_key` in `build_chunk_cache`,
+    lives for the duration of one chunk's rendering, and is discarded when
+    the worker returns. Never persisted, never crosses process boundaries
+    via pickle (cache construction and consumption both run inside the
+    worker).
+
+    Why the shared attrs exist
+    --------------------------
+    All trees sharing a `_cache_key` fall in the same
+    `(species, dbh_bin, height_bin, crown_ratio_bin)` bucket, so
+    `crown_base_height`, `foliage_sav`, and `species_code` are identical
+    (or close enough — see TREEVOX.md). Caching them here means the outer
+    `voxelize_chunk` loop makes zero Tree-allometry calls per row — those
+    ran once per bin inside `build_chunk_cache`.
     """
 
     biomass_arrays: list[np.ndarray]
@@ -288,18 +323,75 @@ def build_chunk_cache(
     source_config: dict,
     rng: np.random.Generator,
 ) -> dict[int, CacheEntry]:
-    """Build per-chunk cache indexed by `_cache_key`.
+    """Pre-sample biomass realizations for every equivalence class in a chunk.
 
-    For each unique cache_key in `trees_in_chunk`:
-      1. Build a Tree from the group's first row.
-      2. `discretize_crown_profile` -> canopy volume-fraction mask.
-      3. Sample N biomass realizations, where N scales with nonzero voxel
-         count and tree frequency (v1's `calculate_arrays_to_cache`).
-      4. Stash the bin-representative tree's placement attrs alongside the
-         biomass arrays so `voxelize_chunk` doesn't rebuild Tree objects
-         per-row.
+    Inputs
+    ------
+    trees_in_chunk
+        DataFrame slice holding every tree assigned to one chunk, already
+        height-sorted ASC and carrying a `_cache_key` column (int group id
+        from `compute_cache_keys`) plus the raw tree columns the v2
+        inventory schema guarantees: `x`, `y`, `fia_species_code`,
+        `fia_status_code`, `dbh`, `height`, `crown_ratio`. Empty frame
+        returns an empty cache.
+    hr
+        Horizontal voxel resolution in meters. Threaded into
+        `discretize_crown_profile` and `VoxelizedTree` so the sampled
+        arrays are sized for the output grid.
+    vr
+        Vertical voxel resolution in meters. Same role as `hr` but for
+        the z axis.
+    source_config
+        The grid's `source` sub-dict. Must carry `crown_profile_model`
+        ("purves" | "beta"), `biomass_model` ("nsvb" | "jenkins" |
+        "inventory"), and — when `biomass_model == "inventory"` — a
+        `biomass_column` naming the per-row crown_fuel_load column.
+        Passed verbatim into `build_tree`.
+    rng
+        Seeded numpy Generator. Used twice per cache entry: once to draw
+        a per-realization int seed for `sample_occupied_cells` (so each
+        realization varies deterministically), and once downstream in
+        `voxelize_chunk` to pick which realization a given tree row uses.
+        Seeded from `source.seed + (row_chunk, col_chunk)` in the
+        orchestrator so the whole job is reproducible.
 
-    `rng` seeds `sample_occupied_cells` for deterministic output.
+    What it does
+    ------------
+    Groups `trees_in_chunk` by `_cache_key`. For each group:
+
+    1. Builds a fastfuels-core `Tree` from the group's first row (the
+       "bin-representative").
+    2. Calls `discretize_crown_profile(tree, hr, vr)` to get a 3D mask of
+       which voxels the tree's crown occupies.
+    3. Computes how many independent biomass realizations to cache via
+       `calculate_arrays_to_cache(nonzero_voxels, group_size)`.
+    4. For each realization:
+         a. Draws a seed from `rng`.
+         b. `sample_occupied_cells(canopy_mask, alpha=0.5, beta=0.5, seed)`
+            — stochastic sub-voxel occupancy.
+         c. `VoxelizedTree(tree, sampled, hr, vr).distribute_biomass()` →
+            per-voxel kg/m³ array.
+         d. Sanitizes non-finite values (`foliage_biomass / 0 volume`
+            edge case inside fastfuels-core) to zero so the downstream
+            zarr store never receives NaN/Inf.
+    5. Packs the realizations plus the bin-representative's
+       `crown_base_height`, `foliage_sav`, and `species_code` into one
+       `CacheEntry`.
+
+    Skip rules (never raise, always log by omission so the job makes
+    progress on partial failure):
+      - Tree construction raises → whole bin skipped (no cache_key entry).
+      - Canopy mask is all-zero (empty crown) → whole bin skipped.
+      - An individual realization fails mid-sample → that one realization
+        dropped; the bin keeps whichever succeeded. Bin skipped only if
+        every realization failed.
+
+    Output
+    ------
+    `dict[int, CacheEntry]` keyed by `_cache_key`. Keys absent from the
+    result are ones `voxelize_chunk` will silently skip (the outer loop
+    does `cache.get(key)` and `continue`s on None). Keys present are
+    guaranteed to have `biomass_arrays` non-empty and all arrays finite.
     """
     cache: dict[int, CacheEntry] = {}
     if trees_in_chunk.empty:
@@ -351,11 +443,45 @@ def build_chunk_cache(
 def _tree_cell_indices(
     x: float, y: float, x_origin: float, y_origin: float, hr: float
 ) -> tuple[int, int]:
-    """World coords → absolute (col, row) cell indices.
+    """Convert a tree stem's world coordinates to absolute grid cell indices.
 
-    `y_origin` is the NORTH edge of the grid; rows increase southward. Uses
-    floor so a stem exactly on a cell boundary lands in the cell to the
-    east/south (the half-open [start, start+hr) convention).
+    Inputs
+    ------
+    x, y
+        Projected coordinates of the tree stem, in the grid's CRS
+        (typically UTM meters — same CRS as the domain GeoDataFrame). For
+        a domain spanning 500000..501000 m E and 5200000..5201000 m N in
+        EPSG:32611, a tree would have `x` somewhere in that first range,
+        `y` in the second.
+    x_origin, y_origin
+        Grid origin in the same projected CRS. By raster convention
+        `x_origin` is the WEST edge and `y_origin` is the NORTH edge —
+        so columns increase eastward as `x` increases, but rows increase
+        southward as `y` DECREASES. Both come from `compute_grid_dimensions`.
+    hr
+        Horizontal cell size in meters (square cells, so the same value
+        applies to both axes).
+
+    What it does
+    ------------
+    Computes the integer cell index of the cell containing the stem on
+    each axis:
+      - `abs_col = floor((x - x_origin) / hr)` — offset east of the
+        grid's west edge, divided by cell size.
+      - `abs_row = floor((y_origin - y) / hr)` — offset south of the
+        grid's north edge, divided by cell size.
+    Floor means stems exactly on a cell boundary land in the east/south
+    cell (the half-open `[start, start+hr)` convention).
+
+    Does no clamping — if `x < x_origin` the returned `abs_col` is
+    negative. The caller is responsible for bounds checking (typically
+    downstream slice clipping in `_place_biomass` handles it).
+
+    Output
+    ------
+    `(abs_col, abs_row)` — zero-based ints into the full grid's x/y
+    axes. Example: a stem 5.5 m east and 3.2 m south of a grid origin at
+    1 m resolution returns `(5, 3)`.
     """
     abs_col = int(math.floor((x - x_origin) / hr))
     abs_row = int(math.floor((y_origin - y) / hr))
@@ -363,10 +489,47 @@ def _tree_cell_indices(
 
 
 def _clip_1d(start: int, span: int, dim: int) -> tuple[slice, slice] | None:
-    """Clip a placement [start, start+span) against a buffer [0, dim).
+    """Clip a 1D placement window against a buffer axis.
 
-    Returns (buffer_slice, source_slice) where source_slice indexes into the
-    unclipped biomass array, or None if the placement is entirely outside.
+    Inputs
+    ------
+    start
+        Buffer-local index (int) where the placement window begins. May be
+        negative when the source array overhangs the buffer's low side
+        (e.g. the tree's crown extends north of the chunk's origin).
+    span
+        Length of the placement window — equals the source array's extent
+        on this axis. `(start, start+span)` is the half-open buffer range
+        the source WOULD write to if the buffer were infinite.
+    dim
+        Size of the buffer on this axis. Valid buffer indices are
+        `[0, dim)`.
+
+    What it does
+    ------------
+    Intersects the requested placement range `[start, start+span)` with
+    the buffer range `[0, dim)` and returns a matched pair of slices:
+      - `buffer_slice` — where to WRITE in the buffer, clamped to
+        `[0, dim)`.
+      - `source_slice` — where to READ from the (unclipped) source array;
+        the beginning is shifted right when `start < 0`, and the end is
+        pulled back when the window runs past `dim`.
+    Both slices have the same length so assigning
+    `buf[buffer_slice] = src[source_slice]` is always shape-safe.
+
+    Returns `None` when the placement is ENTIRELY outside the buffer
+    (`end <= 0` or `start >= dim`) — nothing to write, so the caller
+    skips this axis/tree.
+
+    Output
+    ------
+    Either `(buffer_slice, source_slice)` — both `slice` objects with
+    equal length — or `None`. Examples:
+
+      - Fully inside: `_clip_1d(2, 3, 10)` → `(slice(2, 5), slice(0, 3))`.
+      - Overhang low: `_clip_1d(-2, 5, 10)` → `(slice(0, 3), slice(2, 5))`.
+      - Overhang high: `_clip_1d(8, 5, 10)` → `(slice(8, 10), slice(0, 2))`.
+      - Fully outside: `_clip_1d(-5, 3, 10)` → `None`.
     """
     end = start + span
     if end <= 0 or start >= dim:
@@ -387,12 +550,63 @@ def _place_biomass(
     buffer_shape: tuple[int, int, int],
     vr: float,
 ) -> tuple[tuple[slice, slice, slice], tuple[slice, slice, slice]] | None:
-    """Compute (buffer_slices, source_slices) for placing a biomass array
-    into a chunk buffer.
+    """Compute where to write one biomass array into a chunk buffer.
 
-    The biomass array is placed with its horizontal center at the stem cell
-    and its vertical bottom at crown_base_height, then clipped against the
-    chunk buffer's (nz, ny, nx) shape. Returns None if fully outside.
+    Inputs
+    ------
+    abs_col, abs_row
+        Absolute grid cell indices of the tree stem (from
+        `_tree_cell_indices`). `abs_col` ranges `[0, nx)`; `abs_row`
+        ranges `[0, ny)` in the ideal case but can fall outside when the
+        stem is actually outside the domain.
+    chunk_x_start, chunk_y_start
+        Absolute grid cell indices of the chunk buffer's origin cell —
+        i.e. the y=0, x=0 cell of `buffer`. Includes the halo offset:
+        for chunk (1, 0) at `chunk_xy=1000, overlap_cells=10` the chunk
+        buffer spans absolute x=`[0, 1010)` and y=`[990, 2010)`, so
+        `chunk_x_start=0, chunk_y_start=990`.
+    crown_base_height
+        Meters above ground where the tree's crown starts. From
+        `CacheEntry.crown_base_height` — shared across trees in the bin.
+    biomass_shape
+        `(nz, ny, nx)` of the pre-sampled biomass array being placed.
+        Each biomass realization in the cache has this shape; it's
+        determined by the representative tree's crown dimensions.
+    buffer_shape
+        `(nz, ny, nx)` of the chunk buffer being written to. `nz` equals
+        the full grid's z extent; `ny`/`nx` are the chunk's halo-extended
+        spans (typically `chunk_xy + 2 * overlap_cells` away from grid
+        edges, less near boundaries).
+    vr
+        Vertical voxel resolution in meters. Used to convert
+        `crown_base_height` into a z cell index.
+
+    What it does
+    ------------
+    Determines the placement anchor on each axis:
+      - z: crown bottom at `floor(crown_base_height / vr)`, filling
+        upward through `z + b_nz`.
+      - y: biomass array centered on the stem's buffer-local row
+        (`row_cell - b_ny // 2`), filling north-to-south.
+      - x: biomass array centered on the stem's buffer-local column
+        (`col_cell - b_nx // 2`), filling west-to-east.
+    Each axis is then clipped via `_clip_1d` against the corresponding
+    buffer dimension. If any axis collapses to zero overlap (fully
+    outside the buffer), returns `None` — the tree is entirely outside
+    this chunk's halo and the caller skips it.
+
+    Output
+    ------
+    Either `None` (fully outside) or a pair of 3-tuples:
+      - `buffer_slices`: `(slice, slice, slice)` — where to WRITE in the
+        chunk buffer. `buf[buffer_slices]` is the in-bounds region this
+        tree contributes to.
+      - `source_slices`: `(slice, slice, slice)` — where to READ from
+        the unclipped biomass array. `biomass_array[source_slices]` has
+        the same shape as `buf[buffer_slices]`, so
+        `buf[buffer_slices] += biomass_array[source_slices]` (or any
+        shape-matched write) is safe regardless of which buffer edges
+        the crown overhangs.
     """
     b_nz, b_ny, b_nx = biomass_shape
     nz, ny_chunk, nx_chunk = buffer_shape
@@ -417,11 +631,66 @@ def _apply_bands(
     tree_id: int,
     moisture_value: float | None,
 ) -> None:
-    """Accumulate or overwrite one tree's contribution into the chunk buffers.
+    """Write one tree's contribution into every requested band buffer.
 
-    Accumulate: volume_fraction, bulk_density.foliage.
-    Overwrite:  savr.foliage, fuel_moisture.live, spcd, tree_id — rely on the
-    caller iterating trees height-ASC so the tallest tree's value wins.
+    Inputs
+    ------
+    buffers
+        Mapping from band key to the chunk's numpy buffer for that band,
+        e.g. `{"volume_fraction": np.ndarray((nz, ny, nx), float32),
+        "spcd": np.ndarray((nz, ny, nx), uint16), ...}`. Only keys that
+        the user requested are present; unknown keys are silently ignored
+        by the dispatch loop. Buffers are mutated IN PLACE.
+    buf_slices
+        `(z_slice, y_slice, x_slice)` identifying the 3D sub-region of
+        each buffer this tree writes to — from `_place_biomass`. All
+        buffers share the same shape, so the same slice tuple works for
+        every band.
+    biomass_clip
+        The source-slice view into the bin's biomass array, i.e.
+        `biomass_array[source_slices]`. Same shape as `buf[buf_slices]`.
+        Non-zero values mark voxels the tree occupies; values are kg/m³
+        of foliage biomass.
+    species_code
+        FIA species code (int), from `CacheEntry.species_code`. Written
+        into the `spcd` band.
+    foliage_sav
+        Foliage surface-area-to-volume ratio (1/m), from
+        `CacheEntry.foliage_sav`. Written into the `savr.foliage` band.
+    tree_id
+        Per-row unique tree identifier (int), from the DataFrame row.
+        Written into the `tree_id` band so downstream consumers can trace
+        a voxel back to an inventory row.
+    moisture_value
+        Live fuel moisture percent, read once per chunk from
+        `source.moisture_model.live`. `None` when the `fuel_moisture.live`
+        band isn't requested.
+
+    What it does
+    ------------
+    Masks `biomass_clip > 0` to find the voxels this tree occupies, then
+    dispatches per band into the corresponding buffer's sub-region:
+
+      | Band                  | Rule      | Semantics                    |
+      |-----------------------|-----------|------------------------------|
+      | volume_fraction       | accumulate| `region += mask`             |
+      | bulk_density.foliage  | accumulate| `region += biomass_clip`     |
+      | savr.foliage          | overwrite | `region[mask] = foliage_sav` |
+      | fuel_moisture.live    | overwrite | `region[mask] = moisture`    |
+      | spcd                  | overwrite | `region[mask] = species_code`|
+      | tree_id               | overwrite | `region[mask] = tree_id`     |
+
+    Accumulate bands SUM across overlapping crowns. Overwrite bands
+    take the LAST writer's value on overlap — which, because the caller
+    iterates trees in height-ASC order, means the tallest tree wins (the
+    policy documented on the API).
+
+    Uses `buf[buf_slices]` views (not copies), so `region += ...` and
+    `region[mask] = ...` mutate `buffers` directly.
+
+    Output
+    ------
+    None. Side effect: `buffers` is mutated in place.
     """
     mask = biomass_clip > 0
     for key, buf in buffers.items():
@@ -453,18 +722,74 @@ def voxelize_chunk(
     source_config: dict,
     rng: np.random.Generator,
 ) -> None:
-    """Render `trees_in_chunk` into `buffers` (mutated in place).
+    """Render every tree in a chunk into the per-band buffers.
 
-    - `buffers` is `{band_key: np.ndarray}` per band, already the chunk-local
-      shape `(nz, halo_y, halo_x)` and filled with each band's fill value.
-    - `chunk_y_start` / `chunk_x_start` are the absolute grid indices of
-      buffer cell (y=0, x=0) — the chunk's north-west corner including halo.
-    - Trees arrive pre-sorted by height ASC so tallest writes last; overwrite
-      bands (spcd, tree_id, savr.foliage, fuel_moisture.live) therefore take
-      the tallest tree's value in overlap cells.
-    - Placement attrs (crown_base_height, foliage_sav, species_code) are read
-      from the shared `CacheEntry` — `build_tree` runs once per cache_key in
-      `build_chunk_cache`, not once per row here.
+    Inputs
+    ------
+    trees_in_chunk
+        DataFrame of trees belonging to this chunk. Must carry `x`, `y`,
+        `tree_id`, and `_cache_key` columns. Must be sorted by height
+        ASC (the "tallest last" invariant drives the overlap policy);
+        `assign_trees_to_chunks` guarantees this. Empty frame returns
+        immediately with no buffer mutations.
+    buffers
+        Mapping from band key to the chunk's pre-allocated numpy buffer,
+        e.g. `{"volume_fraction": np.zeros((nz, halo_y, halo_x), float32),
+        ...}`. Pre-filled with each band's fill value (`BAND_SPECS`). All
+        buffers share the same `(nz, halo_y, halo_x)` shape. Mutated IN
+        PLACE; the orchestrator reads them back after this returns.
+    cache
+        Pre-built cache from `build_chunk_cache` mapping each
+        `_cache_key` present in `trees_in_chunk` to a `CacheEntry`.
+        Trees whose key is absent from `cache` (degenerate crown, build
+        failure) are silently skipped.
+    chunk_y_start, chunk_x_start
+        Absolute grid cell indices of the chunk buffer's `(y=0, x=0)`
+        corner, INCLUDING the halo. For chunk `(1, 0)` with
+        `chunk_xy=1000, overlap=10` on a 2000-cell grid:
+        `chunk_y_start=990, chunk_x_start=0`.
+    hr, vr
+        Horizontal and vertical voxel resolution in meters.
+    x_origin, y_origin
+        Full grid origin — west edge and north edge respectively in the
+        grid's CRS. Threaded into `_tree_cell_indices` to turn each
+        tree's world coords into absolute cell indices.
+    source_config
+        The grid's `source` sub-dict. Only used here to read
+        `moisture_model.live` when the `fuel_moisture.live` band is
+        requested (per-chunk constant, resolved once before the loop).
+    rng
+        Seeded numpy Generator. Used to pick one biomass realization
+        per tree when a `CacheEntry` carries multiple. Seed comes from
+        `_chunk_rng_seed(base_seed, row_chunk, col_chunk)` in the
+        orchestrator, so the same grid produces the same output on
+        re-run.
+
+    What it does
+    ------------
+    For each row in `trees_in_chunk`:
+
+    1. Looks up the tree's `CacheEntry`. If missing or empty, skips.
+    2. Picks one biomass realization from `entry.biomass_arrays` — the
+       sole array when there's one, else a uniformly-sampled choice via
+       `rng.integers`.
+    3. `_tree_cell_indices` — stem world coords → absolute cell indices.
+    4. `_place_biomass` — computes matched `(buffer_slices,
+       source_slices)` with vertical anchor at
+       `entry.crown_base_height`; returns `None` if the crown is fully
+       outside this chunk buffer.
+    5. `_apply_bands` — writes the tree's contribution into every
+       requested band buffer with the appropriate accumulate/overwrite
+       rule.
+
+    Because trees are iterated height-ASC, the tallest writer wins on
+    overwrite bands (spcd, tree_id, savr.foliage, fuel_moisture.live)
+    at overlap cells — matches the policy documented on the API.
+
+    Output
+    ------
+    None. Side effect: every buffer in `buffers` is mutated in place
+    with one tree's contribution per iteration.
     """
     if trees_in_chunk.empty:
         return

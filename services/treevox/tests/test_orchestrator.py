@@ -38,7 +38,7 @@ def _fake_domain():
     )
 
 
-def _base_grid(bands=None):
+def _base_grid(bands=None, seed=42):
     return {
         "id": "g1",
         "domain_id": "d1",
@@ -50,6 +50,7 @@ def _base_grid(bands=None):
             "biomass_model": "nsvb",
             "biomass_column": None,
             "moisture_model": {"method": "uniform", "live": 100.0},
+            "seed": seed,
         },
         "bands": bands or [{"key": "volume_fraction"}],
     }
@@ -461,23 +462,24 @@ class TestMaterializeChunkBuffer:
 
 class TestChunkRngSeed:
     def test_same_inputs_produce_same_seed(self):
-        a = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
-        b = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
+        a = orchestrator._chunk_rng_seed(42, 3, 7)
+        b = orchestrator._chunk_rng_seed(42, 3, 7)
         assert a == b
 
     def test_different_row_col_produce_different_seeds(self):
-        base = orchestrator._chunk_rng_seed("grid-abc", 0, 0)
-        assert base != orchestrator._chunk_rng_seed("grid-abc", 0, 1)
-        assert base != orchestrator._chunk_rng_seed("grid-abc", 1, 0)
+        base = orchestrator._chunk_rng_seed(42, 0, 0)
+        assert base != orchestrator._chunk_rng_seed(42, 0, 1)
+        assert base != orchestrator._chunk_rng_seed(42, 1, 0)
 
-    def test_different_grid_id_produces_different_seed(self):
-        assert orchestrator._chunk_rng_seed("grid-a", 0, 0) != (
-            orchestrator._chunk_rng_seed("grid-b", 0, 0)
+    def test_different_base_seed_produces_different_seed(self):
+        """Same (row, col), different base seeds → different chunk seeds."""
+        assert orchestrator._chunk_rng_seed(42, 0, 0) != (
+            orchestrator._chunk_rng_seed(43, 0, 0)
         )
 
     def test_seed_is_uint32_range(self):
         for r, c in [(0, 0), (999, 999), (-1, -1)]:
-            seed = orchestrator._chunk_rng_seed("grid-xyz", r, c)
+            seed = orchestrator._chunk_rng_seed(12345, r, c)
             assert 0 <= seed < 2**32
 
     def test_deterministic_across_python_processes(self):
@@ -490,10 +492,10 @@ class TestChunkRngSeed:
         import subprocess
         import sys
 
-        expected = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
+        expected = orchestrator._chunk_rng_seed(42, 3, 7)
         script = (
             "from treevox.orchestrator import _chunk_rng_seed; "
-            "print(_chunk_rng_seed('grid-abc', 3, 7))"
+            "print(_chunk_rng_seed(42, 3, 7))"
         )
         env = dict(os.environ, PYTHONHASHSEED="random")
         out = subprocess.run(
@@ -507,9 +509,47 @@ class TestChunkRngSeed:
 
     def test_feeds_default_rng_without_error(self):
         """The seed is accepted by `np.random.default_rng`."""
-        seed = orchestrator._chunk_rng_seed("grid-abc", 3, 7)
+        seed = orchestrator._chunk_rng_seed(42, 3, 7)
         rng = np.random.default_rng(seed)
         assert rng.random() is not None
+
+
+class TestResolveBaseSeed:
+    def test_uses_source_seed_when_present(self):
+        source = {"seed": 12345}
+        assert orchestrator._resolve_base_seed(source, "grid-abc") == 12345
+
+    def test_accepts_large_seed_values(self):
+        """API allows any int; _resolve_base_seed must pass it through as int."""
+        source = {"seed": 999_999_999}
+        assert orchestrator._resolve_base_seed(source, "grid-abc") == 999_999_999
+
+    def test_coerces_to_int(self):
+        """String seed (e.g. from a JSON-without-type-coercion source) → int."""
+        source = {"seed": "42"}
+        assert orchestrator._resolve_base_seed(source, "grid-abc") == 42
+
+    def test_missing_seed_falls_back_to_grid_id_hash(self):
+        """Legacy grids pre-dating the seed field still work."""
+        with patch.object(orchestrator, "logger") as mock_logger:
+            result = orchestrator._resolve_base_seed({}, "legacy-grid-id")
+        expected = orchestrator.zlib.crc32(b"legacy-grid-id")
+        assert result == expected
+        mock_logger.warning.assert_called_once()
+        assert "no `seed` field" in mock_logger.warning.call_args[0][0]
+
+    def test_null_seed_also_falls_back(self):
+        """Explicit null (JSON → Python None) takes the fallback path, not a crash."""
+        with patch.object(orchestrator, "logger"):
+            result = orchestrator._resolve_base_seed({"seed": None}, "legacy-grid-id")
+        assert result == orchestrator.zlib.crc32(b"legacy-grid-id")
+
+    def test_fallback_is_deterministic_for_same_grid_id(self):
+        """Legacy grids still re-run reproducibly against their own grid_id."""
+        with patch.object(orchestrator, "logger"):
+            a = orchestrator._resolve_base_seed({}, "g1")
+            b = orchestrator._resolve_base_seed({}, "g1")
+        assert a == b
 
 
 # _build_payloads (integration with helpers)

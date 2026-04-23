@@ -7,6 +7,7 @@ A tree inventory is voxelized onto a 3D grid using species-specific crown
 profile models and biomass models to produce per-voxel fuel properties.
 """
 
+from random import randint
 from typing import Literal, Self
 
 from pydantic import BaseModel, Field, PositiveFloat, field_validator, model_validator
@@ -21,6 +22,10 @@ from api.resources.grids.tree.schema import (
 )
 
 Resolution3D = tuple[PositiveFloat, PositiveFloat, PositiveFloat]
+
+
+def _generate_random_seed() -> int:
+    return randint(1, 1_000_000_000)
 
 
 class TreeInventorySource(BaseModel):
@@ -51,6 +56,12 @@ class TreeInventorySource(BaseModel):
         ),
     )
     moisture_model: MoistureModel | None = None
+    seed: int = Field(
+        description=(
+            "Random seed that drove stochastic sampling during voxelization. "
+            "Persisted so the grid can be exactly reproduced."
+        ),
+    )
 
 
 class CreateTreeInventoryRequest(BaseModel):
@@ -97,6 +108,15 @@ class CreateTreeInventoryRequest(BaseModel):
             "Live fuel moisture model. Applied only when fuel_moisture.live "
             "is in bands — defaults to uniform live=100.0 in that case. "
             "Silently dropped if supplied when fuel_moisture.live is absent."
+        ),
+    )
+    seed: int = Field(
+        default_factory=_generate_random_seed,
+        description=(
+            "Random seed for reproducibility. Controls stochastic tree "
+            "voxel sampling and biomass distribution. Generated randomly "
+            "if omitted; persisted on the grid document either way so "
+            "re-running a grid always yields bit-identical output."
         ),
     )
 

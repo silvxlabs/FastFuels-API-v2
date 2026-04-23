@@ -10,6 +10,7 @@ biomass cache, and the per-chunk voxelization loop.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -19,6 +20,23 @@ from fastfuels_core.voxelization import (
     discretize_crown_profile,
     sample_occupied_cells,
 )
+
+
+@dataclass(frozen=True)
+class CacheEntry:
+    """Per-chunk cache entry for one group of morphologically equivalent trees.
+
+    `biomass_arrays` are the pre-sampled realizations. The remaining fields
+    carry the bin-representative tree's placement attrs — every tree sharing
+    this `_cache_key` uses these values, so `build_tree` runs once per group
+    instead of once per tree during chunk rendering.
+    """
+
+    biomass_arrays: list[np.ndarray]
+    crown_base_height: float
+    foliage_sav: float
+    species_code: int
+
 
 # Constants
 
@@ -269,18 +287,21 @@ def build_chunk_cache(
     vr: float,
     source_config: dict,
     rng: np.random.Generator,
-) -> dict[int, list[np.ndarray]]:
-    """Build per-chunk cache of biomass realizations indexed by `_cache_key`.
+) -> dict[int, CacheEntry]:
+    """Build per-chunk cache indexed by `_cache_key`.
 
     For each unique cache_key in `trees_in_chunk`:
       1. Build a Tree from the group's first row.
       2. `discretize_crown_profile` -> canopy volume-fraction mask.
       3. Sample N biomass realizations, where N scales with nonzero voxel
          count and tree frequency (v1's `calculate_arrays_to_cache`).
+      4. Stash the bin-representative tree's placement attrs alongside the
+         biomass arrays so `voxelize_chunk` doesn't rebuild Tree objects
+         per-row.
 
     `rng` seeds `sample_occupied_cells` for deterministic output.
     """
-    cache: dict[int, list[np.ndarray]] = {}
+    cache: dict[int, CacheEntry] = {}
     if trees_in_chunk.empty:
         return cache
 
@@ -315,7 +336,12 @@ def build_chunk_cache(
                 biomass = np.nan_to_num(biomass, nan=0.0, posinf=0.0, neginf=0.0)
             arrays.append(biomass)
         if arrays:
-            cache[int(cache_key)] = arrays
+            cache[int(cache_key)] = CacheEntry(
+                biomass_arrays=arrays,
+                crown_base_height=float(tree.crown_base_height),
+                foliage_sav=float(tree.foliage_sav),
+                species_code=int(tree.species_code),
+            )
     return cache
 
 
@@ -417,7 +443,7 @@ def _apply_bands(
 def voxelize_chunk(
     trees_in_chunk: pd.DataFrame,
     buffers: dict[str, np.ndarray],
-    cache: dict[int, list[np.ndarray]],
+    cache: dict[int, CacheEntry],
     chunk_y_start: int,
     chunk_x_start: int,
     hr: float,
@@ -436,6 +462,9 @@ def voxelize_chunk(
     - Trees arrive pre-sorted by height ASC so tallest writes last; overwrite
       bands (spcd, tree_id, savr.foliage, fuel_moisture.live) therefore take
       the tallest tree's value in overlap cells.
+    - Placement attrs (crown_base_height, foliage_sav, species_code) are read
+      from the shared `CacheEntry` — `build_tree` runs once per cache_key in
+      `build_chunk_cache`, not once per row here.
     """
     if trees_in_chunk.empty:
         return
@@ -447,16 +476,14 @@ def voxelize_chunk(
     buffer_shape = next(iter(buffers.values())).shape
 
     for _, row in trees_in_chunk.iterrows():
-        cached_list = cache.get(int(row["_cache_key"]))
-        if not cached_list:
+        entry = cache.get(int(row["_cache_key"]))
+        if entry is None or not entry.biomass_arrays:
             continue
+        arrays = entry.biomass_arrays
         biomass_array = (
-            cached_list[0]
-            if len(cached_list) == 1
-            else cached_list[int(rng.integers(len(cached_list)))]
+            arrays[0] if len(arrays) == 1 else arrays[int(rng.integers(len(arrays)))]
         )
 
-        tree = build_tree(row, source_config)
         abs_col, abs_row = _tree_cell_indices(
             float(row["x"]), float(row["y"]), x_origin, y_origin, hr
         )
@@ -465,7 +492,7 @@ def voxelize_chunk(
             abs_row,
             chunk_x_start,
             chunk_y_start,
-            tree.crown_base_height,
+            entry.crown_base_height,
             biomass_array.shape,
             buffer_shape,
             vr,
@@ -478,8 +505,8 @@ def voxelize_chunk(
             buffers,
             buf_slices,
             biomass_array[src_slices],
-            tree.species_code,
-            tree.foliage_sav,
+            entry.species_code,
+            entry.foliage_sav,
             int(row["tree_id"]),
             moisture_value,
         )

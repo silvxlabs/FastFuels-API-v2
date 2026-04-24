@@ -7,14 +7,21 @@ Pure schema tests with no external dependencies.
 
 import pytest
 from api.resources.grids.schema import BandType
+from api.resources.grids.tree.inventory.examples import (
+    ALL_TREE_INVENTORY_EXAMPLE_VALUES,
+)
 from api.resources.grids.tree.inventory.schema import (
     CreateTreeInventoryRequest,
     TreeInventorySource,
 )
 from api.resources.grids.tree.schema import (
     TREE_BAND_DEFS,
-    BiomassModel,
+    AllometryBiomassSource,
+    BiomassComponent,
+    BiomassEquations,
     CrownProfileModel,
+    FineBiomassConfig,
+    InventoryColumnsBiomassSource,
     TreeBand,
     UniformMoistureModel,
     build_tree_bands,
@@ -28,6 +35,8 @@ class TestTreeBand:
     def test_all_expected_bands_present(self):
         expected = {
             "bulk_density.foliage",
+            "bulk_density.branchwood",
+            "bulk_density.fine",
             "fuel_moisture.live",
             "savr.foliage",
             "spcd",
@@ -43,6 +52,8 @@ class TestTreeBand:
         "band,expected_type,expected_unit",
         [
             (TreeBand.bulk_density_foliage, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_branchwood, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_fine, BandType.continuous, "kg/m³"),
             (TreeBand.fuel_moisture_live, BandType.continuous, "%"),
             (TreeBand.savr_foliage, BandType.continuous, "m⁻¹"),
             (TreeBand.spcd, BandType.categorical, None),
@@ -104,6 +115,117 @@ class TestUniformMoistureModel:
             UniformMoistureModel(method="fosberg")
 
 
+class TestBiomassSource:
+    def test_default_allometry_foliage_config(self):
+        biomass_source = AllometryBiomassSource()
+
+        assert biomass_source.type == "allometry"
+        assert biomass_source.equations == BiomassEquations.nsvb
+        assert biomass_source.components == [BiomassComponent.foliage]
+        assert biomass_source.fine is None
+
+    def test_inventory_column_direct_fine_config(self):
+        biomass_source = InventoryColumnsBiomassSource(
+            columns={
+                "fine": {
+                    "column": "fine_biomass",
+                    "unit": "kg",
+                }
+            },
+            components=["fine"],
+        )
+
+        assert biomass_source.type == "inventory_columns"
+        assert biomass_source.columns[BiomassComponent.fine].column == "fine_biomass"
+        assert biomass_source.components == [BiomassComponent.fine]
+        assert biomass_source.fine is None
+
+    def test_derived_fine_config(self):
+        biomass_source = AllometryBiomassSource(
+            equations="nsvb",
+            components=["fine"],
+            fine={
+                "recipe": "foliage_plus_branchwood_fraction",
+                "branchwood_fraction": 0.1,
+            },
+        )
+
+        assert isinstance(biomass_source.fine, FineBiomassConfig)
+        assert biomass_source.fine.recipe == "foliage_plus_branchwood_fraction"
+        assert biomass_source.fine.branchwood_fraction == 0.1
+
+    def test_inventory_units_must_be_kg(self):
+        with pytest.raises(ValidationError):
+            InventoryColumnsBiomassSource(
+                columns={
+                    "foliage": {
+                        "column": "foliage_biomass",
+                        "unit": "kg/m^2",
+                    }
+                },
+                components=["foliage"],
+            )
+
+    def test_inventory_direct_component_requires_matching_column(self):
+        with pytest.raises(ValidationError, match="missing a 'foliage' column"):
+            InventoryColumnsBiomassSource(
+                columns={
+                    "fine": {
+                        "column": "fine_biomass",
+                        "unit": "kg",
+                    }
+                },
+                components=["foliage"],
+            )
+
+    def test_inventory_derived_fine_requires_foliage_and_branchwood_columns(self):
+        with pytest.raises(ValidationError, match="foliage, branchwood"):
+            InventoryColumnsBiomassSource(
+                columns={
+                    "fine": {
+                        "column": "fine_biomass",
+                        "unit": "kg",
+                    }
+                },
+                components=["fine"],
+                fine={
+                    "recipe": "foliage_plus_branchwood_fraction",
+                    "branchwood_fraction": 0.1,
+                },
+            )
+
+    def test_fine_config_requires_fine_component(self):
+        with pytest.raises(ValidationError, match="requires 'fine' in components"):
+            AllometryBiomassSource(
+                components=["branchwood"],
+                fine={
+                    "recipe": "foliage_plus_branchwood_fraction",
+                    "branchwood_fraction": 0.1,
+                },
+            )
+
+    def test_allometry_fine_requires_fine_config(self):
+        with pytest.raises(ValidationError, match="requires a fine configuration"):
+            AllometryBiomassSource(components=["fine"])
+
+    def test_duplicate_components_rejected(self):
+        with pytest.raises(ValidationError, match="Duplicate biomass components"):
+            AllometryBiomassSource(components=["foliage", "foliage"])
+
+    def test_fine_config_requires_recipe_and_fraction(self):
+        with pytest.raises(ValidationError):
+            FineBiomassConfig(
+                recipe="foliage_plus_branchwood_fraction",
+            )
+
+    def test_branchwood_fraction_must_be_fraction(self):
+        with pytest.raises(ValidationError):
+            FineBiomassConfig(
+                recipe="foliage_plus_branchwood_fraction",
+                branchwood_fraction=1.5,
+            )
+
+
 class TestCreateTreeInventoryRequest:
     """Validation rules for the request body."""
 
@@ -122,8 +244,8 @@ class TestCreateTreeInventoryRequest:
         assert req.resolution == (2.0, 2.0, 1.0)
         assert req.bands == [TreeBand.bulk_density_foliage]
         assert req.crown_profile_model == CrownProfileModel.purves
-        assert req.biomass_model == BiomassModel.nsvb
-        assert req.biomass_column is None
+        assert req.biomass_source.equations == BiomassEquations.nsvb
+        assert req.biomass_source.components == [BiomassComponent.foliage]
         assert req.moisture_model is None
         assert req.name == ""
         assert req.description == ""
@@ -180,9 +302,33 @@ class TestCreateTreeInventoryRequest:
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(**self._minimal(crown_profile_model="watershed"))
 
-    def test_invalid_biomass_model_rejected(self):
+    def test_invalid_biomass_source_rejected(self):
         with pytest.raises(ValidationError):
-            CreateTreeInventoryRequest(**self._minimal(biomass_model="allometric"))
+            CreateTreeInventoryRequest(
+                **self._minimal(
+                    biomass_source={
+                        "type": "allometry",
+                        "equations": "allometric",
+                        "components": ["foliage"],
+                    }
+                )
+            )
+
+    def test_legacy_biomass_model_field_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateTreeInventoryRequest(**self._minimal(biomass_model="nsvb"))
+
+    def test_legacy_biomass_field_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateTreeInventoryRequest(
+                **self._minimal(
+                    biomass={
+                        "type": "allometry",
+                        "equations": "nsvb",
+                        "components": ["foliage"],
+                    }
+                )
+            )
 
     def test_fuel_moisture_live_auto_populates_default_moisture_model(self):
         req = CreateTreeInventoryRequest(
@@ -220,24 +366,6 @@ class TestCreateTreeInventoryRequest:
                 )
             )
 
-    def test_biomass_column_preserved_when_biomass_is_inventory(self):
-        req = CreateTreeInventoryRequest(
-            **self._minimal(
-                biomass_model="inventory",
-                biomass_column="my_fuel_load_col",
-            )
-        )
-        assert req.biomass_column == "my_fuel_load_col"
-
-    def test_biomass_column_scrubbed_for_non_inventory_biomass(self):
-        req = CreateTreeInventoryRequest(
-            **self._minimal(
-                biomass_model="nsvb",
-                biomass_column="ignored_column",
-            )
-        )
-        assert req.biomass_column is None
-
     def test_full_request(self):
         req = CreateTreeInventoryRequest(
             name="Tree voxelization",
@@ -252,13 +380,25 @@ class TestCreateTreeInventoryRequest:
                 "volume_fraction",
             ],
             crown_profile_model="beta",
-            biomass_model="jenkins",
+            biomass_source={
+                "type": "allometry",
+                "equations": "jenkins",
+                "components": ["foliage"],
+            },
             moisture_model={"method": "uniform", "live": 97.0},
         )
         assert req.name == "Tree voxelization"
         assert req.crown_profile_model == CrownProfileModel.beta
-        assert req.biomass_model == BiomassModel.jenkins
+        assert req.biomass_source.equations == BiomassEquations.jenkins
         assert req.moisture_model.live == 97.0
+
+    @pytest.mark.parametrize(
+        "example_name,example_value", ALL_TREE_INVENTORY_EXAMPLE_VALUES
+    )
+    def test_documented_examples_are_schema_valid(self, example_name, example_value):
+        body = {**example_value, "source_inventory_id": "abc123"}
+        req = CreateTreeInventoryRequest(**body)
+        assert req.source_inventory_id == "abc123", example_name
 
 
 class TestSeedField:
@@ -306,7 +446,7 @@ class TestSeedField:
                 resolution=(2.0, 2.0, 1.0),
                 bands=[TreeBand.bulk_density_foliage],
                 crown_profile_model=CrownProfileModel.purves,
-                biomass_model=BiomassModel.nsvb,
+                biomass_source=AllometryBiomassSource(),
             )
 
 
@@ -317,7 +457,7 @@ class TestTreeInventorySource:
             resolution=[2.0, 2.0, 1.0],
             bands=[TreeBand.bulk_density_foliage],
             crown_profile_model=CrownProfileModel.purves,
-            biomass_model=BiomassModel.nsvb,
+            biomass_source=AllometryBiomassSource(),
             seed=42,
         )
         assert source.name == "inventory"
@@ -330,17 +470,21 @@ class TestTreeInventorySource:
             resolution=(2.0, 2.0, 1.0),
             bands=[TreeBand.bulk_density_foliage, TreeBand.fuel_moisture_live],
             crown_profile_model=CrownProfileModel.purves,
-            biomass_model=BiomassModel.nsvb,
+            biomass_source=AllometryBiomassSource(),
             moisture_model=UniformMoistureModel(live=85.0),
             seed=42,
         )
-        data = source.model_dump()
+        data = source.model_dump(mode="json", exclude_none=True)
         assert data["name"] == "inventory"
         assert data["product"] == "tree"
         assert data["source_inventory_id"] == "inv123"
-        assert data["resolution"] == (2.0, 2.0, 1.0)
+        assert data["resolution"] == [2.0, 2.0, 1.0]
         assert data["bands"] == ["bulk_density.foliage", "fuel_moisture.live"]
         assert data["crown_profile_model"] == "purves"
-        assert data["biomass_model"] == "nsvb"
+        assert data["biomass_source"] == {
+            "type": "allometry",
+            "equations": "nsvb",
+            "components": ["foliage"],
+        }
         assert data["moisture_model"] == {"method": "uniform", "live": 85.0}
         assert data["seed"] == 42

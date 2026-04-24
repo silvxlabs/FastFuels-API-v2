@@ -79,6 +79,13 @@ def run(payload: dict) -> dict:
             "num_trees": num_trees,
             "process_time_s": time.monotonic() - start,
         }
+    except NotImplementedError as e:
+        return {
+            "chunk_location": payload["chunk_location"],
+            "error_code": "BIOMASS_COMPONENT_NOT_IMPLEMENTED",
+            "error_message": str(e),
+            "error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}",
+        }
     except Exception as e:
         return {
             "chunk_location": payload["chunk_location"],

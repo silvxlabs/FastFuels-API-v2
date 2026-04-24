@@ -61,8 +61,11 @@ def _make_payload(rng_seed=42, trees_n=2):
         "source_config": {
             "resolution": (1.0, 1.0, 1.0),
             "crown_profile_model": "purves",
-            "biomass_model": "nsvb",
-            "biomass_column": None,
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "nsvb",
+                "components": ["foliage"],
+            },
             "moisture_model": {"method": "uniform", "live": 100.0},
         },
         "chunk_y_start": 0,
@@ -123,6 +126,27 @@ class TestRun:
         result = _worker.run(payload)
         assert "error" in result
         assert result["chunk_location"] == (0, 0)
+        assert "buffers" not in result
+
+    def test_not_implemented_component_sets_error_code(self, monkeypatch):
+        _patch_fastfuels(monkeypatch)
+        payload = _make_payload()
+        payload["buffers"] = {
+            "bulk_density.fine": np.zeros_like(
+                payload["buffers"]["bulk_density.foliage"]
+            )
+        }
+        payload["source_config"]["bands"] = ["bulk_density.fine"]
+        payload["source_config"]["biomass_source"]["components"] = ["fine"]
+        payload["source_config"]["biomass_source"]["fine"] = {
+            "recipe": "foliage_plus_branchwood_fraction",
+            "branchwood_fraction": 0.1,
+        }
+
+        result = _worker.run(payload)
+
+        assert result["error_code"] == "BIOMASS_COMPONENT_NOT_IMPLEMENTED"
+        assert "fine" in result["error_message"]
         assert "buffers" not in result
 
 

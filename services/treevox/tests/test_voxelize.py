@@ -52,8 +52,11 @@ def base_source_config():
     return {
         "resolution": (1.0, 1.0, 1.0),
         "crown_profile_model": "purves",
-        "biomass_model": "nsvb",
-        "biomass_column": None,
+        "biomass_source": {
+            "type": "allometry",
+            "equations": "nsvb",
+            "components": ["foliage"],
+        },
         "moisture_model": {"method": "uniform", "live": 100.0},
     }
 
@@ -173,24 +176,23 @@ class TestBuildTree:
         assert tree._crown_profile_model_type == model
 
     @pytest.mark.parametrize(
-        "api_model,ff_model",
-        [("nsvb", "NSVB"), ("jenkins", "jenkins"), ("inventory", "NSVB")],
+        "equations,ff_model",
+        [("nsvb", "NSVB"), ("jenkins", "jenkins")],
     )
-    def test_biomass_model_mapping(self, api_model, ff_model):
+    def test_biomass_equation_mapping(self, equations, ff_model):
         cfg = base_source_config()
-        cfg["biomass_model"] = api_model
-        if api_model == "inventory":
-            cfg["biomass_column"] = "fuel_load"
-            row = self._row(fuel_load=42.0)
-        else:
-            row = self._row()
+        cfg["biomass_source"]["equations"] = equations
+        row = self._row()
         tree = voxelize.build_tree(row, cfg)
-        assert tree._biomass_allometry_model_type in ("NSVB", "jenkins")
+        assert tree._biomass_allometry_model_type == ff_model
 
     def test_inventory_biomass_reads_column_as_crown_fuel_load(self):
         cfg = base_source_config()
-        cfg["biomass_model"] = "inventory"
-        cfg["biomass_column"] = "my_load"
+        cfg["biomass_source"] = {
+            "type": "inventory_columns",
+            "columns": {"foliage": {"column": "my_load", "unit": "kg"}},
+            "components": ["foliage"],
+        }
         row = self._row(my_load=42.0)
         tree = voxelize.build_tree(row, cfg)
         assert tree._crown_fuel_load_override == 42.0
@@ -200,6 +202,45 @@ class TestBuildTree:
         row = self._row()
         tree = voxelize.build_tree(row, cfg)
         assert tree._crown_fuel_load_override is None
+
+
+class TestBiomassComponentDistribution:
+    def test_foliage_calls_fastfuels_distribution(self):
+        class FakeVT:
+            def distribute_biomass(self):
+                return np.ones((1, 2, 2), dtype="float32")
+
+        out = voxelize.distribute_component_biomass(FakeVT(), "foliage")
+        assert out.shape == (1, 2, 2)
+
+    @pytest.mark.parametrize("component", ["branchwood", "fine"])
+    def test_non_foliage_components_raise_not_implemented(self, component):
+        class FakeVT:
+            def distribute_biomass(self):
+                raise AssertionError("should not call foliage distribution")
+
+        with pytest.raises(NotImplementedError, match=component):
+            voxelize.distribute_component_biomass(FakeVT(), component)
+
+    @pytest.mark.parametrize(
+        "band_key,component",
+        [
+            ("bulk_density.foliage", "foliage"),
+            ("bulk_density.branchwood", "branchwood"),
+            ("bulk_density.fine", "fine"),
+        ],
+    )
+    def test_component_selection_from_output_band(self, band_key, component):
+        cfg = base_source_config()
+        cfg["bands"] = [band_key]
+        cfg["biomass_source"]["components"] = []
+        assert voxelize.biomass_component_to_distribute(cfg) == component
+
+    @pytest.mark.parametrize("component", ["branchwood", "fine"])
+    def test_component_selection_from_source_components(self, component):
+        cfg = base_source_config()
+        cfg["biomass_source"]["components"] = [component]
+        assert voxelize.biomass_component_to_distribute(cfg) == component
 
 
 # compute_cache_keys
@@ -432,7 +473,7 @@ class TestBuildChunkCache:
             assert entry.crown_base_height >= 0
 
     def test_biomass_column_flows_to_tree_crown_fuel_load(self, monkeypatch):
-        """`biomass_model="inventory"` + `biomass_column` → Tree's crown_fuel_load.
+        """Inventory foliage column flows to Tree's crown_fuel_load.
 
         `build_tree` alone reading the column is covered by TestBuildTree; this
         asserts build_chunk_cache plumbs the source config through so the
@@ -481,13 +522,56 @@ class TestBuildChunkCache:
         df["_cache_key"] = voxelize.compute_cache_keys(df)
 
         cfg = base_source_config()
-        cfg["biomass_model"] = "inventory"
-        cfg["biomass_column"] = "my_fuel_load"
+        cfg["biomass_source"] = {
+            "type": "inventory_columns",
+            "columns": {"foliage": {"column": "my_fuel_load", "unit": "kg"}},
+            "components": ["foliage"],
+        }
 
         voxelize.build_chunk_cache(df, 1.0, 1.0, cfg, np.random.default_rng(0))
 
         assert len(built_trees) == 1
         assert built_trees[0]._crown_fuel_load_override == 42.0
+
+    @pytest.mark.parametrize("component", ["branchwood", "fine"])
+    def test_non_foliage_component_failure_is_not_swallowed(
+        self, monkeypatch, component
+    ):
+        canopy = np.ones((2, 3, 3))
+        monkeypatch.setattr(
+            voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
+        )
+        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+
+        class FakeVT:
+            def __init__(self, tree, mask, hr, vr):
+                self.mask = mask
+
+        monkeypatch.setattr(voxelize, "VoxelizedTree", FakeVT)
+
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [131],
+                "fia_status_code": [1],
+                "dbh": [20.0],
+                "height": [15.0],
+                "crown_ratio": [0.4],
+                "x": [1.0],
+                "y": [1.0],
+            }
+        )
+        df["_cache_key"] = voxelize.compute_cache_keys(df)
+
+        cfg = base_source_config()
+        cfg["biomass_source"]["components"] = [component]
+        if component == "fine":
+            cfg["biomass_source"]["fine"] = {
+                "recipe": "foliage_plus_branchwood_fraction",
+                "branchwood_fraction": 0.1,
+            }
+
+        with pytest.raises(NotImplementedError, match=component):
+            voxelize.build_chunk_cache(df, 1.0, 1.0, cfg, np.random.default_rng(0))
 
 
 # voxelize_chunk (mocked cache)

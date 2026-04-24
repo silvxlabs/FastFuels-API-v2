@@ -114,7 +114,7 @@ def _load_inventory_dataframe(
     `fia_status_code == 1` predicate pushdown — see `read_inventory`.
     """
     progress("Loading inventory...", 5)
-    biomass_column = source.get("biomass_column")
+    biomass_column = voxelize.foliage_inventory_column(source)
     df = read_inventory(source["source_inventory_id"], biomass_column)
     df = drop_null_rows(df, biomass_column)
     df = assign_tree_ids(df)
@@ -519,6 +519,19 @@ def _process_batch(
 
     for r in results:
         if "error" in r:
+            if r.get("error_code") == "BIOMASS_COMPONENT_NOT_IMPLEMENTED":
+                raise ProcessingError(
+                    code=r["error_code"],
+                    message=r.get(
+                        "error_message",
+                        "Treevox does not yet support this biomass component.",
+                    ),
+                    suggestion=(
+                        "Request foliage biomass outputs for now, or wait for "
+                        "fastfuels-core branchwood/fine component support."
+                    ),
+                    traceback=r["error"],
+                )
             raise ProcessingError(
                 code="VOXELIZATION_FAILED",
                 message=f"Chunk {r['chunk_location']} failed during voxelization.",

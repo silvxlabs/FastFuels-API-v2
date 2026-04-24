@@ -220,14 +220,18 @@ def treevox_runner():
         bands: list[str] | None = None,
         resolution: tuple[float, float, float] = (2.0, 2.0, 1.0),
         crown_profile_model: str = "purves",
-        biomass_model: str = "nsvb",
-        biomass_column: str | None = None,
+        biomass_source: dict | None = None,
         moisture_model: dict | None = None,
         inventory_id_override: str | None = None,
         expect_failed: bool = False,
         timeout: int = 600,
     ) -> TreevoxResult:
         bands = bands or ["volume_fraction", "bulk_density.foliage"]
+        biomass_source = biomass_source or {
+            "type": "allometry",
+            "equations": "nsvb",
+            "components": ["foliage"],
+        }
 
         # Decide how to stage the inventory parquet.
         if inventory_id_override is not None:
@@ -257,6 +261,8 @@ def treevox_runner():
         grid_id = f"test-{uuid4().hex}"
         _BAND_DEFS = {
             "bulk_density.foliage": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.branchwood": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.fine": {"type": "continuous", "unit": "kg/m³"},
             "fuel_moisture.live": {"type": "continuous", "unit": "%"},
             "savr.foliage": {"type": "continuous", "unit": "m⁻¹"},
             "spcd": {"type": "categorical", "unit": None},
@@ -287,8 +293,7 @@ def treevox_runner():
                 "resolution": list(resolution),
                 "bands": bands,
                 "crown_profile_model": crown_profile_model,
-                "biomass_model": biomass_model,
-                "biomass_column": biomass_column,
+                "biomass_source": biomass_source,
                 "moisture_model": moisture_model,
             },
             "bands": band_defs,

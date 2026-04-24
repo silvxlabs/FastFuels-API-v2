@@ -48,8 +48,11 @@ def _base_grid(bands=None, seed=42):
             "source_inventory_id": "inv1",
             "resolution": (1.0, 1.0, 1.0),
             "crown_profile_model": "purves",
-            "biomass_model": "nsvb",
-            "biomass_column": None,
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "nsvb",
+                "components": ["foliage"],
+            },
             "moisture_model": {"method": "uniform", "live": 100.0},
             "seed": seed,
         },
@@ -135,7 +138,7 @@ class TestLoadInventoryDataframe:
                 "crown_ratio": [0.4, 0.4],
             }
         )
-        source = {"source_inventory_id": "inv1"}
+        source = _base_grid()["source"]
         df = orchestrator._load_inventory_dataframe(source, lambda *a, **k: None)
         assert len(df) == 1
         assert list(df["tree_id"]) == [0]
@@ -155,7 +158,7 @@ class TestLoadInventoryDataframe:
         )
         with pytest.raises(ProcessingError) as exc:
             orchestrator._load_inventory_dataframe(
-                {"source_inventory_id": "inv1"}, lambda *a, **k: None
+                _base_grid()["source"], lambda *a, **k: None
             )
         assert exc.value.code == "EMPTY_INVENTORY"
 
@@ -737,6 +740,54 @@ class TestVoxelizeInventoryFlow:
                 voxelize_inventory(_base_grid(), _fake_domain(), lambda *a, **k: None)
         assert exc.value.code == "VOXELIZATION_FAILED"
 
+    @patch("treevox.orchestrator.storage.consolidate_metadata")
+    @patch("treevox.orchestrator.storage.write_union")
+    @patch("treevox.orchestrator.storage.masked_merge")
+    @patch("treevox.orchestrator.storage.read_union")
+    @patch("treevox.orchestrator.storage.init_store")
+    @patch("treevox.orchestrator.read_inventory")
+    def test_worker_not_implemented_error_preserves_code(
+        self,
+        mock_read_inv,
+        mock_init,
+        mock_read,
+        mock_merge,
+        mock_write,
+        mock_consolidate,
+    ):
+        mock_read_inv.return_value = _sample_df(height=5.0)
+        mock_read.return_value = xr.Dataset(
+            {
+                "bulk_density.fine": (
+                    ("z", "y", "x"),
+                    np.zeros((5, 100, 100), dtype="float32"),
+                )
+            }
+        )
+
+        with patch("treevox.orchestrator.multiprocessing.get_context") as mock_get_ctx:
+            fake_pool = MagicMock()
+            fake_pool.__enter__.return_value = fake_pool
+            fake_pool.__exit__.return_value = False
+            fake_pool.map.return_value = [
+                {
+                    "chunk_location": (0, 0),
+                    "error_code": "BIOMASS_COMPONENT_NOT_IMPLEMENTED",
+                    "error_message": "Treevox does not yet support fine biomass distribution.",
+                    "error": "NotImplementedError: fine",
+                }
+            ]
+            fake_ctx = MagicMock()
+            fake_ctx.Pool.return_value = fake_pool
+            mock_get_ctx.return_value = fake_ctx
+
+            grid = _base_grid(bands=[{"key": "bulk_density.fine"}])
+            with pytest.raises(ProcessingError) as exc:
+                voxelize_inventory(grid, _fake_domain(), lambda *a, **k: None)
+
+        assert exc.value.code == "BIOMASS_COMPONENT_NOT_IMPLEMENTED"
+        assert "fine" in exc.value.message
+
 
 class TestPersistentPool:
     @patch("treevox.orchestrator.storage.consolidate_metadata")
@@ -874,8 +925,11 @@ class TestHaloMergeAcrossChunks:
                 "source_inventory_id": "inv1",
                 "resolution": (1.0, 1.0, 1.0),
                 "crown_profile_model": "purves",
-                "biomass_model": "nsvb",
-                "biomass_column": None,
+                "biomass_source": {
+                    "type": "allometry",
+                    "equations": "nsvb",
+                    "components": ["foliage"],
+                },
                 "moisture_model": {"method": "uniform", "live": 100.0},
                 "seed": seed,
             },

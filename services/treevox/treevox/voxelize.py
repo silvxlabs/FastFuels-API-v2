@@ -85,8 +85,13 @@ HEIGHT_BIN_M = 1.0
 DBH_BIN_CM = 2.75
 CR_BIN = 0.1
 
-# Map API biomass_model strings to fastfuels-core model names.
-BIOMASS_MODEL_MAP = {"nsvb": "NSVB", "jenkins": "jenkins", "inventory": "NSVB"}
+# Map API allometry equation names to fastfuels-core model names.
+BIOMASS_EQUATION_MAP = {"nsvb": "NSVB", "jenkins": "jenkins"}
+BIOMASS_DENSITY_BAND_COMPONENTS = {
+    "bulk_density.foliage": "foliage",
+    "bulk_density.branchwood": "branchwood",
+    "bulk_density.fine": "fine",
+}
 
 
 # Errors
@@ -175,19 +180,64 @@ def compute_grid_dimensions(
     }
 
 
+def foliage_inventory_column(source_config: dict) -> str | None:
+    """Return the foliage inventory biomass column used by current compute."""
+    biomass_source = source_config["biomass_source"]
+    if biomass_source["type"] != "inventory_columns":
+        return None
+    foliage = biomass_source.get("columns", {}).get("foliage")
+    if foliage is None:
+        return None
+    return foliage["column"]
+
+
+def _biomass_allometry_model_type(source_config: dict) -> str:
+    """Return the fastfuels-core foliage allometry model for this source."""
+    biomass_source = source_config["biomass_source"]
+    if biomass_source["type"] == "allometry":
+        return BIOMASS_EQUATION_MAP[biomass_source["equations"]]
+    return BIOMASS_EQUATION_MAP["nsvb"]
+
+
+def biomass_component_to_distribute(source_config: dict) -> str:
+    """Select the biomass component represented by cached density arrays."""
+    source_components = set(source_config["biomass_source"].get("components", {}))
+    band_components = {
+        component
+        for band in source_config.get("bands", [])
+        if (component := BIOMASS_DENSITY_BAND_COMPONENTS.get(band))
+    }
+    requested = source_components | band_components
+    for component in ("branchwood", "fine", "foliage"):
+        if component in requested:
+            return component
+    return "foliage"
+
+
+def distribute_component_biomass(vt: VoxelizedTree, component: str) -> np.ndarray:
+    """Populate a biomass array for one component from a VoxelizedTree."""
+    if component == "foliage":
+        return vt.distribute_biomass()
+    if component in {"branchwood", "fine"}:
+        raise NotImplementedError(
+            f"Treevox does not yet support {component} biomass distribution."
+        )
+    raise ValueError(f"Unknown biomass component: {component!r}.")
+
+
 def build_tree(row, source_config: dict) -> Tree:
     """Construct a fastfuels_core.Tree from a v2 inventory row.
 
     V2 columns map directly to Tree kwargs (no renames):
       fia_species_code -> species_code, dbh -> diameter, etc.
 
-    `crown_fuel_load` is only supplied when `biomass_model == "inventory"`;
-    otherwise biomass is computed allometrically via NSVB or Jenkins.
+    `crown_fuel_load` is only supplied when `biomass_source.type` is
+    `inventory_columns` and a foliage column is configured; otherwise foliage
+    biomass is computed allometrically via NSVB or Jenkins.
     """
-    biomass_model = source_config["biomass_model"]
     crown_fuel_load = None
-    if biomass_model == "inventory":
-        column = source_config["biomass_column"]
+    column = foliage_inventory_column(source_config)
+    if column is not None:
         crown_fuel_load = float(row[column])
 
     return Tree(
@@ -199,7 +249,7 @@ def build_tree(row, source_config: dict) -> Tree:
         x=float(row["x"]),
         y=float(row["y"]),
         crown_profile_model_type=source_config["crown_profile_model"],
-        biomass_allometry_model_type=BIOMASS_MODEL_MAP[biomass_model],
+        biomass_allometry_model_type=_biomass_allometry_model_type(source_config),
         crown_fuel_load=crown_fuel_load,
     )
 
@@ -343,10 +393,9 @@ def build_chunk_cache(
         the z axis.
     source_config
         The grid's `source` sub-dict. Must carry `crown_profile_model`
-        ("purves" | "beta"), `biomass_model` ("nsvb" | "jenkins" |
-        "inventory"), and — when `biomass_model == "inventory"` — a
-        `biomass_column` naming the per-row crown_fuel_load column.
-        Passed verbatim into `build_tree`.
+        ("purves" | "beta") and `biomass_source`, whose source is either
+        allometry equations or inventory columns. Passed verbatim into
+        `build_tree`.
     rng
         Seeded numpy Generator. Used twice per cache entry: once to draw
         a per-realization int seed for `sample_occupied_cells` (so each
@@ -396,6 +445,7 @@ def build_chunk_cache(
     cache: dict[int, CacheEntry] = {}
     if trees_in_chunk.empty:
         return cache
+    biomass_component = biomass_component_to_distribute(source_config)
 
     for cache_key, group in trees_in_chunk.groupby("_cache_key", sort=False):
         first_row = group.iloc[0]
@@ -418,7 +468,9 @@ def build_chunk_cache(
                     canopy_mask, alpha=0.5, beta=0.5, seed=seed
                 )
                 vt = VoxelizedTree(tree, sampled, hr, vr)
-                biomass = vt.distribute_biomass()
+                biomass = distribute_component_biomass(vt, biomass_component)
+            except NotImplementedError:
+                raise
             except Exception:
                 continue
             # Guard against divide-by-zero in VoxelizedTree.distribute_biomass
@@ -630,6 +682,7 @@ def _apply_bands(
     foliage_sav: float,
     tree_id: int,
     moisture_value: float | None,
+    biomass_component: str = "foliage",
 ) -> None:
     """Write one tree's contribution into every requested band buffer.
 
@@ -697,7 +750,7 @@ def _apply_bands(
         region = buf[buf_slices]
         if key == "volume_fraction":
             region += mask.astype(buf.dtype)
-        elif key == "bulk_density.foliage":
+        elif key == f"bulk_density.{biomass_component}":
             region += biomass_clip.astype(buf.dtype)
         elif key == "savr.foliage":
             region[mask] = foliage_sav
@@ -797,6 +850,7 @@ def voxelize_chunk(
     moisture_value = None
     if "fuel_moisture.live" in buffers:
         moisture_value = float(source_config["moisture_model"]["live"])
+    biomass_component = biomass_component_to_distribute(source_config)
 
     buffer_shape = next(iter(buffers.values())).shape
 
@@ -834,4 +888,5 @@ def voxelize_chunk(
             entry.foliage_sav,
             int(row["tree_id"]),
             moisture_value,
+            biomass_component,
         )

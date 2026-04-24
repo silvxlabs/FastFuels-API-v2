@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "volume_fraction": ("float32", 0.0),
     "bulk_density.foliage": ("float32", 0.0),
+    "bulk_density.branchwood": ("float32", 0.0),
+    "bulk_density.fine": ("float32", 0.0),
     "savr.foliage": ("float32", 0.0),
     "fuel_moisture.live": ("float32", 0.0),
     "spcd": ("uint16", 0),

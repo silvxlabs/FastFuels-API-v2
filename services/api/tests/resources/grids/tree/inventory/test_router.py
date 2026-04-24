@@ -105,8 +105,11 @@ class TestCreateTreeInventoryGrid:
         assert source["resolution"] == [2.0, 2.0, 1.0]
         assert source["bands"] == ["bulk_density.foliage"]
         assert source["crown_profile_model"] == "purves"
-        assert source["biomass_model"] == "nsvb"
-        assert source["biomass_column"] is None
+        assert source["biomass_source"] == {
+            "type": "allometry",
+            "equations": "nsvb",
+            "components": ["foliage"],
+        }
         assert source["moisture_model"] is None
 
         # Single continuous band with index 0.
@@ -378,14 +381,18 @@ class TestCreateTreeInventoryGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
-    def test_invalid_biomass_model_returns_422(
+    def test_invalid_biomass_source_returns_422(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
             "bands": ["bulk_density.foliage"],
-            "biomass_model": "allometric",
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "allometric",
+                "components": ["foliage"],
+            },
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
@@ -433,34 +440,71 @@ class TestCreateTreeInventoryGrid:
         assert response.status_code == 201
         assert response.json()["source"]["moisture_model"] is None
 
-    def test_biomass_column_scrubbed_for_non_inventory_biomass(
+    def test_nested_biomass_source_is_stored(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
-        """biomass_column should be stripped when biomass_model != 'inventory'."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
             "bands": ["bulk_density.foliage"],
-            "biomass_model": "nsvb",
-            "biomass_column": "should_be_dropped",
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "jenkins",
+                "components": ["fine"],
+                "fine": {
+                    "recipe": "foliage_plus_branchwood_fraction",
+                    "branchwood_fraction": 0.1,
+                },
+            },
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
-        assert response.json()["source"]["biomass_column"] is None
+        assert response.json()["source"]["biomass_source"] == body["biomass_source"]
 
-    def test_biomass_column_preserved_for_inventory_biomass(
+    def test_inventory_column_biomass_source_is_stored(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
             "bands": ["bulk_density.foliage"],
-            "biomass_model": "inventory",
-            "biomass_column": "my_fuel_load_col",
+            "biomass_source": {
+                "type": "inventory_columns",
+                "columns": {
+                    "foliage": {
+                        "column": "my_fuel_load_col",
+                        "unit": "kg",
+                    }
+                },
+                "components": ["foliage"],
+            },
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
-        assert response.json()["source"]["biomass_column"] == "my_fuel_load_col"
+        assert response.json()["source"]["biomass_source"] == body["biomass_source"]
+
+    def test_non_foliage_output_bands_are_accepted_for_async_failure(
+        self, client, domain_for_testing, tree_inventory_for_voxelization
+    ):
+        body = {
+            "source_inventory_id": tree_inventory_for_voxelization["id"],
+            "resolution": [2.0, 2.0, 1.0],
+            "bands": ["bulk_density.fine"],
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "nsvb",
+                "components": ["fine"],
+                "fine": {
+                    "recipe": "foliage_plus_branchwood_fraction",
+                    "branchwood_fraction": 0.1,
+                },
+            },
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["source"]["bands"] == ["bulk_density.fine"]
+        assert data["bands"][0]["key"] == "bulk_density.fine"
 
     @pytest.mark.parametrize(
         "example_name,example_value", ALL_TREE_INVENTORY_EXAMPLE_VALUES

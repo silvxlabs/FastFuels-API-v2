@@ -102,7 +102,11 @@ def complete_3d_grid(firestore_client, domain_for_testing):
             "resolution": [2.0, 2.0, 1.0],
             "bands": ["bulk_density.foliage"],
             "crown_profile_model": "purves",
-            "biomass_model": "nsvb",
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "nsvb",
+                "components": ["foliage"],
+            },
         },
         bands=[
             {

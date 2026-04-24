@@ -4,17 +4,25 @@ api/v2/resources/grids/tree/inventory/schema.py
 Schema models for the tree-inventory voxelization grid product.
 
 A tree inventory is voxelized onto a 3D grid using species-specific crown
-profile models and biomass models to produce per-voxel fuel properties.
+profile models and biomass configuration to produce per-voxel fuel properties.
 """
 
 from random import randint
 from typing import Literal, Self
 
-from pydantic import BaseModel, Field, PositiveFloat, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveFloat,
+    field_validator,
+    model_validator,
+)
 
 from api.resources.grids.schema import validate_no_duplicates
 from api.resources.grids.tree.schema import (
-    BiomassModel,
+    AllometryBiomassSource,
+    BiomassSource,
     CrownProfileModel,
     MoistureModel,
     TreeBand,
@@ -35,6 +43,8 @@ class TreeInventorySource(BaseModel):
     so the grid can be exactly reproduced.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: Literal["inventory"] = "inventory"
     product: Literal["tree"] = "tree"
     description: Literal["3D tree fuel grid from tree inventory voxelization"] = (
@@ -47,14 +57,7 @@ class TreeInventorySource(BaseModel):
     )
     bands: list[TreeBand]
     crown_profile_model: CrownProfileModel
-    biomass_model: BiomassModel
-    biomass_column: str | None = Field(
-        default=None,
-        description=(
-            "Inventory column to read foliage biomass from. Only stored "
-            "when biomass_model == 'inventory'."
-        ),
-    )
+    biomass_source: BiomassSource
     moisture_model: MoistureModel | None = None
     seed: int = Field(
         description=(
@@ -71,6 +74,8 @@ class CreateTreeInventoryRequest(BaseModel):
     modifications — modifications must be applied to the inventory before
     voxelization, not to the resulting voxel grid.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
@@ -90,17 +95,9 @@ class CreateTreeInventoryRequest(BaseModel):
         default=CrownProfileModel.purves,
         description="Crown geometry model. Default: purves.",
     )
-    biomass_model: BiomassModel = Field(
-        default=BiomassModel.nsvb,
-        description="Foliage biomass model. Default: nsvb.",
-    )
-    biomass_column: str | None = Field(
-        default=None,
-        description=(
-            "Inventory column name when biomass_model == 'inventory'. "
-            "Ignored for other biomass models. Defaults to 'crown_fuel_load' "
-            "when biomass_model is 'inventory' and this field is omitted."
-        ),
+    biomass_source: BiomassSource = Field(
+        default_factory=AllometryBiomassSource,
+        description="Biomass source and requested biomass components.",
     )
     moisture_model: MoistureModel | None = Field(
         default=None,
@@ -136,10 +133,5 @@ class CreateTreeInventoryRequest(BaseModel):
                 self.moisture_model = UniformMoistureModel()
         else:
             self.moisture_model = None
-
-        # Same pattern for biomass_column: only meaningful when biomass
-        # is read from an inventory column, dropped otherwise.
-        if self.biomass_model != BiomassModel.inventory:
-            self.biomass_column = None
 
         return self

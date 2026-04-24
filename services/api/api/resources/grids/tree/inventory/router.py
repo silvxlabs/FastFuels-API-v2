@@ -69,14 +69,14 @@ async def create_tree_inventory_grid(
     - **resolution**: (required) Voxel resolution `[x, y, z]` in meters. All
       components must be positive.
     - **bands**: (required) Which output bands to produce. Must be non-empty
-      and contain no duplicates. See `TreeBand` for available bands.
+      and contain no duplicates. Branchwood and fine bands are accepted by
+      the API, but Treevox currently fails those jobs with a not-implemented
+      processing error.
     - **crown_profile_model**: (optional) Crown geometry model. One of
       `purves` (default) or `beta`.
-    - **biomass_model**: (optional) Foliage biomass model. One of `nsvb`
-      (default), `jenkins`, or `inventory`.
-    - **biomass_column**: (optional) Inventory column to read foliage
-      biomass from. Only relevant when `biomass_model == "inventory"`.
-      Defaults to `crown_fuel_load` at voxelization time when omitted.
+    - **biomass_source**: (optional) Biomass source and requested components. The
+      default uses NSVB allometry for foliage. Inventory-column sources must
+      provide per-tree kg values for each requested direct component.
     - **moisture_model**: (optional) Live fuel moisture configuration.
       Required shape: `{"method": "uniform", "live": <percent>}`. Applied
       only when `fuel_moisture.live` is in `bands`. Defaults to
@@ -123,8 +123,7 @@ async def create_tree_inventory_grid(
         resolution=body.resolution,
         bands=body.bands,
         crown_profile_model=body.crown_profile_model,
-        biomass_model=body.biomass_model,
-        biomass_column=body.biomass_column,
+        biomass_source=body.biomass_source,
         moisture_model=body.moisture_model,
         seed=body.seed,
     )
@@ -138,7 +137,7 @@ async def create_tree_inventory_grid(
         "status": JobStatus.pending.value,
         "created_on": request_time,
         "modified_on": request_time,
-        "source": source.model_dump(),
+        "source": source.model_dump(mode="json", exclude_none=True),
         # 3D grids do not support modifications — always empty.
         "modifications": [],
         "bands": [b.model_dump() for b in bands],

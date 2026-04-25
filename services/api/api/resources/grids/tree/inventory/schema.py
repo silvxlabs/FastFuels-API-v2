@@ -26,7 +26,7 @@ from api.resources.grids.tree.schema import (
     CrownProfileModel,
     MoistureModel,
     TreeBand,
-    UniformMoistureModel,
+    UniformMoistureValue,
 )
 
 Resolution3D = tuple[PositiveFloat, PositiveFloat, PositiveFloat]
@@ -102,9 +102,9 @@ class CreateTreeInventoryRequest(BaseModel):
     moisture_model: MoistureModel | None = Field(
         default=None,
         description=(
-            "Live fuel moisture model. Applied only when fuel_moisture.live "
-            "is in bands — defaults to uniform live=100.0 in that case. "
-            "Silently dropped if supplied when fuel_moisture.live is absent."
+            "Live/dead fuel moisture model. Applied only when matching "
+            "fuel_moisture bands are requested. Live defaults to uniform "
+            "100.0; dead defaults to uniform 10.0."
         ),
     )
     seed: int = Field(
@@ -124,13 +124,26 @@ class CreateTreeInventoryRequest(BaseModel):
 
     @model_validator(mode="after")
     def resolve_conditional_defaults(self) -> Self:
-        # moisture_model is only meaningful when fuel_moisture.live is in
-        # bands. Populate the uniform default when the band is requested
-        # without a model; drop any supplied model when the band is absent
-        # so the stored source reflects only what was actually applied.
-        if TreeBand.fuel_moisture_live in self.bands:
-            if self.moisture_model is None:
-                self.moisture_model = UniformMoistureModel()
+        # moisture_model is only meaningful for requested moisture bands.
+        # Populate state-specific uniform defaults when requested without a
+        # model, and drop unrequested states so stored source reflects what
+        # was actually applied.
+        live_requested = TreeBand.fuel_moisture_live in self.bands
+        dead_requested = TreeBand.fuel_moisture_dead in self.bands
+        if live_requested or dead_requested:
+            model = self.moisture_model or MoistureModel()
+            self.moisture_model = MoistureModel(
+                live=(
+                    model.live or UniformMoistureValue(value=100.0)
+                    if live_requested
+                    else None
+                ),
+                dead=(
+                    model.dead or UniformMoistureValue(value=10.0)
+                    if dead_requested
+                    else None
+                ),
+            )
         else:
             self.moisture_model = None
 

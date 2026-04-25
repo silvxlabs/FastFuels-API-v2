@@ -13,7 +13,7 @@ domain_id comes from the URL path parameter, not the request body.
 EXAMPLE_MINIMAL = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
-    "bands": ["bulk_density.foliage"],
+    "bands": ["bulk_density.foliage.live"],
 }
 
 # Explicit foliage-compatible bands list.
@@ -21,7 +21,7 @@ EXAMPLE_WITH_BANDS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
     "bands": [
-        "bulk_density.foliage",
+        "bulk_density.foliage.live",
         "fuel_moisture.live",
         "savr.foliage",
         "spcd",
@@ -34,15 +34,42 @@ EXAMPLE_WITH_BANDS = {
 EXAMPLE_WITH_MOISTURE_MODEL = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
-    "bands": ["bulk_density.foliage", "fuel_moisture.live"],
-    "moisture_model": {"method": "uniform", "live": 75.0},
+    "bands": ["bulk_density.foliage.live", "fuel_moisture.live"],
+    "moisture_model": {"live": {"method": "uniform", "value": 75.0}},
+}
+
+# Split one component into live/dead biomass states and assign state moisture.
+EXAMPLE_WITH_LIVE_DEAD_PARTITION = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": [2.0, 2.0, 1.0],
+    "bands": [
+        "bulk_density.foliage.live",
+        "bulk_density.foliage.dead",
+        "fuel_moisture.live",
+        "fuel_moisture.dead",
+    ],
+    "biomass_source": {
+        "type": "allometry",
+        "equations": "nsvb",
+        "components": ["foliage"],
+        "component_states": {
+            "foliage": {
+                "live": 0.85,
+                "dead": 0.15,
+            },
+        },
+    },
+    "moisture_model": {
+        "live": {"method": "uniform", "value": 95.0},
+        "dead": {"method": "uniform", "value": 8.0},
+    },
 }
 
 # Non-default crown profile and biomass models.
 EXAMPLE_WITH_ALTERNATE_MODELS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
-    "bands": ["bulk_density.foliage"],
+    "bands": ["bulk_density.foliage.live"],
     "crown_profile_model": "beta",
     "biomass_source": {
         "type": "allometry",
@@ -55,7 +82,7 @@ EXAMPLE_WITH_ALTERNATE_MODELS = {
 EXAMPLE_WITH_INVENTORY_BIOMASS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
-    "bands": ["bulk_density.foliage"],
+    "bands": ["bulk_density.foliage.live"],
     "biomass_source": {
         "type": "inventory_columns",
         "columns": {
@@ -73,7 +100,7 @@ EXAMPLE_WITH_INVENTORY_BIOMASS = {
 EXAMPLE_WITH_BRANCHWOOD_BIOMASS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
-    "bands": ["bulk_density.branchwood"],
+    "bands": ["bulk_density.branchwood.live"],
     "biomass_source": {
         "type": "allometry",
         "equations": "nsvb",
@@ -87,7 +114,7 @@ EXAMPLE_WITH_BRANCHWOOD_BIOMASS = {
 EXAMPLE_WITH_DERIVED_FINE_BIOMASS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
-    "bands": ["bulk_density.fine"],
+    "bands": ["bulk_density.fine.live"],
     "biomass_source": {
         "type": "allometry",
         "equations": "nsvb",
@@ -103,7 +130,7 @@ EXAMPLE_WITH_DERIVED_FINE_BIOMASS = {
 EXAMPLE_WITH_SEED = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": [2.0, 2.0, 1.0],
-    "bands": ["bulk_density.foliage"],
+    "bands": ["bulk_density.foliage.live"],
     "seed": 42,
 }
 
@@ -113,7 +140,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "summary": "Minimum request",
         "description": (
             "Voxelizes a tree inventory with all defaults. Produces a single "
-            "`bulk_density.foliage` band (kg/m³) at 2 m × 2 m × 1 m voxel "
+            "`bulk_density.foliage.live` band (kg/m³) at 2 m × 2 m × 1 m voxel "
             "resolution using the Purves crown profile and NSVB biomass "
             "models. Use this when you only need foliage mass per voxel."
         ),
@@ -123,7 +150,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "summary": "Request every foliage-compatible band",
         "description": (
             "Produces all six foliage-compatible tree-grid bands: "
-            "`bulk_density.foliage`, "
+            "`bulk_density.foliage.live`, "
             "`fuel_moisture.live`, `savr.foliage`, `spcd`, `tree_id`, and "
             "`volume_fraction`. `fuel_moisture.live` defaults to a uniform "
             "100% because no `moisture_model` is provided. `spcd` and "
@@ -146,6 +173,17 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "fire-weather conditions). Only the `uniform` method is "
             "available today; additional methods will appear as new "
             "`method` values."
+        ),
+    },
+    "with_live_dead_partition": {
+        "value": EXAMPLE_WITH_LIVE_DEAD_PARTITION,
+        "summary": "Split foliage into live and dead states",
+        "description": (
+            "Splits allometry-estimated foliage biomass into 85% live and "
+            "15% dead density bands, then assigns separate uniform live and "
+            "dead fuel moisture values. Omit `component_states` to use the "
+            "default 100% live, 0% dead partition for each requested "
+            "component."
         ),
     },
     "alternate_models": {
@@ -176,7 +214,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_WITH_BRANCHWOOD_BIOMASS,
         "summary": "Request branchwood biomass",
         "description": (
-            "Requests a `bulk_density.branchwood` output band using NSVB "
+            "Requests a `bulk_density.branchwood.live` output band using NSVB "
             "allometry. The API accepts this request shape, but Treevox "
             "currently marks the asynchronous job failed with a "
             "not-implemented error until branchwood component compute is "
@@ -187,7 +225,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_WITH_DERIVED_FINE_BIOMASS,
         "summary": "Request derived fine biomass",
         "description": (
-            "Requests `bulk_density.fine` as foliage plus 10% of branchwood. "
+            "Requests `bulk_density.fine.live` as foliage plus 10% of branchwood. "
             "The API accepts this request shape, but Treevox currently marks "
             "the asynchronous job failed with a not-implemented error until "
             "fine component compute is available."
@@ -210,6 +248,7 @@ ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_MINIMAL),
     ("with_bands", EXAMPLE_WITH_BANDS),
     ("with_moisture_model", EXAMPLE_WITH_MOISTURE_MODEL),
+    ("with_live_dead_partition", EXAMPLE_WITH_LIVE_DEAD_PARTITION),
     ("alternate_models", EXAMPLE_WITH_ALTERNATE_MODELS),
     ("with_inventory_biomass", EXAMPLE_WITH_INVENTORY_BIOMASS),
     ("with_branchwood_biomass", EXAMPLE_WITH_BRANCHWOOD_BIOMASS),

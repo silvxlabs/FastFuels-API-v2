@@ -88,9 +88,12 @@ CR_BIN = 0.1
 # Map API allometry equation names to fastfuels-core model names.
 BIOMASS_EQUATION_MAP = {"nsvb": "NSVB", "jenkins": "jenkins"}
 BIOMASS_DENSITY_BAND_COMPONENTS = {
-    "bulk_density.foliage": "foliage",
-    "bulk_density.branchwood": "branchwood",
-    "bulk_density.fine": "fine",
+    "bulk_density.foliage.live": "foliage",
+    "bulk_density.foliage.dead": "foliage",
+    "bulk_density.branchwood.live": "branchwood",
+    "bulk_density.branchwood.dead": "branchwood",
+    "bulk_density.fine.live": "fine",
+    "bulk_density.fine.dead": "fine",
 }
 
 
@@ -212,6 +215,16 @@ def biomass_component_to_distribute(source_config: dict) -> str:
         if component in requested:
             return component
     return "foliage"
+
+
+def biomass_component_state(source_config: dict, component: str) -> dict[str, float]:
+    """Return live/dead partition fractions for one biomass component."""
+    states = source_config["biomass_source"].get("component_states", {})
+    state = states.get(component, {})
+    return {
+        "live": float(state.get("live", 1.0)),
+        "dead": float(state.get("dead", 0.0)),
+    }
 
 
 def distribute_component_biomass(vt: VoxelizedTree, component: str) -> np.ndarray:
@@ -681,7 +694,8 @@ def _apply_bands(
     species_code: int,
     foliage_sav: float,
     tree_id: int,
-    moisture_value: float | None,
+    moisture_values: dict[str, float],
+    component_state: dict[str, float],
     biomass_component: str = "foliage",
 ) -> None:
     """Write one tree's contribution into every requested band buffer.
@@ -714,10 +728,11 @@ def _apply_bands(
         Per-row unique tree identifier (int), from the DataFrame row.
         Written into the `tree_id` band so downstream consumers can trace
         a voxel back to an inventory row.
-    moisture_value
-        Live fuel moisture percent, read once per chunk from
-        `source.moisture_model.live`. `None` when the `fuel_moisture.live`
-        band isn't requested.
+    moisture_values
+        Fuel moisture percent by state, read once per chunk from
+        `source.moisture_model`. Contains only requested moisture states.
+    component_state
+        Live/dead biomass partition fractions for `biomass_component`.
 
     What it does
     ------------
@@ -727,9 +742,9 @@ def _apply_bands(
       | Band                  | Rule      | Semantics                    |
       |-----------------------|-----------|------------------------------|
       | volume_fraction       | accumulate| `region += mask`             |
-      | bulk_density.foliage  | accumulate| `region += biomass_clip`     |
+      | bulk_density.<component>.<state> | accumulate| `region += biomass_clip * fraction` |
       | savr.foliage          | overwrite | `region[mask] = foliage_sav` |
-      | fuel_moisture.live    | overwrite | `region[mask] = moisture`    |
+      | fuel_moisture.<state> | overwrite | `region[mask] = moisture`    |
       | spcd                  | overwrite | `region[mask] = species_code`|
       | tree_id               | overwrite | `region[mask] = tree_id`     |
 
@@ -750,12 +765,16 @@ def _apply_bands(
         region = buf[buf_slices]
         if key == "volume_fraction":
             region += mask.astype(buf.dtype)
-        elif key == f"bulk_density.{biomass_component}":
-            region += biomass_clip.astype(buf.dtype)
+        elif key == f"bulk_density.{biomass_component}.live":
+            region += (biomass_clip * component_state["live"]).astype(buf.dtype)
+        elif key == f"bulk_density.{biomass_component}.dead":
+            region += (biomass_clip * component_state["dead"]).astype(buf.dtype)
         elif key == "savr.foliage":
             region[mask] = foliage_sav
         elif key == "fuel_moisture.live":
-            region[mask] = moisture_value
+            region[mask] = moisture_values["live"]
+        elif key == "fuel_moisture.dead":
+            region[mask] = moisture_values["dead"]
         elif key == "spcd":
             region[mask] = species_code
         elif key == "tree_id":
@@ -809,8 +828,8 @@ def voxelize_chunk(
         tree's world coords into absolute cell indices.
     source_config
         The grid's `source` sub-dict. Only used here to read
-        `moisture_model.live` when the `fuel_moisture.live` band is
-        requested (per-chunk constant, resolved once before the loop).
+        `moisture_model` when fuel moisture bands are requested
+        (per-chunk constants, resolved once before the loop).
     rng
         Seeded numpy Generator. Used to pick one biomass realization
         per tree when a `CacheEntry` carries multiple. Seed comes from
@@ -836,7 +855,7 @@ def voxelize_chunk(
        rule.
 
     Because trees are iterated height-ASC, the tallest writer wins on
-    overwrite bands (spcd, tree_id, savr.foliage, fuel_moisture.live)
+    overwrite bands (spcd, tree_id, savr.foliage, fuel_moisture.*)
     at overlap cells — matches the policy documented on the API.
 
     Output
@@ -847,10 +866,14 @@ def voxelize_chunk(
     if trees_in_chunk.empty:
         return
 
-    moisture_value = None
+    moisture_values: dict[str, float] = {}
+    moisture_model = source_config.get("moisture_model") or {}
     if "fuel_moisture.live" in buffers:
-        moisture_value = float(source_config["moisture_model"]["live"])
+        moisture_values["live"] = float(moisture_model["live"]["value"])
+    if "fuel_moisture.dead" in buffers:
+        moisture_values["dead"] = float(moisture_model["dead"]["value"])
     biomass_component = biomass_component_to_distribute(source_config)
+    component_state = biomass_component_state(source_config, biomass_component)
 
     buffer_shape = next(iter(buffers.values())).shape
 
@@ -887,6 +910,7 @@ def voxelize_chunk(
             entry.species_code,
             entry.foliage_sav,
             int(row["tree_id"]),
-            moisture_value,
+            moisture_values,
+            component_state,
             biomass_component,
         )

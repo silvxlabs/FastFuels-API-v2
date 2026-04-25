@@ -56,8 +56,9 @@ def base_source_config():
             "type": "allometry",
             "equations": "nsvb",
             "components": ["foliage"],
+            "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
         },
-        "moisture_model": {"method": "uniform", "live": 100.0},
+        "moisture_model": {"live": {"method": "uniform", "value": 100.0}},
     }
 
 
@@ -225,9 +226,12 @@ class TestBiomassComponentDistribution:
     @pytest.mark.parametrize(
         "band_key,component",
         [
-            ("bulk_density.foliage", "foliage"),
-            ("bulk_density.branchwood", "branchwood"),
-            ("bulk_density.fine", "fine"),
+            ("bulk_density.foliage.live", "foliage"),
+            ("bulk_density.foliage.dead", "foliage"),
+            ("bulk_density.branchwood.live", "branchwood"),
+            ("bulk_density.branchwood.dead", "branchwood"),
+            ("bulk_density.fine.live", "fine"),
+            ("bulk_density.fine.dead", "fine"),
         ],
     )
     def test_component_selection_from_output_band(self, band_key, component):
@@ -582,7 +586,7 @@ class TestVoxelizeChunk:
         self,
         keys=(
             "volume_fraction",
-            "bulk_density.foliage",
+            "bulk_density.foliage.live",
             "spcd",
             "tree_id",
             "savr.foliage",
@@ -653,7 +657,7 @@ class TestVoxelizeChunk:
             np.random.default_rng(0),
         )
         assert buffers["volume_fraction"].sum() > 0
-        assert buffers["bulk_density.foliage"].sum() > 0
+        assert buffers["bulk_density.foliage.live"].sum() > 0
         assert (buffers["spcd"] == 131).any()
         assert (buffers["tree_id"] == 0).any()
         assert buffers["fuel_moisture.live"].max() == 100.0
@@ -712,7 +716,7 @@ class TestVoxelizeChunk:
 
     def test_accumulative_bands_sum_across_trees(self):
         dims, buffers = self._dims_and_buffers(
-            keys=("volume_fraction", "bulk_density.foliage")
+            keys=("volume_fraction", "bulk_density.foliage.live")
         )
         df = pd.DataFrame(
             {
@@ -742,7 +746,33 @@ class TestVoxelizeChunk:
             np.random.default_rng(0),
         )
         assert buffers["volume_fraction"].max() == pytest.approx(2.0)
-        assert buffers["bulk_density.foliage"].max() == pytest.approx(2.0)
+        assert buffers["bulk_density.foliage.live"].max() == pytest.approx(2.0)
+
+    def test_component_state_splits_voxelized_density_bands(self):
+        dims, buffers = self._dims_and_buffers(
+            keys=("bulk_density.foliage.live", "bulk_density.foliage.dead")
+        )
+        df = self._one_tree_df()
+        cfg = base_source_config()
+        cfg["biomass_source"]["component_states"] = {
+            "foliage": {"live": 0.25, "dead": 0.75}
+        }
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            self._deterministic_cache(value=2.0),
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            cfg,
+            np.random.default_rng(0),
+        )
+
+        assert buffers["bulk_density.foliage.live"].max() == pytest.approx(0.5)
+        assert buffers["bulk_density.foliage.dead"].max() == pytest.approx(1.5)
 
     def test_subset_of_bands_only(self):
         dims, buffers = self._dims_and_buffers(keys=("volume_fraction",))
@@ -767,7 +797,7 @@ class TestVoxelizeChunk:
         dims, buffers = self._dims_and_buffers(keys=("fuel_moisture.live",))
         df = self._one_tree_df()
         cfg = base_source_config()
-        cfg["moisture_model"] = {"method": "uniform", "live": 75.0}
+        cfg["moisture_model"] = {"live": {"method": "uniform", "value": 75.0}}
         voxelize.voxelize_chunk(
             df,
             buffers,
@@ -782,6 +812,26 @@ class TestVoxelizeChunk:
             np.random.default_rng(0),
         )
         assert buffers["fuel_moisture.live"].max() == 75.0
+
+    def test_fuel_moisture_dead_uses_source_config_value(self):
+        dims, buffers = self._dims_and_buffers(keys=("fuel_moisture.dead",))
+        df = self._one_tree_df()
+        cfg = base_source_config()
+        cfg["moisture_model"] = {"dead": {"method": "uniform", "value": 9.0}}
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            self._deterministic_cache(),
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            cfg,
+            np.random.default_rng(0),
+        )
+        assert buffers["fuel_moisture.dead"].max() == 9.0
 
     def test_empty_trees_leaves_buffers_untouched(self):
         dims, buffers = self._dims_and_buffers(keys=("volume_fraction",))
@@ -1096,6 +1146,12 @@ class TestApplyBands:
     def _full_slice(self, shape):
         return tuple(slice(0, n) for n in shape)
 
+    def _moisture(self):
+        return {"live": 100.0, "dead": 10.0}
+
+    def _component_state(self):
+        return {"live": 1.0, "dead": 0.0}
+
     def test_volume_fraction_accumulates_from_mask(self):
         shape = (2, 3, 3)
         bufs = self._buffers(("volume_fraction",), shape=shape)
@@ -1107,7 +1163,8 @@ class TestApplyBands:
             species_code=131,
             foliage_sav=2000.0,
             tree_id=7,
-            moisture_value=100.0,
+            moisture_values=self._moisture(),
+            component_state=self._component_state(),
         )
         assert bufs["volume_fraction"].sum() == biomass.size
 
@@ -1116,18 +1173,58 @@ class TestApplyBands:
         bufs = self._buffers(("volume_fraction",), shape=shape)
         biomass = np.zeros(shape, dtype="float32")
         voxelize._apply_bands(
-            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            131,
+            2000.0,
+            0,
+            self._moisture(),
+            self._component_state(),
         )
         assert bufs["volume_fraction"].sum() == 0
 
     def test_bulk_density_sums_biomass(self):
         shape = (2, 3, 3)
-        bufs = self._buffers(("bulk_density.foliage",), shape=shape)
+        bufs = self._buffers(("bulk_density.foliage.live",), shape=shape)
         biomass = np.full(shape, 0.5, dtype="float32")
         voxelize._apply_bands(
-            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            131,
+            2000.0,
+            0,
+            self._moisture(),
+            self._component_state(),
         )
-        assert bufs["bulk_density.foliage"].sum() == pytest.approx(0.5 * biomass.size)
+        assert bufs["bulk_density.foliage.live"].sum() == pytest.approx(
+            0.5 * biomass.size
+        )
+
+    def test_bulk_density_splits_live_dead_biomass(self):
+        shape = (2, 3, 3)
+        bufs = self._buffers(
+            ("bulk_density.foliage.live", "bulk_density.foliage.dead"), shape=shape
+        )
+        biomass = np.full(shape, 2.0, dtype="float32")
+        voxelize._apply_bands(
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            131,
+            2000.0,
+            0,
+            self._moisture(),
+            {"live": 0.25, "dead": 0.75},
+        )
+
+        assert bufs["bulk_density.foliage.live"].sum() == pytest.approx(
+            0.5 * biomass.size
+        )
+        assert bufs["bulk_density.foliage.dead"].sum() == pytest.approx(
+            1.5 * biomass.size
+        )
 
     def test_overwrite_bands_written_where_mask_nonzero(self):
         shape = (2, 3, 3)
@@ -1144,7 +1241,8 @@ class TestApplyBands:
             species_code=131,
             foliage_sav=2000.0,
             tree_id=7,
-            moisture_value=100.0,
+            moisture_values=self._moisture(),
+            component_state=self._component_state(),
         )
         assert bufs["savr.foliage"][0, 1, 1] == 2000.0
         assert bufs["fuel_moisture.live"][0, 1, 1] == 100.0
@@ -1161,27 +1259,57 @@ class TestApplyBands:
         biomass = np.ones(shape, dtype="float32")
 
         voxelize._apply_bands(
-            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            131,
+            2000.0,
+            0,
+            self._moisture(),
+            self._component_state(),
         )
         voxelize._apply_bands(
-            bufs, self._full_slice(shape), biomass, 202, 2500.0, 1, 100.0
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            202,
+            2500.0,
+            1,
+            self._moisture(),
+            self._component_state(),
         )
         assert (bufs["spcd"] == 202).all()
         assert (bufs["tree_id"] == 1).all()
 
     def test_accumulate_second_tree_sums_with_first(self):
         shape = (1, 2, 2)
-        bufs = self._buffers(("volume_fraction", "bulk_density.foliage"), shape=shape)
+        bufs = self._buffers(
+            ("volume_fraction", "bulk_density.foliage.live"), shape=shape
+        )
         biomass = np.ones(shape, dtype="float32")
 
         voxelize._apply_bands(
-            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            131,
+            2000.0,
+            0,
+            self._moisture(),
+            self._component_state(),
         )
         voxelize._apply_bands(
-            bufs, self._full_slice(shape), biomass, 202, 2500.0, 1, 100.0
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            202,
+            2500.0,
+            1,
+            self._moisture(),
+            self._component_state(),
         )
         assert (bufs["volume_fraction"] == 2.0).all()
-        assert (bufs["bulk_density.foliage"] == 2.0).all()
+        assert (bufs["bulk_density.foliage.live"] == 2.0).all()
 
     def test_subset_of_bands_only_touches_those(self):
         """A caller requesting just volume_fraction shouldn't error on missing keys."""
@@ -1189,7 +1317,14 @@ class TestApplyBands:
         bufs = self._buffers(("volume_fraction",), shape=shape)
         biomass = np.ones(shape, dtype="float32")
         voxelize._apply_bands(
-            bufs, self._full_slice(shape), biomass, 131, 2000.0, 0, 100.0
+            bufs,
+            self._full_slice(shape),
+            biomass,
+            131,
+            2000.0,
+            0,
+            self._moisture(),
+            self._component_state(),
         )
         assert list(bufs.keys()) == ["volume_fraction"]
         assert bufs["volume_fraction"].sum() == biomass.size
@@ -1207,7 +1342,8 @@ class TestApplyBands:
             species_code=131,
             foliage_sav=0,
             tree_id=0,
-            moisture_value=None,
+            moisture_values={},
+            component_state=self._component_state(),
         )
         # Inside sub: written to 131.
         assert (bufs["spcd"][sub] == 131).all()

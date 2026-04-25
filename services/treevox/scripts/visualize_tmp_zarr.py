@@ -1,6 +1,6 @@
 """Visualize foliage bulk density from tmp.zarr to verify integration tests.
 
-Reads `bulk_density.foliage` (nz, ny, nx) from the zarr store and produces:
+Reads `bulk_density.foliage.live` (nz, ny, nx) from the zarr store and produces:
   - 2D canopy height map (highest z with non-zero bulk density)
   - 2D column-summed bulk density (kg/m^3 summed over z)
   - 3D PyVista rendering of canopy voxels (PNG + optional interactive window)
@@ -27,7 +27,7 @@ DPI = 600
 
 def load_bulk_density(path: Path):
     ds = xr.open_zarr(str(path), consolidated=True)
-    da = ds["bulk_density.foliage"].load()
+    da = ds["bulk_density.foliage.live"].load()
     bd = np.nan_to_num(da.values, nan=0.0).astype(np.float32)
     x = ds["x"].values
     y = ds["y"].values

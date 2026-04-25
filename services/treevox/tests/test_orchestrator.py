@@ -52,8 +52,9 @@ def _base_grid(bands=None, seed=42):
                 "type": "allometry",
                 "equations": "nsvb",
                 "components": ["foliage"],
+                "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
             },
-            "moisture_model": {"method": "uniform", "live": 100.0},
+            "moisture_model": {"live": {"method": "uniform", "value": 100.0}},
             "seed": seed,
         },
         "bands": bands or [{"key": "volume_fraction"}],
@@ -758,7 +759,7 @@ class TestVoxelizeInventoryFlow:
         mock_read_inv.return_value = _sample_df(height=5.0)
         mock_read.return_value = xr.Dataset(
             {
-                "bulk_density.fine": (
+                "bulk_density.fine.live": (
                     ("z", "y", "x"),
                     np.zeros((5, 100, 100), dtype="float32"),
                 )
@@ -781,7 +782,7 @@ class TestVoxelizeInventoryFlow:
             fake_ctx.Pool.return_value = fake_pool
             mock_get_ctx.return_value = fake_ctx
 
-            grid = _base_grid(bands=[{"key": "bulk_density.fine"}])
+            grid = _base_grid(bands=[{"key": "bulk_density.fine.live"}])
             with pytest.raises(ProcessingError) as exc:
                 voxelize_inventory(grid, _fake_domain(), lambda *a, **k: None)
 
@@ -929,8 +930,9 @@ class TestHaloMergeAcrossChunks:
                     "type": "allometry",
                     "equations": "nsvb",
                     "components": ["foliage"],
+                    "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
                 },
-                "moisture_model": {"method": "uniform", "live": 100.0},
+                "moisture_model": {"live": {"method": "uniform", "value": 100.0}},
                 "seed": seed,
             },
             "bands": [{"key": k} for k in bands],

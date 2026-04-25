@@ -204,7 +204,7 @@ def treevox_runner():
         def test_happy_path(treevox_runner):
             result = treevox_runner(
                 static_inventory="static-test-blue-mtn-pim-inventory",
-                bands=["volume_fraction", "bulk_density.foliage"],
+                bands=["volume_fraction", "bulk_density.foliage.live"],
             )
             assert "volume_fraction" in result.ds.data_vars
     """
@@ -226,11 +226,12 @@ def treevox_runner():
         expect_failed: bool = False,
         timeout: int = 600,
     ) -> TreevoxResult:
-        bands = bands or ["volume_fraction", "bulk_density.foliage"]
+        bands = bands or ["volume_fraction", "bulk_density.foliage.live"]
         biomass_source = biomass_source or {
             "type": "allometry",
             "equations": "nsvb",
             "components": ["foliage"],
+            "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
         }
 
         # Decide how to stage the inventory parquet.
@@ -260,10 +261,14 @@ def treevox_runner():
         # Create grid document mirroring what the API writes.
         grid_id = f"test-{uuid4().hex}"
         _BAND_DEFS = {
-            "bulk_density.foliage": {"type": "continuous", "unit": "kg/m³"},
-            "bulk_density.branchwood": {"type": "continuous", "unit": "kg/m³"},
-            "bulk_density.fine": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.foliage.live": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.foliage.dead": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.branchwood.live": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.branchwood.dead": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.fine.live": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.fine.dead": {"type": "continuous", "unit": "kg/m³"},
             "fuel_moisture.live": {"type": "continuous", "unit": "%"},
+            "fuel_moisture.dead": {"type": "continuous", "unit": "%"},
             "savr.foliage": {"type": "continuous", "unit": "m⁻¹"},
             "spcd": {"type": "categorical", "unit": None},
             "tree_id": {"type": "categorical", "unit": None},

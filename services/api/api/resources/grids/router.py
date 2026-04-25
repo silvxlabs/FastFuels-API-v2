@@ -408,6 +408,7 @@ async def delete_grid(
 @router.get(
     "/{grid_id}/chunks/{chunk_index}",
     response_model=GridDataChunkMetadata,
+    response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
     summary="Get chunk metadata",
 )
@@ -420,25 +421,29 @@ async def get_chunk_metadata(
     """
     # Get Chunk Metadata Endpoint
 
-    Retrieves the shape, pixel offset, and affine transform for a single chunk
-    of a completed grid. This is a lightweight call that performs pure arithmetic
-    on the grid's stored georeference and chunk shape — no raster data is read.
+    Retrieves the shape, pixel offset, and affine transform for a single 2D or
+    3D chunk of a completed grid. This is a lightweight call that performs pure
+    arithmetic on the grid's stored georeference and chunk shape — no raster
+    data is read.
 
     ## Path Parameters
 
     - **domain_id**: (string) The domain the grid belongs to.
     - **grid_id**: (string) The unique identifier of the grid.
-    - **chunk_index**: (integer) Zero-based flat chunk index in row-major order.
+    - **chunk_index**: (integer) Zero-based flat chunk index. 2D grids use
+      y,x order. 3D grids use z,y,x order.
 
     ## Response
 
     Returns chunk metadata:
 
     - **index**: The chunk index.
-    - **shape**: (height, width) of the chunk in pixels. Edge chunks may be
-      smaller than the grid's chunk shape.
-    - **offset**: (row, column) pixel offset of the chunk within the full grid.
+    - **shape**: 2D `(height, width)` or 3D `(z, height, width)`. Edge chunks
+      may be smaller than the grid's chunk shape.
+    - **offset**: 2D `(row, column)` or 3D `(z, row, column)` pixel offset of
+      the chunk within the full grid.
     - **transform**: Six-element affine transform for the chunk's spatial extent.
+    - **z_origin**, **z_resolution**: Present only for 3D grids.
 
     ## Error Responses
 
@@ -497,7 +502,8 @@ async def get_grid_data(
     - **grid_id**: (string) The unique identifier of the grid.
     - **band**: (string) Band key to read (e.g., `elevation`, `fbfm`). Must match
       a band present in the grid.
-    - **chunk_index**: (integer) Zero-based flat chunk index in row-major order.
+    - **chunk_index**: (integer) Zero-based flat chunk index. 2D grids use
+      y,x order. 3D grids use z,y,x order.
 
     ## Query Parameters
 
@@ -543,10 +549,10 @@ async def get_grid_data(
             detail=str(exc),
         )
 
-    row_slice, col_slice = compute_chunk_slices(meta)
+    chunk_slices = compute_chunk_slices(meta)
 
     array = await get_grid_array(grid_id, band)
-    data = await array.getitem((row_slice, col_slice))
+    data = await array.getitem(chunk_slices)
 
     if data_format == GridDataFormat.binary:
         raw = data.ravel(order=order.value).tobytes()

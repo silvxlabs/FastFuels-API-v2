@@ -1,9 +1,9 @@
 """
 End-to-end tests that generate static test data for backend services.
 
-Each test creates a grid through the full API -> Cloud Tasks -> griddle
-pipeline, then copies the output zarr to a well-known static path in GCS
-and saves a JSON template for use in griddle integration tests.
+Each test creates a grid through the full API -> Cloud Tasks -> backend
+service pipeline, then copies the output zarr to a well-known static path in
+GCS and saves a JSON template for use in integration tests.
 
 Run manually when fixture data needs (re)generating:
     cd services/api && uv run pytest tests/e2e/ -v --log-cli-level=INFO
@@ -56,9 +56,41 @@ def test_create_blue_mtn_pim_inventory(
         endpoint="/inventories/tree/pim",
         body={
             "source_pim_grid_id": "static-test-blue-mtn-pim-treemap",
+            "seed": 898870608,
         },
         static_name="static-test-blue-mtn-pim-inventory",
         grid_dependency="static-test-blue-mtn-pim-treemap",
+    )
+
+
+@pytest.mark.dependency(depends=["test_create_blue_mtn_pim_inventory"])
+def test_create_blue_mtn_tree_inventory_voxels(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create static 3D tree voxel grid fixture from Blue Mountain PIM inventory."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/tree/inventory",
+        body={
+            "source_inventory_id": "static-test-blue-mtn-pim-inventory",
+            "resolution": [20.0, 20.0, 5.0],
+            "bands": [
+                "volume_fraction",
+                "bulk_density.foliage.live",
+            ],
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "nsvb",
+                "components": ["foliage"],
+                "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
+            },
+            "seed": 42,
+        },
+        static_name="static-test-blue-mtn-tree-inventory-voxels",
+        resource_dependencies={
+            "inventories": ["static-test-blue-mtn-pim-inventory"],
+        },
     )
 
 

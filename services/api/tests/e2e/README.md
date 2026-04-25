@@ -3,9 +3,10 @@
 ## Purpose
 
 This module generates static test data in GCS that backend services (griddle,
-exporter) use as fixtures for their own integration tests. It exercises the full
-API -> Cloud Tasks -> griddle pipeline to produce completed grids, then copies
-the output zarr to well-known static paths and saves JSON templates.
+treevox, exporter) use as fixtures for their own integration tests. It exercises
+the full API -> Cloud Tasks -> backend-service pipeline to produce completed
+grids, then copies the output zarr to well-known static paths and saves JSON
+templates.
 
 ## Prerequisites
 
@@ -40,16 +41,19 @@ To add a new domain:
    `create_static_fixture()` with the appropriate endpoint, request body, and
    `static_name`
 2. Run the e2e tests to generate the zarr in GCS and the JSON template
-3. Commit the generated JSON template from `services/lib/tests/static_data/grids/`
+3. Commit the generated JSON template from `services/lib/tests/shared_data/grids/`
 
 ## Chained fixtures
 
-Some fixtures depend on other static fixtures as source grids. For example, a
-resampled FBFM40 grid at 2m needs the LANDFIRE FBFM40 static fixture to exist.
+Some fixtures depend on other static fixtures as source grids or inventories.
+For example, a resampled FBFM40 grid at 2m needs the LANDFIRE FBFM40 static
+fixture to exist, and a tree voxel grid needs a static tree inventory.
 
 Any `static-test-*` values in the request body are **automatically detected**
-and temporarily registered in Firestore so the API's source grid validation
-passes. Use `@pytest.mark.dependency` to enforce ordering:
+and temporarily registered in Firestore as grids so the API's source validation
+passes. Dependencies on other static resource types are passed explicitly with
+`resource_dependencies={"inventories": [...]}`. Use `@pytest.mark.dependency`
+to enforce ordering:
 
 ```python
 @pytest.mark.dependency()
@@ -87,7 +91,7 @@ fails, dependent tests are automatically skipped.
 ## Where outputs go
 
 - **Zarr data**: `gs://{GRIDS_BUCKET}/static-test-{domain}-{name}/`
-- **JSON template**: `services/lib/tests/static_data/grids/static-test-{domain}-{name}.json`
+- **JSON template**: `services/lib/tests/shared_data/grids/static-test-{domain}-{name}.json`
 
 ## When to regenerate
 

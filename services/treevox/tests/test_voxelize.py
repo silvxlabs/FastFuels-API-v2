@@ -285,6 +285,28 @@ class TestComputeCacheKeys:
         keys = voxelize.compute_cache_keys(df)
         assert keys.nunique() == 2
 
+    def test_inventory_foliage_biomass_splits_same_morphology(self):
+        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df["my_fuel_load"] = [10.0, 25.0]
+        cfg = base_source_config()
+        cfg["biomass_source"] = {
+            "type": "inventory_columns",
+            "columns": {"foliage": {"column": "my_fuel_load", "unit": "kg"}},
+            "components": ["foliage"],
+        }
+
+        keys = voxelize.compute_cache_keys(df, cfg)
+
+        assert keys.nunique() == 2
+
+    def test_allometry_ignores_unconfigured_biomass_columns(self):
+        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df["my_fuel_load"] = [10.0, 25.0]
+
+        keys = voxelize.compute_cache_keys(df, base_source_config())
+
+        assert keys.nunique() == 1
+
 
 # calculate_arrays_to_cache
 
@@ -536,6 +558,51 @@ class TestBuildChunkCache:
 
         assert len(built_trees) == 1
         assert built_trees[0]._crown_fuel_load_override == 42.0
+
+    def test_inventory_biomass_column_is_preserved_per_cache_key(self, monkeypatch):
+        canopy = np.ones((2, 3, 3))
+        monkeypatch.setattr(
+            voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
+        )
+        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+
+        class FakeVT:
+            def __init__(self, tree, mask, hr, vr):
+                self.tree = tree
+                self.mask = mask
+
+            def distribute_biomass(self):
+                return self.mask * self.tree._crown_fuel_load_override
+
+        monkeypatch.setattr(voxelize, "VoxelizedTree", FakeVT)
+
+        cfg = base_source_config()
+        cfg["biomass_source"] = {
+            "type": "inventory_columns",
+            "columns": {"foliage": {"column": "my_fuel_load", "unit": "kg"}},
+            "components": ["foliage"],
+        }
+        df = pd.DataFrame(
+            {
+                "fia_species_code": [131, 131],
+                "fia_status_code": [1, 1],
+                "dbh": [20.0, 20.0],
+                "height": [15.0, 15.0],
+                "crown_ratio": [0.4, 0.4],
+                "x": [1.0, 2.0],
+                "y": [1.0, 2.0],
+                "my_fuel_load": [10.0, 25.0],
+            }
+        )
+        df["_cache_key"] = voxelize.compute_cache_keys(df, cfg)
+
+        cache = voxelize.build_chunk_cache(df, 1.0, 1.0, cfg, np.random.default_rng(0))
+        cached_values = sorted(
+            float(entry.biomass_arrays[0].max()) for entry in cache.values()
+        )
+
+        assert len(cache) == 2
+        assert cached_values == [10.0, 25.0]
 
     @pytest.mark.parametrize("component", ["branchwood", "fine"])
     def test_non_foliage_component_failure_is_not_swallowed(

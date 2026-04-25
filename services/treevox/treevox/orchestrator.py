@@ -173,14 +173,16 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
     )
 
 
-def _prepare_tree_chunks(df: pd.DataFrame, layout: GridLayout) -> pd.DataFrame:
+def _prepare_tree_chunks(
+    df: pd.DataFrame, layout: GridLayout, source: dict | None = None
+) -> pd.DataFrame:
     """Attach cache keys and assign each tree to its (row_chunk, col_chunk).
 
     Uses `DataFrame.assign` to add `_cache_key` without a full block-manager
     copy of the caller's frame; `assign_trees_to_chunks` then returns a fresh
     sorted DataFrame so the caller's input is never mutated.
     """
-    df = df.assign(_cache_key=voxelize.compute_cache_keys(df))
+    df = df.assign(_cache_key=voxelize.compute_cache_keys(df, source))
     df = voxelize.assign_trees_to_chunks(
         df,
         layout.dims["x_origin"],
@@ -708,7 +710,7 @@ def voxelize_inventory(
         chunk_shape=layout.chunk_shape,
     )
 
-    df = _prepare_tree_chunks(df, layout)
+    df = _prepare_tree_chunks(df, layout, source)
     stats = _run_voxelization_batches(df, layout, source, grid_id, path, progress)
 
     progress("Finalizing...", 95)

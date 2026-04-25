@@ -267,12 +267,17 @@ def build_tree(row, source_config: dict) -> Tree:
     )
 
 
-def compute_cache_keys(df: pd.DataFrame) -> pd.Series:
+def compute_cache_keys(
+    df: pd.DataFrame, source_config: dict | None = None
+) -> pd.Series:
     """Group trees into cache-equivalence classes by binned characteristics.
 
     Trees with the same (species, binned dbh, binned height, binned crown_ratio)
     share voxelized biomass realizations — they're morphologically
-    indistinguishable within the chosen bin widths. Returns integer codes via
+    indistinguishable within the chosen bin widths. When foliage biomass comes
+    from an inventory column, that per-row biomass value is also part of the
+    key so rows with the same morphology but different supplied biomass do not
+    reuse the first row's cached density arrays. Returns integer codes via
     `groupby().ngroup()`.
 
     See TREEVOX.md for rationale and bin widths.
@@ -280,10 +285,17 @@ def compute_cache_keys(df: pd.DataFrame) -> pd.Series:
     dbh_bin = (df["dbh"] / DBH_BIN_CM).astype("int64")
     height_bin = (df["height"] / HEIGHT_BIN_M).astype("int64")
     cr_bin = (df["crown_ratio"] / CR_BIN).round().astype("int64")
-    return df.groupby(
-        [df["fia_species_code"].astype("int64"), dbh_bin, height_bin, cr_bin],
-        sort=False,
-    ).ngroup()
+    groupers = [
+        df["fia_species_code"].astype("int64"),
+        dbh_bin,
+        height_bin,
+        cr_bin,
+    ]
+    if source_config is not None and (
+        column := foliage_inventory_column(source_config)
+    ):
+        groupers.append(df[column].astype("float64"))
+    return df.groupby(groupers, sort=False).ngroup()
 
 
 def calculate_arrays_to_cache(

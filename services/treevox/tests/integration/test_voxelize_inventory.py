@@ -32,19 +32,19 @@ def test_voxelize_pim_inventory_all_bands(treevox_runner):
         static_inventory="static-test-blue-mtn-pim-inventory",
         bands=[
             "volume_fraction",
-            "bulk_density.foliage",
+            "bulk_density.foliage.live",
             "savr.foliage",
             "fuel_moisture.live",
             "spcd",
             "tree_id",
         ],
-        moisture_model={"method": "uniform", "live": 100.0},
+        moisture_model={"live": {"method": "uniform", "value": 100.0}},
     )
 
     ds = result.ds
     for key in (
         "volume_fraction",
-        "bulk_density.foliage",
+        "bulk_density.foliage.live",
         "savr.foliage",
         "fuel_moisture.live",
         "spcd",
@@ -53,12 +53,16 @@ def test_voxelize_pim_inventory_all_bands(treevox_runner):
         assert key in ds.data_vars, f"{key} missing from zarr"
 
     assert ds["volume_fraction"].dtype == np.float32
-    assert ds["bulk_density.foliage"].dtype == np.float32
+    assert ds["bulk_density.foliage.live"].dtype == np.float32
     assert ds["spcd"].dtype == np.uint16
     assert ds["tree_id"].dtype == np.int32
 
     assert ds["volume_fraction"].values.sum() > 0
-    assert ds["bulk_density.foliage"].values.sum() > 0
+    assert ds["bulk_density.foliage.live"].values.sum() > 0
+
+    # Check that all the nonzero live fuel moisture values are 100 (the uniform value we specified).
+    live_moisture = ds["fuel_moisture.live"].values
+    assert np.all(live_moisture[live_moisture > 0] == 100.0)
 
     tree_ids = np.unique(ds["tree_id"].values)
     tree_ids = tree_ids[tree_ids != -1]

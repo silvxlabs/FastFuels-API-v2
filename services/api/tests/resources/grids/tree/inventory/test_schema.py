@@ -18,12 +18,14 @@ from api.resources.grids.tree.schema import (
     TREE_BAND_DEFS,
     AllometryBiomassSource,
     BiomassComponent,
+    BiomassComponentState,
     BiomassEquations,
     CrownProfileModel,
     FineBiomassConfig,
     InventoryColumnsBiomassSource,
+    MoistureModel,
     TreeBand,
-    UniformMoistureModel,
+    UniformMoistureValue,
     build_tree_bands,
 )
 from pydantic import ValidationError
@@ -34,10 +36,14 @@ class TestTreeBand:
 
     def test_all_expected_bands_present(self):
         expected = {
-            "bulk_density.foliage",
-            "bulk_density.branchwood",
-            "bulk_density.fine",
+            "bulk_density.foliage.live",
+            "bulk_density.foliage.dead",
+            "bulk_density.branchwood.live",
+            "bulk_density.branchwood.dead",
+            "bulk_density.fine.live",
+            "bulk_density.fine.dead",
             "fuel_moisture.live",
+            "fuel_moisture.dead",
             "savr.foliage",
             "spcd",
             "tree_id",
@@ -51,10 +57,14 @@ class TestTreeBand:
     @pytest.mark.parametrize(
         "band,expected_type,expected_unit",
         [
-            (TreeBand.bulk_density_foliage, BandType.continuous, "kg/m³"),
-            (TreeBand.bulk_density_branchwood, BandType.continuous, "kg/m³"),
-            (TreeBand.bulk_density_fine, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_foliage_live, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_foliage_dead, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_branchwood_live, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_branchwood_dead, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_fine_live, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_fine_dead, BandType.continuous, "kg/m³"),
             (TreeBand.fuel_moisture_live, BandType.continuous, "%"),
+            (TreeBand.fuel_moisture_dead, BandType.continuous, "%"),
             (TreeBand.savr_foliage, BandType.continuous, "m⁻¹"),
             (TreeBand.spcd, BandType.categorical, None),
             (TreeBand.tree_id, BandType.categorical, None),
@@ -72,9 +82,9 @@ class TestBuildTreeBands:
     """build_tree_bands assigns indices in request order."""
 
     def test_single_band(self):
-        bands = build_tree_bands([TreeBand.bulk_density_foliage])
+        bands = build_tree_bands([TreeBand.bulk_density_foliage_live])
         assert len(bands) == 1
-        assert bands[0].key == "bulk_density.foliage"
+        assert bands[0].key == "bulk_density.foliage.live"
         assert bands[0].type == BandType.continuous
         assert bands[0].unit == "kg/m³"
         assert bands[0].index == 0
@@ -83,14 +93,14 @@ class TestBuildTreeBands:
         requested = [
             TreeBand.savr_foliage,
             TreeBand.spcd,
-            TreeBand.bulk_density_foliage,
+            TreeBand.bulk_density_foliage_live,
         ]
         bands = build_tree_bands(requested)
         assert [b.index for b in bands] == [0, 1, 2]
         assert [b.key for b in bands] == [
             "savr.foliage",
             "spcd",
-            "bulk_density.foliage",
+            "bulk_density.foliage.live",
         ]
 
     def test_all_bands(self):
@@ -100,19 +110,30 @@ class TestBuildTreeBands:
         assert [b.index for b in bands] == list(range(len(all_bands)))
 
 
-class TestUniformMoistureModel:
-    def test_default_live_value(self):
-        m = UniformMoistureModel()
+class TestUniformMoistureValue:
+    def test_default_value(self):
+        m = UniformMoistureValue()
         assert m.method == "uniform"
-        assert m.live == 100.0
+        assert m.value == 100.0
 
-    def test_override_live_value(self):
-        m = UniformMoistureModel(live=97.0)
-        assert m.live == 97.0
+    def test_override_value(self):
+        m = UniformMoistureValue(value=97.0)
+        assert m.value == 97.0
 
     def test_method_cannot_be_overridden(self):
         with pytest.raises(ValidationError):
-            UniformMoistureModel(method="fosberg")
+            UniformMoistureValue(method="fosberg")
+
+
+class TestMoistureModel:
+    def test_live_and_dead_values(self):
+        model = MoistureModel(
+            live={"method": "uniform", "value": 95.0},
+            dead={"method": "uniform", "value": 8.0},
+        )
+
+        assert model.live.value == 95.0
+        assert model.dead.value == 8.0
 
 
 class TestBiomassSource:
@@ -122,6 +143,8 @@ class TestBiomassSource:
         assert biomass_source.type == "allometry"
         assert biomass_source.equations == BiomassEquations.nsvb
         assert biomass_source.components == [BiomassComponent.foliage]
+        assert biomass_source.component_states[BiomassComponent.foliage].live == 1.0
+        assert biomass_source.component_states[BiomassComponent.foliage].dead == 0.0
         assert biomass_source.fine is None
 
     def test_inventory_column_direct_fine_config(self):
@@ -138,7 +161,28 @@ class TestBiomassSource:
         assert biomass_source.type == "inventory_columns"
         assert biomass_source.columns[BiomassComponent.fine].column == "fine_biomass"
         assert biomass_source.components == [BiomassComponent.fine]
+        assert biomass_source.component_states[BiomassComponent.fine].live == 1.0
         assert biomass_source.fine is None
+
+    def test_component_state_partition_can_be_configured(self):
+        biomass_source = AllometryBiomassSource(
+            components=["foliage"],
+            component_states={"foliage": {"live": 0.8, "dead": 0.2}},
+        )
+
+        assert biomass_source.component_states[BiomassComponent.foliage].live == 0.8
+        assert biomass_source.component_states[BiomassComponent.foliage].dead == 0.2
+
+    def test_component_state_partition_must_sum_to_one(self):
+        with pytest.raises(ValidationError, match="sum to 1.0"):
+            BiomassComponentState(live=0.8, dead=0.3)
+
+    def test_component_state_keys_must_be_requested_components(self):
+        with pytest.raises(ValidationError, match="component_states keys"):
+            AllometryBiomassSource(
+                components=["foliage"],
+                component_states={"branchwood": {"live": 1.0, "dead": 0.0}},
+            )
 
     def test_derived_fine_config(self):
         biomass_source = AllometryBiomassSource(
@@ -233,7 +277,7 @@ class TestCreateTreeInventoryRequest:
         body = {
             "source_inventory_id": "abc123",
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         body.update(overrides)
         return body
@@ -242,7 +286,7 @@ class TestCreateTreeInventoryRequest:
         req = CreateTreeInventoryRequest(**self._minimal())
         assert req.source_inventory_id == "abc123"
         assert req.resolution == (2.0, 2.0, 1.0)
-        assert req.bands == [TreeBand.bulk_density_foliage]
+        assert req.bands == [TreeBand.bulk_density_foliage_live]
         assert req.crown_profile_model == CrownProfileModel.purves
         assert req.biomass_source.equations == BiomassEquations.nsvb
         assert req.biomass_source.components == [BiomassComponent.foliage]
@@ -255,14 +299,14 @@ class TestCreateTreeInventoryRequest:
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(
                 resolution=[2.0, 2.0, 1.0],
-                bands=["bulk_density.foliage"],
+                bands=["bulk_density.foliage.live"],
             )
 
     def test_resolution_is_required(self):
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(
                 source_inventory_id="abc",
-                bands=["bulk_density.foliage"],
+                bands=["bulk_density.foliage.live"],
             )
 
     def test_bands_is_required(self):
@@ -279,7 +323,9 @@ class TestCreateTreeInventoryRequest:
     def test_duplicate_bands_rejected(self):
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(
-                **self._minimal(bands=["bulk_density.foliage", "bulk_density.foliage"])
+                **self._minimal(
+                    bands=["bulk_density.foliage.live", "bulk_density.foliage.live"]
+                )
             )
 
     def test_invalid_band_rejected(self):
@@ -332,27 +378,36 @@ class TestCreateTreeInventoryRequest:
 
     def test_fuel_moisture_live_auto_populates_default_moisture_model(self):
         req = CreateTreeInventoryRequest(
-            **self._minimal(bands=["bulk_density.foliage", "fuel_moisture.live"])
+            **self._minimal(bands=["bulk_density.foliage.live", "fuel_moisture.live"])
         )
         assert req.moisture_model is not None
-        assert req.moisture_model.method == "uniform"
-        assert req.moisture_model.live == 100.0
+        assert req.moisture_model.live.method == "uniform"
+        assert req.moisture_model.live.value == 100.0
+
+    def test_fuel_moisture_dead_auto_populates_default_moisture_model(self):
+        req = CreateTreeInventoryRequest(
+            **self._minimal(bands=["bulk_density.foliage.dead", "fuel_moisture.dead"])
+        )
+        assert req.moisture_model is not None
+        assert req.moisture_model.dead.method == "uniform"
+        assert req.moisture_model.dead.value == 10.0
+        assert req.moisture_model.live is None
 
     def test_fuel_moisture_live_preserves_explicit_moisture_model(self):
         req = CreateTreeInventoryRequest(
             **self._minimal(
-                bands=["bulk_density.foliage", "fuel_moisture.live"],
-                moisture_model={"method": "uniform", "live": 75.0},
+                bands=["bulk_density.foliage.live", "fuel_moisture.live"],
+                moisture_model={"live": {"method": "uniform", "value": 75.0}},
             )
         )
-        assert req.moisture_model.method == "uniform"
-        assert req.moisture_model.live == 75.0
+        assert req.moisture_model.live.method == "uniform"
+        assert req.moisture_model.live.value == 75.0
 
     def test_moisture_model_stripped_when_fuel_moisture_band_absent(self):
         """moisture_model is dropped if fuel_moisture.live is not requested."""
         req = CreateTreeInventoryRequest(
             **self._minimal(
-                moisture_model={"method": "uniform", "live": 50.0},
+                moisture_model={"live": {"method": "uniform", "value": 50.0}},
             )
         )
         assert req.moisture_model is None
@@ -361,8 +416,8 @@ class TestCreateTreeInventoryRequest:
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(
                 **self._minimal(
-                    bands=["bulk_density.foliage", "fuel_moisture.live"],
-                    moisture_model={"method": "fosberg", "live": 100.0},
+                    bands=["bulk_density.foliage.live", "fuel_moisture.live"],
+                    moisture_model={"live": {"method": "fosberg", "value": 100.0}},
                 )
             )
 
@@ -374,7 +429,7 @@ class TestCreateTreeInventoryRequest:
             source_inventory_id="inv123",
             resolution=[1.0, 1.0, 0.5],
             bands=[
-                "bulk_density.foliage",
+                "bulk_density.foliage.live",
                 "savr.foliage",
                 "fuel_moisture.live",
                 "volume_fraction",
@@ -385,12 +440,12 @@ class TestCreateTreeInventoryRequest:
                 "equations": "jenkins",
                 "components": ["foliage"],
             },
-            moisture_model={"method": "uniform", "live": 97.0},
+            moisture_model={"live": {"method": "uniform", "value": 97.0}},
         )
         assert req.name == "Tree voxelization"
         assert req.crown_profile_model == CrownProfileModel.beta
         assert req.biomass_source.equations == BiomassEquations.jenkins
-        assert req.moisture_model.live == 97.0
+        assert req.moisture_model.live.value == 97.0
 
     @pytest.mark.parametrize(
         "example_name,example_value", ALL_TREE_INVENTORY_EXAMPLE_VALUES
@@ -414,7 +469,7 @@ class TestSeedField:
         body = {
             "source_inventory_id": "inv1",
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         body.update(overrides)
         return body
@@ -444,7 +499,7 @@ class TestSeedField:
             TreeInventorySource(
                 source_inventory_id="inv1",
                 resolution=(2.0, 2.0, 1.0),
-                bands=[TreeBand.bulk_density_foliage],
+                bands=[TreeBand.bulk_density_foliage_live],
                 crown_profile_model=CrownProfileModel.purves,
                 biomass_source=AllometryBiomassSource(),
             )
@@ -455,7 +510,7 @@ class TestTreeInventorySource:
         source = TreeInventorySource(
             source_inventory_id="inv123",
             resolution=[2.0, 2.0, 1.0],
-            bands=[TreeBand.bulk_density_foliage],
+            bands=[TreeBand.bulk_density_foliage_live],
             crown_profile_model=CrownProfileModel.purves,
             biomass_source=AllometryBiomassSource(),
             seed=42,
@@ -468,10 +523,12 @@ class TestTreeInventorySource:
         source = TreeInventorySource(
             source_inventory_id="inv123",
             resolution=(2.0, 2.0, 1.0),
-            bands=[TreeBand.bulk_density_foliage, TreeBand.fuel_moisture_live],
+            bands=[TreeBand.bulk_density_foliage_live, TreeBand.fuel_moisture_live],
             crown_profile_model=CrownProfileModel.purves,
             biomass_source=AllometryBiomassSource(),
-            moisture_model=UniformMoistureModel(live=85.0),
+            moisture_model=MoistureModel(
+                live=UniformMoistureValue(value=85.0),
+            ),
             seed=42,
         )
         data = source.model_dump(mode="json", exclude_none=True)
@@ -479,12 +536,13 @@ class TestTreeInventorySource:
         assert data["product"] == "tree"
         assert data["source_inventory_id"] == "inv123"
         assert data["resolution"] == [2.0, 2.0, 1.0]
-        assert data["bands"] == ["bulk_density.foliage", "fuel_moisture.live"]
+        assert data["bands"] == ["bulk_density.foliage.live", "fuel_moisture.live"]
         assert data["crown_profile_model"] == "purves"
         assert data["biomass_source"] == {
             "type": "allometry",
             "equations": "nsvb",
             "components": ["foliage"],
+            "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
         }
-        assert data["moisture_model"] == {"method": "uniform", "live": 85.0}
+        assert data["moisture_model"] == {"live": {"method": "uniform", "value": 85.0}}
         assert data["seed"] == 42

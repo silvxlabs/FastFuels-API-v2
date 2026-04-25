@@ -100,17 +100,18 @@ def complete_3d_grid(firestore_client, domain_for_testing):
             "description": "3D tree fuel grid from tree inventory voxelization",
             "source_inventory_id": "test-source-inv",
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
             "crown_profile_model": "purves",
             "biomass_source": {
                 "type": "allometry",
                 "equations": "nsvb",
                 "components": ["foliage"],
+                "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
             },
         },
         bands=[
             {
-                "key": "bulk_density.foliage",
+                "key": "bulk_density.foliage.live",
                 "type": "continuous",
                 "unit": "kg/m³",
                 "index": 0,

@@ -20,7 +20,7 @@ def _make_payload(rng_seed=42, trees_n=2):
     """Build a minimal worker payload with mock-friendly data.
 
     The buffer covers the full grid so placement math doesn't clip trees
-    in these unit tests. bulk_density.foliage is included so tests can
+    in these unit tests. bulk_density.foliage.live is included so tests can
     observe per-biomass-array variation (volume_fraction only sees the mask).
     """
     dims = voxelize.compute_grid_dimensions(
@@ -32,7 +32,7 @@ def _make_payload(rng_seed=42, trees_n=2):
         "volume_fraction": np.zeros(
             (dims["nz"], dims["ny"], dims["nx"]), dtype="float32"
         ),
-        "bulk_density.foliage": np.zeros(
+        "bulk_density.foliage.live": np.zeros(
             (dims["nz"], dims["ny"], dims["nx"]), dtype="float32"
         ),
         "tree_id": np.full((dims["nz"], dims["ny"], dims["nx"]), -1, dtype="int32"),
@@ -65,8 +65,9 @@ def _make_payload(rng_seed=42, trees_n=2):
                 "type": "allometry",
                 "equations": "nsvb",
                 "components": ["foliage"],
+                "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
             },
-            "moisture_model": {"method": "uniform", "live": 100.0},
+            "moisture_model": {"live": {"method": "uniform", "value": 100.0}},
         },
         "chunk_y_start": 0,
         "chunk_x_start": 0,
@@ -132,11 +133,11 @@ class TestRun:
         _patch_fastfuels(monkeypatch)
         payload = _make_payload()
         payload["buffers"] = {
-            "bulk_density.fine": np.zeros_like(
-                payload["buffers"]["bulk_density.foliage"]
+            "bulk_density.fine.live": np.zeros_like(
+                payload["buffers"]["bulk_density.foliage.live"]
             )
         }
-        payload["source_config"]["bands"] = ["bulk_density.fine"]
+        payload["source_config"]["bands"] = ["bulk_density.fine.live"]
         payload["source_config"]["biomass_source"]["components"] = ["fine"]
         payload["source_config"]["biomass_source"]["fine"] = {
             "recipe": "foliage_plus_branchwood_fraction",
@@ -168,7 +169,7 @@ class TestDeterminism:
     def test_different_seeds_may_differ(self, monkeypatch):
         """With a cache of >1 realizations, different seeds pick different
         biomass arrays. Mock scales the whole biomass array by the incoming
-        sample seed so `bulk_density.foliage` observably diverges between runs.
+        sample seed so `bulk_density.foliage.live` observably diverges between runs.
         """
         canopy = np.ones((3, 3, 3), dtype="float32")
 
@@ -200,8 +201,8 @@ class TestDeterminism:
         assert "error" not in r1, r1.get("error")
         assert "error" not in r2, r2.get("error")
         assert not np.array_equal(
-            r1["buffers"]["bulk_density.foliage"],
-            r2["buffers"]["bulk_density.foliage"],
+            r1["buffers"]["bulk_density.foliage.live"],
+            r2["buffers"]["bulk_density.foliage.live"],
         )
 
 

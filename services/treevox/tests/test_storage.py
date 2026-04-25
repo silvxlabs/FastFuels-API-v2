@@ -44,9 +44,15 @@ class TestBandSpecs:
     def test_keys_match_tree_bands(self):
         expected = {
             "volume_fraction",
-            "bulk_density.foliage",
+            "bulk_density.foliage.live",
+            "bulk_density.foliage.dead",
+            "bulk_density.branchwood.live",
+            "bulk_density.branchwood.dead",
+            "bulk_density.fine.live",
+            "bulk_density.fine.dead",
             "savr.foliage",
             "fuel_moisture.live",
+            "fuel_moisture.dead",
             "spcd",
             "tree_id",
         }
@@ -56,9 +62,15 @@ class TestBandSpecs:
         "key,dtype,fill",
         [
             ("volume_fraction", "float32", 0.0),
-            ("bulk_density.foliage", "float32", 0.0),
+            ("bulk_density.foliage.live", "float32", 0.0),
+            ("bulk_density.foliage.dead", "float32", 0.0),
+            ("bulk_density.branchwood.live", "float32", 0.0),
+            ("bulk_density.branchwood.dead", "float32", 0.0),
+            ("bulk_density.fine.live", "float32", 0.0),
+            ("bulk_density.fine.dead", "float32", 0.0),
             ("savr.foliage", "float32", 0.0),
             ("fuel_moisture.live", "float32", 0.0),
+            ("fuel_moisture.dead", "float32", 0.0),
             ("spcd", "uint16", 0),
             ("tree_id", "int32", -1),
         ],

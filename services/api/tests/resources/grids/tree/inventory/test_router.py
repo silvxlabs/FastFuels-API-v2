@@ -81,7 +81,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
 
@@ -103,18 +103,19 @@ class TestCreateTreeInventoryGrid:
         assert source["product"] == "tree"
         assert source["source_inventory_id"] == tree_inventory_for_voxelization["id"]
         assert source["resolution"] == [2.0, 2.0, 1.0]
-        assert source["bands"] == ["bulk_density.foliage"]
+        assert source["bands"] == ["bulk_density.foliage.live"]
         assert source["crown_profile_model"] == "purves"
         assert source["biomass_source"] == {
             "type": "allometry",
             "equations": "nsvb",
             "components": ["foliage"],
+            "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
         }
         assert source["moisture_model"] is None
 
         # Single continuous band with index 0.
         assert len(data["bands"]) == 1
-        assert data["bands"][0]["key"] == "bulk_density.foliage"
+        assert data["bands"][0]["key"] == "bulk_density.foliage.live"
         assert data["bands"][0]["type"] == "continuous"
         assert data["bands"][0]["unit"] == "kg/m³"
         assert data["bands"][0]["index"] == 0
@@ -127,7 +128,7 @@ class TestCreateTreeInventoryGrid:
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
             "bands": [
-                "bulk_density.foliage",
+                "bulk_density.foliage.live",
                 "fuel_moisture.live",
                 "savr.foliage",
                 "spcd",
@@ -143,8 +144,7 @@ class TestCreateTreeInventoryGrid:
         assert [b["index"] for b in data["bands"]] == [0, 1, 2, 3, 4, 5]
         # fuel_moisture.live in bands triggers default uniform moisture model.
         assert data["source"]["moisture_model"] == {
-            "method": "uniform",
-            "live": 100.0,
+            "live": {"method": "uniform", "value": 100.0},
         }
 
     def test_request_with_metadata(
@@ -154,7 +154,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [1.5, 1.5, 0.75],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
             "name": "Named tree grid",
             "description": "A tree grid with metadata",
             "tags": ["tree", "test"],
@@ -174,7 +174,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
@@ -187,7 +187,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
@@ -199,7 +199,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
@@ -211,7 +211,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(
             self.route("00000000000000000000000000000000"), json=body
@@ -228,7 +228,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_with_different_owner["id"]), json=body)
         assert response.status_code == 404
@@ -239,7 +239,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": "00000000000000000000000000000000",
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 404
@@ -253,7 +253,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_in_different_domain["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 404
@@ -276,7 +276,7 @@ class TestCreateTreeInventoryGrid:
             body = {
                 "source_inventory_id": pending_inv["id"],
                 "resolution": [2.0, 2.0, 1.0],
-                "bands": ["bulk_density.foliage"],
+                "bands": ["bulk_density.foliage.live"],
             }
             response = client.post(self.route(domain_for_testing["id"]), json=body)
             assert response.status_code == 422
@@ -288,7 +288,7 @@ class TestCreateTreeInventoryGrid:
     def test_missing_source_inventory_id_returns_422(self, client, domain_for_testing):
         body = {
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
@@ -298,7 +298,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
@@ -330,7 +330,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage", "bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live", "bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
@@ -364,7 +364,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": resolution,
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
@@ -375,7 +375,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
             "crown_profile_model": "watershed",
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -387,7 +387,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
             "biomass_source": {
                 "type": "allometry",
                 "equations": "allometric",
@@ -403,8 +403,8 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage", "fuel_moisture.live"],
-            "moisture_model": {"method": "fosberg", "live": 100.0},
+            "bands": ["bulk_density.foliage.live", "fuel_moisture.live"],
+            "moisture_model": {"live": {"method": "fosberg", "value": 100.0}},
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
@@ -417,13 +417,26 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage", "fuel_moisture.live"],
+            "bands": ["bulk_density.foliage.live", "fuel_moisture.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
         assert response.json()["source"]["moisture_model"] == {
-            "method": "uniform",
-            "live": 100.0,
+            "live": {"method": "uniform", "value": 100.0},
+        }
+
+    def test_fuel_moisture_dead_auto_populates_default_moisture_model(
+        self, client, domain_for_testing, tree_inventory_for_voxelization
+    ):
+        body = {
+            "source_inventory_id": tree_inventory_for_voxelization["id"],
+            "resolution": [2.0, 2.0, 1.0],
+            "bands": ["bulk_density.foliage.dead", "fuel_moisture.dead"],
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201
+        assert response.json()["source"]["moisture_model"] == {
+            "dead": {"method": "uniform", "value": 10.0},
         }
 
     def test_moisture_model_stripped_when_fuel_moisture_band_absent(
@@ -433,8 +446,8 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
-            "moisture_model": {"method": "uniform", "live": 50.0},
+            "bands": ["bulk_density.foliage.live"],
+            "moisture_model": {"live": {"method": "uniform", "value": 50.0}},
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
@@ -446,7 +459,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
             "biomass_source": {
                 "type": "allometry",
                 "equations": "jenkins",
@@ -459,7 +472,11 @@ class TestCreateTreeInventoryGrid:
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
-        assert response.json()["source"]["biomass_source"] == body["biomass_source"]
+        expected = {
+            **body["biomass_source"],
+            "component_states": {"fine": {"live": 1.0, "dead": 0.0}},
+        }
+        assert response.json()["source"]["biomass_source"] == expected
 
     def test_inventory_column_biomass_source_is_stored(
         self, client, domain_for_testing, tree_inventory_for_voxelization
@@ -467,7 +484,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.foliage"],
+            "bands": ["bulk_density.foliage.live"],
             "biomass_source": {
                 "type": "inventory_columns",
                 "columns": {
@@ -481,7 +498,11 @@ class TestCreateTreeInventoryGrid:
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
-        assert response.json()["source"]["biomass_source"] == body["biomass_source"]
+        expected = {
+            **body["biomass_source"],
+            "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
+        }
+        assert response.json()["source"]["biomass_source"] == expected
 
     def test_non_foliage_output_bands_are_accepted_for_async_failure(
         self, client, domain_for_testing, tree_inventory_for_voxelization
@@ -489,7 +510,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": [2.0, 2.0, 1.0],
-            "bands": ["bulk_density.fine"],
+            "bands": ["bulk_density.fine.live"],
             "biomass_source": {
                 "type": "allometry",
                 "equations": "nsvb",
@@ -503,8 +524,8 @@ class TestCreateTreeInventoryGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
         data = response.json()
-        assert data["source"]["bands"] == ["bulk_density.fine"]
-        assert data["bands"][0]["key"] == "bulk_density.fine"
+        assert data["source"]["bands"] == ["bulk_density.fine.live"]
+        assert data["bands"][0]["key"] == "bulk_density.fine.live"
 
     @pytest.mark.parametrize(
         "example_name,example_value", ALL_TREE_INVENTORY_EXAMPLE_VALUES

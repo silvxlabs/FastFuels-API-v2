@@ -24,10 +24,14 @@ class TreeBand(StrEnum):
     Grid document. Band definitions (type, unit) live in TREE_BAND_DEFS.
     """
 
-    bulk_density_foliage = "bulk_density.foliage"
-    bulk_density_branchwood = "bulk_density.branchwood"
-    bulk_density_fine = "bulk_density.fine"
+    bulk_density_foliage_live = "bulk_density.foliage.live"
+    bulk_density_foliage_dead = "bulk_density.foliage.dead"
+    bulk_density_branchwood_live = "bulk_density.branchwood.live"
+    bulk_density_branchwood_dead = "bulk_density.branchwood.dead"
+    bulk_density_fine_live = "bulk_density.fine.live"
+    bulk_density_fine_dead = "bulk_density.fine.dead"
     fuel_moisture_live = "fuel_moisture.live"
+    fuel_moisture_dead = "fuel_moisture.dead"
     savr_foliage = "savr.foliage"
     spcd = "spcd"
     tree_id = "tree_id"
@@ -35,23 +39,43 @@ class TreeBand(StrEnum):
 
 
 TREE_BAND_DEFS: dict[TreeBand, dict] = {
-    TreeBand.bulk_density_foliage: {
-        "key": "bulk_density.foliage",
+    TreeBand.bulk_density_foliage_live: {
+        "key": "bulk_density.foliage.live",
         "type": BandType.continuous,
         "unit": "kg/m³",
     },
-    TreeBand.bulk_density_branchwood: {
-        "key": "bulk_density.branchwood",
+    TreeBand.bulk_density_foliage_dead: {
+        "key": "bulk_density.foliage.dead",
         "type": BandType.continuous,
         "unit": "kg/m³",
     },
-    TreeBand.bulk_density_fine: {
-        "key": "bulk_density.fine",
+    TreeBand.bulk_density_branchwood_live: {
+        "key": "bulk_density.branchwood.live",
+        "type": BandType.continuous,
+        "unit": "kg/m³",
+    },
+    TreeBand.bulk_density_branchwood_dead: {
+        "key": "bulk_density.branchwood.dead",
+        "type": BandType.continuous,
+        "unit": "kg/m³",
+    },
+    TreeBand.bulk_density_fine_live: {
+        "key": "bulk_density.fine.live",
+        "type": BandType.continuous,
+        "unit": "kg/m³",
+    },
+    TreeBand.bulk_density_fine_dead: {
+        "key": "bulk_density.fine.dead",
         "type": BandType.continuous,
         "unit": "kg/m³",
     },
     TreeBand.fuel_moisture_live: {
         "key": "fuel_moisture.live",
+        "type": BandType.continuous,
+        "unit": "%",
+    },
+    TreeBand.fuel_moisture_dead: {
+        "key": "fuel_moisture.dead",
         "type": BandType.continuous,
         "unit": "%",
     },
@@ -124,6 +148,21 @@ class FineBiomassConfig(BaseModel):
     branchwood_fraction: float = Field(gt=0, le=1)
 
 
+class BiomassComponentState(BaseModel):
+    """Live/dead partition for one biomass component."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    live: float = Field(default=1.0, ge=0, le=1)
+    dead: float = Field(default=0.0, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_partition_sums_to_one(self):
+        if abs((self.live + self.dead) - 1.0) > 1e-9:
+            raise ValueError("Component live/dead fractions must sum to 1.0.")
+        return self
+
+
 class BiomassSourceBase(BaseModel):
     """Common biomass component request behavior."""
 
@@ -149,6 +188,20 @@ class BiomassSourceBase(BaseModel):
         if self.fine is not None and BiomassComponent.fine not in self.components:
             raise ValueError("fine configuration requires 'fine' in components.")
 
+        unknown_states = [
+            component.value
+            for component in self.component_states
+            if component not in self.components
+        ]
+        if unknown_states:
+            raise ValueError(
+                "component_states keys must also be listed in components: "
+                f"{', '.join(unknown_states)}."
+            )
+
+        for component in self.components:
+            self.component_states.setdefault(component, BiomassComponentState())
+
         return self
 
 
@@ -160,6 +213,10 @@ class AllometryBiomassSource(BiomassSourceBase):
     components: list[BiomassComponent] = Field(
         default_factory=lambda: [BiomassComponent.foliage],
         min_length=1,
+    )
+    component_states: dict[BiomassComponent, BiomassComponentState] = Field(
+        default_factory=dict,
+        description="Per-component live/dead biomass partition fractions.",
     )
     fine: FineBiomassConfig | None = None
 
@@ -181,6 +238,10 @@ class InventoryColumnsBiomassSource(BiomassSourceBase):
     components: list[BiomassComponent] = Field(
         default_factory=lambda: [BiomassComponent.foliage],
         min_length=1,
+    )
+    component_states: dict[BiomassComponent, BiomassComponentState] = Field(
+        default_factory=dict,
+        description="Per-component live/dead biomass partition fractions.",
     )
     fine: FineBiomassConfig | None = None
 
@@ -216,17 +277,23 @@ BiomassSource = Annotated[
 ]
 
 
-class UniformMoistureModel(BaseModel):
-    """Uniform live fuel moisture — every canopy voxel gets the same value."""
+class UniformMoistureValue(BaseModel):
+    """Uniform fuel moisture for one fuel state."""
 
     method: Literal["uniform"] = "uniform"
-    live: float = Field(
+    value: float = Field(
         default=100.0,
-        description="Live fuel moisture content (%), applied uniformly.",
+        description="Fuel moisture content (%), applied uniformly.",
     )
 
 
-MoistureModel = UniformMoistureModel
+class MoistureModel(BaseModel):
+    """Live/dead fuel moisture settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    live: UniformMoistureValue | None = None
+    dead: UniformMoistureValue | None = None
 
 
 def build_tree_bands(requested: list[TreeBand]) -> list[Band]:

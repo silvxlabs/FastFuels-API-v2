@@ -33,11 +33,15 @@ logger = logging.getLogger(__name__)
 # uniquely identifies cells written by a tree — see masked_merge.
 BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "volume_fraction": ("float32", 0.0),
-    "bulk_density.foliage": ("float32", 0.0),
-    "bulk_density.branchwood": ("float32", 0.0),
-    "bulk_density.fine": ("float32", 0.0),
+    "bulk_density.foliage.live": ("float32", 0.0),
+    "bulk_density.foliage.dead": ("float32", 0.0),
+    "bulk_density.branchwood.live": ("float32", 0.0),
+    "bulk_density.branchwood.dead": ("float32", 0.0),
+    "bulk_density.fine.live": ("float32", 0.0),
+    "bulk_density.fine.dead": ("float32", 0.0),
     "savr.foliage": ("float32", 0.0),
     "fuel_moisture.live": ("float32", 0.0),
+    "fuel_moisture.dead": ("float32", 0.0),
     "spcd": ("uint16", 0),
     "tree_id": ("int32", -1),
 }
@@ -144,7 +148,7 @@ def masked_merge(
     For each band, cells where the worker wrote (buffer != fill_value) overwrite
     the union. Overlapping halo cells between adjacent chunks combine via
     last-writer-wins on the specific cells each chunk touched — for accumulating
-    bands (`volume_fraction`, `bulk_density.foliage`) the workers already
+    bands (`volume_fraction`, `bulk_density.foliage.live`) the workers already
     accumulated within their own buffers, so writes are disjoint by
     construction.
 

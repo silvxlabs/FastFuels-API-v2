@@ -77,11 +77,11 @@ async def create_tree_inventory_grid(
     - **biomass_source**: (optional) Biomass source and requested components. The
       default uses NSVB allometry for foliage. Inventory-column sources must
       provide per-tree kg values for each requested direct component.
-    - **moisture_model**: (optional) Live fuel moisture configuration.
-      Required shape: `{"method": "uniform", "live": <percent>}`. Applied
-      only when `fuel_moisture.live` is in `bands`. Defaults to
-      `{"method": "uniform", "live": 100.0}` when `fuel_moisture.live` is
-      requested without an explicit model.
+    - **moisture_model**: (optional) Live/dead fuel moisture configuration.
+      Required shape: `{"live": {"method": "uniform", "value": <percent>}}`
+      and/or `{"dead": {"method": "uniform", "value": <percent>}}`.
+      Applied only when matching `fuel_moisture.*` bands are requested. Live
+      defaults to 100%; dead defaults to 10%.
     - **name**, **description**, **tags**: (optional) Standard metadata.
 
     ## Response

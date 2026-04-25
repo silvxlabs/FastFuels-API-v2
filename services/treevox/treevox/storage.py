@@ -29,8 +29,7 @@ from lib.gcs import delete_directory
 logger = logging.getLogger(__name__)
 
 
-# (dtype, fill_value) per band. Fill values are chosen so `data != fill_value`
-# uniquely identifies cells written by a tree — see masked_merge.
+# (dtype, fill_value) per band.
 BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "volume_fraction": ("float32", 0.0),
     "bulk_density.foliage.live": ("float32", 0.0),
@@ -45,6 +44,18 @@ BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "spcd": ("uint16", 0),
     "tree_id": ("int32", -1),
 }
+
+ADDITIVE_BANDS = frozenset(
+    {
+        "volume_fraction",
+        "bulk_density.foliage.live",
+        "bulk_density.foliage.dead",
+        "bulk_density.branchwood.live",
+        "bulk_density.branchwood.dead",
+        "bulk_density.fine.live",
+        "bulk_density.fine.dead",
+    }
+)
 
 
 def gcs_path(grid_id: str) -> str:
@@ -145,17 +156,18 @@ def masked_merge(
 ) -> xr.Dataset:
     """Merge worker results into the union Dataset.
 
-    For each band, cells where the worker wrote (buffer != fill_value) overwrite
-    the union. Overlapping halo cells between adjacent chunks combine via
-    last-writer-wins on the specific cells each chunk touched — for accumulating
-    bands (`volume_fraction`, `bulk_density.foliage.live`) the workers already
-    accumulated within their own buffers, so writes are disjoint by
-    construction.
+    Each worker starts from the same pre-batch union slice. For additive bands
+    (`volume_fraction`, `bulk_density.*`) merge only the worker's delta above
+    that original slice, so overlapping halo cells sum contributions from every
+    chunk instead of keeping the last worker's full buffer. For overwrite bands
+    (`spcd`, `tree_id`, `savr.*`, `fuel_moisture.*`) only cells changed by that
+    worker overwrite the merged union, preserving last-writer-wins semantics
+    without letting an untouched neighboring halo revert a previous write.
 
-    Correctness fix vs v1: v1 used `mask = data > 0`, which breaks for
-    `tree_id` (fill=-1: any value > -1 including 0 wins; but real 0 shouldn't
-    differ from fill-0 by that rule) and `spcd` (fill=0: real species code 0
-    is indistinguishable from fill). V2 uses `data != fill_value` per band.
+    Like the previous fill-value mask, comparing against the original union
+    cannot distinguish a real write whose value exactly equals the baseline.
+    That is acceptable for current bands: real `tree_id` never equals -1, and
+    species code / moisture / SAV writes equal to the baseline are no-ops.
     """
     merged = union_ds.copy(deep=True)
     for result in chunk_results:
@@ -174,10 +186,13 @@ def masked_merge(
             x_slice.stop - union_x.start,
         )
         for key, buffer in result["buffers"].items():
-            fill = BAND_SPECS[key][1]
-            mask = buffer != fill
+            original = union_ds[key].values[:, rel_y, rel_x]
             target = merged[key].values[:, rel_y, rel_x]
-            target[mask] = buffer[mask]
+            if key in ADDITIVE_BANDS:
+                target += buffer - original
+            else:
+                mask = buffer != original
+                target[mask] = buffer[mask]
             merged[key].values[:, rel_y, rel_x] = target
     return merged
 

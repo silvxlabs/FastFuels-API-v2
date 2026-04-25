@@ -1,34 +1,49 @@
 {
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [
-            [276743.8, 5159747.44],
-            [277743.8, 5159747.44],
-            [277743.8, 5160747.44],
-            [276743.8, 5160747.44],
-            [276743.8, 5159747.44]
-          ]
-        ]
-      },
-      "properties": {},
-      "id": "0"
-    }
-  ],
-  "name": "meta-chm-4-tiles",
-  "description": "1km domain spanning 4 Meta CHM tiles near Blue Mountain",
+  "created_on": "2026-02-23T00:00:00.000000",
   "crs": {
-    "type": "name",
     "properties": {
       "name": "EPSG:32612"
-    }
+    },
+    "type": "name"
   },
-  "tags": [],
+  "description": "1km domain spanning 4 Meta CHM tiles near Blue Mountain",
+  "features": [
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              276743.8,
+              5159747.44
+            ],
+            [
+              277743.8,
+              5159747.44
+            ],
+            [
+              277743.8,
+              5160747.44
+            ],
+            [
+              276743.8,
+              5160747.44
+            ],
+            [
+              276743.8,
+              5159747.44
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "0",
+      "properties": {},
+      "type": "Feature"
+    }
+  ],
   "id": "meta_chm_4_tiles_test_domain",
-  "created_on": "2026-02-23T00:00:00.000000",
-  "modified_on": "2026-02-23T00:00:00.000000"
+  "modified_on": "2026-02-23T00:00:00.000000",
+  "name": "meta-chm-4-tiles",
+  "tags": [],
+  "type": "FeatureCollection"
 }

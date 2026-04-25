@@ -1,20 +1,28 @@
 {
-  "name": "test-chm-meta",
+  "bands": [
+    {
+      "index": 0,
+      "key": "chm",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunk_shape": [
+    512,
+    512
+  ],
   "description": "Meta canopy height for integration test",
-  "status": "pending",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-chm-meta",
   "progress": null,
   "source": {
+    "description": "Meta global canopy height model at ~1m resolution",
     "name": "chm",
     "product": "meta",
-    "version": "2",
-    "description": "Meta global canopy height model at ~1m resolution"
+    "version": "2"
   },
-  "modifications": [],
-  "bands": [
-    {"key": "chm", "type": "continuous", "unit": "m", "index": 0}
-  ],
-  "georeference": null,
-  "error": null,
-  "tags": [],
-  "chunk_shape": [512, 512]
+  "status": "pending",
+  "tags": []
 }

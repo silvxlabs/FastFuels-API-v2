@@ -184,9 +184,11 @@ class GridDataOrder(StrEnum):
 
 class GridDataChunkMetadata(BaseModel):
     index: int
-    shape: tuple[int, int]
-    offset: tuple[int, int]
+    shape: tuple[int, int] | tuple[int, int, int]
+    offset: tuple[int, int] | tuple[int, int, int]
     transform: tuple[float, float, float, float, float, float]
+    z_origin: float | None = None
+    z_resolution: float | None = None
 
 
 class GridDataResponse(BaseModel):

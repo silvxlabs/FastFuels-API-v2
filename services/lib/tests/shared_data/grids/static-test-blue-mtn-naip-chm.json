@@ -1,26 +1,23 @@
 {
-  "chunk_shape": [
-    512,
-    512
-  ],
-  "name": "",
-  "status": "completed",
-  "description": "",
-  "modifications": [],
   "bands": [
     {
-      "key": "chm",
       "index": 0,
+      "key": "chm",
       "type": "continuous",
       "unit": "m"
     }
   ],
-  "tags": [],
-  "progress": {
-    "percent": 100,
-    "message": "Complete"
-  },
+  "chunk_shape": [
+    512,
+    512
+  ],
+  "description": "",
   "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      1479,
+      2186
+    ],
     "transform": [
       0.5999999999981885,
       0.0,
@@ -28,25 +25,28 @@
       0.0,
       -0.5999999999979836,
       5190648.0001211995
-    ],
-    "crs": "EPSG:32611",
-    "shape": [
-      1479,
-      2186
     ]
   },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
   "source": {
-    "name": "chm",
     "description": "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)",
+    "name": "chm",
+    "product": "naip",
     "tile_metadata": {
+      "acquisition_dates": null,
+      "native_crs": "EPSG:32611",
+      "tile_count": 1,
+      "tile_source": null,
       "tiles": [
         "http://rangeland.ntsg.umt.edu/data/naip-chm/2023/11/m_4611416_nw_11_060_20231019_20240103_chm.tif"
-      ],
-      "tile_source": null,
-      "native_crs": "EPSG:32611",
-      "acquisition_dates": null,
-      "tile_count": 1
-    },
-    "product": "naip"
-  }
+      ]
+    }
+  },
+  "status": "completed",
+  "tags": []
 }

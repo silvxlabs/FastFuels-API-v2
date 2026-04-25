@@ -1,10 +1,4 @@
 {
-  "name": "",
-  "status": "completed",
-  "description": "",
-  "error": null,
-  "modifications": [],
-  "tags": [],
   "columns": [
     {
       "key": "x",
@@ -42,11 +36,8 @@
       "unit": null
     }
   ],
-  "progress": {
-    "percent": 100,
-    "message": "Complete"
-  },
-  "type": "tree",
+  "description": "",
+  "error": null,
   "georeference": {
     "bounds": [
       720227.9398802927,
@@ -56,13 +47,22 @@
     ],
     "crs": "EPSG:32611"
   },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
   "source": {
-    "name": "chm",
     "algorithm": {
-      "name": "lmf",
+      "footprint_size": 3,
       "min_height": 2.0,
-      "footprint_size": 3
+      "name": "lmf"
     },
+    "name": "chm",
     "source_chm_grid_id": "static-test-blue-mtn-naip-chm"
-  }
+  },
+  "status": "completed",
+  "tags": [],
+  "type": "tree"
 }

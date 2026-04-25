@@ -78,6 +78,9 @@ class TestBandSpecs:
     def test_per_band_dtype_and_fill(self, key, dtype, fill):
         assert storage.BAND_SPECS[key] == (dtype, fill)
 
+    def test_additive_bands_are_known_band_specs(self):
+        assert storage.ADDITIVE_BANDS <= set(storage.BAND_SPECS)
+
 
 # init_store
 
@@ -303,6 +306,63 @@ class TestMaskedMerge:
         )
         assert merged["volume_fraction"].values[0, 2, 2] == 7.0
         assert merged["volume_fraction"].values[0, 1, 6] == 9.0
+
+    def test_overlapping_additive_halos_sum_worker_deltas(self):
+        """Adjacent chunks start from the same union, so only deltas should add."""
+        union = self._union_ds(nz=1, ny=6, nx=6, keys=("volume_fraction",))
+        union["volume_fraction"].values[0, 2, 2] = 5.0
+
+        buf_a = union["volume_fraction"].values[:, 0:5, 0:5].copy()
+        buf_a[0, 2, 2] += 2.0
+        result_a = {
+            "chunk_location": (0, 0),
+            "y_slice": slice(0, 5),
+            "x_slice": slice(0, 5),
+            "buffers": {"volume_fraction": buf_a},
+        }
+
+        buf_b = union["volume_fraction"].values[:, 0:5, 2:6].copy()
+        buf_b[0, 2, 0] += 3.0
+        result_b = {
+            "chunk_location": (0, 1),
+            "y_slice": slice(0, 5),
+            "x_slice": slice(2, 6),
+            "buffers": {"volume_fraction": buf_b},
+        }
+
+        merged = storage.masked_merge(
+            union, [result_a, result_b], slice(0, 6), slice(0, 6)
+        )
+
+        assert merged["volume_fraction"].values[0, 2, 2] == 10.0
+
+    def test_overwrite_halo_carryover_does_not_revert_previous_worker(self):
+        """An untouched halo carrying pre-batch data should not overwrite a write."""
+        union = self._union_ds(nz=1, ny=6, nx=6, keys=("spcd",))
+        union["spcd"].values[0, 2, 2] = 131
+
+        buf_a = union["spcd"].values[:, 0:5, 0:5].copy()
+        buf_a[0, 2, 2] = 202
+        result_a = {
+            "chunk_location": (0, 0),
+            "y_slice": slice(0, 5),
+            "x_slice": slice(0, 5),
+            "buffers": {"spcd": buf_a},
+        }
+
+        buf_b = union["spcd"].values[:, 0:5, 2:6].copy()
+        result_b = {
+            "chunk_location": (0, 1),
+            "y_slice": slice(0, 5),
+            "x_slice": slice(2, 6),
+            "buffers": {"spcd": buf_b},
+        }
+
+        merged = storage.masked_merge(
+            union, [result_a, result_b], slice(0, 6), slice(0, 6)
+        )
+
+        assert merged["spcd"].values[0, 2, 2] == 202
 
     def test_worker_error_raises(self):
         union = self._union_ds(keys=("volume_fraction",))

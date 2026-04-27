@@ -24,6 +24,7 @@ class LandfireFbfm40Version(StrEnum):
     v2020 = "2020"
     v2022 = "2022"
     v2023 = "2023"
+    v2024 = "2024"
 
 
 class NonBurnableFuelModel(StrEnum):
@@ -66,7 +67,7 @@ class CreateLandfireFbfm40Request(CreateGridRequestBase):
     To convert codes to fuel parameters, use /grids/lookup/fbfm40.
     """
 
-    version: LandfireFbfm40Version = LandfireFbfm40Version.v2022
+    version: LandfireFbfm40Version = LandfireFbfm40Version.v2024
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
 
     @field_validator("remove_non_burnable")

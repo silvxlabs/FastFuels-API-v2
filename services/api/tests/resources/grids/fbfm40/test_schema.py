@@ -105,16 +105,16 @@ class TestCreateLandfireFbfm40Request:
     def test_minimal_valid_request(self):
         """Minimal request with no required body fields."""
         request = CreateLandfireFbfm40Request()
-        assert request.version == "2022"
+        assert request.version == "2024"
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
         assert request.modifications == []
 
     def test_version_defaults_to_2022(self):
-        """version defaults to '2022'."""
+        """version defaults to '2024'."""
         request = CreateLandfireFbfm40Request()
-        assert request.version == "2022"
+        assert request.version == "2024"
 
     def test_version_can_be_overridden(self):
         """version can be set to a different valid value."""

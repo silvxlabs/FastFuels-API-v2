@@ -92,7 +92,7 @@ def handle_landfire(
 ) -> xr.Dataset:
     """Handle LANDFIRE source grids."""
     product = source["product"]
-    version = source.get("version", "2022")
+    version = source.get("version", "2024")
 
     progress(f"Fetching LANDFIRE {product} v{version}...", 10)
 

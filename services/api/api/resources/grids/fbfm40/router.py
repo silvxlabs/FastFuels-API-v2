@@ -60,7 +60,7 @@ async def create_landfire_fbfm40(
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
-    - **version**: (optional) LANDFIRE version. Default: "2022".
+    - **version**: (optional) LANDFIRE version. Default: "2024".
 
     ## Response
 

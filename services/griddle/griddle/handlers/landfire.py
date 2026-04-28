@@ -70,14 +70,14 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
 
 def fetch_fbfm40(
     roi: gpd.GeoDataFrame,
-    version: str = "2022",
+    version: str = "2024",
     remove_non_burnable: list[str] | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM40 fuel model codes.
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        version: LANDFIRE version year (default "2022")
+        version: LANDFIRE version year (default "2024")
         remove_non_burnable: List of non-burnable fuel model names to remove
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.

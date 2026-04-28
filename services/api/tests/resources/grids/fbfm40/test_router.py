@@ -35,7 +35,7 @@ class TestCreateLandfireFbfm40:
         # Check source
         assert data["source"]["name"] == "landfire"
         assert data["source"]["product"] == "fbfm40"
-        assert data["source"]["version"] == "2022"
+        assert data["source"]["version"] == "2024"
 
         # Check single fbfm band
         assert len(data["bands"]) == 1

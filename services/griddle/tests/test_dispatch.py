@@ -39,7 +39,7 @@ class TestHandleLandfire:
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
     def test_default_version(self, mock_fetch):
-        """handle_landfire uses 2022 as default version."""
+        """handle_landfire uses 2024 as default version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
 
@@ -47,9 +47,7 @@ class TestHandleLandfire:
 
         handle_landfire(mock_gdf, source, progress)
 
-        # Check that fetch_fbfm40 was called with default version
-        _, call_kwargs = mock_fetch.call_args
-        assert call_kwargs == {} or mock_fetch.call_args[0][1] == "2022"
+        assert mock_fetch.call_args[0][1] == "2024"
 
     def test_unknown_product_raises(self):
         """handle_landfire raises ProcessingError for unknown product."""

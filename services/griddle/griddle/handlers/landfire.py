@@ -95,6 +95,24 @@ def fetch_fbfm40(
     return _to_dataset({"fbfm": data})
 
 
+def fetch_fccs(
+    roi: gpd.GeoDataFrame,
+    version: str = "2023",
+) -> xr.Dataset:
+    """Fetch LANDFIRE FCCS fuel model codes.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest
+        version: LANDFIRE version year (default "2023")
+
+    Returns:
+        Dataset with a single "fccs" variable (int32 categorical codes)
+    """
+    data = _fetch_landfire_raster(roi, "FCCS", version)
+
+    return _to_dataset({"fccs": data})
+
+
 def _remove_non_burnable_blocks(grid: ndarray, non_burnable_keys: list[int]) -> ndarray:
     """Replace non-burnable fuel model codes with neighboring burnable codes.
 

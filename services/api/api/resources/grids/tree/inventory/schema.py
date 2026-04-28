@@ -27,6 +27,7 @@ from api.resources.grids.tree.schema import (
     MoistureModel,
     TreeBand,
     UniformMoistureValue,
+    validate_bulk_density_bands_have_components,
 )
 
 Resolution3D = tuple[PositiveFloat, PositiveFloat, PositiveFloat]
@@ -65,6 +66,11 @@ class TreeInventorySource(BaseModel):
             "Persisted so the grid can be exactly reproduced."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_band_components_configured(self) -> Self:
+        validate_bulk_density_bands_have_components(self.bands, self.biomass_source)
+        return self
 
 
 class CreateTreeInventoryRequest(BaseModel):
@@ -147,4 +153,9 @@ class CreateTreeInventoryRequest(BaseModel):
         else:
             self.moisture_model = None
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_band_components_configured(self) -> Self:
+        validate_bulk_density_bands_have_components(self.bands, self.biomass_source)
         return self

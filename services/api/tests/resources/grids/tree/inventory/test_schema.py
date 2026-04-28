@@ -455,6 +455,88 @@ class TestCreateTreeInventoryRequest:
         req = CreateTreeInventoryRequest(**body)
         assert req.source_inventory_id == "abc123", example_name
 
+    def test_band_component_not_in_biomass_components_rejected(self):
+        """bulk_density bands must reference a configured biomass component."""
+        with pytest.raises(ValidationError, match="biomass_source.components"):
+            CreateTreeInventoryRequest(
+                **self._minimal(
+                    bands=["bulk_density.branchwood.live"],
+                    biomass_source={
+                        "type": "allometry",
+                        "equations": "nsvb",
+                        "components": ["foliage"],
+                    },
+                )
+            )
+
+    def test_inventory_columns_band_component_mismatch_rejected(self):
+        """Same gate applies for inventory_columns biomass sources."""
+        with pytest.raises(ValidationError, match="biomass_source.components"):
+            CreateTreeInventoryRequest(
+                **self._minimal(
+                    bands=["bulk_density.foliage.live"],
+                    biomass_source={
+                        "type": "inventory_columns",
+                        "columns": {"branchwood": {"column": "bw_kg", "unit": "kg"}},
+                        "components": ["branchwood"],
+                    },
+                )
+            )
+
+    def test_band_component_matching_components_accepted(self):
+        """foliage bands with foliage configured pass."""
+        req = CreateTreeInventoryRequest(
+            **self._minimal(
+                bands=["bulk_density.foliage.live", "bulk_density.foliage.dead"],
+                biomass_source={
+                    "type": "allometry",
+                    "equations": "nsvb",
+                    "components": ["foliage"],
+                    "component_states": {"foliage": {"live": 0.9, "dead": 0.1}},
+                },
+            )
+        )
+        assert req.biomass_source.components == [BiomassComponent.foliage]
+
+    def test_non_bulk_density_bands_are_unaffected_by_component_check(self):
+        """volume_fraction / spcd / tree_id / savr / fuel_moisture don't gate."""
+        req = CreateTreeInventoryRequest(
+            **self._minimal(
+                bands=["volume_fraction", "spcd", "tree_id", "savr.foliage"],
+                biomass_source={
+                    "type": "allometry",
+                    "equations": "nsvb",
+                    "components": ["foliage"],
+                },
+            )
+        )
+        assert req.bands == [
+            TreeBand.volume_fraction,
+            TreeBand.spcd,
+            TreeBand.tree_id,
+            TreeBand.savr_foliage,
+        ]
+
+    def test_band_component_mismatch_lists_every_offending_band(self):
+        """Multiple unconfigured bulk_density bands are reported together."""
+        with pytest.raises(ValidationError) as exc_info:
+            CreateTreeInventoryRequest(
+                **self._minimal(
+                    bands=[
+                        "bulk_density.branchwood.live",
+                        "bulk_density.fine.live",
+                    ],
+                    biomass_source={
+                        "type": "allometry",
+                        "equations": "nsvb",
+                        "components": ["foliage"],
+                    },
+                )
+            )
+        message = str(exc_info.value)
+        assert "branchwood" in message
+        assert "fine" in message
+
 
 class TestSeedField:
     """The `seed` field makes voxelization reproducible.
@@ -546,3 +628,19 @@ class TestTreeInventorySource:
         }
         assert data["moisture_model"] == {"live": {"method": "uniform", "value": 85.0}}
         assert data["seed"] == 42
+
+    def test_band_component_mismatch_rejected(self):
+        """Source rejects bulk_density bands whose component isn't configured.
+
+        Defense in depth: even if a stored doc somehow held a mismatched
+        bands/biomass_source pair, reconstruction fails loudly.
+        """
+        with pytest.raises(ValidationError, match="biomass_source.components"):
+            TreeInventorySource(
+                source_inventory_id="inv1",
+                resolution=(2.0, 2.0, 1.0),
+                bands=[TreeBand.bulk_density_branchwood_live],
+                crown_profile_model=CrownProfileModel.purves,
+                biomass_source=AllometryBiomassSource(),  # foliage default
+                seed=42,
+            )

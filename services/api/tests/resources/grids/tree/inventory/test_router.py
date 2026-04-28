@@ -409,6 +409,24 @@ class TestCreateTreeInventoryGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
+    def test_band_component_mismatch_returns_422(
+        self, client, domain_for_testing, tree_inventory_for_voxelization
+    ):
+        """API rejects bulk_density bands whose component isn't configured."""
+        body = {
+            "source_inventory_id": tree_inventory_for_voxelization["id"],
+            "resolution": [2.0, 2.0, 1.0],
+            "bands": ["bulk_density.foliage.live"],
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "nsvb",
+                "components": ["branchwood"],
+            },
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 422
+        assert "biomass_source.components" in str(response.json()["detail"]).lower()
+
     # --- Default-resolution behavior ---
 
     def test_fuel_moisture_live_auto_populates_default_moisture_model(

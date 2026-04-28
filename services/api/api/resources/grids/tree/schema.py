@@ -299,3 +299,41 @@ class MoistureModel(BaseModel):
 def build_tree_bands(requested: list[TreeBand]) -> list[Band]:
     """Build Band objects for requested tree bands with indices in request order."""
     return [Band(index=i, **TREE_BAND_DEFS[band]) for i, band in enumerate(requested)]
+
+
+def _bulk_density_component(band: TreeBand) -> BiomassComponent | None:
+    """Return the biomass component a `bulk_density.<component>.<state>` band
+    references, or None for bands that aren't bulk-density bands.
+    """
+    parts = band.value.split(".")
+    if len(parts) == 3 and parts[0] == "bulk_density":
+        try:
+            return BiomassComponent(parts[1])
+        except ValueError:
+            return None
+    return None
+
+
+def validate_bulk_density_bands_have_components(
+    bands: list[TreeBand],
+    biomass_source: "AllometryBiomassSource | InventoryColumnsBiomassSource",
+) -> None:
+    """Reject requests where a bulk_density band's component isn't configured.
+
+    Without this gate the worker either fails opaquely (priority dispatch picks
+    the unimplemented component → NotImplementedError) or — once branchwood/fine
+    compute lands — silently emits a zero band for the unconfigured component.
+    """
+    configured = set(biomass_source.components)
+    missing = [
+        (band.value, component.value)
+        for band in bands
+        if (component := _bulk_density_component(band)) is not None
+        and component not in configured
+    ]
+    if missing:
+        details = ", ".join(f"{b!r} requires {c!r}" for b, c in missing)
+        raise ValueError(
+            "Requested bulk_density bands reference components not in "
+            f"biomass_source.components: {details}"
+        )

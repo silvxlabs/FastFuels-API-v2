@@ -92,17 +92,22 @@ def handle_landfire(
 ) -> xr.Dataset:
     """Handle LANDFIRE source grids."""
     product = source["product"]
-    version = source.get("version", "2024")
-
-    progress(f"Fetching LANDFIRE {product} v{version}...", 10)
 
     match product:
         case "fbfm40":
+            version = source.get("version", "2024")
+            progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
             return landfire.fetch_fbfm40(
                 domain_gdf, version, remove_non_burnable=remove_non_burnable
             )
+        case "fccs":
+            version = source.get("version", "2023")
+            progress(f"Fetching LANDFIRE {product} v{version}...", 10)
+            return landfire.fetch_fccs(domain_gdf, version)
         case "topography":
+            version = source.get("version", "2020")
+            progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             return landfire.fetch_topography(
                 domain_gdf, version, source["bands"], progress
             )

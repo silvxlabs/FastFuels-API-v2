@@ -15,6 +15,7 @@ from griddle.handlers.landfire import (
     _most_frequent,
     _remove_non_burnable_blocks,
     fetch_fbfm40,
+    fetch_fccs,
     fetch_topography,
 )
 
@@ -91,6 +92,50 @@ class TestFetchFbfm40:
         """FBFM40 codes should be <= 204."""
         result = fetch_fbfm40(roi=roi)
         assert result["fbfm"].values.max() <= 204
+
+
+class TestFetchFccs:
+    """Integration tests for fetch_fccs."""
+
+    def test_returns_dataset(self, roi):
+        """fetch_fccs returns a Dataset."""
+        result = fetch_fccs(roi=roi)
+        assert isinstance(result, xr.Dataset)
+
+    def test_has_fccs_variable(self, roi):
+        """Dataset contains a 'fccs' variable."""
+        result = fetch_fccs(roi=roi)
+        assert "fccs" in result.data_vars
+
+    def test_fccs_shape(self, test_domain, roi):
+        """The fccs variable has the expected spatial shape."""
+        result = fetch_fccs(roi=roi)
+        assert result["fccs"].shape == test_domain.expected_shape
+
+    def test_fccs_dtype(self, roi):
+        """The fccs variable is int32 (codes up to 12990133 exceed int16 range)."""
+        result = fetch_fccs(roi=roi)
+        assert result["fccs"].dtype == "int32"
+
+    def test_crs_preserved(self, roi):
+        """CRS is preserved via rioxarray."""
+        result = fetch_fccs(roi=roi)
+        assert result.rio.crs == roi.crs
+
+    def test_fccs_valid_values_in_range(self, roi):
+        """Mapped FCCS codes should be between 0 and 12990133."""
+        result = fetch_fccs(roi=roi)
+        values = result["fccs"].values
+        valid_mask = ~np.isin(values, [-1111, -9999])
+        assert values[valid_mask].min() >= 0
+        assert values[valid_mask].max() <= 12990133
+
+    def test_fccs_fill_values_are_expected(self, roi):
+        """Any negative values are only the known fill values (-1111, -9999)."""
+        result = fetch_fccs(roi=roi)
+        values = result["fccs"].values
+        negative_values = np.unique(values[values < 0])
+        assert set(negative_values).issubset({-1111, -9999})
 
 
 class TestFetchTopography:

@@ -91,7 +91,7 @@ class TestHandleLandfire:
 
         result = handle_landfire(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2023")
+        mock_fetch.assert_called_once_with(mock_gdf, "2023", remove_bare_ground=False)
         assert result == mock_result
 
     @patch("griddle.dispatch.landfire.fetch_fccs")

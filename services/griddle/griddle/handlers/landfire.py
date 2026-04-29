@@ -98,17 +98,25 @@ def fetch_fbfm40(
 def fetch_fccs(
     roi: gpd.GeoDataFrame,
     version: str = "2023",
+    remove_bare_ground: bool = False,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FCCS fuel model codes.
 
     Args:
         roi: GeoDataFrame defining the region of interest
         version: LANDFIRE version year (default "2023")
+        remove_bare_ground: If True, removes FCCS fuelbed ID 0 (bare ground).
+            Removed cells are replaced by the most frequent neighboring
+            non-bare-ground fuelbed via majority filter.
 
     Returns:
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
     data = _fetch_landfire_raster(roi, "FCCS", version)
+
+    if remove_bare_ground:
+        filtered = _remove_non_burnable_blocks(data.values, [0])
+        data = data.copy(data=filtered)
 
     return _to_dataset({"fccs": data})
 
@@ -121,7 +129,7 @@ def _remove_non_burnable_blocks(grid: ndarray, non_burnable_keys: list[int]) -> 
     filter is applied iteratively until no targeted codes remain.
 
     Args:
-        grid: 2D array of FBFM40 fuel model codes
+        grid: 2D array of LANDFIRE (FBFM40 or FCCS) fuel model codes
         non_burnable_keys: Numeric codes to replace (e.g., [91, 93, 99])
 
     Returns:

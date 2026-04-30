@@ -12,14 +12,14 @@ domain_id comes from the URL path parameter, not the request body.
 # Minimum request — only required fields.
 EXAMPLE_MINIMAL = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.foliage.live"],
 }
 
 # Explicit foliage-compatible bands list.
 EXAMPLE_WITH_BANDS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": [
         "bulk_density.foliage.live",
         "fuel_moisture.live",
@@ -33,7 +33,7 @@ EXAMPLE_WITH_BANDS = {
 # Moisture model configured explicitly.
 EXAMPLE_WITH_MOISTURE_MODEL = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.foliage.live", "fuel_moisture.live"],
     "moisture_model": {"live": {"method": "uniform", "value": 75.0}},
 }
@@ -41,7 +41,7 @@ EXAMPLE_WITH_MOISTURE_MODEL = {
 # Split one component into live/dead biomass states and assign state moisture.
 EXAMPLE_WITH_LIVE_DEAD_PARTITION = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": [
         "bulk_density.foliage.live",
         "bulk_density.foliage.dead",
@@ -68,7 +68,7 @@ EXAMPLE_WITH_LIVE_DEAD_PARTITION = {
 # Non-default crown profile and biomass models.
 EXAMPLE_WITH_ALTERNATE_MODELS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.foliage.live"],
     "crown_profile_model": "beta",
     "biomass_source": {
@@ -81,7 +81,7 @@ EXAMPLE_WITH_ALTERNATE_MODELS = {
 # Foliage biomass supplied directly by the inventory.
 EXAMPLE_WITH_INVENTORY_BIOMASS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.foliage.live"],
     "biomass_source": {
         "type": "inventory_columns",
@@ -99,7 +99,7 @@ EXAMPLE_WITH_INVENTORY_BIOMASS = {
 # not-implemented processing error until branchwood compute lands.
 EXAMPLE_WITH_BRANCHWOOD_BIOMASS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.branchwood.live"],
     "biomass_source": {
         "type": "allometry",
@@ -113,7 +113,7 @@ EXAMPLE_WITH_BRANCHWOOD_BIOMASS = {
 # component compute lands.
 EXAMPLE_WITH_DERIVED_FINE_BIOMASS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.fine.live"],
     "biomass_source": {
         "type": "allometry",
@@ -129,7 +129,7 @@ EXAMPLE_WITH_DERIVED_FINE_BIOMASS = {
 # Pinned seed for reproducible voxelization.
 EXAMPLE_WITH_SEED = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "resolution": [2.0, 2.0, 1.0],
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.foliage.live"],
     "seed": 42,
 }

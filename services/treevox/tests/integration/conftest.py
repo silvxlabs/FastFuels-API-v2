@@ -218,7 +218,7 @@ def treevox_runner():
         trees: pd.DataFrame | None = None,
         domain_file: str = "blue_mtn.json",
         bands: list[str] | None = None,
-        resolution: tuple[float, float, float] = (2.0, 2.0, 1.0),
+        resolution: dict | None = None,
         crown_profile_model: str = "purves",
         biomass_source: dict | None = None,
         moisture_model: dict | None = None,
@@ -227,6 +227,7 @@ def treevox_runner():
         timeout: int = 600,
     ) -> TreevoxResult:
         bands = bands or ["volume_fraction", "bulk_density.foliage.live"]
+        resolution = resolution or {"horizontal": 2.0, "vertical": 1.0}
         biomass_source = biomass_source or {
             "type": "allometry",
             "equations": "nsvb",
@@ -295,7 +296,7 @@ def treevox_runner():
                 "product": "tree",
                 "description": "3D tree fuel grid from tree inventory voxelization",
                 "source_inventory_id": inventory_id,
-                "resolution": list(resolution),
+                "resolution": resolution,
                 "bands": bands,
                 "crown_profile_model": crown_profile_model,
                 "biomass_source": biomass_source,

@@ -30,7 +30,28 @@ from api.resources.grids.tree.schema import (
     validate_bulk_density_bands_have_components,
 )
 
-Resolution3D = tuple[PositiveFloat, PositiveFloat, PositiveFloat]
+
+class Resolution3D(BaseModel):
+    """Voxel resolution for a 3D grid.
+
+    `horizontal` applies to both x and y (fastfuels-core requires isotropic
+    horizontal resolution). `vertical` is independent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    horizontal: PositiveFloat = Field(description="Cell size in x and y, meters.")
+    vertical: PositiveFloat = Field(description="Cell size in z, meters.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_list_shape(cls, data):
+        if isinstance(data, (list, tuple)):
+            raise ValueError(
+                'resolution must be an object with "horizontal" and '
+                '"vertical" fields (in meters).'
+            )
+        return data
 
 
 def _generate_random_seed() -> int:
@@ -54,7 +75,7 @@ class TreeInventorySource(BaseModel):
 
     source_inventory_id: str
     resolution: Resolution3D = Field(
-        description="Voxel resolution (x, y, z) in meters.",
+        description="Voxel resolution (horizontal x/y, vertical z) in meters.",
     )
     bands: list[TreeBand]
     crown_profile_model: CrownProfileModel
@@ -91,7 +112,7 @@ class CreateTreeInventoryRequest(BaseModel):
         description="ID of a completed tree inventory to voxelize.",
     )
     resolution: Resolution3D = Field(
-        description="Voxel resolution (x, y, z) in meters.",
+        description="Voxel resolution (horizontal x/y, vertical z) in meters.",
     )
     bands: list[TreeBand] = Field(
         min_length=1,

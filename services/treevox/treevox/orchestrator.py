@@ -130,10 +130,13 @@ def _load_inventory_dataframe(
 
 def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
     """Compute grid dimensions, chunk sizing, and the chunk processing order."""
+    res = grid["source"]["resolution"]
+    if isinstance(res, dict):
+        resolution_tuple = (res["horizontal"], res["horizontal"], res["vertical"])
+    else:
+        resolution_tuple = tuple(res)
     try:
-        dims = voxelize.compute_grid_dimensions(
-            domain_gdf, df, grid["source"]["resolution"]
-        )
+        dims = voxelize.compute_grid_dimensions(domain_gdf, df, resolution_tuple)
     except voxelize.InvalidResolutionError as e:
         raise ProcessingError(
             code="INVALID_RESOLUTION",

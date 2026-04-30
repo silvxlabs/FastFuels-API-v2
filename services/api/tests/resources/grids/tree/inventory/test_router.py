@@ -80,7 +80,7 @@ class TestCreateTreeInventoryGrid:
         """Minimal request with required fields creates a pending grid."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -102,7 +102,7 @@ class TestCreateTreeInventoryGrid:
         assert source["name"] == "inventory"
         assert source["product"] == "tree"
         assert source["source_inventory_id"] == tree_inventory_for_voxelization["id"]
-        assert source["resolution"] == [2.0, 2.0, 1.0]
+        assert source["resolution"] == {"horizontal": 2.0, "vertical": 1.0}
         assert source["bands"] == ["bulk_density.foliage.live"]
         assert source["crown_profile_model"] == "purves"
         assert source["biomass_source"] == {
@@ -126,7 +126,7 @@ class TestCreateTreeInventoryGrid:
         """Request with all six TreeBand values succeeds."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": [
                 "bulk_density.foliage.live",
                 "fuel_moisture.live",
@@ -153,7 +153,7 @@ class TestCreateTreeInventoryGrid:
         """Name, description, tags round-trip through the endpoint."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [1.5, 1.5, 0.75],
+            "resolution": {"horizontal": 1.5, "vertical": 0.75},
             "bands": ["bulk_density.foliage.live"],
             "name": "Named tree grid",
             "description": "A tree grid with metadata",
@@ -173,7 +173,7 @@ class TestCreateTreeInventoryGrid:
         """Georeference is null until Treevox completes voxelization."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -186,7 +186,7 @@ class TestCreateTreeInventoryGrid:
         """chunk_shape is null until Treevox computes the 3D chunk layout."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -198,7 +198,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -210,7 +210,7 @@ class TestCreateTreeInventoryGrid:
     def test_invalid_domain_returns_404(self, client, tree_inventory_for_voxelization):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(
@@ -227,7 +227,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_with_different_owner["id"]), json=body)
@@ -238,7 +238,7 @@ class TestCreateTreeInventoryGrid:
     def test_nonexistent_source_inventory_returns_404(self, client, domain_for_testing):
         body = {
             "source_inventory_id": "00000000000000000000000000000000",
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -252,7 +252,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_in_different_domain["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -275,7 +275,7 @@ class TestCreateTreeInventoryGrid:
         try:
             body = {
                 "source_inventory_id": pending_inv["id"],
-                "resolution": [2.0, 2.0, 1.0],
+                "resolution": {"horizontal": 2.0, "vertical": 1.0},
                 "bands": ["bulk_density.foliage.live"],
             }
             response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -287,7 +287,7 @@ class TestCreateTreeInventoryGrid:
 
     def test_missing_source_inventory_id_returns_422(self, client, domain_for_testing):
         body = {
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -308,7 +308,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
@@ -318,7 +318,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": [],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -329,7 +329,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live", "bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -340,7 +340,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["not_a_real_band"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -349,9 +349,9 @@ class TestCreateTreeInventoryGrid:
     @pytest.mark.parametrize(
         "resolution",
         [
-            [0.0, 2.0, 1.0],
-            [-1.0, 2.0, 1.0],
-            [2.0, 2.0, 0.0],
+            {"horizontal": 0.0, "vertical": 1.0},
+            {"horizontal": -1.0, "vertical": 1.0},
+            {"horizontal": 2.0, "vertical": 0.0},
         ],
     )
     def test_non_positive_resolution_returns_422(
@@ -374,7 +374,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
             "crown_profile_model": "watershed",
         }
@@ -386,7 +386,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
             "biomass_source": {
                 "type": "allometry",
@@ -402,7 +402,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live", "fuel_moisture.live"],
             "moisture_model": {"live": {"method": "fosberg", "value": 100.0}},
         }
@@ -415,7 +415,7 @@ class TestCreateTreeInventoryGrid:
         """API rejects bulk_density bands whose component isn't configured."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
             "biomass_source": {
                 "type": "allometry",
@@ -434,7 +434,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live", "fuel_moisture.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -448,7 +448,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.dead", "fuel_moisture.dead"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -463,7 +463,7 @@ class TestCreateTreeInventoryGrid:
         """moisture_model should be stripped when fuel_moisture.live is not requested."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
             "moisture_model": {"live": {"method": "uniform", "value": 50.0}},
         }
@@ -476,7 +476,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
             "biomass_source": {
                 "type": "allometry",
@@ -501,7 +501,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
             "biomass_source": {
                 "type": "inventory_columns",
@@ -527,7 +527,7 @@ class TestCreateTreeInventoryGrid:
     ):
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.fine.live"],
             "biomass_source": {
                 "type": "allometry",

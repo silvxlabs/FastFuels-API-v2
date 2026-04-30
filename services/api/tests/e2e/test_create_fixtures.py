@@ -59,7 +59,7 @@ def test_create_blue_mtn_pim_inventory(
             "seed": 898870608,
         },
         static_name="static-test-blue-mtn-pim-inventory",
-        grid_dependency="static-test-blue-mtn-pim-treemap",
+        dependencies={"grids": ["static-test-blue-mtn-pim-treemap"]},
     )
 
 
@@ -88,9 +88,7 @@ def test_create_blue_mtn_tree_inventory_voxels(
             "seed": 42,
         },
         static_name="static-test-blue-mtn-tree-inventory-voxels",
-        resource_dependencies={
-            "inventories": ["static-test-blue-mtn-pim-inventory"],
-        },
+        dependencies={"inventories": ["static-test-blue-mtn-pim-inventory"]},
     )
 
 
@@ -119,7 +117,7 @@ def test_create_blue_mtn_chm_inventory(
             "source_chm_grid_id": "static-test-blue-mtn-naip-chm",
         },
         static_name="static-test-blue-mtn-chm-inventory",
-        grid_dependency="static-test-blue-mtn-naip-chm",
+        dependencies={"grids": ["static-test-blue-mtn-naip-chm"]},
     )
 
 
@@ -152,4 +150,5 @@ def test_create_blue_mtn_fbfm40_2m(create_static_fixture, client, blue_mountain_
             "method": "nearest",
         },
         static_name="static-test-blue-mtn-fbfm40-2m",
+        dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm40"]},
     )

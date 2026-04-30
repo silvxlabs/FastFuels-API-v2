@@ -49,11 +49,11 @@ Some fixtures depend on other static fixtures as source grids or inventories.
 For example, a resampled FBFM40 grid at 2m needs the LANDFIRE FBFM40 static
 fixture to exist, and a tree voxel grid needs a static tree inventory.
 
-Any `static-test-*` values in the request body are **automatically detected**
-and temporarily registered in Firestore as grids so the API's source validation
-passes. Dependencies on other static resource types are passed explicitly with
-`resource_dependencies={"inventories": [...]}`. Use `@pytest.mark.dependency`
-to enforce ordering:
+Pass every dependency explicitly via the `dependencies` argument, keyed by
+resource type. Each ref is temporarily registered as a Firestore doc so the
+API's source validation passes during the POST, then unregistered after.
+Use `@pytest.mark.dependency` to enforce ordering so the parent fixture's
+GCS data and JSON template exist before the child runs:
 
 ```python
 @pytest.mark.dependency()
@@ -82,8 +82,12 @@ def test_create_blue_mtn_fbfm40_2m(
             "method": "nearest",
         },
         static_name="static-test-blue-mtn-fbfm40-2m",
+        dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm40"]},
     )
 ```
+
+For inventory deps, use the `"inventories"` key. Mix freely:
+`dependencies={"grids": [...], "inventories": [...]}`.
 
 `@pytest.mark.dependency` ensures base fixtures run first. If a dependency
 fails, dependent tests are automatically skipped.

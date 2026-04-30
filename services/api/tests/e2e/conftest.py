@@ -4,11 +4,12 @@ Fixtures for generating static test data via the full API pipeline.
 The ``create_static_fixture`` fixture drives the end-to-end flow:
 POST grid -> poll Firestore -> copy zarr to static path -> save JSON template.
 
-For chained fixtures (e.g., resample depends on lookup which depends on
-LANDFIRE), any ``static-test-*`` values found in the request body are
-automatically registered as temporary Firestore grid docs so the API's
-source validation passes. Use ``@pytest.mark.dependency`` to control
-test ordering.
+For chained fixtures, the caller passes ``dependencies={"grids": [...],
+"inventories": [...]}`` listing every static fixture the API will look up
+during source validation; each is temporarily registered as a Firestore doc
+for the duration of the request. Use ``@pytest.mark.dependency`` to control
+test ordering so the parent fixture's GCS data + JSON template exist before
+the child runs.
 """
 
 import json
@@ -35,8 +36,6 @@ logger = logging.getLogger(__name__)
 STATIC_GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 STATIC_INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
 
-STATIC_PREFIX = "static-test-"
-
 
 @dataclass(frozen=True)
 class StaticResourceType:
@@ -58,20 +57,6 @@ STATIC_RESOURCE_TYPES = {
 # Fields to strip from grid documents when saving JSON templates.
 # These are runtime-specific and get set dynamically in tests.
 STRIP_FIELDS = {"id", "domain_id", "owner_id", "created_on", "modified_on"}
-
-
-def _find_static_refs(obj) -> list[str]:
-    """Find all static-test-* string values in a nested dict/list."""
-    refs = []
-    if isinstance(obj, str) and obj.startswith(STATIC_PREFIX):
-        refs.append(obj)
-    elif isinstance(obj, dict):
-        for v in obj.values():
-            refs.extend(_find_static_refs(v))
-    elif isinstance(obj, list):
-        for item in obj:
-            refs.extend(_find_static_refs(item))
-    return refs
 
 
 def _poll_for_completion(
@@ -177,22 +162,6 @@ def _register_static_resource(
     return static_name
 
 
-def _register_static_as_grid(
-    fs_client: firestore.Client,
-    static_name: str,
-    owner_id: str,
-    domain_id: str,
-) -> str:
-    """Temporarily register a static fixture as a completed grid in Firestore."""
-    return _register_static_resource(
-        fs_client,
-        resource_type="grids",
-        static_name=static_name,
-        owner_id=owner_id,
-        domain_id=domain_id,
-    )
-
-
 def _unregister_static_resource(
     fs_client: firestore.Client, resource_type: str, static_name: str
 ) -> None:
@@ -204,9 +173,27 @@ def _unregister_static_resource(
     )
 
 
-def _unregister_static_grid(fs_client: firestore.Client, grid_id: str) -> None:
-    """Remove a temporarily-registered static grid from Firestore."""
-    _unregister_static_resource(fs_client, "grids", grid_id)
+def _register_dependencies(
+    fs_client: firestore.Client,
+    dependencies: dict[str, list[str]] | None,
+    owner_id: str,
+    domain_id: str,
+) -> list[tuple[str, str]]:
+    """Register every dependency in Firestore. Returns (resource_type, ref) tuples for cleanup."""
+    registered: list[tuple[str, str]] = []
+    for resource_type, refs in (dependencies or {}).items():
+        if resource_type not in STATIC_RESOURCE_TYPES:
+            supported = ", ".join(sorted(STATIC_RESOURCE_TYPES))
+            raise ValueError(
+                f"Unsupported static resource dependency type {resource_type!r}. "
+                f"Supported types: {supported}."
+            )
+        for ref in refs:
+            _register_static_resource(
+                fs_client, resource_type, ref, owner_id, domain_id
+            )
+            registered.append((resource_type, ref))
+    return registered
 
 
 @pytest.fixture
@@ -217,12 +204,11 @@ def create_static_fixture(firestore_client, test_owner_id):
     to a static path, saves a JSON template, then cleans up the
     temporary grid.
 
-    Any ``static-test-*`` values found in ``body`` are automatically
-    registered as temporary Firestore grid docs (with the test user's owner_id
-    and domain_id) so the API can validate them as source grids. Static
-    resource dependencies can be passed explicitly via
-    ``resource_dependencies``. All temporary dependency documents are cleaned up
-    after the grid is created, regardless of success or failure.
+    Pass ``dependencies={"grids": [...], "inventories": [...]}`` listing every
+    static fixture the API will look up during source validation. Each ref is
+    temporarily registered as a Firestore doc (with the test user's owner_id
+    and domain_id) and unregistered after the grid is created, regardless of
+    success or failure.
 
     Use ``@pytest.mark.dependency`` on the test functions to control
     execution order for chained fixtures.
@@ -234,36 +220,11 @@ def create_static_fixture(firestore_client, test_owner_id):
         endpoint,
         body,
         static_name,
-        resource_dependencies=None,
+        dependencies: dict[str, list[str]] | None = None,
     ):
-        # Auto-detect static-test-* references in the request body
-        static_refs = _find_static_refs(body)
-        resource_dependencies = resource_dependencies or {}
-
-        # Register grid dependencies as temporary Firestore grid docs.
-        registered = []
-        for ref in static_refs:
-            if ref in resource_dependencies.get("grids", []):
-                continue
-            _register_static_as_grid(firestore_client, ref, test_owner_id, domain_id)
-            registered.append(("grids", ref))
-
-        for resource_type, refs in resource_dependencies.items():
-            if resource_type not in STATIC_RESOURCE_TYPES:
-                supported = ", ".join(sorted(STATIC_RESOURCE_TYPES))
-                raise ValueError(
-                    f"Unsupported static resource dependency type {resource_type!r}. "
-                    f"Supported types: {supported}."
-                )
-            for ref in refs:
-                _register_static_resource(
-                    firestore_client,
-                    resource_type,
-                    ref,
-                    test_owner_id,
-                    domain_id,
-                )
-                registered.append((resource_type, ref))
+        registered = _register_dependencies(
+            firestore_client, dependencies, test_owner_id, domain_id
+        )
 
         try:
             # Create the grid via the API
@@ -365,19 +326,23 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
     parquet to a static path, saves a JSON template, then cleans up the
     temporary inventory.
 
-    The PIM grid dependency is registered as a temporary Firestore doc
-    so the API's source grid validation passes.
+    Pass ``dependencies={"grids": [...], "inventories": [...]}`` listing every
+    static fixture the API will look up during source validation. Each ref is
+    temporarily registered as a Firestore doc and unregistered after, regardless
+    of success or failure.
     """
 
-    def _create(client, domain_id, endpoint, body, static_name, grid_dependency=None):
-        registered = []
-
-        # Register grid dependency if provided
-        if grid_dependency:
-            _register_static_as_grid(
-                firestore_client, grid_dependency, test_owner_id, domain_id
-            )
-            registered.append(grid_dependency)
+    def _create(
+        client,
+        domain_id,
+        endpoint,
+        body,
+        static_name,
+        dependencies: dict[str, list[str]] | None = None,
+    ):
+        registered = _register_dependencies(
+            firestore_client, dependencies, test_owner_id, domain_id
+        )
 
         try:
             # Create the inventory via the API
@@ -417,8 +382,8 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
 
         finally:
             # Always clean up dependency registrations
-            for ref in registered:
-                _unregister_static_grid(firestore_client, ref)
+            for resource_type, ref in registered:
+                _unregister_static_resource(firestore_client, resource_type, ref)
 
     yield _create
 

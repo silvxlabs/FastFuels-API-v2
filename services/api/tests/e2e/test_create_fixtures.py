@@ -74,7 +74,7 @@ def test_create_blue_mtn_tree_inventory_voxels(
         endpoint="/grids/tree/inventory",
         body={
             "source_inventory_id": "static-test-blue-mtn-pim-inventory",
-            "resolution": [20.0, 20.0, 5.0],
+            "resolution": {"horizontal": 2, "vertical": 1},
             "bands": [
                 "volume_fraction",
                 "bulk_density.foliage.live",

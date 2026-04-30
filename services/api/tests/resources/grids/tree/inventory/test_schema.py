@@ -276,7 +276,7 @@ class TestCreateTreeInventoryRequest:
     def _minimal(self, **overrides) -> dict:
         body = {
             "source_inventory_id": "abc123",
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         body.update(overrides)
@@ -285,7 +285,8 @@ class TestCreateTreeInventoryRequest:
     def test_minimal_valid_request(self):
         req = CreateTreeInventoryRequest(**self._minimal())
         assert req.source_inventory_id == "abc123"
-        assert req.resolution == (2.0, 2.0, 1.0)
+        assert req.resolution.horizontal == 2.0
+        assert req.resolution.vertical == 1.0
         assert req.bands == [TreeBand.bulk_density_foliage_live]
         assert req.crown_profile_model == CrownProfileModel.purves
         assert req.biomass_source.equations == BiomassEquations.nsvb
@@ -298,7 +299,7 @@ class TestCreateTreeInventoryRequest:
     def test_source_inventory_id_is_required(self):
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(
-                resolution=[2.0, 2.0, 1.0],
+                resolution={"horizontal": 2.0, "vertical": 1.0},
                 bands=["bulk_density.foliage.live"],
             )
 
@@ -313,7 +314,7 @@ class TestCreateTreeInventoryRequest:
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(
                 source_inventory_id="abc",
-                resolution=[2.0, 2.0, 1.0],
+                resolution={"horizontal": 2.0, "vertical": 1.0},
             )
 
     def test_bands_cannot_be_empty(self):
@@ -335,9 +336,9 @@ class TestCreateTreeInventoryRequest:
     @pytest.mark.parametrize(
         "resolution",
         [
-            [0.0, 2.0, 1.0],
-            [2.0, -1.0, 1.0],
-            [2.0, 2.0, 0.0],
+            {"horizontal": 0.0, "vertical": 1.0},
+            {"horizontal": -1.0, "vertical": 1.0},
+            {"horizontal": 2.0, "vertical": 0.0},
         ],
     )
     def test_non_positive_resolution_rejected(self, resolution):
@@ -427,7 +428,7 @@ class TestCreateTreeInventoryRequest:
             description="FDS high-res",
             tags=["fds", "high-res"],
             source_inventory_id="inv123",
-            resolution=[1.0, 1.0, 0.5],
+            resolution={"horizontal": 1.0, "vertical": 0.5},
             bands=[
                 "bulk_density.foliage.live",
                 "savr.foliage",
@@ -550,7 +551,7 @@ class TestSeedField:
     def _minimal_body(self, **overrides):
         body = {
             "source_inventory_id": "inv1",
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
         }
         body.update(overrides)
@@ -580,7 +581,7 @@ class TestSeedField:
         with pytest.raises(ValidationError):
             TreeInventorySource(
                 source_inventory_id="inv1",
-                resolution=(2.0, 2.0, 1.0),
+                resolution={"horizontal": 2.0, "vertical": 1.0},
                 bands=[TreeBand.bulk_density_foliage_live],
                 crown_profile_model=CrownProfileModel.purves,
                 biomass_source=AllometryBiomassSource(),
@@ -591,7 +592,7 @@ class TestTreeInventorySource:
     def test_name_product_description_fixed(self):
         source = TreeInventorySource(
             source_inventory_id="inv123",
-            resolution=[2.0, 2.0, 1.0],
+            resolution={"horizontal": 2.0, "vertical": 1.0},
             bands=[TreeBand.bulk_density_foliage_live],
             crown_profile_model=CrownProfileModel.purves,
             biomass_source=AllometryBiomassSource(),
@@ -604,7 +605,7 @@ class TestTreeInventorySource:
     def test_model_dump_includes_resolved_defaults(self):
         source = TreeInventorySource(
             source_inventory_id="inv123",
-            resolution=(2.0, 2.0, 1.0),
+            resolution={"horizontal": 2.0, "vertical": 1.0},
             bands=[TreeBand.bulk_density_foliage_live, TreeBand.fuel_moisture_live],
             crown_profile_model=CrownProfileModel.purves,
             biomass_source=AllometryBiomassSource(),
@@ -617,7 +618,7 @@ class TestTreeInventorySource:
         assert data["name"] == "inventory"
         assert data["product"] == "tree"
         assert data["source_inventory_id"] == "inv123"
-        assert data["resolution"] == [2.0, 2.0, 1.0]
+        assert data["resolution"] == {"horizontal": 2.0, "vertical": 1.0}
         assert data["bands"] == ["bulk_density.foliage.live", "fuel_moisture.live"]
         assert data["crown_profile_model"] == "purves"
         assert data["biomass_source"] == {
@@ -638,7 +639,7 @@ class TestTreeInventorySource:
         with pytest.raises(ValidationError, match="biomass_source.components"):
             TreeInventorySource(
                 source_inventory_id="inv1",
-                resolution=(2.0, 2.0, 1.0),
+                resolution={"horizontal": 2.0, "vertical": 1.0},
                 bands=[TreeBand.bulk_density_branchwood_live],
                 crown_profile_model=CrownProfileModel.purves,
                 biomass_source=AllometryBiomassSource(),  # foliage default

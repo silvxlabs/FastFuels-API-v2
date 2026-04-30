@@ -131,7 +131,7 @@ def completed_3d_grid_in_firestore(firestore_client, domain_for_testing):
             "product": "tree",
             "description": "3D tree fuel grid from tree inventory voxelization",
             "source_inventory_id": "test-source-inv",
-            "resolution": [2.0, 2.0, 1.0],
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],
             "crown_profile_model": "purves",
             "biomass_source": {

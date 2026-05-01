@@ -137,7 +137,7 @@ async def create_tree_inventory_grid(
         "status": JobStatus.pending.value,
         "created_on": request_time,
         "modified_on": request_time,
-        "source": source.model_dump(mode="json"),
+        "source": source.model_dump(mode="json", exclude_none=True),
         # 3D grids do not support modifications — always empty.
         "modifications": [],
         "bands": [b.model_dump() for b in bands],

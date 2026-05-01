@@ -76,7 +76,7 @@ class CacheEntry:
 # Constants
 
 
-CHUNK_LENGTH_METERS = 1000  # v1 default horizontal chunk size
+CHUNK_SIZE_HORIZONTAL = 500  # cells per chunk in x and y; resolution-independent
 OVERLAP_CELLS = 10  # halo cells for batch union reads (v1 line 525)
 MAX_BIOMASS_ARRAY_CACHE = 100  # v1 line 42
 

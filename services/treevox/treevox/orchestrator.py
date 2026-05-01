@@ -148,8 +148,7 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
     requested_keys = [b["key"] for b in grid["bands"]]
     hr = dims["hr"]
     nx, ny, nz = dims["nx"], dims["ny"], dims["nz"]
-    # TODO: This looks off
-    chunk_xy = min(max(1, int(voxelize.CHUNK_LENGTH_METERS / hr)), nx, ny)
+    chunk_xy = min(voxelize.CHUNK_SIZE_HORIZONTAL, nx, ny)
     chunk_shape: tuple[int, int, int] = (nz, chunk_xy, chunk_xy)
 
     num_row_chunks = int(math.ceil(ny / chunk_xy))

@@ -97,4 +97,4 @@ V2's `masked_merge` uses `mask = data != BAND_SPECS[key].fill_value` per band, s
 - Moisture methods beyond `uniform` — schema permits them; add when needed.
 - Per-tree SAVR / fuel-moisture overrides — current `fuel_moisture.live` is uniform per moisture_model contract.
 - Shared-memory worker payloads (Constraint #4 optimization) — defer until profiling shows IPC dominates wall time.
-- Tree-crown boundary overflow correctness beyond the halo+merge approach — the 10 m halo is larger than typical crown radii at 1000 m chunks, so boundary artifacts are sub-1%.
+- Tree-crown boundary overflow correctness beyond the halo+merge approach — at the canonical 1 m / 2 m horizontal resolutions, the 10-cell halo exceeds typical crown radii while staying tiny relative to the 500-cell chunk size, so boundary artifacts are sub-1%.

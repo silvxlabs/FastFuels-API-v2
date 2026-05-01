@@ -819,7 +819,7 @@ class TestPersistentPool:
         mock_merge.side_effect = lambda union_ds, *a, **kw: union_ds
 
         with (
-            patch("treevox.orchestrator.voxelize.CHUNK_LENGTH_METERS", 20),
+            patch("treevox.orchestrator.voxelize.CHUNK_SIZE_HORIZONTAL", 20),
             patch("treevox.orchestrator.multiprocessing.get_context") as mock_get_ctx,
         ):
             fake_pool = MagicMock()
@@ -939,13 +939,12 @@ class TestHaloMergeAcrossChunks:
         }
 
     def _force_chunk_xy(self, monkeypatch, chunk_xy=20):
-        """Shrink CHUNK_LENGTH_METERS so the planner picks the size we want.
+        """Shrink CHUNK_SIZE_HORIZONTAL so the planner picks the size we want.
 
-        `_plan_grid_layout` derives chunk_xy from CHUNK_LENGTH_METERS / hr,
-        clamped to (nx, ny). At hr=1 we want chunk_xy=20 → two chunks on a
-        40-wide grid.
+        `_plan_grid_layout` clamps chunk_xy to min(CHUNK_SIZE_HORIZONTAL, nx, ny).
+        Setting it to 20 → two chunks on a 40-wide grid.
         """
-        monkeypatch.setattr(orchestrator.voxelize, "CHUNK_LENGTH_METERS", chunk_xy)
+        monkeypatch.setattr(orchestrator.voxelize, "CHUNK_SIZE_HORIZONTAL", chunk_xy)
 
     def test_tree_at_seam_writes_into_neighbor_halo_and_merges(self, monkeypatch):
         """Tree stem in chunk (0,0), crown spills east across the seam at col=20.

@@ -111,7 +111,7 @@ class TestCreateTreeInventoryGrid:
             "components": ["foliage"],
             "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
         }
-        assert source["moisture_model"] is None
+        assert "moisture_model" not in source
 
         # Single continuous band with index 0.
         assert len(data["bands"]) == 1
@@ -469,7 +469,7 @@ class TestCreateTreeInventoryGrid:
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
-        assert response.json()["source"]["moisture_model"] is None
+        assert "moisture_model" not in response.json()["source"]
 
     def test_nested_biomass_source_is_stored(
         self, client, domain_for_testing, tree_inventory_for_voxelization
@@ -477,7 +477,7 @@ class TestCreateTreeInventoryGrid:
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": {"horizontal": 2.0, "vertical": 1.0},
-            "bands": ["bulk_density.foliage.live"],
+            "bands": ["bulk_density.fine.live"],
             "biomass_source": {
                 "type": "allometry",
                 "equations": "jenkins",

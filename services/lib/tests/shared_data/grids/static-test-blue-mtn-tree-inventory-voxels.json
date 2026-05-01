@@ -67,11 +67,10 @@
     "moisture_model": null,
     "name": "inventory",
     "product": "tree",
-    "resolution": [
-      2.0,
-      2.0,
-      1.0
-    ],
+    "resolution": {
+      "horizontal": 2.0,
+      "vertical": 1.0
+    },
     "seed": 42,
     "source_inventory_id": "static-test-blue-mtn-pim-inventory"
   },

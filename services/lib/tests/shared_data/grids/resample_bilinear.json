@@ -1,23 +1,41 @@
 {
-  "name": "test-resample-bilinear",
+  "bands": [
+    {
+      "index": 0,
+      "key": "elevation",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "index": 1,
+      "key": "slope",
+      "type": "continuous",
+      "unit": "degrees"
+    },
+    {
+      "index": 2,
+      "key": "aspect",
+      "type": "continuous",
+      "unit": "degrees"
+    }
+  ],
+  "chunk_shape": [
+    512,
+    512
+  ],
   "description": "",
-  "status": "pending",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-resample-bilinear",
   "progress": null,
   "source": {
+    "method": "bilinear",
+    "method_overrides": {},
     "name": "resample",
     "source_grid_id": "PLACEHOLDER",
-    "target_resolution": 60.0,
-    "method": "bilinear",
-    "method_overrides": {}
+    "target_resolution": 60.0
   },
-  "modifications": [],
-  "bands": [
-    {"key": "elevation", "type": "continuous", "unit": "m", "index": 0},
-    {"key": "slope", "type": "continuous", "unit": "degrees", "index": 1},
-    {"key": "aspect", "type": "continuous", "unit": "degrees", "index": 2}
-  ],
-  "georeference": null,
-  "error": null,
-  "tags": [],
-  "chunk_shape": [512, 512]
+  "status": "pending",
+  "tags": []
 }

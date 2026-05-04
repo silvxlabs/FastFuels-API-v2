@@ -1,12 +1,12 @@
 {
-  "name": "Test PIM Inventory",
   "description": "Integration test inventory using TreeMap 2022",
-  "status": "pending",
-  "tags": [],
+  "name": "Test PIM Inventory",
   "source": {
     "name": "pim",
-    "source_pim_grid_id": null,
     "point_process": "inhomogeneous_poisson",
-    "seed": 42
-  }
+    "seed": 42,
+    "source_pim_grid_id": null
+  },
+  "status": "pending",
+  "tags": []
 }

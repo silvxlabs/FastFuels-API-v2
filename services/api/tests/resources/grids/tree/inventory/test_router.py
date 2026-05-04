@@ -77,11 +77,9 @@ class TestCreateTreeInventoryGrid:
     def test_minimal_request_creates_grid(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
-        """Minimal request with required fields creates a pending grid."""
+        """Minimal request creates a pending grid with resolved defaults."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
-            "resolution": {"horizontal": 2.0, "vertical": 1.0},
-            "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
 
@@ -293,7 +291,7 @@ class TestCreateTreeInventoryGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
-    def test_missing_resolution_returns_422(
+    def test_missing_resolution_uses_default(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
         body = {
@@ -301,9 +299,13 @@ class TestCreateTreeInventoryGrid:
             "bands": ["bulk_density.foliage.live"],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
-        assert response.status_code == 422
+        assert response.status_code == 201
+        assert response.json()["source"]["resolution"] == {
+            "horizontal": 2.0,
+            "vertical": 1.0,
+        }
 
-    def test_missing_bands_returns_422(
+    def test_missing_bands_uses_default(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
         body = {
@@ -311,7 +313,8 @@ class TestCreateTreeInventoryGrid:
             "resolution": {"horizontal": 2.0, "vertical": 1.0},
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
-        assert response.status_code == 422
+        assert response.status_code == 201
+        assert response.json()["source"]["bands"] == ["bulk_density.foliage.live"]
 
     def test_empty_bands_returns_422(
         self, client, domain_for_testing, tree_inventory_for_voxelization

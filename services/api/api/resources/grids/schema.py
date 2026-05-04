@@ -172,9 +172,9 @@ class ListGridsResponse(PaginatedResponse):
     grids: list[Grid]
 
 
-class GridDataFormat(StrEnum):
-    json = "json"
-    binary = "binary"
+class GridDataArrayFormat(StrEnum):
+    dense = "dense"
+    sparse = "sparse"
 
 
 class GridDataOrder(StrEnum):
@@ -191,7 +191,19 @@ class GridDataChunkMetadata(BaseModel):
     z_resolution: float | None = None
 
 
+class DenseGridData(BaseModel):
+    format: Literal["dense"]
+    values: list[float | int]
+
+
+class SparseGridData(BaseModel):
+    format: Literal["sparse"]
+    fill_value: float | int | None
+    indices: list[int]
+    values: list[float | int]
+
+
 class GridDataResponse(BaseModel):
     shape: list[int]
     order: Literal["C", "F"]
-    data: list[float | int]
+    data: DenseGridData | SparseGridData = Field(discriminator="format")

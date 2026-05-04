@@ -7,6 +7,7 @@ Product-specific endpoints (FBFM40, Topography, etc.) are in their respective su
 
 from datetime import datetime
 
+import numpy as np
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -33,13 +34,16 @@ from api.resources.grids.lookup.router import router as lookup_router
 from api.resources.grids.pim.router import router as pim_router
 from api.resources.grids.resample.router import router as resample_router
 from api.resources.grids.schema import (
+    DenseGridData,
     Grid,
+    GridDataArrayFormat,
     GridDataChunkMetadata,
-    GridDataFormat,
     GridDataOrder,
     GridDataResponse,
+    GridDataResponseFormat,
     GridSortField,
     ListGridsResponse,
+    SparseGridData,
     UpdateGridRequestBody,
 )
 from api.resources.grids.topography.router import router as topography_router
@@ -57,6 +61,33 @@ router = APIRouter()
 wildcard_router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
+MAX_BINARY_BYTES = 30 * 1024 * 1024
+MAX_JSON_SCALARS = 1_000_000
+
+
+def _check_size(actual: int, limit: int, what: str) -> None:
+    if actual > limit:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"{what} ({actual}) exceeds API response limit ({limit}). "
+                "Request array_format=sparse, format=binary, or a smaller chunk."
+            ),
+        )
+
+
+def _sparse_components(
+    data: np.ndarray,
+    fill_value: float | int,
+    order: GridDataOrder,
+) -> tuple[np.ndarray, np.ndarray]:
+    flat = data.ravel(order=order.value)
+    if np.issubdtype(flat.dtype, np.floating) and np.isnan(fill_value):
+        mask = ~np.isnan(flat)
+    else:
+        mask = flat != fill_value
+    indices = np.flatnonzero(mask).astype(np.int32, copy=False)
+    return indices, flat[indices]
 
 
 @wildcard_router.get(
@@ -483,8 +514,12 @@ async def get_grid_data(
     grid_id: str,
     chunk_index: int,
     band: str,
-    data_format: GridDataFormat = Query(
-        GridDataFormat.json, alias="format", description="Response format."
+    response_format: GridDataResponseFormat = Query(
+        GridDataResponseFormat.json, alias="format", description="Response format."
+    ),
+    array_format: GridDataArrayFormat = Query(
+        GridDataArrayFormat.dense,
+        description="Array format: dense values or sparse COO flat indices.",
     ),
     order: GridDataOrder = Query(
         GridDataOrder.C, description="Array memory order for flattening."
@@ -494,7 +529,8 @@ async def get_grid_data(
     # Get Grid Data Endpoint
 
     Reads a single chunk of a single band from a completed grid's Zarr store
-    on GCS. Returns the raster values as either a JSON array or raw binary bytes.
+    on GCS. Returns dense raster values or sparse COO flat indices as either
+    JSON or raw binary bytes.
 
     ## Path Parameters
 
@@ -508,18 +544,29 @@ async def get_grid_data(
     ## Query Parameters
 
     - **format**: (string, optional) Response format: `json` (default) or `binary`.
+    - **array_format**: (string, optional) Array format: `dense` (default) or
+      `sparse`.
     - **order**: (string, optional) Array memory order for flattening: `C`
       (row-major, default) or `F` (column-major).
 
     ## Response
 
-    **JSON format** (`format=json`): Returns shape, order, and a flat list of values.
+    **Dense JSON** (`format=json&array_format=dense`): Returns shape, order,
+    and a flat list of values.
 
-    **Binary format** (`format=binary`): Returns raw bytes with metadata in headers:
+    **Dense binary** (`format=binary&array_format=dense`): Returns raw bytes
+    with metadata in headers:
 
     - `X-Data-Shape`: Comma-separated dimensions (e.g., `47,61`).
     - `X-Data-Dtype`: NumPy dtype string (e.g., `float32`).
+    - `X-Data-Format`: `dense`.
     - `X-Data-Order`: Memory order used for flattening (`C` or `F`).
+
+    **Sparse JSON** (`format=json&array_format=sparse`): Returns shape, order,
+    fill value, flat int32 indices, and values.
+
+    **Sparse binary** (`format=binary&array_format=sparse`): Returns
+    `indices.tobytes() + values.tobytes()` with sparse metadata in headers.
 
     ## Error Responses
 
@@ -527,6 +574,8 @@ async def get_grid_data(
       does not have access.
     - **422 Unprocessable Entity**: The requested band does not exist on this
       grid, or the chunk index is out of range.
+    - **413 Payload Too Large**: The requested dense or JSON response is too
+      large for the API response limit.
     """
     _, snapshot = await get_document_async(
         COLLECTION,
@@ -554,22 +603,69 @@ async def get_grid_data(
     array = await get_grid_array(grid_id, band)
     data = await array.getitem(chunk_slices)
 
-    if data_format == GridDataFormat.binary:
+    shape_header = ",".join(str(s) for s in data.shape)
+
+    if array_format == GridDataArrayFormat.sparse:
+        raw_fill = getattr(getattr(array, "metadata", None), "fill_value", None)
+        if raw_fill is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sparse grid data requires a zarr fill value.",
+            )
+        fill_value = raw_fill.item() if hasattr(raw_fill, "item") else raw_fill
+
+        indices, values = _sparse_components(data, fill_value, order)
+
+        if response_format == GridDataResponseFormat.binary:
+            raw = indices.tobytes() + values.tobytes()
+            _check_size(len(raw), MAX_BINARY_BYTES, "Sparse binary grid data")
+            return Response(
+                content=raw,
+                media_type="application/octet-stream",
+                headers={
+                    "X-Data-Shape": shape_header,
+                    "X-Data-Order": order.value,
+                    "X-Data-Format": "sparse",
+                    "X-Data-Fill-Value": str(fill_value),
+                    "X-Data-NNZ": str(len(indices)),
+                    "X-Data-Index-Dtype": str(indices.dtype),
+                    "X-Data-Value-Dtype": str(values.dtype),
+                },
+            )
+
+        return GridDataResponse(
+            shape=list(data.shape),
+            order=order.value,
+            data=SparseGridData(
+                format="sparse",
+                fill_value=fill_value,
+                indices=indices.tolist(),
+                values=values.tolist(),
+            ),
+        )
+
+    if response_format == GridDataResponseFormat.binary:
         raw = data.ravel(order=order.value).tobytes()
+        _check_size(len(raw), MAX_BINARY_BYTES, "Dense binary grid data")
         return Response(
             content=raw,
             media_type="application/octet-stream",
             headers={
-                "X-Data-Shape": ",".join(str(s) for s in data.shape),
+                "X-Data-Shape": shape_header,
                 "X-Data-Dtype": str(data.dtype),
                 "X-Data-Order": order.value,
+                "X-Data-Format": "dense",
             },
         )
 
+    _check_size(data.size, MAX_JSON_SCALARS, "Dense JSON grid data")
     return GridDataResponse(
         shape=list(data.shape),
         order=order.value,
-        data=data.ravel(order=order.value).tolist(),
+        data=DenseGridData(
+            format="dense",
+            values=data.ravel(order=order.value).tolist(),
+        ),
     )
 
 

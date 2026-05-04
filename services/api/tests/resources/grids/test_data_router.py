@@ -15,7 +15,12 @@ import numpy as np
 import pytest
 import xarray as xr
 from api.resources.grids import router as grids_router
-from api.resources.grids.schema import GridDataFormat, GridDataOrder
+from api.resources.grids.schema import (
+    GridDataArrayFormat,
+    GridDataOrder,
+    GridDataResponseFormat,
+)
+from fastapi import HTTPException
 
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.testing import SHARED_TEST_GRIDS_DIR
@@ -177,6 +182,18 @@ def data_route(domain_id, grid_id, band, chunk_index=0, **params):
     return f"/domains/{domain_id}/grids/{grid_id}/data/{band}/{chunk_index}", params
 
 
+class FakeGridArray:
+    def __init__(self, data, fill_value=0):
+        self.data = data
+        if fill_value is not None:
+            self.metadata = SimpleNamespace(fill_value=fill_value)
+        self.selection = None
+
+    async def getitem(self, selection):
+        self.selection = selection
+        return self.data
+
+
 # GET /domains/{domain_id}/grids/{grid_id}/chunks/{chunk_index}
 
 
@@ -320,10 +337,11 @@ class TestGetGridData:
         expected_shape = list(static_grid_in_firestore["georeference"]["shape"])
         assert data["shape"] == expected_shape
         assert data["order"] == "C"
-        assert isinstance(data["data"], list)
-        assert len(data["data"]) == expected_shape[0] * expected_shape[1]
+        assert data["data"]["format"] == "dense"
+        assert isinstance(data["data"]["values"], list)
+        assert len(data["data"]["values"]) == expected_shape[0] * expected_shape[1]
 
-    def test_3d_json_format_matches_static_zarr_chunk(
+    def test_3d_sparse_json_format_matches_static_zarr_chunk(
         self, client, domain_for_testing, static_3d_grid_in_firestore
     ):
         metadata_response = client.get(
@@ -337,19 +355,67 @@ class TestGetGridData:
             STATIC_3D_NAME,
             band=STATIC_3D_BAND,
             format="json",
+            array_format="sparse",
             order="C",
         )
         response = client.get(url, params=params)
         assert response.status_code == 200
 
         payload = response.json()
+        sparse = payload["data"]
         expected = _read_static_zarr_chunk(STATIC_3D_NAME, STATIC_3D_BAND, metadata)
-        actual = np.asarray(payload["data"], dtype=expected.dtype).reshape(
-            payload["shape"],
-            order=payload["order"],
-        )
+        actual = np.full(payload["shape"], sparse["fill_value"], dtype=expected.dtype)
+        indices = np.asarray(sparse["indices"], dtype=np.int32)
+        values = np.asarray(sparse["values"], dtype=expected.dtype)
+        actual.ravel(order=payload["order"])[indices] = values
 
         assert payload["shape"] == metadata["shape"]
+        assert payload["order"] == "C"
+        assert sparse["format"] == "sparse"
+        assert sparse["fill_value"] == 0.0
+        np.testing.assert_allclose(actual, expected)
+
+    def test_3d_sparse_binary_format_matches_static_zarr_chunk(
+        self, client, domain_for_testing, static_3d_grid_in_firestore
+    ):
+        metadata_response = client.get(
+            chunk_route(domain_for_testing["id"], STATIC_3D_NAME, 0)
+        )
+        assert metadata_response.status_code == 200
+        metadata = metadata_response.json()
+
+        url, params = data_route(
+            domain_for_testing["id"],
+            STATIC_3D_NAME,
+            band=STATIC_3D_BAND,
+            format="binary",
+            array_format="sparse",
+            order="C",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/octet-stream"
+        assert response.headers["X-Data-Shape"] == ",".join(
+            str(s) for s in metadata["shape"]
+        )
+        assert response.headers["X-Data-Order"] == "C"
+        assert response.headers["X-Data-Format"] == "sparse"
+        assert response.headers["X-Data-Fill-Value"] == "0.0"
+        assert response.headers["X-Data-Index-Dtype"] == "int32"
+
+        nnz = int(response.headers["X-Data-NNZ"])
+        index_dtype = np.dtype(response.headers["X-Data-Index-Dtype"])
+        value_dtype = np.dtype(response.headers["X-Data-Value-Dtype"])
+        index_bytes = nnz * index_dtype.itemsize
+        value_bytes = nnz * value_dtype.itemsize
+        assert len(response.content) == index_bytes + value_bytes
+
+        indices = np.frombuffer(response.content[:index_bytes], dtype=index_dtype)
+        values = np.frombuffer(response.content[index_bytes:], dtype=value_dtype)
+        expected = _read_static_zarr_chunk(STATIC_3D_NAME, STATIC_3D_BAND, metadata)
+        actual = np.full(metadata["shape"], 0.0, dtype=expected.dtype)
+        actual.ravel(order=response.headers["X-Data-Order"])[indices] = values
+
         np.testing.assert_allclose(actual, expected)
 
     def test_binary_format_returns_200(
@@ -368,13 +434,14 @@ class TestGetGridData:
         assert "X-Data-Shape" in response.headers
         assert "X-Data-Dtype" in response.headers
         assert response.headers["X-Data-Order"] == "C"
+        assert response.headers["X-Data-Format"] == "dense"
         expected_shape = static_grid_in_firestore["georeference"]["shape"]
         assert response.headers["X-Data-Shape"] == ",".join(
             str(s) for s in expected_shape
         )
 
     def test_default_params(self, client, domain_for_testing, static_grid_in_firestore):
-        """Defaults: format=json, order=C."""
+        """Defaults: format=json, array_format=dense, order=C."""
         url, params = data_route(domain_for_testing["id"], STATIC_NAME, band="fbfm")
         response = client.get(url, params=params)
         assert response.status_code == 200
@@ -458,6 +525,138 @@ class TestGetGridData:
         response = client.get(url, params=params)
         assert response.status_code == 404
 
+    async def _call_grid_data_with_fake_array(
+        self,
+        monkeypatch,
+        fake_array,
+        *,
+        band="bulk_density.foliage.live",
+        response_format=GridDataResponseFormat.json,
+        array_format=GridDataArrayFormat.sparse,
+        order=GridDataOrder.C,
+    ):
+        shape = list(fake_array.data.shape)
+        georeference = {
+            "crs": "EPSG:32611",
+            "transform": (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0),
+            "shape": shape,
+        }
+        if len(shape) == 3:
+            georeference["z_resolution"] = 0.5
+            georeference["z_origin"] = 10.0
+
+        grid_data = {
+            "id": "grid-fake",
+            "domain_id": "domain-1",
+            "owner_id": "owner-1",
+            "status": "completed",
+            "bands": [
+                {
+                    "key": band,
+                    "type": "continuous",
+                    "unit": None,
+                    "index": 0,
+                }
+            ],
+            "georeference": georeference,
+            "chunk_shape": shape,
+        }
+
+        async def fake_get_document_async(*args, **kwargs):
+            return None, SimpleNamespace(to_dict=lambda: grid_data)
+
+        async def fake_get_grid_array(grid_id, requested_band):
+            assert grid_id == "grid-fake"
+            assert requested_band == band
+            return fake_array
+
+        monkeypatch.setattr(grids_router, "get_document_async", fake_get_document_async)
+        monkeypatch.setattr(grids_router, "get_grid_array", fake_get_grid_array)
+
+        return await grids_router.get_grid_data(
+            request=SimpleNamespace(state=SimpleNamespace(id="owner-1")),
+            domain={"id": "domain-1"},
+            grid_id="grid-fake",
+            chunk_index=0,
+            band=band,
+            response_format=response_format,
+            array_format=array_format,
+            order=order,
+        )
+
+    @pytest.mark.anyio
+    async def test_sparse_empty_chunk_returns_empty_indices(self, monkeypatch):
+        fake_array = FakeGridArray(np.zeros((2, 3), dtype=np.float32), fill_value=0.0)
+
+        response = await self._call_grid_data_with_fake_array(monkeypatch, fake_array)
+
+        assert response.shape == [2, 3]
+        assert response.data.format == "sparse"
+        assert response.data.fill_value == 0.0
+        assert response.data.indices == []
+        assert response.data.values == []
+
+    @pytest.mark.anyio
+    async def test_sparse_uses_nonzero_fill_value_from_zarr(self, monkeypatch):
+        fake_array = FakeGridArray(
+            np.array([[-1, 0, 7]], dtype=np.int32),
+            fill_value=-1,
+        )
+
+        response = await self._call_grid_data_with_fake_array(
+            monkeypatch,
+            fake_array,
+            band="tree_id",
+        )
+
+        assert response.data.fill_value == -1
+        assert response.data.indices == [1, 2]
+        assert response.data.values == [0, 7]
+
+    @pytest.mark.anyio
+    async def test_sparse_missing_fill_value_returns_422(self, monkeypatch):
+        fake_array = FakeGridArray(np.zeros((2, 3), dtype=np.float32), fill_value=None)
+
+        with pytest.raises(HTTPException) as exc:
+            await self._call_grid_data_with_fake_array(monkeypatch, fake_array)
+
+        assert exc.value.status_code == 422
+        assert "fill value" in exc.value.detail
+
+    @pytest.mark.anyio
+    async def test_sparse_order_f_uses_fortran_flat_indices(self, monkeypatch):
+        fake_array = FakeGridArray(
+            np.array([[0, 1, 0], [2, 0, 3]], dtype=np.float32),
+            fill_value=0.0,
+        )
+
+        response = await self._call_grid_data_with_fake_array(
+            monkeypatch,
+            fake_array,
+            order=GridDataOrder.F,
+        )
+
+        assert response.order == "F"
+        assert response.data.indices == [1, 2, 5]
+        assert response.data.values == [2.0, 1.0, 3.0]
+
+    @pytest.mark.anyio
+    async def test_dense_json_above_scalar_limit_returns_413(self, monkeypatch):
+        rows = 1001
+        cols = grids_router.MAX_JSON_SCALARS // rows + 1
+        fake_array = FakeGridArray(np.zeros((rows, cols), dtype=np.float32))
+        assert fake_array.data.size > grids_router.MAX_JSON_SCALARS
+
+        with pytest.raises(HTTPException) as exc:
+            await self._call_grid_data_with_fake_array(
+                monkeypatch,
+                fake_array,
+                array_format=GridDataArrayFormat.dense,
+            )
+
+        assert exc.value.status_code == 413
+        assert "sparse" in exc.value.detail
+
     @pytest.mark.anyio
     async def test_3d_data_route_reads_with_z_y_x_slices(self, monkeypatch):
         grid_data = {
@@ -483,14 +682,7 @@ class TestGetGridData:
             "chunk_shape": [2, 2, 3],
         }
 
-        class FakeArray:
-            selection = None
-
-            async def getitem(self, selection):
-                self.selection = selection
-                return np.arange(12, dtype=np.float32).reshape((2, 2, 3))
-
-        fake_array = FakeArray()
+        fake_array = FakeGridArray(np.arange(12, dtype=np.float32).reshape((2, 2, 3)))
 
         async def fake_get_document_async(*args, **kwargs):
             return None, SimpleNamespace(to_dict=lambda: grid_data)
@@ -509,7 +701,8 @@ class TestGetGridData:
             grid_id="grid-3d",
             chunk_index=5,
             band="bulk_density.foliage.live",
-            data_format=GridDataFormat.json,
+            response_format=GridDataResponseFormat.json,
+            array_format=GridDataArrayFormat.dense,
             order=GridDataOrder.C,
         )
 
@@ -519,4 +712,5 @@ class TestGetGridData:
             slice(3, 6),
         )
         assert response.shape == [2, 2, 3]
-        assert response.data == list(range(12))
+        assert response.data.format == "dense"
+        assert response.data.values == list(range(12))

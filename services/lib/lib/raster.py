@@ -1,7 +1,28 @@
 # External imports
+import rasterio
 import rioxarray
 from geopandas import GeoDataFrame
 from xarray import DataArray
+
+# Reduce HTTP round trips when opening remote Cloud Optimized GeoTIFFs.
+# See: https://gdal.org/en/stable/user/configoptions.html
+GDAL_COG_CONFIG = {
+    "GDAL_DISABLE_READDIR_ON_OPEN": "YES",
+    "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif",
+    "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES": "YES",
+    "VSI_CACHE": "TRUE",
+    "VSI_CACHE_SIZE": "5000000",
+    "GDAL_INGESTED_BYTES_AT_OPEN": "32768",
+}
+
+
+def cog_env(**extra: str) -> rasterio.Env:
+    """rasterio.Env preconfigured for remote COG access.
+
+    Caller-supplied kwargs override or extend GDAL_COG_CONFIG (e.g.
+    AWS_NO_SIGN_REQUEST="YES" for anonymous public S3 buckets).
+    """
+    return rasterio.Env(**{**GDAL_COG_CONFIG, **extra})
 
 
 class RasterConnection:

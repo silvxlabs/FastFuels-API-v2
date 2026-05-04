@@ -9,7 +9,6 @@ from api.resources.grids.schema import (
     GridDataChunkMetadata,
     GridDataOrder,
     GridDataResponse,
-    GridDataResponseFormat,
     SparseGridData,
 )
 from api.resources.grids.utils import compute_chunk_metadata, compute_chunk_slices
@@ -331,9 +330,21 @@ class TestResponseModels:
         assert r.data.indices == [0, 4]
         assert r.data.values == [7, 9]
 
-    def test_response_format_enum(self):
-        assert GridDataResponseFormat.json == "json"
-        assert GridDataResponseFormat.binary == "binary"
+    def test_sparse_data_response_model_accepts_null_fill_value(self):
+        r = GridDataResponse(
+            shape=[2, 3],
+            order="C",
+            data={
+                "format": "sparse",
+                "fill_value": None,
+                "indices": [0, 1, 2, 3, 4, 5],
+                "values": [1, 2, 3, 4, 5, 6],
+            },
+        )
+        assert isinstance(r.data, SparseGridData)
+        assert r.data.fill_value is None
+        assert r.data.indices == [0, 1, 2, 3, 4, 5]
+        assert r.data.values == [1, 2, 3, 4, 5, 6]
 
     def test_array_format_enum(self):
         assert GridDataArrayFormat.dense == "dense"

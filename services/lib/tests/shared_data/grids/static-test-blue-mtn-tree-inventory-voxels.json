@@ -59,12 +59,13 @@
         "foliage"
       ],
       "equations": "nsvb",
-      "fine": null,
       "type": "allometry"
     },
     "crown_profile_model": "purves",
     "description": "3D tree fuel grid from tree inventory voxelization",
-    "moisture_model": null,
+    "max_crown_radius_source": {
+      "type": "allometry"
+    },
     "name": "inventory",
     "product": "tree",
     "resolution": {

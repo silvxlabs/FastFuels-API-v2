@@ -15,7 +15,7 @@ from scipy.ndimage import generic_filter
 from xarray import DataArray
 
 from lib.config import RASTERS_BUCKET
-from lib.raster import RasterConnection
+from lib.raster import RasterConnection, cog_env
 
 NB_CODE_MAP: dict[str, int] = {
     "NB1": 91,
@@ -42,12 +42,13 @@ def _fetch_landfire_raster(
         DataArray with dims (y, x)
     """
     url = f"gs://{RASTERS_BUCKET}/LF{version}_{product}_CONUS.tif"
-    raster = RasterConnection(url, connection_type="rioxarray", cache=True)
-    data = raster.extract_window(
-        roi=roi,
-        projection_padding_meters=15 * raster.raster_resolution,
-        interpolation_padding_cells=8,
-    )
+    with cog_env():
+        raster = RasterConnection(url, connection_type="rioxarray", cache=True)
+        data = raster.extract_window(
+            roi=roi,
+            projection_padding_meters=15 * raster.raster_resolution,
+            interpolation_padding_cells=8,
+        )
     return data.squeeze("band", drop=True)
 
 

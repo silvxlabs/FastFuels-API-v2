@@ -277,6 +277,40 @@ BiomassSource = Annotated[
 ]
 
 
+class MaxCrownRadiusUnit(StrEnum):
+    """Accepted inventory max crown radius units."""
+
+    m = "m"
+
+
+class AllometryMaxCrownRadiusSource(BaseModel):
+    """Use the crown profile model's allometric max crown radius (default)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["allometry"] = "allometry"
+
+
+class InventoryColumnMaxCrownRadiusSource(BaseModel):
+    """Read per-tree max crown radius from an inventory column.
+
+    The crown profile model still drives the crown shape — the supplied
+    radius rescales it so the maximum radius matches the per-tree value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["inventory_column"] = "inventory_column"
+    column: str
+    unit: MaxCrownRadiusUnit = MaxCrownRadiusUnit.m
+
+
+MaxCrownRadiusSource = Annotated[
+    AllometryMaxCrownRadiusSource | InventoryColumnMaxCrownRadiusSource,
+    Field(discriminator="type"),
+]
+
+
 class UniformMoistureValue(BaseModel):
     """Uniform fuel moisture for one fuel state."""
 

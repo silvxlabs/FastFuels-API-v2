@@ -194,6 +194,20 @@ def foliage_inventory_column(source_config: dict) -> str | None:
     return foliage["column"]
 
 
+def max_crown_radius_inventory_column(source_config: dict) -> str | None:
+    """Return the inventory column overriding max crown radius, or None.
+
+    Mirrors `foliage_inventory_column`: when the API's
+    `max_crown_radius_source` resolves to `inventory_column`, the named
+    column carries per-tree max crown radius (m) and is plumbed into
+    fastfuels-core's `Tree(max_crown_radius=...)`.
+    """
+    radius_source = source_config.get("max_crown_radius_source") or {}
+    if radius_source.get("type") != "inventory_column":
+        return None
+    return radius_source.get("column")
+
+
 def _biomass_allometry_model_type(source_config: dict) -> str:
     """Return the fastfuels-core foliage allometry model for this source."""
     biomass_source = source_config["biomass_source"]
@@ -247,11 +261,22 @@ def build_tree(row, source_config: dict) -> Tree:
     `crown_fuel_load` is only supplied when `biomass_source.type` is
     `inventory_columns` and a foliage column is configured; otherwise foliage
     biomass is computed allometrically via NSVB or Jenkins.
+
+    `max_crown_radius` is only supplied when `max_crown_radius_source.type`
+    is `inventory_column`; otherwise the crown profile model's allometric
+    radius is used. When supplied, fastfuels-core preserves the crown
+    profile shape and rescales it so the maximum radius matches the
+    per-tree value.
     """
     crown_fuel_load = None
     column = foliage_inventory_column(source_config)
     if column is not None:
         crown_fuel_load = float(row[column])
+
+    max_crown_radius = None
+    radius_column = max_crown_radius_inventory_column(source_config)
+    if radius_column is not None:
+        max_crown_radius = float(row[radius_column])
 
     return Tree(
         species_code=int(row["fia_species_code"]),
@@ -264,6 +289,7 @@ def build_tree(row, source_config: dict) -> Tree:
         crown_profile_model_type=source_config["crown_profile_model"],
         biomass_allometry_model_type=_biomass_allometry_model_type(source_config),
         crown_fuel_load=crown_fuel_load,
+        max_crown_radius=max_crown_radius,
     )
 
 
@@ -277,7 +303,9 @@ def compute_cache_keys(
     indistinguishable within the chosen bin widths. When foliage biomass comes
     from an inventory column, that per-row biomass value is also part of the
     key so rows with the same morphology but different supplied biomass do not
-    reuse the first row's cached density arrays. Returns integer codes via
+    reuse the first row's cached density arrays. The same applies to a
+    per-tree max_crown_radius column: it changes the crown geometry and
+    must split otherwise-identical bins. Returns integer codes via
     `groupby().ngroup()`.
 
     See TREEVOX.md for rationale and bin widths.
@@ -291,10 +319,11 @@ def compute_cache_keys(
         height_bin,
         cr_bin,
     ]
-    if source_config is not None and (
-        column := foliage_inventory_column(source_config)
-    ):
-        groupers.append(df[column].astype("float64"))
+    if source_config is not None:
+        if column := foliage_inventory_column(source_config):
+            groupers.append(df[column].astype("float64"))
+        if column := max_crown_radius_inventory_column(source_config):
+            groupers.append(df[column].astype("float64"))
     return df.groupby(groupers, sort=False).ngroup()
 
 

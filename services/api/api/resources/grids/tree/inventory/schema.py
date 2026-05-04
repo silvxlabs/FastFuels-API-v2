@@ -22,8 +22,10 @@ from pydantic import (
 from api.resources.grids.schema import validate_no_duplicates
 from api.resources.grids.tree.schema import (
     AllometryBiomassSource,
+    AllometryMaxCrownRadiusSource,
     BiomassSource,
     CrownProfileModel,
+    MaxCrownRadiusSource,
     MoistureModel,
     TreeBand,
     UniformMoistureValue,
@@ -58,6 +60,14 @@ def _generate_random_seed() -> int:
     return randint(1, 1_000_000_000)
 
 
+def _default_resolution() -> Resolution3D:
+    return Resolution3D(horizontal=2.0, vertical=1.0)
+
+
+def _default_bands() -> list[TreeBand]:
+    return [TreeBand.bulk_density_foliage_live]
+
+
 class TreeInventorySource(BaseModel):
     """Source metadata stored on the Grid document for reproducibility.
 
@@ -80,6 +90,7 @@ class TreeInventorySource(BaseModel):
     bands: list[TreeBand]
     crown_profile_model: CrownProfileModel
     biomass_source: BiomassSource
+    max_crown_radius_source: MaxCrownRadiusSource = AllometryMaxCrownRadiusSource()
     moisture_model: MoistureModel | None = None
     seed: int = Field(
         description=(
@@ -112,11 +123,15 @@ class CreateTreeInventoryRequest(BaseModel):
         description="ID of a completed tree inventory to voxelize.",
     )
     resolution: Resolution3D = Field(
+        default_factory=_default_resolution,
         description="Voxel resolution (horizontal x/y, vertical z) in meters.",
     )
     bands: list[TreeBand] = Field(
+        default_factory=_default_bands,
         min_length=1,
-        description="Which output bands to produce.",
+        description=(
+            "Which output bands to produce. Defaults to `bulk_density.foliage.live`."
+        ),
     )
     crown_profile_model: CrownProfileModel = Field(
         default=CrownProfileModel.purves,
@@ -125,6 +140,17 @@ class CreateTreeInventoryRequest(BaseModel):
     biomass_source: BiomassSource = Field(
         default_factory=AllometryBiomassSource,
         description="Biomass source and requested biomass components.",
+    )
+    max_crown_radius_source: MaxCrownRadiusSource = Field(
+        default_factory=AllometryMaxCrownRadiusSource,
+        description=(
+            "Source of each tree's maximum crown radius. Defaults to the "
+            "crown profile model's allometric value. Use "
+            '`{"type": "inventory_column", "column": ...}` to read a '
+            "per-tree maximum crown radius (m) from an inventory column "
+            "(e.g. derived from LiDAR); the crown profile model still "
+            "controls the crown shape — only the peak radius is rescaled."
+        ),
     )
     moisture_model: MoistureModel | None = Field(
         default=None,

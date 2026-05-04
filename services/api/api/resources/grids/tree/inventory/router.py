@@ -66,17 +66,24 @@ async def create_tree_inventory_grid(
     ## Request Body
 
     - **source_inventory_id**: (required) ID of a completed tree inventory.
-    - **resolution**: (required) Voxel resolution `[x, y, z]` in meters. All
-      components must be positive.
-    - **bands**: (required) Which output bands to produce. Must be non-empty
-      and contain no duplicates. Branchwood and fine bands are accepted by
-      the API, but Treevox currently fails those jobs with a not-implemented
-      processing error.
+    - **resolution**: (optional) Voxel resolution in meters. Defaults to
+      `{"horizontal": 2.0, "vertical": 1.0}`. All components must be positive.
+    - **bands**: (optional) Which output bands to produce. Defaults to
+      `["bulk_density.foliage.live"]`. Must be non-empty and contain no
+      duplicates. Branchwood and fine bands are accepted by the API, but
+      Treevox currently fails those jobs with a not-implemented processing
+      error.
     - **crown_profile_model**: (optional) Crown geometry model. One of
       `purves` (default) or `beta`.
     - **biomass_source**: (optional) Biomass source and requested components. The
       default uses NSVB allometry for foliage. Inventory-column sources must
       provide per-tree kg values for each requested direct component.
+    - **max_crown_radius_source**: (optional) Source of each tree's maximum
+      crown radius. Defaults to the crown profile model's allometric value;
+      pass `{"type": "inventory_column", "column": <name>}` to read a per-tree
+      maximum radius (m) from an inventory column (e.g. derived from LiDAR).
+      The crown profile model still controls the crown shape — only the peak
+      radius is rescaled.
     - **moisture_model**: (optional) Live/dead fuel moisture configuration.
       Required shape: `{"live": {"method": "uniform", "value": <percent>}}`
       and/or `{"dead": {"method": "uniform", "value": <percent>}}`.
@@ -124,6 +131,7 @@ async def create_tree_inventory_grid(
         bands=body.bands,
         crown_profile_model=body.crown_profile_model,
         biomass_source=body.biomass_source,
+        max_crown_radius_source=body.max_crown_radius_source,
         moisture_model=body.moisture_model,
         seed=body.seed,
     )

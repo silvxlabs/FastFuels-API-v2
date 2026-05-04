@@ -83,6 +83,47 @@ class TestReadInventory:
         read_inventory("inv1", biomass_column="dbh")
         assert captured["columns"].count("dbh") == 1
 
+    def test_crown_radius_column_appended_to_projection(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            return pd.DataFrame({c: [] for c in columns})
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        read_inventory("inv1", crown_radius_column="lidar_max_radius")
+        assert "lidar_max_radius" in captured["columns"]
+
+    def test_biomass_and_crown_radius_columns_both_projected(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            return pd.DataFrame({c: [] for c in columns})
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        read_inventory(
+            "inv1",
+            biomass_column="my_load",
+            crown_radius_column="lidar_max_radius",
+        )
+        assert "my_load" in captured["columns"]
+        assert "lidar_max_radius" in captured["columns"]
+
+    def test_crown_radius_column_already_required_not_duplicated(self, monkeypatch):
+        captured: dict = {}
+
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            return pd.DataFrame({c: [] for c in columns})
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        read_inventory("inv1", crown_radius_column="dbh")
+        assert captured["columns"].count("dbh") == 1
+
     def test_missing_inventory_raises_processing_error(self, monkeypatch):
         def raising(path, **kwargs):
             raise FileNotFoundError(path)
@@ -135,6 +176,26 @@ class TestDropNullRows:
         out = drop_null_rows(df, biomass_column="fuel_load")
         assert len(out) == 2
         assert list(out["fuel_load"]) == [10.0, 20.0]
+
+    def test_crown_radius_column_non_null_required_when_specified(self):
+        df = self._df()
+        df["lidar_max_radius"] = [2.5, None, 4.0]
+        out = drop_null_rows(df, crown_radius_column="lidar_max_radius")
+        assert len(out) == 2
+        assert list(out["lidar_max_radius"]) == [2.5, 4.0]
+
+    def test_biomass_and_crown_radius_columns_drop_independently(self):
+        df = self._df()
+        df["fuel_load"] = [10.0, 20.0, 30.0]
+        df["lidar_max_radius"] = [2.5, None, 4.0]
+        out = drop_null_rows(
+            df,
+            biomass_column="fuel_load",
+            crown_radius_column="lidar_max_radius",
+        )
+        assert len(out) == 2
+        assert list(out["fuel_load"]) == [10.0, 30.0]
+        assert list(out["lidar_max_radius"]) == [2.5, 4.0]
 
     def test_resets_index(self):
         df = self._df()

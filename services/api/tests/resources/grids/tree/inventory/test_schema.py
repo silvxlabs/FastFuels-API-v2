@@ -17,12 +17,15 @@ from api.resources.grids.tree.inventory.schema import (
 from api.resources.grids.tree.schema import (
     TREE_BAND_DEFS,
     AllometryBiomassSource,
+    AllometryMaxCrownRadiusSource,
     BiomassComponent,
     BiomassComponentState,
     BiomassEquations,
     CrownProfileModel,
     FineBiomassConfig,
+    InventoryColumnMaxCrownRadiusSource,
     InventoryColumnsBiomassSource,
+    MaxCrownRadiusUnit,
     MoistureModel,
     TreeBand,
     UniformMoistureValue,
@@ -270,14 +273,45 @@ class TestBiomassSource:
             )
 
 
+class TestMaxCrownRadiusSource:
+    def test_default_allometry_source(self):
+        source = AllometryMaxCrownRadiusSource()
+        assert source.type == "allometry"
+
+    def test_inventory_column_source(self):
+        source = InventoryColumnMaxCrownRadiusSource(column="lidar_max_radius")
+        assert source.type == "inventory_column"
+        assert source.column == "lidar_max_radius"
+        assert source.unit == MaxCrownRadiusUnit.m
+
+    def test_inventory_column_unit_must_be_meters(self):
+        with pytest.raises(ValidationError):
+            InventoryColumnMaxCrownRadiusSource(column="r", unit="ft")
+
+    def test_inventory_column_requires_column(self):
+        with pytest.raises(ValidationError):
+            InventoryColumnMaxCrownRadiusSource()
+
+    def test_inventory_column_extra_fields_rejected(self):
+        with pytest.raises(ValidationError):
+            InventoryColumnMaxCrownRadiusSource(column="r", species="something")
+
+    def test_unknown_discriminator_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateTreeInventoryRequest(
+                source_inventory_id="abc",
+                resolution={"horizontal": 2.0, "vertical": 1.0},
+                bands=["bulk_density.foliage.live"],
+                max_crown_radius_source={"type": "lookup_table", "column": "r"},
+            )
+
+
 class TestCreateTreeInventoryRequest:
     """Validation rules for the request body."""
 
     def _minimal(self, **overrides) -> dict:
         body = {
             "source_inventory_id": "abc123",
-            "resolution": {"horizontal": 2.0, "vertical": 1.0},
-            "bands": ["bulk_density.foliage.live"],
         }
         body.update(overrides)
         return body
@@ -291,10 +325,26 @@ class TestCreateTreeInventoryRequest:
         assert req.crown_profile_model == CrownProfileModel.purves
         assert req.biomass_source.equations == BiomassEquations.nsvb
         assert req.biomass_source.components == [BiomassComponent.foliage]
+        assert req.max_crown_radius_source.type == "allometry"
         assert req.moisture_model is None
         assert req.name == ""
         assert req.description == ""
         assert req.tags == []
+
+    def test_max_crown_radius_inventory_column_accepted(self):
+        req = CreateTreeInventoryRequest(
+            **self._minimal(
+                max_crown_radius_source={
+                    "type": "inventory_column",
+                    "column": "lidar_max_radius",
+                    "unit": "m",
+                }
+            )
+        )
+        assert isinstance(
+            req.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource
+        )
+        assert req.max_crown_radius_source.column == "lidar_max_radius"
 
     def test_source_inventory_id_is_required(self):
         with pytest.raises(ValidationError):
@@ -303,19 +353,20 @@ class TestCreateTreeInventoryRequest:
                 bands=["bulk_density.foliage.live"],
             )
 
-    def test_resolution_is_required(self):
-        with pytest.raises(ValidationError):
-            CreateTreeInventoryRequest(
-                source_inventory_id="abc",
-                bands=["bulk_density.foliage.live"],
-            )
+    def test_resolution_defaults_to_two_by_one(self):
+        req = CreateTreeInventoryRequest(
+            source_inventory_id="abc",
+            bands=["bulk_density.foliage.live"],
+        )
+        assert req.resolution.horizontal == 2.0
+        assert req.resolution.vertical == 1.0
 
-    def test_bands_is_required(self):
-        with pytest.raises(ValidationError):
-            CreateTreeInventoryRequest(
-                source_inventory_id="abc",
-                resolution={"horizontal": 2.0, "vertical": 1.0},
-            )
+    def test_bands_defaults_to_live_foliage_bulk_density(self):
+        req = CreateTreeInventoryRequest(
+            source_inventory_id="abc",
+            resolution={"horizontal": 2.0, "vertical": 1.0},
+        )
+        assert req.bands == [TreeBand.bulk_density_foliage_live]
 
     def test_bands_cannot_be_empty(self):
         with pytest.raises(ValidationError):
@@ -601,6 +652,36 @@ class TestTreeInventorySource:
         assert source.name == "inventory"
         assert source.product == "tree"
         assert "tree" in source.description.lower()
+
+    def test_max_crown_radius_source_persists_inventory_column(self):
+        source = TreeInventorySource(
+            source_inventory_id="inv123",
+            resolution={"horizontal": 2.0, "vertical": 1.0},
+            bands=[TreeBand.bulk_density_foliage_live],
+            crown_profile_model=CrownProfileModel.purves,
+            biomass_source=AllometryBiomassSource(),
+            max_crown_radius_source=InventoryColumnMaxCrownRadiusSource(
+                column="lidar_max_radius",
+            ),
+            seed=42,
+        )
+        data = source.model_dump(mode="json", exclude_none=True)
+        assert data["max_crown_radius_source"] == {
+            "type": "inventory_column",
+            "column": "lidar_max_radius",
+            "unit": "m",
+        }
+
+    def test_max_crown_radius_source_defaults_to_allometry_on_persisted_source(self):
+        source = TreeInventorySource(
+            source_inventory_id="inv123",
+            resolution={"horizontal": 2.0, "vertical": 1.0},
+            bands=[TreeBand.bulk_density_foliage_live],
+            crown_profile_model=CrownProfileModel.purves,
+            biomass_source=AllometryBiomassSource(),
+            seed=42,
+        )
+        assert source.max_crown_radius_source.type == "allometry"
 
     def test_model_dump_includes_resolved_defaults(self):
         source = TreeInventorySource(

@@ -204,6 +204,30 @@ class TestBuildTree:
         tree = voxelize.build_tree(row, cfg)
         assert tree._crown_fuel_load_override is None
 
+    def test_inventory_crown_radius_reads_column_as_max_crown_radius(self):
+        cfg = base_source_config()
+        cfg["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "lidar_max_radius",
+            "unit": "m",
+        }
+        row = self._row(lidar_max_radius=3.5)
+        tree = voxelize.build_tree(row, cfg)
+        assert tree._max_crown_radius_override == 3.5
+
+    def test_default_crown_radius_source_does_not_set_override(self):
+        cfg = base_source_config()  # no max_crown_radius_source
+        row = self._row()
+        tree = voxelize.build_tree(row, cfg)
+        assert tree._max_crown_radius_override is None
+
+    def test_allometry_crown_radius_source_does_not_set_override(self):
+        cfg = base_source_config()
+        cfg["max_crown_radius_source"] = {"type": "allometry"}
+        row = self._row()
+        tree = voxelize.build_tree(row, cfg)
+        assert tree._max_crown_radius_override is None
+
 
 class TestBiomassComponentDistribution:
     def test_foliage_calls_fastfuels_distribution(self):
@@ -304,6 +328,30 @@ class TestComputeCacheKeys:
         df["my_fuel_load"] = [10.0, 25.0]
 
         keys = voxelize.compute_cache_keys(df, base_source_config())
+
+        assert keys.nunique() == 1
+
+    def test_inventory_max_crown_radius_splits_same_morphology(self):
+        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df["lidar_max_radius"] = [2.5, 4.0]
+        cfg = base_source_config()
+        cfg["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "lidar_max_radius",
+            "unit": "m",
+        }
+
+        keys = voxelize.compute_cache_keys(df, cfg)
+
+        assert keys.nunique() == 2
+
+    def test_allometry_crown_radius_source_does_not_split(self):
+        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df["lidar_max_radius"] = [2.5, 4.0]
+        cfg = base_source_config()
+        cfg["max_crown_radius_source"] = {"type": "allometry"}
+
+        keys = voxelize.compute_cache_keys(df, cfg)
 
         assert keys.nunique() == 1
 

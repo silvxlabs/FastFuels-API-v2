@@ -32,20 +32,24 @@ REQUIRED_COLUMNS = [
 
 
 def read_inventory(
-    inventory_id: str, biomass_column: str | None = None
+    inventory_id: str,
+    biomass_column: str | None = None,
+    crown_radius_column: str | None = None,
 ) -> pd.DataFrame:
     """Read a tree-inventory parquet directly from GCS with column projection
     and a `fia_status_code == 1` predicate pushdown.
 
-    Only `REQUIRED_COLUMNS` (plus `biomass_column` if supplied) are decoded;
-    parquet row groups containing only dead trees are skipped when statistics
-    permit. This avoids staging the blob on the Cloud Run tmpfs, cuts peak
-    memory roughly in half during load, and transfers less data over the wire.
+    Only `REQUIRED_COLUMNS` (plus `biomass_column` and `crown_radius_column`
+    if supplied) are decoded; parquet row groups containing only dead trees
+    are skipped when statistics permit. This avoids staging the blob on the
+    Cloud Run tmpfs, cuts peak memory roughly in half during load, and
+    transfers less data over the wire.
     """
     gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
     columns = list(REQUIRED_COLUMNS)
-    if biomass_column and biomass_column not in columns:
-        columns.append(biomass_column)
+    for optional in (biomass_column, crown_radius_column):
+        if optional and optional not in columns:
+            columns.append(optional)
 
     try:
         return pd.read_parquet(
@@ -70,8 +74,13 @@ def read_inventory(
         ) from e
 
 
-def drop_null_rows(df: pd.DataFrame, biomass_column: str | None = None) -> pd.DataFrame:
-    """Drop rows with nulls in any required column (plus `biomass_column` when set).
+def drop_null_rows(
+    df: pd.DataFrame,
+    biomass_column: str | None = None,
+    crown_radius_column: str | None = None,
+) -> pd.DataFrame:
+    """Drop rows with nulls in any required column (plus `biomass_column` and
+    `crown_radius_column` when set).
 
     Parquet's row-group statistics can skip dead-tree groups (the
     `fia_status_code == 1` pushdown lives in `read_inventory`), but can't
@@ -79,8 +88,9 @@ def drop_null_rows(df: pd.DataFrame, biomass_column: str | None = None) -> pd.Da
     this function's job.
     """
     required = list(REQUIRED_COLUMNS)
-    if biomass_column:
-        required.append(biomass_column)
+    for optional in (biomass_column, crown_radius_column):
+        if optional and optional not in required:
+            required.append(optional)
     return df.dropna(subset=required).reset_index(drop=True)
 
 

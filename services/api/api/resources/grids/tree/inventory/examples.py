@@ -9,8 +9,13 @@ These examples are used in:
 domain_id comes from the URL path parameter, not the request body.
 """
 
-# Minimum request — only required fields.
+# Minimum request — source inventory only; other fields resolve to defaults.
 EXAMPLE_MINIMAL = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+}
+
+# Basic request with default grid options shown explicitly.
+EXAMPLE_BASIC = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "resolution": {"horizontal": 2.0, "vertical": 1.0},
     "bands": ["bulk_density.foliage.live"],
@@ -126,6 +131,18 @@ EXAMPLE_WITH_DERIVED_FINE_BIOMASS = {
     },
 }
 
+# Per-tree max crown radius supplied by the inventory (e.g. from LiDAR).
+EXAMPLE_WITH_INVENTORY_CROWN_RADIUS = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
+    "bands": ["bulk_density.foliage.live"],
+    "max_crown_radius_source": {
+        "type": "inventory_column",
+        "column": "max_crown_radius",
+        "unit": "m",
+    },
+}
+
 # Pinned seed for reproducible voxelization.
 EXAMPLE_WITH_SEED = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
@@ -139,10 +156,19 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_MINIMAL,
         "summary": "Minimum request",
         "description": (
-            "Voxelizes a tree inventory with all defaults. Produces a single "
+            "Voxelizes a tree inventory with all defaults. The request only "
+            "needs the source inventory ID. Produces a single "
             "`bulk_density.foliage.live` band (kg/m³) at 2 m × 2 m × 1 m voxel "
             "resolution using the Purves crown profile and NSVB biomass "
             "models. Use this when you only need foliage mass per voxel."
+        ),
+    },
+    "basic": {
+        "value": EXAMPLE_BASIC,
+        "summary": "Basic request with explicit defaults",
+        "description": (
+            "Equivalent to the minimum request, but shows the default "
+            "`resolution` and `bands` values explicitly."
         ),
     },
     "with_bands": {
@@ -231,6 +257,19 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "fine component compute is available."
         ),
     },
+    "with_inventory_crown_radius": {
+        "value": EXAMPLE_WITH_INVENTORY_CROWN_RADIUS,
+        "summary": "Use per-tree max crown radius from inventory",
+        "description": (
+            "Reads each tree's maximum crown radius (m) from the "
+            "`max_crown_radius` inventory column instead of estimating it "
+            "from the crown profile model. The crown profile model still "
+            "drives the crown shape — the supplied radius rescales the "
+            "profile so its peak matches the per-tree value. Useful when "
+            "max crown radius has been measured externally (e.g. from "
+            "LiDAR) and is more reliable than the allometric estimate."
+        ),
+    },
     "with_seed": {
         "value": EXAMPLE_WITH_SEED,
         "summary": "Pin the random seed for reproducibility",
@@ -246,6 +285,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
 
 ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_MINIMAL),
+    ("basic", EXAMPLE_BASIC),
     ("with_bands", EXAMPLE_WITH_BANDS),
     ("with_moisture_model", EXAMPLE_WITH_MOISTURE_MODEL),
     ("with_live_dead_partition", EXAMPLE_WITH_LIVE_DEAD_PARTITION),
@@ -253,5 +293,6 @@ ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
     ("with_inventory_biomass", EXAMPLE_WITH_INVENTORY_BIOMASS),
     ("with_branchwood_biomass", EXAMPLE_WITH_BRANCHWOOD_BIOMASS),
     ("with_derived_fine_biomass", EXAMPLE_WITH_DERIVED_FINE_BIOMASS),
+    ("with_inventory_crown_radius", EXAMPLE_WITH_INVENTORY_CROWN_RADIUS),
     ("with_seed", EXAMPLE_WITH_SEED),
 ]

@@ -115,8 +115,11 @@ def _load_inventory_dataframe(
     """
     progress("Loading inventory...", 5)
     biomass_column = voxelize.foliage_inventory_column(source)
-    df = read_inventory(source["source_inventory_id"], biomass_column)
-    df = drop_null_rows(df, biomass_column)
+    crown_radius_column = voxelize.max_crown_radius_inventory_column(source)
+    df = read_inventory(
+        source["source_inventory_id"], biomass_column, crown_radius_column
+    )
+    df = drop_null_rows(df, biomass_column, crown_radius_column)
     df = assign_tree_ids(df)
     if df.empty:
         raise ProcessingError(

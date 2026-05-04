@@ -1,5 +1,23 @@
 {
+  "bands": [
+    {
+      "index": 0,
+      "key": "fbfm",
+      "type": "categorical",
+      "unit": null
+    }
+  ],
+  "chunk_shape": [
+    512,
+    512
+  ],
+  "description": "",
   "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      47,
+      60
+    ],
     "transform": [
       29.945424601110094,
       0.0,
@@ -7,39 +25,21 @@
       0.0,
       -29.94542460111172,
       5190913.867581626
-    ],
-    "shape": [
-      47,
-      60
-    ],
-    "crs": "EPSG:32611"
+    ]
   },
-  "source": {
-    "description": "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
-    "version": "2022",
-    "remove_non_burnable": null,
-    "product": "fbfm40",
-    "name": "landfire"
-  },
-  "bands": [
-    {
-      "type": "categorical",
-      "unit": null,
-      "index": 0,
-      "key": "fbfm"
-    }
-  ],
+  "modifications": [],
   "name": "",
   "progress": {
     "message": "Complete",
     "percent": 100
   },
-  "description": "",
-  "tags": [],
-  "modifications": [],
+  "source": {
+    "description": "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
+    "name": "landfire",
+    "product": "fbfm40",
+    "remove_non_burnable": null,
+    "version": "2022"
+  },
   "status": "completed",
-  "chunk_shape": [
-    512,
-    512
-  ]
+  "tags": []
 }

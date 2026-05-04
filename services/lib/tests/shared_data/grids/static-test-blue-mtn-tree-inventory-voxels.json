@@ -1,0 +1,79 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "volume_fraction",
+      "type": "continuous",
+      "unit": null
+    },
+    {
+      "index": 1,
+      "key": "bulk_density.foliage.live",
+      "type": "continuous",
+      "unit": "kg/m\u00b3"
+    }
+  ],
+  "chunk_shape": [
+    36,
+    442,
+    442
+  ],
+  "description": "",
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      36,
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ],
+    "z_origin": 0.0,
+    "z_resolution": 1.0
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "bands": [
+      "volume_fraction",
+      "bulk_density.foliage.live"
+    ],
+    "biomass_source": {
+      "component_states": {
+        "foliage": {
+          "dead": 0.0,
+          "live": 1.0
+        }
+      },
+      "components": [
+        "foliage"
+      ],
+      "equations": "nsvb",
+      "fine": null,
+      "type": "allometry"
+    },
+    "crown_profile_model": "purves",
+    "description": "3D tree fuel grid from tree inventory voxelization",
+    "moisture_model": null,
+    "name": "inventory",
+    "product": "tree",
+    "resolution": {
+      "horizontal": 2.0,
+      "vertical": 1.0
+    },
+    "seed": 42,
+    "source_inventory_id": "static-test-blue-mtn-pim-inventory"
+  },
+  "status": "completed",
+  "tags": []
+}

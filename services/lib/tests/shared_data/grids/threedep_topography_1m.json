@@ -1,22 +1,32 @@
 {
-  "name": "test-3dep-topography-1m",
+  "bands": [
+    {
+      "index": 0,
+      "key": "elevation",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunk_shape": [
+    512,
+    512
+  ],
   "description": "",
-  "status": "pending",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-3dep-topography-1m",
   "progress": null,
   "source": {
+    "bands": [
+      "elevation"
+    ],
+    "description": "3DEP topographic data (elevation) at 1m from S1M",
     "name": "3dep",
     "product": "topography",
     "resolution": 1,
-    "bands": ["elevation"],
-    "description": "3DEP topographic data (elevation) at 1m from S1M",
     "tile_metadata": null
   },
-  "modifications": [],
-  "bands": [
-    {"key": "elevation", "type": "continuous", "unit": "m", "index": 0}
-  ],
-  "georeference": null,
-  "error": null,
-  "tags": [],
-  "chunk_shape": [512, 512]
+  "status": "pending",
+  "tags": []
 }

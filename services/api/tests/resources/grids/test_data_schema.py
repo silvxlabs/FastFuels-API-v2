@@ -1,9 +1,17 @@
 """
-Unit tests for compute_chunk_metadata() and compute_chunk_slices().
+Unit tests for grid data schema models and compute_chunk_metadata().
 """
 
 import pytest
-from api.resources.grids.schema import GridDataChunkMetadata
+from api.resources.grids.schema import (
+    DenseGridData,
+    GridDataArrayFormat,
+    GridDataChunkMetadata,
+    GridDataOrder,
+    GridDataResponse,
+    GridDataResponseFormat,
+    SparseGridData,
+)
 from api.resources.grids.utils import compute_chunk_metadata, compute_chunk_slices
 
 # Helpers
@@ -268,3 +276,69 @@ class TestComputeChunkSlices:
         assert z_slice == slice(4, 5)
         assert row_slice == slice(512, 1000)
         assert col_slice == slice(512, 800)
+
+
+class TestResponseModels:
+    def test_chunk_metadata_model(self):
+        m = GridDataChunkMetadata(
+            index=0,
+            shape=(100, 200),
+            offset=(0, 0),
+            transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+        )
+        assert m.index == 0
+        assert m.shape == (100, 200)
+
+    def test_3d_chunk_metadata_model(self):
+        m = GridDataChunkMetadata(
+            index=0,
+            shape=(4, 100, 200),
+            offset=(8, 0, 0),
+            transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+            z_origin=14.0,
+            z_resolution=0.5,
+        )
+        assert m.shape == (4, 100, 200)
+        assert m.offset == (8, 0, 0)
+        assert m.z_origin == 14.0
+
+    def test_dense_data_response_model(self):
+        r = GridDataResponse(
+            shape=[47, 61],
+            order="C",
+            data={"format": "dense", "values": [1, 2, 3]},
+        )
+        assert r.shape == [47, 61]
+        assert r.order == "C"
+        assert isinstance(r.data, DenseGridData)
+        assert r.data.format == "dense"
+        assert r.data.values == [1, 2, 3]
+
+    def test_sparse_data_response_model(self):
+        r = GridDataResponse(
+            shape=[2, 3],
+            order="C",
+            data={
+                "format": "sparse",
+                "fill_value": 0,
+                "indices": [0, 4],
+                "values": [7, 9],
+            },
+        )
+        assert isinstance(r.data, SparseGridData)
+        assert r.data.format == "sparse"
+        assert r.data.fill_value == 0
+        assert r.data.indices == [0, 4]
+        assert r.data.values == [7, 9]
+
+    def test_response_format_enum(self):
+        assert GridDataResponseFormat.json == "json"
+        assert GridDataResponseFormat.binary == "binary"
+
+    def test_array_format_enum(self):
+        assert GridDataArrayFormat.dense == "dense"
+        assert GridDataArrayFormat.sparse == "sparse"
+
+    def test_order_enum(self):
+        assert GridDataOrder.C == "C"
+        assert GridDataOrder.F == "F"

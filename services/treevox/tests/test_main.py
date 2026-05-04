@@ -85,7 +85,15 @@ class TestProcessGridRequest:
         assert calls[1][1] == "completed"
 
         mock_update_doc.assert_any_call(
-            main.GRIDS_COLLECTION, "g1", {"chunk_shape": [5, 10, 10]}
+            main.GRIDS_COLLECTION,
+            "g1",
+            {
+                "chunks": {
+                    "shape": [5, 10, 10],
+                    "count": 1,
+                    "count_by_axis": {"z": 1, "y": 1, "x": 1},
+                }
+            },
         )
 
     @patch("treevox.main.storage.delete_zarr")

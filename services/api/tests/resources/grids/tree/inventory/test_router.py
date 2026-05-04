@@ -178,10 +178,10 @@ class TestCreateTreeInventoryGrid:
         assert response.status_code == 201
         assert response.json()["georeference"] is None
 
-    def test_chunk_shape_is_null_on_creation(
+    def test_chunks_is_null_on_creation(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
-        """chunk_shape is null until Treevox computes the 3D chunk layout."""
+        """chunks is null until Treevox computes the 3D chunk layout."""
         body = {
             "source_inventory_id": tree_inventory_for_voxelization["id"],
             "resolution": {"horizontal": 2.0, "vertical": 1.0},
@@ -189,7 +189,7 @@ class TestCreateTreeInventoryGrid:
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
-        assert response.json()["chunk_shape"] is None
+        assert response.json()["chunks"] is None
 
     def test_response_excludes_owner_id(
         self, client, domain_for_testing, tree_inventory_for_voxelization

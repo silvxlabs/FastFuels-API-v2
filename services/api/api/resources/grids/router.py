@@ -63,16 +63,14 @@ wildcard_router = APIRouter()
 COLLECTION = GRIDS_COLLECTION
 MAX_BINARY_BYTES = 30 * 1024 * 1024
 MAX_JSON_SCALARS = 1_000_000
+MAX_SPARSE_INDEX = int(np.iinfo(np.int32).max)
 
 
-def _check_size(actual: int, limit: int, what: str) -> None:
+def _check_size(actual: int, limit: int, what: str, hint: str) -> None:
     if actual > limit:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"{what} ({actual}) exceeds API response limit ({limit}). "
-                "Request array_format=sparse, format=binary, or a smaller chunk."
-            ),
+            detail=f"{what} ({actual}) exceeds API response limit ({limit}). {hint}",
         )
 
 
@@ -82,6 +80,14 @@ def _sparse_components(
     order: GridDataOrder,
 ) -> tuple[np.ndarray, np.ndarray]:
     flat = data.ravel(order=order.value)
+    if flat.size > MAX_SPARSE_INDEX:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Chunk size ({flat.size}) exceeds int32 sparse-index limit "
+                f"({MAX_SPARSE_INDEX}). Request a smaller chunk."
+            ),
+        )
     if np.issubdtype(flat.dtype, np.floating) and np.isnan(fill_value):
         mask = ~np.isnan(flat)
     else:
@@ -618,7 +624,12 @@ async def get_grid_data(
 
         if response_format == GridDataResponseFormat.binary:
             raw = indices.tobytes() + values.tobytes()
-            _check_size(len(raw), MAX_BINARY_BYTES, "Sparse binary grid data")
+            _check_size(
+                len(raw),
+                MAX_BINARY_BYTES,
+                "Sparse binary grid data",
+                "Request a smaller chunk.",
+            )
             return Response(
                 content=raw,
                 media_type="application/octet-stream",
@@ -633,6 +644,12 @@ async def get_grid_data(
                 },
             )
 
+        _check_size(
+            2 * len(indices),
+            MAX_JSON_SCALARS,
+            "Sparse JSON grid data",
+            "Request format=binary or a smaller chunk.",
+        )
         return GridDataResponse(
             shape=list(data.shape),
             order=order.value,
@@ -646,7 +663,12 @@ async def get_grid_data(
 
     if response_format == GridDataResponseFormat.binary:
         raw = data.ravel(order=order.value).tobytes()
-        _check_size(len(raw), MAX_BINARY_BYTES, "Dense binary grid data")
+        _check_size(
+            len(raw),
+            MAX_BINARY_BYTES,
+            "Dense binary grid data",
+            "Request array_format=sparse or a smaller chunk.",
+        )
         return Response(
             content=raw,
             media_type="application/octet-stream",
@@ -658,7 +680,12 @@ async def get_grid_data(
             },
         )
 
-    _check_size(data.size, MAX_JSON_SCALARS, "Dense JSON grid data")
+    _check_size(
+        data.size,
+        MAX_JSON_SCALARS,
+        "Dense JSON grid data",
+        "Request array_format=sparse, format=binary, or a smaller chunk.",
+    )
     return GridDataResponse(
         shape=list(data.shape),
         order=order.value,

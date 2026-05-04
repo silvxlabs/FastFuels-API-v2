@@ -525,8 +525,8 @@ class TestGetGridData:
         response = client.get(url, params=params)
         assert response.status_code == 404
 
+    @staticmethod
     async def _call_grid_data_with_fake_array(
-        self,
         monkeypatch,
         fake_array,
         *,
@@ -656,6 +656,65 @@ class TestGetGridData:
 
         assert exc.value.status_code == 413
         assert "sparse" in exc.value.detail
+
+    @pytest.mark.anyio
+    async def test_sparse_json_above_scalar_limit_returns_413(self, monkeypatch):
+        # Fully-dense data (no fill values) maximizes nnz so the sparse JSON
+        # response still trips MAX_JSON_SCALARS.
+        rows = 1001
+        cols = grids_router.MAX_JSON_SCALARS // rows + 1
+        fake_array = FakeGridArray(
+            np.ones((rows, cols), dtype=np.float32), fill_value=0.0
+        )
+        assert 2 * fake_array.data.size > grids_router.MAX_JSON_SCALARS
+
+        with pytest.raises(HTTPException) as exc:
+            await self._call_grid_data_with_fake_array(
+                monkeypatch,
+                fake_array,
+                array_format=GridDataArrayFormat.sparse,
+            )
+
+        assert exc.value.status_code == 413
+        assert "binary" in exc.value.detail
+
+    @pytest.mark.anyio
+    async def test_sparse_binary_above_byte_limit_returns_413(self, monkeypatch):
+        # nnz = rows*cols nonzero entries; each entry costs 4 (int32 index) +
+        # 8 (float64 value) = 12 bytes, so size ~= 12 * data.size.
+        target_bytes = grids_router.MAX_BINARY_BYTES + 1024
+        nnz_needed = target_bytes // 12 + 1
+        cols = 4096
+        rows = nnz_needed // cols + 1
+        fake_array = FakeGridArray(
+            np.ones((rows, cols), dtype=np.float64), fill_value=0.0
+        )
+        assert fake_array.data.size * 12 > grids_router.MAX_BINARY_BYTES
+
+        with pytest.raises(HTTPException) as exc:
+            await self._call_grid_data_with_fake_array(
+                monkeypatch,
+                fake_array,
+                array_format=GridDataArrayFormat.sparse,
+                response_format=GridDataResponseFormat.binary,
+            )
+
+        assert exc.value.status_code == 413
+        assert "smaller chunk" in exc.value.detail
+
+    @pytest.mark.anyio
+    async def test_sparse_chunk_above_int32_index_limit_returns_413(self, monkeypatch):
+        # Patch the int32 limit down so we can exercise the guard without
+        # allocating a 2.1B-element array.
+        monkeypatch.setattr(grids_router, "MAX_SPARSE_INDEX", 5)
+        fake_array = FakeGridArray(np.zeros((3, 3), dtype=np.float32), fill_value=0.0)
+        assert fake_array.data.size > 5
+
+        with pytest.raises(HTTPException) as exc:
+            await self._call_grid_data_with_fake_array(monkeypatch, fake_array)
+
+        assert exc.value.status_code == 413
+        assert "int32" in exc.value.detail
 
     @pytest.mark.anyio
     async def test_3d_data_route_reads_with_z_y_x_slices(self, monkeypatch):

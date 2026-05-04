@@ -13,11 +13,19 @@
       "unit": "kg/m\u00b3"
     }
   ],
-  "chunk_shape": [
-    36,
-    442,
-    442
-  ],
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1,
+      "z": 1
+    },
+    "shape": [
+      36,
+      442,
+      442
+    ]
+  },
   "description": "",
   "georeference": {
     "crs": "EPSG:32611",

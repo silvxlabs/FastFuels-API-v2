@@ -19,10 +19,17 @@
       "unit": "degrees"
     }
   ],
-  "chunk_shape": [
-    512,
-    512
-  ],
+  "chunks": {
+    "count": 1,
+    "count_by_axis": {
+      "x": 1,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
   "description": "",
   "georeference": {
     "crs": "EPSG:32611",

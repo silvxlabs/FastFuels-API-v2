@@ -184,8 +184,10 @@ class TestCreateUniformGrid:
         data = response.json()
         assert data["source"]["name"] == "uniform"
 
-    def test_chunk_shape_defaults_to_512_512(self, client, domain_for_testing):
-        """Response includes the default chunk_shape."""
+    def test_chunks_at_creation_has_shape_only(self, client, domain_for_testing):
+        """At creation, chunks contains only shape; count/count_by_axis are filled in
+        once the grid finishes processing.
+        """
         route = self._route(domain_for_testing["id"])
         request_body = {
             "resolution": 2.0,
@@ -195,4 +197,8 @@ class TestCreateUniformGrid:
         response = client.post(route, json=request_body)
 
         assert response.status_code == 201
-        assert response.json()["chunk_shape"] == [512, 512]
+        assert response.json()["chunks"] == {
+            "shape": [512, 512],
+            "count": None,
+            "count_by_axis": None,
+        }

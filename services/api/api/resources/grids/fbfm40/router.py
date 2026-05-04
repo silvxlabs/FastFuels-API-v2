@@ -90,7 +90,7 @@ async def create_landfire_fbfm40(
         "bands": [FBFM40_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
-        "chunk_shape": CHUNK_SHAPE,
+        "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
 

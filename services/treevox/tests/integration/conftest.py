@@ -305,7 +305,7 @@ def treevox_runner():
             "bands": band_defs,
             "modifications": [],
             "georeference": None,
-            "chunk_shape": None,
+            "chunks": None,
             "tags": [],
         }
         set_document(GRIDS_COLLECTION, grid_id, grid_data)

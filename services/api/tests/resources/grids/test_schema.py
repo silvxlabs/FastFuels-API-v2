@@ -12,6 +12,7 @@ from api.resources.grids.schema import (
     CHUNK_SHAPE,
     Band,
     BandType,
+    Chunks,
     CreateGridRequestBase,
     Georeference,
     Georeference3D,
@@ -30,6 +31,28 @@ class TestChunkShape:
     def test_chunk_shape_is_512_512(self):
         """CHUNK_SHAPE is [512, 512]."""
         assert CHUNK_SHAPE == [512, 512]
+
+
+class TestChunks:
+    """Tests for the Chunks model."""
+
+    def test_2d_shape_valid(self):
+        c = Chunks(shape=(512, 512))
+        assert c.shape == (512, 512)
+        assert c.count is None
+        assert c.count_by_axis is None
+
+    def test_3d_shape_valid(self):
+        c = Chunks(
+            shape=(2, 512, 512), count=12, count_by_axis={"z": 3, "y": 2, "x": 2}
+        )
+        assert c.shape == (2, 512, 512)
+        assert c.count == 12
+        assert c.count_by_axis == {"z": 3, "y": 2, "x": 2}
+
+    def test_shape_is_required(self):
+        with pytest.raises(ValidationError):
+            Chunks()
 
 
 class TestBandType:
@@ -425,16 +448,43 @@ class TestGrid:
         with pytest.raises(ValidationError):
             Grid(**minimal_grid_data)
 
-    def test_chunk_shape_defaults_to_none(self, minimal_grid_data):
-        """chunk_shape defaults to None on Grid response."""
+    def test_chunks_defaults_to_none(self, minimal_grid_data):
+        """chunks defaults to None on Grid response."""
         grid = Grid(**minimal_grid_data)
-        assert grid.chunk_shape is None
+        assert grid.chunks is None
 
-    def test_chunk_shape_can_be_set(self, minimal_grid_data):
-        """chunk_shape can be set on Grid response."""
-        minimal_grid_data["chunk_shape"] = (512, 512)
+    def test_chunks_can_be_set(self, minimal_grid_data):
+        """chunks accepts a Chunks dict on Grid response."""
+        minimal_grid_data["chunks"] = {
+            "shape": (512, 512),
+            "count": 4,
+            "count_by_axis": {"y": 2, "x": 2},
+        }
         grid = Grid(**minimal_grid_data)
-        assert grid.chunk_shape == (512, 512)
+        assert grid.chunks is not None
+        assert grid.chunks.shape == (512, 512)
+        assert grid.chunks.count == 4
+        assert grid.chunks.count_by_axis == {"y": 2, "x": 2}
+
+    def test_chunks_3d_round_trip(self, minimal_grid_data):
+        """3D chunks layout round-trips through the Grid model."""
+        minimal_grid_data["chunks"] = {
+            "shape": (2, 512, 512),
+            "count": 12,
+            "count_by_axis": {"z": 3, "y": 2, "x": 2},
+        }
+        grid = Grid(**minimal_grid_data)
+        assert grid.chunks.shape == (2, 512, 512)
+        assert grid.chunks.count == 12
+        assert grid.chunks.count_by_axis == {"z": 3, "y": 2, "x": 2}
+
+    def test_chunks_count_and_count_by_axis_default_to_none(self, minimal_grid_data):
+        """count and count_by_axis are optional (populated after processing)."""
+        minimal_grid_data["chunks"] = {"shape": (512, 512)}
+        grid = Grid(**minimal_grid_data)
+        assert grid.chunks.shape == (512, 512)
+        assert grid.chunks.count is None
+        assert grid.chunks.count_by_axis is None
 
     def test_georeference_defaults_to_none(self, minimal_grid_data):
         """georeference defaults to None (populated by backend)."""

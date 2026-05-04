@@ -25,6 +25,7 @@ from api.resources.grids.schema import (
 from fastapi import HTTPException
 
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
+from lib.grids import compute_chunks_doc
 from lib.testing import SHARED_TEST_GRIDS_DIR
 from tests.fixtures import make_grid_data
 
@@ -173,7 +174,7 @@ def completed_3d_grid_in_firestore(firestore_client, domain_for_testing):
             "z_origin": 10.0,
         },
     )
-    grid_data["chunk_shape"] = [2, 512, 512]
+    grid_data["chunks"] = compute_chunks_doc((5, 1000, 800), (2, 512, 512))
     doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
     doc_ref.set(grid_data)
     yield grid_data
@@ -242,7 +243,7 @@ async def _call_handler(
             {"key": band, "type": "continuous", "unit": None, "index": 0},
         ],
         "georeference": georeference,
-        "chunk_shape": shape,
+        "chunks": compute_chunks_doc(shape, shape),
     }
 
     async def fake_get_document_async(*args, **kwargs):
@@ -426,7 +427,7 @@ class TestGetChunkMetadata:
 
         data = response.json()
         georef = static_3d_grid_in_firestore["georeference"]
-        chunk_shape = static_3d_grid_in_firestore["chunk_shape"]
+        chunk_shape = static_3d_grid_in_firestore["chunks"]["shape"]
         expected_shape = [
             min(chunk, dimension)
             for chunk, dimension in zip(chunk_shape, georef["shape"])
@@ -553,7 +554,7 @@ class TestGetGridDataJson:
                 "z_resolution": 0.5,
                 "z_origin": 10.0,
             },
-            "chunk_shape": [2, 2, 3],
+            "chunks": compute_chunks_doc((5, 4, 6), (2, 2, 3)),
         }
 
         fake_array = FakeGridArray(np.arange(12, dtype=np.float32).reshape((2, 2, 3)))

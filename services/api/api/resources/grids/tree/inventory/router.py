@@ -151,9 +151,9 @@ async def create_tree_inventory_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        # chunk_shape is computed by Treevox once the 3D grid dimensions
+        # chunks is computed by Treevox once the 3D grid dimensions
         # are known from the domain bbox + resolution.
-        "chunk_shape": None,
+        "chunks": None,
         "owner_id": owner_id,
     }
 

@@ -460,9 +460,8 @@ async def get_chunk_metadata(
     # Get Chunk Metadata Endpoint
 
     Retrieves the shape, pixel offset, and affine transform for a single 2D or
-    3D chunk of a completed grid. This is a lightweight call that performs pure
-    arithmetic on the grid's stored georeference and chunk shape — no raster
-    data is read.
+    3D chunk of a completed grid. This is a lightweight call — no raster data
+    is read.
 
     ## Path Parameters
 
@@ -497,10 +496,16 @@ async def get_chunk_metadata(
         document_status="completed",
     )
     grid_data = snapshot.to_dict()
+    chunks = grid_data.get("chunks")
+    if not chunks:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Grid {grid_id} has no chunk layout.",
+        )
 
     try:
         return compute_chunk_metadata(
-            grid_data["georeference"], grid_data["chunk_shape"], chunk_index
+            grid_data["georeference"], chunks["shape"], chunk_index
         )
     except ValueError as exc:
         raise HTTPException(
@@ -526,10 +531,16 @@ async def _read_grid_chunk(
     grid_data = snapshot.to_dict()
 
     validate_grid_has_band(grid_data, grid_id, band)
+    chunks = grid_data.get("chunks")
+    if not chunks:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Grid {grid_id} has no chunk layout.",
+        )
 
     try:
         meta = compute_chunk_metadata(
-            grid_data["georeference"], grid_data["chunk_shape"], chunk_index
+            grid_data["georeference"], chunks["shape"], chunk_index
         )
     except ValueError as exc:
         raise HTTPException(

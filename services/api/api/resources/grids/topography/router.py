@@ -99,7 +99,7 @@ async def create_landfire_topography(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "chunk_shape": CHUNK_SHAPE,
+        "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
 
@@ -177,7 +177,7 @@ async def create_3dep_topography(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "chunk_shape": CHUNK_SHAPE,
+        "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
 

@@ -13,14 +13,13 @@ from collections.abc import Callable
 import gcsfs
 import geopandas as gpd
 import pandas as pd
-import rasterio
 import xarray as xr
 from rioxarray.merge import merge_arrays
 
 from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
 from lib.config import TABLES_BUCKET
-from lib.raster import RasterConnection
+from lib.raster import RasterConnection, cog_env
 
 META_VERSION_CONFIG = {
     "1": {
@@ -33,17 +32,6 @@ META_VERSION_CONFIG = {
     },
 }
 NAIP_INDEX_PATH = f"{TABLES_BUCKET}/naip_chm_index_optimized.parquet"
-
-# Reduce HTTP round trips when opening remote COGs.
-# See: https://gdal.org/en/stable/user/configoptions.html
-_GDAL_COG_CONFIG = {
-    "GDAL_DISABLE_READDIR_ON_OPEN": "YES",
-    "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif",
-    "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES": "YES",
-    "VSI_CACHE": "TRUE",
-    "VSI_CACHE_SIZE": "5000000",
-    "GDAL_INGESTED_BYTES_AT_OPEN": "32768",
-}
 
 
 def _query_tile_index(index_path: str, roi: gpd.GeoDataFrame) -> pd.DataFrame:
@@ -78,7 +66,7 @@ def _process_intersecting_tiles(
     n_tiles = len(fetch_urls)
     tile_arrays = []
 
-    with rasterio.Env(**_GDAL_COG_CONFIG, **gdal_env):
+    with cog_env(**gdal_env):
         for i, (url, scale) in enumerate(zip(fetch_urls, scale_factors)):
             progress(
                 f"Fetching CHM tile {i + 1}/{n_tiles}...",

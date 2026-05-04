@@ -13,7 +13,6 @@ from collections.abc import Callable
 
 import geopandas as gpd
 import numpy as np
-import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 from rioxarray.merge import merge_arrays
@@ -21,6 +20,7 @@ from xarray import DataArray
 
 from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
+from lib.raster import RasterConnection, cog_env
 from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
 
 logger = logging.getLogger(__name__)
@@ -168,8 +168,6 @@ def _fetch_and_mosaic_tiles(
     Returns:
         DataArray with dims (y, x) in ROI's CRS at target resolution
     """
-    from lib.raster import RasterConnection
-
     n_tiles = len(tile_urls)
     tile_arrays = []
 
@@ -181,7 +179,7 @@ def _fetch_and_mosaic_tiles(
     #                                 sub-tile clips that miss data)
     padding_meters = max(resolution * (pad_cells + 8), resolution * 15, 500)
 
-    with rasterio.Env(AWS_NO_SIGN_REQUEST="YES"):
+    with cog_env(AWS_NO_SIGN_REQUEST="YES"):
         for i, url in enumerate(tile_urls):
             pct = 20 + int(50 * (i + 1) / n_tiles)
             progress(f"Fetching 3DEP tile {i + 1}/{n_tiles}...", pct)

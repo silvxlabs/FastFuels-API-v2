@@ -7,10 +7,14 @@
       "unit": null
     }
   ],
-  "chunk_shape": [
-    512,
-    512
-  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
   "description": "",
   "error": null,
   "georeference": null,

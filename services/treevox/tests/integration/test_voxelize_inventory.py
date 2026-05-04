@@ -24,7 +24,7 @@ def test_voxelize_pim_inventory_all_bands(treevox_runner):
 
     Exercises GCS parquet read, the persistent multiprocessing pool across
     multiple chunks/batches, per-band zarr writes, consolidated metadata,
-    and the Firestore georeference/chunk_shape persistence. One
+    and the Firestore georeference/chunks persistence. One
     end-to-end test is sufficient — the output shape/semantics of each
     band are covered by unit tests.
     """
@@ -72,12 +72,20 @@ def test_voxelize_pim_inventory_all_bands(treevox_runner):
     spcd_vals = spcd_vals[spcd_vals > 0]
     assert len(spcd_vals) >= 1
 
-    # Firestore persistence — 3D georeference and 3-tuple chunk_shape.
+    # Firestore persistence — 3D georeference and chunks layout.
     geo = result.grid["georeference"]
     assert len(geo["shape"]) == 3
     assert len(geo["transform"]) == 6
-    chunk_shape = result.grid["chunk_shape"]
-    assert chunk_shape is not None and len(chunk_shape) == 3
+    chunks = result.grid["chunks"]
+    assert chunks is not None
+    assert len(chunks["shape"]) == 3
+    assert chunks["count"] >= 1
+    assert set(chunks["count_by_axis"].keys()) == {"z", "y", "x"}
+    assert chunks["count"] == (
+        chunks["count_by_axis"]["z"]
+        * chunks["count_by_axis"]["y"]
+        * chunks["count_by_axis"]["x"]
+    )
 
 
 def test_inventory_not_found_fails_gracefully(treevox_runner):

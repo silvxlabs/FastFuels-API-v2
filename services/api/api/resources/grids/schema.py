@@ -90,6 +90,29 @@ class Georeference3D(Georeference):
     z_origin: float
 
 
+class Chunks(BaseModel):
+    """Chunk layout for a grid."""
+
+    shape: tuple[int, int] | tuple[int, int, int] = Field(
+        ...,
+        description=(
+            "Size of a single chunk. 2D grids: (y, x). 3D grids: (z, y, x). "
+            "Edge chunks may be smaller."
+        ),
+    )
+    count: int | None = Field(
+        default=None,
+        description="Total number of chunks in the grid.",
+    )
+    count_by_axis: dict[str, int] | None = Field(
+        default=None,
+        description=(
+            "Number of chunks along each axis. Keys are 'y','x' for 2D grids "
+            "and 'z','y','x' for 3D grids."
+        ),
+    )
+
+
 class CreateGridRequestBase(BaseModel):
     """Base fields for grid creation requests.
 
@@ -155,10 +178,11 @@ class Grid(BaseModel):
     )
 
     # Storage
-    chunk_shape: tuple[int, int] | tuple[int, int, int] | None = Field(
+    chunks: Chunks | None = Field(
         default=None,
         description=(
-            "Zarr chunk shape. 2D grids: (height, width). 3D grids: (z, height, width)."
+            "Chunk layout. Null until the grid finishes processing. "
+            "Use chunks.count to know how many chunks are available to fetch."
         ),
     )
 

@@ -7,10 +7,14 @@
       "unit": "m"
     }
   ],
-  "chunk_shape": [
-    512,
-    512
-  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
   "description": "Meta canopy height for integration test",
   "error": null,
   "georeference": null,

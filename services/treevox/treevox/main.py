@@ -23,6 +23,7 @@ from flask import Request
 
 from lib.config import GRIDS_COLLECTION
 from lib.firestore import DocumentNotFoundError, update_document
+from lib.grids import compute_chunks_doc
 from treevox import storage
 from treevox.errors import CancelledException, ProcessingError
 from treevox.firestore_io import (
@@ -129,7 +130,10 @@ def process_grid_request(request: Request):
         # This is where we run the actual process
         result = dispatch_handler(grid, domain_gdf, progress_callback)
 
-        update_document(GRIDS_COLLECTION, grid_id, {"chunk_shape": result.chunk_shape})
+        chunks_doc = compute_chunks_doc(
+            result.georeference["shape"], result.chunk_shape
+        )
+        update_document(GRIDS_COLLECTION, grid_id, {"chunks": chunks_doc})
         update_status(grid_id, "completed", georeference=result.georeference)
 
         logger.info("Processing complete", extra=ids)

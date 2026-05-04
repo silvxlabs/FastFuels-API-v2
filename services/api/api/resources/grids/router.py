@@ -40,7 +40,6 @@ from api.resources.grids.schema import (
     GridDataChunkMetadata,
     GridDataOrder,
     GridDataResponse,
-    GridDataResponseFormat,
     GridSortField,
     ListGridsResponse,
     SparseGridData,
@@ -76,7 +75,7 @@ def _check_size(actual: int, limit: int, what: str, hint: str) -> None:
 
 def _sparse_components(
     data: np.ndarray,
-    fill_value: float | int,
+    fill_value: float | int | None,
     order: GridDataOrder,
 ) -> tuple[np.ndarray, np.ndarray]:
     flat = data.ravel(order=order.value)
@@ -88,6 +87,8 @@ def _sparse_components(
                 f"({MAX_SPARSE_INDEX}). Request a smaller chunk."
             ),
         )
+    if fill_value is None:
+        return np.arange(flat.size, dtype=np.int32), flat
     if np.issubdtype(flat.dtype, np.floating) and np.isnan(fill_value):
         mask = ~np.isnan(flat)
     else:
@@ -508,81 +509,13 @@ async def get_chunk_metadata(
         )
 
 
-@router.get(
-    "/{grid_id}/data/{band}/{chunk_index}",
-    response_model=GridDataResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Get band data for a chunk",
-)
-async def get_grid_data(
+async def _read_grid_chunk(
     request: Request,
     domain: VerifiedDomain,
     grid_id: str,
-    chunk_index: int,
     band: str,
-    response_format: GridDataResponseFormat = Query(
-        GridDataResponseFormat.json, alias="format", description="Response format."
-    ),
-    array_format: GridDataArrayFormat = Query(
-        GridDataArrayFormat.dense,
-        description="Array format: dense values or sparse COO flat indices.",
-    ),
-    order: GridDataOrder = Query(
-        GridDataOrder.C, description="Array memory order for flattening."
-    ),
+    chunk_index: int,
 ):
-    """
-    # Get Grid Data Endpoint
-
-    Reads a single chunk of a single band from a completed grid's Zarr store
-    on GCS. Returns dense raster values or sparse COO flat indices as either
-    JSON or raw binary bytes.
-
-    ## Path Parameters
-
-    - **domain_id**: (string) The domain the grid belongs to.
-    - **grid_id**: (string) The unique identifier of the grid.
-    - **band**: (string) Band key to read (e.g., `elevation`, `fbfm`). Must match
-      a band present in the grid.
-    - **chunk_index**: (integer) Zero-based flat chunk index. 2D grids use
-      y,x order. 3D grids use z,y,x order.
-
-    ## Query Parameters
-
-    - **format**: (string, optional) Response format: `json` (default) or `binary`.
-    - **array_format**: (string, optional) Array format: `dense` (default) or
-      `sparse`.
-    - **order**: (string, optional) Array memory order for flattening: `C`
-      (row-major, default) or `F` (column-major).
-
-    ## Response
-
-    **Dense JSON** (`format=json&array_format=dense`): Returns shape, order,
-    and a flat list of values.
-
-    **Dense binary** (`format=binary&array_format=dense`): Returns raw bytes
-    with metadata in headers:
-
-    - `X-Data-Shape`: Comma-separated dimensions (e.g., `47,61`).
-    - `X-Data-Dtype`: NumPy dtype string (e.g., `float32`).
-    - `X-Data-Format`: `dense`.
-    - `X-Data-Order`: Memory order used for flattening (`C` or `F`).
-
-    **Sparse JSON** (`format=json&array_format=sparse`): Returns shape, order,
-    fill value, flat int32 indices, and values.
-
-    **Sparse binary** (`format=binary&array_format=sparse`): Returns
-    `indices.tobytes() + values.tobytes()` with sparse metadata in headers.
-
-    ## Error Responses
-
-    - **404 Not Found**: The grid does not exist, is not completed, or the user
-      does not have access.
-    - **422 Unprocessable Entity**: The requested band does not exist on this
-      grid, or the chunk index is out of range.
-    - **413 Payload Too Large**: The requested dense or JSON response is too
-      large for the API response limit.
-    """
     _, snapshot = await get_document_async(
         COLLECTION,
         grid_id,
@@ -604,51 +537,90 @@ async def get_grid_data(
             detail=str(exc),
         )
 
-    chunk_slices = compute_chunk_slices(meta)
-
     array = await get_grid_array(grid_id, band)
-    data = await array.getitem(chunk_slices)
+    data = await array.getitem(compute_chunk_slices(meta))
+    return data, array
 
-    shape_header = ",".join(str(s) for s in data.shape)
+
+@router.get(
+    "/{grid_id}/data/{band}/{chunk_index}",
+    response_model=GridDataResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get band data for a chunk (JSON)",
+)
+async def get_grid_data_json(
+    request: Request,
+    domain: VerifiedDomain,
+    grid_id: str,
+    chunk_index: int,
+    band: str,
+    array_format: GridDataArrayFormat = Query(
+        GridDataArrayFormat.dense,
+        description="Array format: dense values or sparse COO flat indices.",
+    ),
+    order: GridDataOrder = Query(
+        GridDataOrder.C, description="Array memory order for flattening."
+    ),
+):
+    """
+    # Get Grid Data (JSON)
+
+    Returns the values of a single band within a single chunk of a completed
+    grid as a JSON payload — either dense values or a sparse representation,
+    selected via `array_format`.
+
+    For raw bytes (smaller, faster to parse), use the `/binary` variant of
+    this endpoint.
+
+    ## Path Parameters
+
+    - **domain_id**: The domain the grid belongs to.
+    - **grid_id**: The grid identifier.
+    - **band**: Band key to read (must be present in the grid's `bands`).
+    - **chunk_index**: Zero-based flat chunk index. 2D grids index in (y, x);
+      3D grids index in (z, y, x). Use `GET …/chunks/{chunk_index}` to
+      discover chunk shape and offset.
+
+    ## Query Parameters
+
+    - **array_format**: `dense` (default) or `sparse`. Sparse compresses out
+      cells equal to the band's fill value, returning only the non-fill
+      entries.
+    - **order**: Flattening order — `C` (row-major, default) or `F`
+      (column-major).
+
+    ## Response
+
+    Both variants share `shape` (chunk dimensions) and `order` (flattening
+    order used for the values).
+
+    **Dense** (`array_format=dense`): `data.format = "dense"`, `data.values`
+    is a flat list of all cells.
+
+    **Sparse** (`array_format=sparse`): `data.format = "sparse"`,
+    `data.indices` are flat positions of non-fill cells, `data.values` are
+    their values. `data.fill_value` is the band's fill value, or `null` if
+    the band does not define one — in which case every cell is listed and no
+    compression has been applied.
+
+    ## Errors
+
+    - **404**: Grid not found, not completed, or not accessible.
+    - **422**: Band does not exist on this grid, or chunk index out of range.
+    - **413**: Response would exceed the size limit. Try `array_format=sparse`,
+      the `/binary` variant, or a smaller chunk.
+    """
+    data, array = await _read_grid_chunk(request, domain, grid_id, band, chunk_index)
 
     if array_format == GridDataArrayFormat.sparse:
         raw_fill = getattr(getattr(array, "metadata", None), "fill_value", None)
-        if raw_fill is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Sparse grid data requires a zarr fill value.",
-            )
         fill_value = raw_fill.item() if hasattr(raw_fill, "item") else raw_fill
-
         indices, values = _sparse_components(data, fill_value, order)
-
-        if response_format == GridDataResponseFormat.binary:
-            raw = indices.tobytes() + values.tobytes()
-            _check_size(
-                len(raw),
-                MAX_BINARY_BYTES,
-                "Sparse binary grid data",
-                "Request a smaller chunk.",
-            )
-            return Response(
-                content=raw,
-                media_type="application/octet-stream",
-                headers={
-                    "X-Data-Shape": shape_header,
-                    "X-Data-Order": order.value,
-                    "X-Data-Format": "sparse",
-                    "X-Data-Fill-Value": str(fill_value),
-                    "X-Data-NNZ": str(len(indices)),
-                    "X-Data-Index-Dtype": str(indices.dtype),
-                    "X-Data-Value-Dtype": str(values.dtype),
-                },
-            )
-
         _check_size(
             2 * len(indices),
             MAX_JSON_SCALARS,
             "Sparse JSON grid data",
-            "Request format=binary or a smaller chunk.",
+            "Request /binary or a smaller chunk.",
         )
         return GridDataResponse(
             shape=list(data.shape),
@@ -661,30 +633,11 @@ async def get_grid_data(
             ),
         )
 
-    if response_format == GridDataResponseFormat.binary:
-        raw = data.ravel(order=order.value).tobytes()
-        _check_size(
-            len(raw),
-            MAX_BINARY_BYTES,
-            "Dense binary grid data",
-            "Request array_format=sparse or a smaller chunk.",
-        )
-        return Response(
-            content=raw,
-            media_type="application/octet-stream",
-            headers={
-                "X-Data-Shape": shape_header,
-                "X-Data-Dtype": str(data.dtype),
-                "X-Data-Order": order.value,
-                "X-Data-Format": "dense",
-            },
-        )
-
     _check_size(
         data.size,
         MAX_JSON_SCALARS,
         "Dense JSON grid data",
-        "Request array_format=sparse, format=binary, or a smaller chunk.",
+        "Request array_format=sparse, /binary, or a smaller chunk.",
     )
     return GridDataResponse(
         shape=list(data.shape),
@@ -693,6 +646,136 @@ async def get_grid_data(
             format="dense",
             values=data.ravel(order=order.value).tolist(),
         ),
+    )
+
+
+@router.get(
+    "/{grid_id}/data/{band}/{chunk_index}/binary",
+    status_code=status.HTTP_200_OK,
+    summary="Get band data for a chunk (binary)",
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
+async def get_grid_data_binary(
+    request: Request,
+    domain: VerifiedDomain,
+    grid_id: str,
+    chunk_index: int,
+    band: str,
+    array_format: GridDataArrayFormat = Query(
+        GridDataArrayFormat.dense,
+        description="Array format: dense values or sparse COO flat indices.",
+    ),
+    order: GridDataOrder = Query(
+        GridDataOrder.C, description="Array memory order for flattening."
+    ),
+):
+    """
+    # Get Grid Data (binary)
+
+    Returns the values of a single band within a single chunk of a completed
+    grid as raw bytes, with shape and type metadata in `X-Data-*` response
+    headers. Use this when you need the most compact wire format and intend
+    to deserialize into a typed array on the client.
+
+    For a structured JSON payload, use the JSON variant of this endpoint
+    (drop the trailing `/binary`).
+
+    ## Path Parameters
+
+    - **domain_id**: The domain the grid belongs to.
+    - **grid_id**: The grid identifier.
+    - **band**: Band key to read (must be present in the grid's `bands`).
+    - **chunk_index**: Zero-based flat chunk index. 2D grids index in (y, x);
+      3D grids index in (z, y, x). Use `GET …/chunks/{chunk_index}` to
+      discover chunk shape and offset.
+
+    ## Query Parameters
+
+    - **array_format**: `dense` (default) or `sparse`. Sparse compresses out
+      cells equal to the band's fill value, returning only the non-fill
+      entries.
+    - **order**: Flattening order — `C` (row-major, default) or `F`
+      (column-major).
+
+    ## Response
+
+    All variants return `application/octet-stream` with these common headers:
+
+    - `X-Data-Shape`: comma-separated chunk dimensions (e.g., `47,61`).
+    - `X-Data-Order`: flattening order used (`C` or `F`).
+    - `X-Data-Format`: `dense` or `sparse`.
+
+    **Dense** (`array_format=dense`): body is the flattened cells as raw
+    bytes.
+
+    - `X-Data-Dtype`: numeric type of the cells (e.g., `float32`).
+
+    **Sparse** (`array_format=sparse`): body is the index array bytes
+    immediately followed by the value array bytes.
+
+    - `X-Data-NNZ`: number of non-fill entries (length of both arrays).
+    - `X-Data-Index-Dtype`: numeric type of the index array (`int32`).
+    - `X-Data-Value-Dtype`: numeric type of the value array.
+    - `X-Data-Fill-Value`: the band's fill value (stringified). Omitted when
+      the band does not define a fill value, in which case every cell is
+      listed and no compression has been applied.
+
+    Slice the response body at `NNZ * sizeof(index_dtype)` to separate
+    indices from values.
+
+    ## Errors
+
+    - **404**: Grid not found, not completed, or not accessible.
+    - **422**: Band does not exist on this grid, or chunk index out of range.
+    - **413**: Response would exceed the size limit. Try `array_format=sparse`
+      or a smaller chunk.
+    """
+    data, array = await _read_grid_chunk(request, domain, grid_id, band, chunk_index)
+    shape_header = ",".join(str(s) for s in data.shape)
+
+    if array_format == GridDataArrayFormat.sparse:
+        raw_fill = getattr(getattr(array, "metadata", None), "fill_value", None)
+        fill_value = raw_fill.item() if hasattr(raw_fill, "item") else raw_fill
+        indices, values = _sparse_components(data, fill_value, order)
+        raw = indices.tobytes() + values.tobytes()
+        _check_size(
+            len(raw),
+            MAX_BINARY_BYTES,
+            "Sparse binary grid data",
+            "Request a smaller chunk.",
+        )
+        headers = {
+            "X-Data-Shape": shape_header,
+            "X-Data-Order": order.value,
+            "X-Data-Format": "sparse",
+            "X-Data-NNZ": str(len(indices)),
+            "X-Data-Index-Dtype": str(indices.dtype),
+            "X-Data-Value-Dtype": str(values.dtype),
+        }
+        if fill_value is not None:
+            headers["X-Data-Fill-Value"] = str(fill_value)
+        return Response(
+            content=raw,
+            media_type="application/octet-stream",
+            headers=headers,
+        )
+
+    raw = data.ravel(order=order.value).tobytes()
+    _check_size(
+        len(raw),
+        MAX_BINARY_BYTES,
+        "Dense binary grid data",
+        "Request array_format=sparse or a smaller chunk.",
+    )
+    return Response(
+        content=raw,
+        media_type="application/octet-stream",
+        headers={
+            "X-Data-Shape": shape_header,
+            "X-Data-Dtype": str(data.dtype),
+            "X-Data-Order": order.value,
+            "X-Data-Format": "dense",
+        },
     )
 
 

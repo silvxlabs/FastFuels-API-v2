@@ -172,11 +172,6 @@ class ListGridsResponse(PaginatedResponse):
     grids: list[Grid]
 
 
-class GridDataResponseFormat(StrEnum):
-    json = "json"
-    binary = "binary"
-
-
 class GridDataArrayFormat(StrEnum):
     dense = "dense"
     sparse = "sparse"
@@ -203,7 +198,7 @@ class DenseGridData(BaseModel):
 
 class SparseGridData(BaseModel):
     format: Literal["sparse"]
-    fill_value: float | int
+    fill_value: float | int | None
     indices: list[int]
     values: list[float | int]
 

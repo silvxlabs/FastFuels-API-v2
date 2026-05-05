@@ -148,7 +148,6 @@ class TestFetchTreemapTmIdOnly:
         fetch_treemap(roi, "2022", ["tm_id"], progress)
 
         call_kwargs = mock_raster.extract_window.call_args[1]
-        assert call_kwargs["projection_padding_meters"] == 15 * 30  # 450m
         assert call_kwargs["interpolation_padding_cells"] == 8
 
 

@@ -16,7 +16,6 @@ from griddle.errors import ProcessingError
 from griddle.handlers.threedep import (
     _compute_slope_aspect,
     _fetch_and_mosaic_tiles,
-    _meters_to_degrees,
     _validate_dem_has_data,
     fetch_topography,
 )
@@ -181,51 +180,6 @@ class TestComputeSlopeAspect:
         assert isinstance(aspect, DataArray)
 
 
-# Geographic CRS padding conversion
-
-
-class TestMetersToDegrees:
-    """Tests for meter-to-degree padding conversion."""
-
-    def test_known_latitude_45(self):
-        """At 45°N, 1 degree latitude ≈ 111,320m. 1000m ≈ 0.00898°."""
-        geom = box(-110.0, 44.5, -109.5, 45.5)
-        roi = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326")
-        result = _meters_to_degrees(1000.0, roi)
-        # Latitude component: 1000 / 111320 ≈ 0.00898
-        # Longitude component: 1000 / (111320 * cos(45°)) ≈ 0.01270
-        # Should return the larger (longitude) value
-        assert 0.012 < result < 0.014
-
-    def test_equator_lat_lon_nearly_equal(self):
-        """At the equator, lat and lon degree sizes are nearly equal."""
-        geom = box(-80.0, -0.5, -79.5, 0.5)
-        roi = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326")
-        result = _meters_to_degrees(1000.0, roi)
-        expected = 1000.0 / 111_320
-        assert abs(result - expected) < 0.0001
-
-    def test_higher_latitude_gives_larger_result(self):
-        """Closer to the poles, the same meter distance spans more degrees."""
-        geom_low = box(-110.0, 29.5, -109.5, 30.5)
-        roi_low = gpd.GeoDataFrame(geometry=[geom_low], crs="EPSG:4326")
-
-        geom_high = box(-110.0, 59.5, -109.5, 60.5)
-        roi_high = gpd.GeoDataFrame(geometry=[geom_high], crs="EPSG:4326")
-
-        result_low = _meters_to_degrees(1000.0, roi_low)
-        result_high = _meters_to_degrees(1000.0, roi_high)
-        assert result_high > result_low
-
-    def test_projected_crs_roi_reprojected(self):
-        """ROI in a projected CRS should still produce a valid result."""
-        geom = box(300000, 4100000, 301000, 4101000)
-        roi = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:32611")
-        result = _meters_to_degrees(1000.0, roi)
-        # Should be a small positive number in the range of 0.008-0.015
-        assert 0.005 < result < 0.02
-
-
 # fetch_topography pipeline (all external calls mocked)
 
 
@@ -338,6 +292,9 @@ class TestFetchAndMosaicTiles:
 
         assert isinstance(result, DataArray)
         assert result.shape == (50, 50)
+        call_kwargs = mock_rc_class.return_value.extract_window.call_args[1]
+        assert "projection_padding_meters" not in call_kwargs
+        assert call_kwargs["interpolation_padding_cells"] == 0
 
     @patch("griddle.handlers.threedep.merge_arrays")
     @patch("griddle.handlers.threedep.RasterConnection")
@@ -355,16 +312,6 @@ class TestFetchAndMosaicTiles:
         )
 
         mock_merge.assert_called_once()
-
-    def test_padding_floor_500m(self):
-        """1m resolution with no derivatives should still get >= 500m padding."""
-        padding = max(1 * (0 + 8), 1 * 15, 500)
-        assert padding == 500
-
-    def test_padding_derivative_override(self):
-        """30m with derivatives: resolution * (pad_cells + 8) > 500."""
-        padding = max(30 * (10 + 8), 30 * 15, 500)
-        assert padding == 540
 
 
 # DEM data validation

@@ -4,7 +4,7 @@ Tests for LANDFIRE handler.
 
 import json
 from dataclasses import dataclass
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import numpy as np
@@ -12,6 +12,7 @@ import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.landfire import (
+    _fetch_landfire_raster,
     _most_frequent,
     _remove_non_burnable_blocks,
     fetch_fbfm40,
@@ -62,6 +63,24 @@ def roi(test_domain) -> gpd.GeoDataFrame:
 
 class TestFetchFbfm40:
     """Integration tests for fetch_fbfm40."""
+
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_extract_window_has_output_padding_only(self, mock_raster_cls, roi):
+        """LANDFIRE extraction leaves reprojection padding to RasterConnection."""
+        data = xr.DataArray(
+            np.array([[[101]]], dtype=np.int16),
+            dims=("band", "y", "x"),
+            coords={"band": [1], "y": [0.0], "x": [0.0]},
+        ).rio.write_crs(roi.crs)
+        mock_raster = MagicMock()
+        mock_raster.extract_window.return_value = data
+        mock_raster_cls.return_value = mock_raster
+
+        _fetch_landfire_raster(roi, "FBFM40", "2024")
+
+        call_kwargs = mock_raster.extract_window.call_args[1]
+        assert "projection_padding_meters" not in call_kwargs
+        assert call_kwargs["interpolation_padding_cells"] == 8
 
     def test_returns_dataset(self, roi):
         """fetch_fbfm40 returns a Dataset."""

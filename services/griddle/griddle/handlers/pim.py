@@ -47,7 +47,6 @@ def fetch_treemap(
         raster = RasterConnection(url, connection_type="rioxarray", cache=True)
         data = raster.extract_window(
             roi=roi,
-            projection_padding_meters=15 * raster.raster_resolution,
             interpolation_padding_cells=8,
         )
     tm_id_da = data.squeeze("band", drop=True)

@@ -7,8 +7,8 @@ feature type and source product.
 
 import geopandas as gpd
 
-from feature.errors import ProcessingError
-from feature.handlers import road, water
+from featureFinder.errors import ProcessingError
+from featureFinder.handlers import road, water
 
 
 def dispatch_handler(

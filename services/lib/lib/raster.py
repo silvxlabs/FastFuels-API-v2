@@ -2,6 +2,7 @@
 import rasterio
 import rioxarray
 from geopandas import GeoDataFrame
+from rasterio.warp import transform_bounds
 from xarray import DataArray
 
 # Reduce HTTP round trips when opening remote Cloud Optimized GeoTIFFs.
@@ -14,6 +15,8 @@ GDAL_COG_CONFIG = {
     "VSI_CACHE_SIZE": "5000000",
     "GDAL_INGESTED_BYTES_AT_OPEN": "32768",
 }
+
+REPROJECTION_GUARD_CELLS = 3
 
 
 def cog_env(**extra: str) -> rasterio.Env:
@@ -37,7 +40,10 @@ class RasterConnection:
         if connection_type == "rioxarray":
             self.raster = rioxarray.open_rasterio(raster_path, **kwargs)
             self.raster_crs = self.raster.rio.crs
-            self.raster_resolution = abs(self.raster.rio.resolution()[0])
+            x_resolution, y_resolution = self.raster.rio.resolution()
+            self.raster_x_resolution = abs(x_resolution)
+            self.raster_y_resolution = abs(y_resolution)
+            self.raster_resolution = self.raster_x_resolution
             self.raster_bounds = self.raster.rio.bounds()
             self.raster_dtype = self.raster.dtype
 
@@ -58,7 +64,6 @@ class RasterConnection:
     def extract_window(
         self,
         roi: GeoDataFrame,
-        projection_padding_meters: float,
         interpolation_padding_cells: int,
     ) -> DataArray:
         """
@@ -67,48 +72,64 @@ class RasterConnection:
         kwargs passed to the
         """
         if self.connection_type == "rioxarray":
-            return self._extract_window_rioxarray(
-                roi, projection_padding_meters, interpolation_padding_cells
-            )
+            return self._extract_window_rioxarray(roi, interpolation_padding_cells)
 
     def _extract_window_rioxarray(
         self,
         roi: GeoDataFrame,
-        projection_padding_meters: float,
         interpolation_padding_cells: int,
     ) -> DataArray:
         """
         Extract the window of the raster that contains the ROI using rioxarray.
-        Only reproject if the ROI CRS differs from the raster CRS. Apply
-        projection padding in all cases.
+        Only reproject if the ROI CRS differs from the raster CRS.
         """
-        if roi.crs != self.raster_crs:
-            roi_reprojected = roi.to_crs(self.raster_crs)
-            roi_bounds = roi_reprojected.total_bounds
-        else:
-            roi_bounds = roi.total_bounds
-
-        roi_padded_bounds = [
-            roi_bounds[0] - projection_padding_meters,
-            roi_bounds[1] - projection_padding_meters,
-            roi_bounds[2] + projection_padding_meters,
-            roi_bounds[3] + projection_padding_meters,
-        ]
-        window = self.raster.rio.clip_box(*roi_padded_bounds)
+        window = self.raster.rio.clip_box(
+            *self._source_clip_bounds(roi, interpolation_padding_cells)
+        )
 
         if roi.crs != self.raster_crs:
             window_reprojected = window.rio.reproject(roi.crs)
         else:
             window_reprojected = window
 
-        # Calculate padded bounds in the ROI's CRS
-        roi_padded = [
-            roi.total_bounds[0] - interpolation_padding_cells * self.raster_resolution,
-            roi.total_bounds[1] - interpolation_padding_cells * self.raster_resolution,
-            roi.total_bounds[2] + interpolation_padding_cells * self.raster_resolution,
-            roi.total_bounds[3] + interpolation_padding_cells * self.raster_resolution,
-        ]
+        roi_padded = self._target_clip_bounds(roi, interpolation_padding_cells)
 
         clip = window_reprojected.rio.clip_box(*roi_padded)
 
         return clip
+
+    def _source_clip_bounds(
+        self,
+        roi: GeoDataFrame,
+        interpolation_padding_cells: int = 0,
+    ) -> tuple[float, float, float, float]:
+        """Return source raster bounds needed to cover the ROI after reprojection."""
+        target_bounds = self._target_clip_bounds(roi, interpolation_padding_cells)
+        if roi.crs != self.raster_crs:
+            bounds = transform_bounds(roi.crs, self.raster_crs, *target_bounds)
+        else:
+            bounds = tuple(target_bounds)
+
+        x_guard = REPROJECTION_GUARD_CELLS * self.raster_x_resolution
+        y_guard = REPROJECTION_GUARD_CELLS * self.raster_y_resolution
+
+        return (
+            bounds[0] - x_guard,
+            bounds[1] - y_guard,
+            bounds[2] + x_guard,
+            bounds[3] + y_guard,
+        )
+
+    def _target_clip_bounds(
+        self,
+        roi: GeoDataFrame,
+        interpolation_padding_cells: int,
+    ) -> tuple[float, float, float, float]:
+        """Return final output clip bounds in the ROI CRS."""
+        padding = interpolation_padding_cells * self.raster_resolution
+        return (
+            roi.total_bounds[0] - padding,
+            roi.total_bounds[1] - padding,
+            roi.total_bounds[2] + padding,
+            roi.total_bounds[3] + padding,
+        )

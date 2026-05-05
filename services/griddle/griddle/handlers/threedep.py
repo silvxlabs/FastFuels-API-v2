@@ -134,21 +134,6 @@ def _discover_tiles_1m(
     return [], "none", "none", None
 
 
-def _meters_to_degrees(meters: float, roi: gpd.GeoDataFrame) -> float:
-    """Convert a meter padding value to approximate degrees.
-
-    Uses the midpoint latitude of the ROI bounds for the longitude
-    scaling factor. Returns the larger of the lat/lon conversions so
-    the padding is sufficient in both directions.
-    """
-    bounds_4326 = roi.to_crs("EPSG:4326").total_bounds
-    mid_lat = (bounds_4326[1] + bounds_4326[3]) / 2
-    lat_rad = np.radians(mid_lat)
-    deg_lat = meters / 111_320
-    deg_lon = meters / (111_320 * np.cos(lat_rad))
-    return max(deg_lat, deg_lon)
-
-
 def _fetch_and_mosaic_tiles(
     roi: gpd.GeoDataFrame,
     tile_urls: list[str],
@@ -171,14 +156,6 @@ def _fetch_and_mosaic_tiles(
     n_tiles = len(tile_urls)
     tile_arrays = []
 
-    # Padding applied in the raster's native CRS before reprojection.
-    # Three competing minimums ensure enough context for:
-    #   resolution * (pad_cells + 8): derivative border + reprojection warp
-    #   resolution * 15:              minimum 15-cell buffer at any resolution
-    #   500:                          absolute floor for 1m tiles (avoids
-    #                                 sub-tile clips that miss data)
-    padding_meters = max(resolution * (pad_cells + 8), resolution * 15, 500)
-
     with cog_env(AWS_NO_SIGN_REQUEST="YES"):
         for i, url in enumerate(tile_urls):
             pct = 20 + int(50 * (i + 1) / n_tiles)
@@ -186,18 +163,8 @@ def _fetch_and_mosaic_tiles(
 
             raster = RasterConnection(url, connection_type="rioxarray", cache=False)
 
-            # RasterConnection.extract_window applies padding in the raster's
-            # CRS units. For geographic CRS (EPSG:4269 for 10m/30m tiles),
-            # convert meters → degrees so we clip a tight window instead of
-            # the entire tile.
-            if raster.raster_crs.is_geographic:
-                padding_crs = _meters_to_degrees(padding_meters, roi)
-            else:
-                padding_crs = padding_meters
-
             data = raster.extract_window(
                 roi=roi,
-                projection_padding_meters=padding_crs,
                 interpolation_padding_cells=pad_cells,
             )
             tile_arrays.append(data.squeeze("band", drop=True))

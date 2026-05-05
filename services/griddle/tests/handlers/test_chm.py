@@ -268,6 +268,9 @@ class TestFetchMetaChm:
         assert isinstance(ds, xr.Dataset)
         assert tile_metadata["tile_count"] == 1
         assert len(tile_metadata["tiles"]) == 1
+        call_kwargs = mock_raster_cls.return_value.extract_window.call_args[1]
+        assert "projection_padding_meters" not in call_kwargs
+        assert call_kwargs["interpolation_padding_cells"] == 4
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm._query_tile_index")

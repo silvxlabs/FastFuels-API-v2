@@ -1,0 +1,11 @@
+{
+  "name": "Test Road Feature",
+  "description": "Integration test feature for OSM roads",
+  "type": "road",
+  "status": "pending",
+  "tags": ["test", "integration"],
+  "source": {
+    "product": "osm",
+    "description": "OpenStreetMap road network"
+  }
+}

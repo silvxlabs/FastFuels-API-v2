@@ -53,4 +53,3 @@ EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", f"exporter-v2-{INFRA_ENV}")
 STANDGEN_SERVICE = os.getenv("STANDGEN_SERVICE", f"standgen-v2-{INFRA_ENV}")
 FEATURES_SERVICE = os.getenv("FEATURES_SERVICE", f"features-v2-{INFRA_ENV}")
 TREEVOX_SERVICE = os.getenv("TREEVOX_SERVICE", f"treevox-v2-{INFRA_ENV}")
-

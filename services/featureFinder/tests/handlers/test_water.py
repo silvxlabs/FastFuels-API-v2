@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import geopandas as gpd
 import pandas as pd
 import pytest
-from feature.handlers.water import (
+from featureFinder.handlers.water import (
     buffer_water_features,
     compute_georeference,
     handle_osm,
@@ -101,8 +101,8 @@ class TestHandleOsm:
     def mock_feature(self):
         return {"id": "feat-999", "domain_id": "dom-456", "type": "water"}
 
-    @patch("feature.handlers.water.save_geojson")
-    @patch("feature.handlers.water.ox.features_from_polygon")
+    @patch("featureFinder.handlers.water.save_geojson")
+    @patch("featureFinder.handlers.water.ox.features_from_polygon")
     def test_happy_path(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf, sample_osm_water
     ):
@@ -133,8 +133,8 @@ class TestHandleOsm:
         assert "georeference" in result
         assert result["georeference"]["crs"] == "EPSG:32610"
 
-    @patch("feature.handlers.water.save_geojson")
-    @patch("feature.handlers.water.ox.features_from_polygon")
+    @patch("featureFinder.handlers.water.save_geojson")
+    @patch("featureFinder.handlers.water.ox.features_from_polygon")
     def test_empty_osmnx_response(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
     ):
@@ -151,8 +151,8 @@ class TestHandleOsm:
         assert saved_gdf.empty
         assert saved_gdf.crs == sample_domain_gdf.crs
 
-    @patch("feature.handlers.water.save_geojson")
-    @patch("feature.handlers.water.ox.features_from_polygon")
+    @patch("featureFinder.handlers.water.save_geojson")
+    @patch("featureFinder.handlers.water.ox.features_from_polygon")
     def test_osmnx_raises_exception(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
     ):

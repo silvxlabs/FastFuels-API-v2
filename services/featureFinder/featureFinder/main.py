@@ -15,9 +15,9 @@ from datetime import UTC, datetime
 import functions_framework
 from flask import Request
 
-from feature.dispatch import dispatch_handler
-from feature.errors import CancelledException, ProcessingError
-from feature.storage import delete_geojson
+from featureFinder.dispatch import dispatch_handler
+from featureFinder.errors import CancelledException, ProcessingError
+from featureFinder.storage import delete_geojson
 from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.firestore import DocumentNotFoundError, get_document, update_document

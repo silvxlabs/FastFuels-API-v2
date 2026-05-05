@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import pytest
-from feature.dispatch import dispatch_handler
-from feature.errors import ProcessingError
+from featureFinder.dispatch import dispatch_handler
+from featureFinder.errors import ProcessingError
 
 
 def test_unknown_feature_type_raises():
@@ -41,7 +41,7 @@ def test_unknown_product_for_water_raises():
     assert exc_info.value.code == "UNKNOWN_PRODUCT"
 
 
-@patch("feature.handlers.road.handle_osm")
+@patch("featureFinder.handlers.road.handle_osm")
 def test_road_osm_dispatch(mock_handle_osm):
     """Ensure road+osm correctly routes to the road OSM handler."""
     mock_handle_osm.return_value = {
@@ -60,7 +60,7 @@ def test_road_osm_dispatch(mock_handle_osm):
     assert "georeference" in result
 
 
-@patch("feature.handlers.water.handle_osm")
+@patch("featureFinder.handlers.water.handle_osm")
 def test_water_osm_dispatch(mock_handle_osm):
     """Ensure water+osm correctly routes to the water OSM handler."""
     mock_handle_osm.return_value = {

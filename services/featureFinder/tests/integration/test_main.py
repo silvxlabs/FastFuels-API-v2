@@ -76,7 +76,7 @@ class TestProcessFeatureRequest:
 
     def test_status_transitions(self, firestore_domain, firestore_feature):
         """Feature status transitions: pending -> running -> completed."""
-        from feature.main import process_feature_request
+        from featureFinder.main import process_feature_request
 
         domain_id = firestore_domain()
         feature_id = firestore_feature(domain_id)
@@ -100,7 +100,7 @@ class TestProcessFeatureRequest:
 
     def test_geojson_written_to_gcs(self, firestore_domain, firestore_feature):
         """Processing should write a GeoJSON file to GCS."""
-        from feature.main import process_feature_request
+        from featureFinder.main import process_feature_request
 
         domain_id = firestore_domain()
         feature_id = firestore_feature(domain_id)
@@ -113,7 +113,7 @@ class TestProcessFeatureRequest:
 
     def test_missing_domain_marks_failed(self, firestore_feature):
         """Referencing a nonexistent domain should mark feature as failed."""
-        from feature.main import process_feature_request
+        from featureFinder.main import process_feature_request
 
         # Create feature pointing to a domain that doesn't exist
         fake_domain_id = f"test-nonexistent-{uuid4().hex}"
@@ -131,7 +131,7 @@ class TestProcessFeatureRequest:
 
     def test_deleted_feature_returns_ok(self):
         """Processing a deleted feature should return 200 gracefully."""
-        from feature.main import process_feature_request
+        from featureFinder.main import process_feature_request
 
         request = MockRequest(data={"id": f"test-nonexistent-{uuid4().hex}"})
         response, status_code = process_feature_request(request)
@@ -140,7 +140,7 @@ class TestProcessFeatureRequest:
 
     def test_progress_updates(self, firestore_domain, firestore_feature):
         """After completion, progress should show 100%."""
-        from feature.main import process_feature_request
+        from featureFinder.main import process_feature_request
 
         domain_id = firestore_domain()
         feature_id = firestore_feature(domain_id)

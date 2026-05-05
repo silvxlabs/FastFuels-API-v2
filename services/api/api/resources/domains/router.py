@@ -36,7 +36,11 @@ from api.resources.domains.schema import (
     ListDomainsResponse,
     UpdateDomainRequestBody,
 )
-from api.resources.domains.validate import validate_domain
+from api.resources.domains.validate import (
+    reproject_features,
+    validate_crs,
+    validate_domain,
+)
 from lib.config import (
     DOMAINS_COLLECTION,
     GRIDS_BUCKET,
@@ -118,6 +122,12 @@ async def create_domain(
       - **properties**: (object) Contains the CRS details.
         - **name**: (string) The CRS identifier, e.g., "EPSG:4326", "EPSG:5070",
           or URN format "urn:ogc:def:crs:EPSG::32611".
+    - **pad_to_resolution**: (number) Optional resolution in meters to snap the
+      domain bounding box to. When set, the bounding box (the "domain" feature)
+      is snapped outward to the nearest multiple of this value. Grids whose
+      resolutions divide evenly into this value will produce identical, aligned
+      footprints on this domain. Useful for compositional workflows where
+      multiple grids at different resolutions need to share an extent.
 
     ## Response
 
@@ -131,7 +141,15 @@ async def create_domain(
     - **modified_on**: (datetime) When the domain was last modified.
     - **tags**: (array) The tags associated with the domain.
     - **crs**: (object) The coordinate reference system (always projected).
-    - **features**: (array) The domain geometry features.
+    - **features**: (array) Two named features:
+      - **`name: "domain"`** — A polygon covering the working extent (bounding
+        box of the input, possibly padded). This is what griddle, standgen,
+        and exporter use as the authoritative spatial extent.
+      - **`name: "input"`** — The user's original projected geometry, preserved
+        for visualization and reference.
+    - **bbox**: (array) Standard GeoJSON bbox `[minx, miny, maxx, maxy]` in the
+      domain's projected CRS. Equals the bounds of the "domain" feature.
+    - **pad_to_resolution**: (number, optional) The padding value, if set.
 
     ## CRS Handling
 
@@ -150,8 +168,10 @@ async def create_domain(
 
     1. **CRS Validation**: Must be a valid EPSG code or URN format.
     2. **Area Validation**: Geometry must have non-zero area (no points or lines).
-    3. **Size Limit**: Total area must be less than 16 square kilometers.
-    4. **Location**: Geometry must be entirely within CONUS (Continental US).
+    3. **Location**: Geometry must be entirely within CONUS (Continental US).
+       Validated against the original input polygon (not the padded bbox).
+    4. **Size Limit**: The working extent (possibly padded bbox) must be less
+       than 16 square kilometers.
 
     ## Important Notes
 
@@ -159,8 +179,10 @@ async def create_domain(
        FeatureCollection input, not individual Feature objects. Wrap single
        features in a FeatureCollection.
 
-    2. **Multiple Features**: When multiple features are provided, all geometries
-       are included in the domain.
+    2. **Two-Feature Output**: The created domain stores two named features:
+       a "domain" feature (bounding box, the working extent used by all
+       downstream services) and an "input" feature (the user's original
+       polygon, preserved for visualization).
 
     3. **Projection**: Geographic coordinates are always projected to a suitable
        UTM zone for accurate area calculations and grid operations.
@@ -196,6 +218,8 @@ async def create_domain(
             "properties": {"name": str(validation_result.crs)},
         },
         "features": validation_result.features,
+        "bbox": list(validation_result.bbox),
+        "pad_to_resolution": body.pad_to_resolution,
     }
 
     domain = Domain(**domain_data)
@@ -211,6 +235,133 @@ async def create_domain(
 
     # Send data back to the client
     return domain
+
+
+@router.post(
+    "/preview",
+    response_model=Domain,
+    status_code=status.HTTP_200_OK,
+    summary="Preview a domain without persisting it",
+    response_model_exclude_none=True,
+)
+async def preview_domain(
+    body: Annotated[
+        CreateDomainRequestBody,
+        Body(openapi_examples=CREATE_DOMAIN_OPENAPI_EXAMPLES),
+    ],
+):
+    """
+    # Preview Domain Endpoint
+
+    Runs the same validation and projection pipeline as `POST /v2/domains` but
+    returns the resulting `Domain` resource without writing to Firestore. Use
+    this to let users inspect the projected, padded bounding box before committing
+    to a create.
+
+    ## Request Body
+
+    Identical to `POST /v2/domains`. See that endpoint for full documentation.
+
+    ## Response
+
+    Returns the same `Domain` response model as create, with:
+
+    - **id**: Always `"preview"` — not a real domain identifier.
+    - **created_on** / **modified_on**: Set to the current request time (not persisted).
+    - **features**: Two named features — `"domain"` (working extent) and `"input"`
+      (original polygon), identical to what create would return.
+    - **bbox**: Bounding box of the `"domain"` feature.
+    - **crs**: Projected CRS, identical to what create would return.
+
+    ## Error Responses
+
+    Same 422 error responses as `POST /v2/domains`:
+
+    - "Invalid CRS '{crs}'. Must be a valid authority string (e.g., 'EPSG:4326')."
+    - "Invalid geometry. The feature must have an area greater than zero."
+    - "Invalid spatial extent. Area must be less than 16 square kilometers."
+    - "Invalid spatial extent. The domain must be entirely within CONUS."
+    """
+    validation_result = validate_domain(body.model_dump())
+
+    request_time = datetime.now()
+    domain_data = {
+        "type": "FeatureCollection",
+        "id": "preview",
+        "name": body.name,
+        "description": body.description,
+        "created_on": request_time,
+        "modified_on": request_time,
+        "tags": body.tags,
+        "crs": {
+            "type": "name",
+            "properties": {"name": str(validation_result.crs)},
+        },
+        "features": validation_result.features,
+        "bbox": list(validation_result.bbox),
+        "pad_to_resolution": body.pad_to_resolution,
+    }
+
+    return Domain(**domain_data)
+
+
+@router.post(
+    "/reproject",
+    response_model=CreateDomainRequestBody,
+    status_code=status.HTTP_200_OK,
+    summary="Reproject a FeatureCollection to a target CRS",
+    response_model_exclude_none=True,
+)
+async def reproject_domain(
+    body: CreateDomainRequestBody,
+    target_epsg: int = Query(..., description="EPSG code of the target CRS."),
+):
+    """
+    # Reproject Domain Endpoint
+
+    Stateless utility that reprojects a GeoJSON `FeatureCollection` from one
+    coordinate reference system to another. No resource is created; the
+    reprojected `FeatureCollection` is returned immediately.
+
+    ## Query Parameters
+
+    - **target_epsg**: (integer, required) EPSG code of the target CRS
+      (e.g., `4326` for WGS84, `32611` for UTM zone 11N).
+
+    ## Request Body
+
+    A GeoJSON `FeatureCollection`. The source CRS is read from the
+    `crs.properties.name` field if present; otherwise EPSG:4326 is assumed.
+
+    ## Response
+
+    Returns the reprojected `FeatureCollection` with:
+
+    - **features**: All input features reprojected to the target CRS, with
+      original feature properties preserved.
+    - **crs**: Set to the target EPSG code.
+
+    ## Error Responses
+
+    - **422**: Invalid source CRS, invalid target EPSG, or geometry that
+      cannot be reprojected.
+    """
+    source_crs = validate_crs(body.crs.properties.name)
+    target_crs = validate_crs(f"EPSG:{target_epsg}")
+
+    features = [feat.model_dump() for feat in body.features]
+    reprojected = reproject_features(features, source_crs, target_crs)
+
+    return CreateDomainRequestBody(
+        **{
+            "type": "FeatureCollection",
+            "features": reprojected,
+            "name": body.name,
+            "description": body.description,
+            "tags": body.tags,
+            "crs": {"type": "name", "properties": {"name": f"EPSG:{target_epsg}"}},
+        }
+    )
 
 
 @router.get(

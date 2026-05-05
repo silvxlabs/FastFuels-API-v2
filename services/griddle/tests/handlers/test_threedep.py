@@ -323,7 +323,7 @@ class TestFetchTopography:
 class TestFetchAndMosaicTiles:
     """Mock-based tests for tile fetching and mosaicking."""
 
-    @patch("lib.raster.RasterConnection")
+    @patch("griddle.handlers.threedep.RasterConnection")
     def test_single_tile_returns_data(self, mock_rc_class):
         values = np.full((50, 50), 1234.0, dtype=np.float32)
         mock_rc_class.return_value = _make_mock_raster(values)
@@ -340,7 +340,7 @@ class TestFetchAndMosaicTiles:
         assert result.shape == (50, 50)
 
     @patch("griddle.handlers.threedep.merge_arrays")
-    @patch("lib.raster.RasterConnection")
+    @patch("griddle.handlers.threedep.RasterConnection")
     def test_multi_tile_merges(self, mock_rc_class, mock_merge):
         values = np.full((50, 50), 1234.0, dtype=np.float32)
         mock_rc_class.return_value = _make_mock_raster(values)

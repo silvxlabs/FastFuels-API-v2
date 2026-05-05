@@ -1,0 +1,68 @@
+{
+  "columns": [
+    {
+      "key": "x",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "y",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "fia_species_code",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "key": "fia_status_code",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "key": "dbh",
+      "type": "continuous",
+      "unit": "cm"
+    },
+    {
+      "key": "height",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "crown_ratio",
+      "type": "continuous",
+      "unit": null
+    }
+  ],
+  "description": "",
+  "error": null,
+  "georeference": {
+    "bounds": [
+      720227.9398802927,
+      5189763.323999467,
+      721533.6406826023,
+      5190645.048516054
+    ],
+    "crs": "EPSG:32611"
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "algorithm": {
+      "footprint_size": 3,
+      "min_height": 2.0,
+      "name": "lmf"
+    },
+    "name": "chm",
+    "source_chm_grid_id": "static-test-blue-mtn-naip-chm"
+  },
+  "status": "completed",
+  "tags": [],
+  "type": "tree"
+}

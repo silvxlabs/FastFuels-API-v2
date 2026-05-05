@@ -143,7 +143,7 @@ async def create_fbfm40_lookup(
         "bands": [b.model_dump() for b in bands],
         "georeference": source_grid_data.get("georeference"),
         "tags": body.tags,
-        "chunk_shape": CHUNK_SHAPE,
+        "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
 

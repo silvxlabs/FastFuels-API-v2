@@ -1,0 +1,49 @@
+{
+  "created_on": "2026-03-08T20:39:04.684981",
+  "crs": {
+    "properties": {
+      "name": "EPSG:32612"
+    },
+    "type": "name"
+  },
+  "description": "Domain near the Blackfoot River containing 3DEP, road, and water features.",
+  "features": [
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              294120.6891617497,
+              5199749.484544501
+            ],
+            [
+              294094.99218481116,
+              5199004.517494326
+            ],
+            [
+              294758.46129646216,
+              5198981.669894749
+            ],
+            [
+              294784.07535750256,
+              5199726.63730008
+            ],
+            [
+              294120.6891617497,
+              5199749.484544501
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "0",
+      "properties": {},
+      "type": "Feature"
+    }
+  ],
+  "id": "5ee59392763c472ab4f15dcefe207bf4",
+  "modified_on": "2026-03-08T20:39:04.684981",
+  "name": "Making blackfoot static data",
+  "tags": [],
+  "type": "FeatureCollection"
+}

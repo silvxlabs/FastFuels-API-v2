@@ -44,9 +44,13 @@ GRIDDLE_QUEUE = os.getenv("GRIDDLE_QUEUE", "griddle-v2-queue")
 EXPORTER_QUEUE = os.getenv("EXPORTER_QUEUE", "exporter-v2-queue")
 STANDGEN_QUEUE = os.getenv("STANDGEN_QUEUE", "standgen-v2-queue")
 FEATURES_QUEUE = os.getenv("FEATURES_QUEUE", "features-v2-queue")
+TREEVOX_QUEUE = os.getenv("TREEVOX_QUEUE", "treevox-v2-queue")
+
 
 # Service names
 GRIDDLE_SERVICE = os.getenv("GRIDDLE_SERVICE", f"griddle-v2-{INFRA_ENV}")
 EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", f"exporter-v2-{INFRA_ENV}")
 STANDGEN_SERVICE = os.getenv("STANDGEN_SERVICE", f"standgen-v2-{INFRA_ENV}")
 FEATURES_SERVICE = os.getenv("FEATURES_SERVICE", f"features-v2-{INFRA_ENV}")
+TREEVOX_SERVICE = os.getenv("TREEVOX_SERVICE", f"treevox-v2-{INFRA_ENV}")
+

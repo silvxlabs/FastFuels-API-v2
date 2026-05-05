@@ -14,7 +14,11 @@ import json
 from pathlib import Path
 
 import pytest
-from api.resources.domains.examples import ALL_EXAMPLE_VALUES
+from api.resources.domains.examples import (
+    ALL_EXAMPLE_VALUES,
+    EXAMPLE_PADDED,
+    EXAMPLE_WGS84_DEFAULT,
+)
 from google.cloud import firestore
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
@@ -93,7 +97,17 @@ class TestCreateDomainExamples:
         assert "modified_on" in data
         assert data["type"] == "FeatureCollection"
         assert "features" in data
-        assert len(data["features"]) > 0
+
+        # Two-feature response: "domain" (working extent) and "input" (original polygon)
+        assert len(data["features"]) >= 2
+        names = [f["properties"]["name"] for f in data["features"]]
+        assert "domain" in names
+        assert "input" in names
+
+        # bbox field should be populated and equal the "domain" feature's bounds
+        assert "bbox" in data
+        assert data["bbox"] is not None
+        assert len(data["bbox"]) == 4
 
         # Name and description should match input
         assert data["name"] == example_value.get("name", "")
@@ -188,6 +202,209 @@ class TestCreateDomainFromFiles:
         assert response_body["tags"] == ["test", "integration", "v2"]
 
         DOMAINS.append(response_body)
+
+    def test_pad_to_resolution_snaps_domain_bbox(self, client):
+        """pad_to_resolution=30 should snap the 'domain' feature bbox to multiples of 30."""
+        with open(DATA_DIR / "blue_mountain_feature_4326.geojson") as f:
+            feature = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [feature]
+                if feature.get("type") == "Feature"
+                else feature.get("features", [])
+            ),
+            "name": "Padded Domain",
+            "pad_to_resolution": 30,
+        }
+
+        response = client.post("/domains", json=request_body)
+
+        assert response.status_code == 201
+        data = response.json()
+
+        # Response should echo pad_to_resolution
+        assert data["pad_to_resolution"] == 30
+
+        # Two features: domain + input
+        assert len(data["features"]) == 2
+        names = [f["properties"]["name"] for f in data["features"]]
+        assert names == ["domain", "input"]
+
+        # bbox field should be present and snapped to multiples of 30
+        assert data["bbox"] is not None
+        for value in data["bbox"]:
+            assert value % 30 == 0, f"bbox value {value} is not a multiple of 30"
+
+        # The "domain" feature's geometry should match the bbox
+        domain_feature = data["features"][0]
+        assert domain_feature["properties"]["name"] == "domain"
+        coords = domain_feature["geometry"]["coordinates"][0]
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        assert (min(xs), min(ys), max(xs), max(ys)) == tuple(data["bbox"])
+
+        DOMAINS.append(data)
+
+    def test_pad_to_resolution_none_omitted_from_response(self, client):
+        """When pad_to_resolution is not provided, it should be omitted from the response."""
+        with open(DATA_DIR / "blue_mountain_feature_4326.geojson") as f:
+            feature = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [feature]
+                if feature.get("type") == "Feature"
+                else feature.get("features", [])
+            ),
+            "name": "Unpadded Domain",
+        }
+
+        response = client.post("/domains", json=request_body)
+
+        assert response.status_code == 201
+        data = response.json()
+
+        # response_model_exclude_none should drop pad_to_resolution when None
+        assert "pad_to_resolution" not in data
+
+        # Should still have two features and bbox
+        assert len(data["features"]) == 2
+        assert "bbox" in data
+
+        DOMAINS.append(data)
+
+
+class TestPreviewDomain:
+    """Test the POST /domains/preview endpoint.
+
+    Preview runs the same validation + projection pipeline as create but
+    returns id="preview" and never writes to Firestore.
+    """
+
+    route = "/domains/preview"
+
+    def test_preview_returns_200(self, client):
+        """Preview returns 200 (not 201 — nothing is created)."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+
+    def test_preview_id_is_preview(self, client):
+        """Preview response always has id='preview'."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+        assert response.json()["id"] == "preview"
+
+    def test_preview_returns_two_features(self, client):
+        """Preview returns the two-feature FeatureCollection (domain + input)."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert len(data["features"]) == 2
+        names = [f["properties"]["name"] for f in data["features"]]
+        assert "domain" in names
+        assert "input" in names
+
+    def test_preview_returns_bbox(self, client):
+        """Preview response includes a valid 4-element bbox."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "bbox" in data
+        assert len(data["bbox"]) == 4
+
+    def test_preview_pad_to_resolution_honored(self, client):
+        """pad_to_resolution snaps the domain bbox in preview, same as create."""
+        response = client.post(self.route, json=EXAMPLE_PADDED)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["pad_to_resolution"] == 30
+        for value in data["bbox"]:
+            assert value % 30 == 0, f"bbox value {value} is not a multiple of 30"
+
+    def test_preview_no_document_written(self, client, firestore_client):
+        """Preview must not create any Firestore document."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+        assert response.status_code == 200
+
+        doc = firestore_client.collection(DOMAINS_COLLECTION).document("preview").get()
+        assert not doc.exists
+
+    def test_preview_zero_area_returns_422(self, client):
+        """Point geometry (zero area) propagates as 422."""
+        with open(DATA_DIR / "point.geojson") as f:
+            point = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [point] if point.get("type") == "Feature" else point.get("features", [])
+            ),
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+        assert "area greater than zero" in response.json()["detail"]
+
+    def test_preview_outside_conus_returns_422(self, client):
+        """Domain outside CONUS propagates as 422."""
+        with open(DATA_DIR / "polygon_in_alaska.geojson") as f:
+            alaska = json.load(f)
+
+        request_body = {
+            "type": "FeatureCollection",
+            "features": (
+                [alaska]
+                if alaska.get("type") == "Feature"
+                else alaska.get("features", [])
+            ),
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+        assert "within CONUS" in response.json()["detail"]
+
+    def test_preview_invalid_crs_returns_422(self, client):
+        """Invalid CRS propagates as 422."""
+        request_body = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.0, 46.8],
+                                [-114.01, 46.8],
+                                [-114.01, 46.79],
+                                [-114.0, 46.79],
+                                [-114.0, 46.8],
+                            ]
+                        ],
+                    },
+                }
+            ],
+            "crs": {"type": "name", "properties": {"name": "INVALID:CRS"}},
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+        assert "Invalid CRS" in response.json()["detail"]
 
 
 class TestCreateDomainValidationErrors:
@@ -285,6 +502,64 @@ class TestCreateDomainValidationErrors:
 
         assert response.status_code == 422
         assert "Invalid CRS" in response.json()["detail"]
+
+    def test_pad_to_resolution_zero_returns_422(self, client):
+        """pad_to_resolution=0 should return 422 (gt=0 constraint)."""
+        request_body = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.0, 46.8],
+                                [-114.01, 46.8],
+                                [-114.01, 46.79],
+                                [-114.0, 46.79],
+                                [-114.0, 46.8],
+                            ]
+                        ],
+                    },
+                }
+            ],
+            "pad_to_resolution": 0,
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
+
+    def test_pad_to_resolution_negative_returns_422(self, client):
+        """pad_to_resolution=-1 should return 422 (gt=0 constraint)."""
+        request_body = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.0, 46.8],
+                                [-114.01, 46.8],
+                                [-114.01, 46.79],
+                                [-114.0, 46.79],
+                                [-114.0, 46.8],
+                            ]
+                        ],
+                    },
+                }
+            ],
+            "pad_to_resolution": -1,
+        }
+
+        response = client.post(self.route, json=request_body)
+
+        assert response.status_code == 422
 
 
 class TestGetDomain:
@@ -1023,3 +1298,144 @@ class TestDeleteDomain:
 
         doc = domain_ref.get()
         assert not doc.exists
+
+
+class TestReprojectDomain:
+    """Test the POST /domains/reproject endpoint.
+
+    Stateless reprojection — no Firestore reads or writes.
+    """
+
+    route = "/domains/reproject"
+
+    # Small WGS84 polygon in western Montana (UTM zone 12N / EPSG:32612)
+    WGS84_FC = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "test"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [
+                            [-114.0, 46.8],
+                            [-114.01, 46.8],
+                            [-114.01, 46.79],
+                            [-114.0, 46.79],
+                            [-114.0, 46.8],
+                        ]
+                    ],
+                },
+            }
+        ],
+    }
+
+    def test_reproject_returns_200(self, client):
+        """Reproject returns 200."""
+        response = client.post(
+            self.route, params={"target_epsg": 5070}, json=self.WGS84_FC
+        )
+        assert response.status_code == 200
+
+    def test_round_trip_4326_to_5070_to_4326(self, client):
+        """Round-trip 4326 → EPSG:5070 → 4326 returns approximately original coordinates."""
+        response_5070 = client.post(
+            self.route, params={"target_epsg": 5070}, json=self.WGS84_FC
+        )
+        assert response_5070.status_code == 200
+
+        response_4326 = client.post(
+            self.route, params={"target_epsg": 4326}, json=response_5070.json()
+        )
+        assert response_4326.status_code == 200
+
+        orig_coords = self.WGS84_FC["features"][0]["geometry"]["coordinates"][0]
+        result_coords = response_4326.json()["features"][0]["geometry"]["coordinates"][
+            0
+        ]
+        for orig, result in zip(orig_coords, result_coords):
+            assert abs(orig[0] - result[0]) < 1e-5
+            assert abs(orig[1] - result[1]) < 1e-5
+
+    def test_preserves_feature_properties(self, client):
+        """Reprojected features retain original properties."""
+        response = client.post(
+            self.route, params={"target_epsg": 5070}, json=self.WGS84_FC
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["features"][0]["properties"]["name"] == "test"
+
+    def test_preserves_multi_feature_input(self, client):
+        """All features in a multi-feature FeatureCollection are reprojected and returned."""
+        multi_fc = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {"id": 1},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.0, 46.8],
+                                [-114.01, 46.8],
+                                [-114.01, 46.79],
+                                [-114.0, 46.79],
+                                [-114.0, 46.8],
+                            ]
+                        ],
+                    },
+                },
+                {
+                    "type": "Feature",
+                    "properties": {"id": 2},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [-114.02, 46.81],
+                                [-114.03, 46.81],
+                                [-114.03, 46.80],
+                                [-114.02, 46.80],
+                                [-114.02, 46.81],
+                            ]
+                        ],
+                    },
+                },
+            ],
+        }
+        response = client.post(self.route, params={"target_epsg": 5070}, json=multi_fc)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["features"]) == 2
+        ids = {f["properties"]["id"] for f in data["features"]}
+        assert ids == {1, 2}
+
+    def test_response_crs_reflects_target(self, client):
+        """Response FeatureCollection crs field is set to the target EPSG."""
+        response = client.post(
+            self.route, params={"target_epsg": 5070}, json=self.WGS84_FC
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["crs"]["properties"]["name"] == "EPSG:5070"
+
+    def test_invalid_target_epsg_returns_422(self, client):
+        """Invalid target EPSG returns 422."""
+        response = client.post(
+            self.route, params={"target_epsg": 999999}, json=self.WGS84_FC
+        )
+        assert response.status_code == 422
+        assert "Invalid CRS" in response.json()["detail"]
+
+    def test_invalid_source_crs_returns_422(self, client):
+        """Invalid source CRS in the request body returns 422."""
+        fc = {
+            **self.WGS84_FC,
+            "crs": {"type": "name", "properties": {"name": "INVALID:9999"}},
+        }
+        response = client.post(self.route, params={"target_epsg": 5070}, json=fc)
+        assert response.status_code == 422
+        assert "Invalid CRS" in response.json()["detail"]

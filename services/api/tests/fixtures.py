@@ -23,7 +23,19 @@ def make_domain_data(
     description: str = "Test domain created by fixture",
     tags: list | None = None,
 ) -> dict:
-    """Factory function to create domain data as stored in Firestore."""
+    """Factory function to create domain data as stored in Firestore.
+
+    Produces the two-feature format: a "domain" feature (working extent /
+    bounding box) and an "input" feature (the original user polygon). For a
+    rectangular input, both features have the same geometry.
+    """
+    polygon_coords = [
+        [500000.0, 5200000.0],
+        [501000.0, 5200000.0],
+        [501000.0, 5201000.0],
+        [500000.0, 5201000.0],
+        [500000.0, 5200000.0],
+    ]
     return {
         "type": "FeatureCollection",
         "id": f"test-{uuid.uuid4().hex}",
@@ -37,23 +49,23 @@ def make_domain_data(
         "features": [
             {
                 "type": "Feature",
-                "properties": {},
+                "properties": {"name": "domain"},
                 "geometry": {
                     "type": "Polygon",
-                    "coordinates": json.dumps(
-                        [
-                            [
-                                [500000.0, 5200000.0],
-                                [501000.0, 5200000.0],
-                                [501000.0, 5201000.0],
-                                [500000.0, 5201000.0],
-                                [500000.0, 5200000.0],
-                            ]
-                        ]
-                    ),
+                    "coordinates": json.dumps([polygon_coords]),
                 },
-            }
+            },
+            {
+                "type": "Feature",
+                "properties": {"name": "input"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": json.dumps([polygon_coords]),
+                },
+            },
         ],
+        "bbox": [500000.0, 5200000.0, 501000.0, 5201000.0],
+        "pad_to_resolution": None,
     }
 
 
@@ -67,9 +79,10 @@ def make_grid_data(
     source: dict | None = None,
     bands: list | None = None,
     georeference: dict | None = None,
+    chunks: dict | None = None,
 ) -> dict:
     """Factory function to create grid data as stored in Firestore."""
-    return {
+    data = {
         "id": f"test-{uuid.uuid4().hex}",
         "domain_id": domain_id,
         "name": name,
@@ -102,6 +115,9 @@ def make_grid_data(
         ),
         "tags": tags or [],
     }
+    if chunks is not None:
+        data["chunks"] = chunks
+    return data
 
 
 def make_inventory_data(

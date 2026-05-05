@@ -1,10 +1,15 @@
 {
-  "type": "FeatureCollection",
+  "created_on": "2026-02-23T00:00:00.000000",
+  "crs": {
+    "properties": {
+      "name": "EPSG:32612"
+    },
+    "type": "name"
+  },
+  "description": "Testing bounds that cross 2 naip tiles, contain road and water features and 3DEP data.",
   "features": [
     {
-      "type": "Feature",
       "geometry": {
-        "type": "Polygon",
         "coordinates": [
           [
             [
@@ -28,22 +33,17 @@
               5197054
             ]
           ]
-        ]
+        ],
+        "type": "Polygon"
       },
+      "id": "0",
       "properties": {},
-      "id": "0"
+      "type": "Feature"
     }
   ],
-  "name": "naip-chm-2-tiles",
-  "description": "Testing bounds that cross 2 naip tiles, contain road and water features and 3DEP data.",
-  "crs": {
-    "type": "name",
-    "properties": {
-      "name": "EPSG:32612"
-    }
-  },
-  "tags": [],
   "id": "naip_chm_2_tiles_test_domain",
-  "created_on": "2026-02-23T00:00:00.000000",
-  "modified_on": "2026-02-23T00:00:00.000000"
+  "modified_on": "2026-02-23T00:00:00.000000",
+  "name": "naip-chm-2-tiles",
+  "tags": [],
+  "type": "FeatureCollection"
 }

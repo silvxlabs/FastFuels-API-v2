@@ -60,7 +60,7 @@ async def create_landfire_fbfm40(
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
-    - **version**: (optional) LANDFIRE version. Default: "2022".
+    - **version**: (optional) LANDFIRE version. Default: "2024".
 
     ## Response
 
@@ -72,7 +72,10 @@ async def create_landfire_fbfm40(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = LandfireFbfm40Source(version=body.version)
+    source = LandfireFbfm40Source(
+        version=body.version,
+        remove_non_burnable=body.remove_non_burnable,
+    )
 
     grid_data = {
         "id": grid_id,
@@ -87,7 +90,7 @@ async def create_landfire_fbfm40(
         "bands": [FBFM40_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
-        "chunk_shape": CHUNK_SHAPE,
+        "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
 

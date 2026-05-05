@@ -1,19 +1,19 @@
 {
-  "domain_id": "test-domain",
-  "owner_id": "integration-test",
-  "name": "Test Parquet Export",
   "description": "Integration test export",
-  "tags": [],
-  "status": "pending",
-  "progress": null,
+  "domain_id": "test-domain",
   "error": null,
-  "source": {
-    "name": "parquet",
-    "inventory_id": "PLACEHOLDER",
-    "columns": null,
-    "crs": null
-  },
   "expiration_days": 1,
+  "expires_on": null,
+  "name": "Test Parquet Export",
+  "owner_id": "integration-test",
+  "progress": null,
   "signed_url": null,
-  "expires_on": null
+  "source": {
+    "columns": null,
+    "crs": null,
+    "inventory_id": "PLACEHOLDER",
+    "name": "parquet"
+  },
+  "status": "pending",
+  "tags": []
 }

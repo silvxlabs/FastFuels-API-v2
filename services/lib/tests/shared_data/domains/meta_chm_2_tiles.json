@@ -1,34 +1,49 @@
 {
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "geometry": {
-        "type": "Polygon",
-        "coordinates": [
-          [
-            [278238.23, 5173147.41],
-            [278238.23, 5174147.41],
-            [277238.23, 5174147.41],
-            [277238.23, 5173147.41],
-            [278238.23, 5173147.41]
-          ]
-        ]
-      },
-      "properties": {},
-      "id": "0"
-    }
-  ],
-  "name": "meta-chm-2-tiles",
-  "description": "1km domain spanning 2 Meta CHM tiles (E/W boundary)",
+  "created_on": "2026-02-23T00:00:00.000000",
   "crs": {
-    "type": "name",
     "properties": {
       "name": "EPSG:32612"
-    }
+    },
+    "type": "name"
   },
-  "tags": [],
+  "description": "1km domain spanning 2 Meta CHM tiles (E/W boundary)",
+  "features": [
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              278238.23,
+              5173147.41
+            ],
+            [
+              278238.23,
+              5174147.41
+            ],
+            [
+              277238.23,
+              5174147.41
+            ],
+            [
+              277238.23,
+              5173147.41
+            ],
+            [
+              278238.23,
+              5173147.41
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "0",
+      "properties": {},
+      "type": "Feature"
+    }
+  ],
   "id": "meta_chm_2_tiles_test_domain",
-  "created_on": "2026-02-23T00:00:00.000000",
-  "modified_on": "2026-03-30T11:00:00.000000"
+  "modified_on": "2026-03-30T11:00:00.000000",
+  "name": "meta-chm-2-tiles",
+  "tags": [],
+  "type": "FeatureCollection"
 }

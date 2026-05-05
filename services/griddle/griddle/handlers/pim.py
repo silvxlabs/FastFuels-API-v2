@@ -7,16 +7,13 @@ All handlers return xr.Dataset where each variable name is a band name.
 
 from collections.abc import Callable
 
-import gcsfs
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from lib.config import RASTERS_BUCKET, TABLES_BUCKET
-from lib.raster import RasterConnection
-
-_fs = gcsfs.GCSFileSystem()
+from lib.raster import RasterConnection, cog_env
 
 # Column names vary by TreeMap version
 TREEMAP_COLUMNS = {
@@ -46,12 +43,13 @@ def fetch_treemap(
     """
     # Fetch the TreeMap COG raster (TM_ID pixel values)
     url = f"gs://{RASTERS_BUCKET}/TreeMap{version}.tif"
-    raster = RasterConnection(url, connection_type="rioxarray", cache=True)
-    data = raster.extract_window(
-        roi=roi,
-        projection_padding_meters=15 * raster.raster_resolution,
-        interpolation_padding_cells=8,
-    )
+    with cog_env():
+        raster = RasterConnection(url, connection_type="rioxarray", cache=True)
+        data = raster.extract_window(
+            roi=roi,
+            projection_padding_meters=15 * raster.raster_resolution,
+            interpolation_padding_cells=8,
+        )
     tm_id_da = data.squeeze("band", drop=True)
 
     variables = {}

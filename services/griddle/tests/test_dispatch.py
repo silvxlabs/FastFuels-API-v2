@@ -22,35 +22,6 @@ from griddle.errors import ProcessingError
 class TestHandleLandfire:
     """Tests for handle_landfire function."""
 
-    @patch("griddle.dispatch.landfire.fetch_fbfm40")
-    def test_routes_fbfm40_to_handler(self, mock_fetch):
-        """handle_landfire routes fbfm40 product to fetch_fbfm40."""
-        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
-        mock_result = MagicMock()
-        mock_fetch.return_value = mock_result
-        progress = MagicMock()
-
-        source = {"product": "fbfm40", "version": "2022"}
-
-        result = handle_landfire(mock_gdf, source, progress)
-
-        mock_fetch.assert_called_once_with(mock_gdf, "2022")
-        assert result == mock_result
-
-    @patch("griddle.dispatch.landfire.fetch_fbfm40")
-    def test_default_version(self, mock_fetch):
-        """handle_landfire uses 2022 as default version."""
-        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
-        progress = MagicMock()
-
-        source = {"product": "fbfm40"}  # No version specified
-
-        handle_landfire(mock_gdf, source, progress)
-
-        # Check that fetch_fbfm40 was called with default version
-        _, call_kwargs = mock_fetch.call_args
-        assert call_kwargs == {} or mock_fetch.call_args[0][1] == "2022"
-
     def test_unknown_product_raises(self):
         """handle_landfire raises ProcessingError for unknown product."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
@@ -65,7 +36,36 @@ class TestHandleLandfire:
         assert "unknown_product" in exc_info.value.message
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
-    def test_calls_progress_callback(self, mock_fetch):
+    def test_routes_fbfm40_to_handler(self, mock_fetch):
+        """handle_landfire routes fbfm40 product to fetch_fbfm40."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        source = {"product": "fbfm40", "version": "2022"}
+
+        result = handle_landfire(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(mock_gdf, "2022", remove_non_burnable=None)
+        assert result == mock_result
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm40")
+    def test_fbfm40_default_version(self, mock_fetch):
+        """handle_landfire uses 2024 as default version for fbfm40."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        source = {"product": "fbfm40"}  # No version specified
+
+        handle_landfire(mock_gdf, source, progress)
+
+        # Check that fetch_fbfm40 was called with default version
+        _, call_kwargs = mock_fetch.call_args
+        assert call_kwargs == {} or mock_fetch.call_args[0][1] == "2024"
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm40")
+    def test_fbfm40_calls_progress_callback(self, mock_fetch):
         """handle_landfire reports progress."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
@@ -78,6 +78,51 @@ class TestHandleLandfire:
         call_args = progress.call_args[0]
         assert "LANDFIRE" in call_args[0]
         assert "fbfm40" in call_args[0]
+
+    @patch("griddle.dispatch.landfire.fetch_fccs")
+    def test_routes_fccs_to_handler(self, mock_fetch):
+        """handle_landfire routes fccs product to fetch_fccs."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        source = {"product": "fccs", "version": "2023"}
+
+        result = handle_landfire(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(mock_gdf, "2023")
+        assert result == mock_result
+
+    @patch("griddle.dispatch.landfire.fetch_fccs")
+    def test_fccs_default_version(self, mock_fetch):
+        """handle_landfire uses 2023 as default version for fccs."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "fccs"}  # No version specified
+
+        handle_landfire(mock_gdf, source, progress)
+
+        call_args = mock_fetch.call_args[0]
+        assert call_args[1] == "2023"
+
+    @patch("griddle.dispatch.landfire.fetch_fccs")
+    def test_fccs_calls_progress(self, mock_fetch):
+        """handle_landfire reports progress for fccs."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "fccs", "version": "2023"}
+
+        handle_landfire(mock_gdf, source, progress)
+
+        progress.assert_called_once()
+        call_args = progress.call_args[0]
+        assert "LANDFIRE" in call_args[0]
+        assert "fccs" in call_args[0]
 
     @patch("griddle.dispatch.landfire.fetch_topography")
     def test_routes_topography_to_handler(self, mock_fetch):
@@ -632,7 +677,7 @@ class TestHandleChm:
 
         result = handle_chm(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2020", progress)
+        mock_fetch.assert_called_once_with(mock_gdf, progress)
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
 

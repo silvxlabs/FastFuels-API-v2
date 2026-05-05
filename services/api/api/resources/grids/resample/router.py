@@ -98,6 +98,18 @@ async def create_resample(
     # Validate source grid has a georeference
     validate_grid_has_georeference(source_grid_data, body.source_grid_id)
 
+    # Reject 3D sources — resampling is a 2D operation. 3D grid products
+    # (e.g. tree/inventory) set a 3-tuple shape on their georeference.
+    source_shape = source_grid_data["georeference"].get("shape")
+    if source_shape is not None and len(source_shape) == 3:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Grid '{body.source_grid_id}' is a 3D grid. Resampling is "
+                f"not supported for 3D grids."
+            ),
+        )
+
     # Validate method override keys exist in source bands
     source_band_keys = {b["key"] for b in source_grid_data.get("bands", [])}
     invalid_keys = set(body.method_overrides.keys()) - source_band_keys
@@ -136,7 +148,7 @@ async def create_resample(
         "bands": bands,
         "georeference": None,
         "tags": body.tags,
-        "chunk_shape": CHUNK_SHAPE,
+        "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
 

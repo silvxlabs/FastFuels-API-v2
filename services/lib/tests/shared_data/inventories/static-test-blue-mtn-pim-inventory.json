@@ -1,65 +1,65 @@
 {
+  "columns": [
+    {
+      "key": "x",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "y",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "fia_species_code",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "key": "fia_status_code",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "key": "dbh",
+      "type": "continuous",
+      "unit": "cm"
+    },
+    {
+      "key": "height",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "crown_ratio",
+      "type": "continuous",
+      "unit": null
+    }
+  ],
+  "description": "",
+  "error": null,
   "georeference": {
-    "crs": "EPSG:32611",
     "bounds": [
       720227.9398802927,
       5189763.323999467,
       721533.6406826023,
       5190645.048516054
-    ]
+    ],
+    "crs": "EPSG:32611"
   },
-  "tags": [],
-  "name": "",
-  "status": "completed",
-  "progress": {
-    "percent": 100,
-    "message": "Complete"
-  },
-  "description": "",
-  "columns": [
-    {
-      "key": "x",
-      "unit": "m",
-      "type": "continuous"
-    },
-    {
-      "key": "y",
-      "unit": "m",
-      "type": "continuous"
-    },
-    {
-      "key": "fia_species_code",
-      "unit": null,
-      "type": "categorical"
-    },
-    {
-      "key": "fia_status_code",
-      "unit": null,
-      "type": "categorical"
-    },
-    {
-      "key": "dbh",
-      "unit": "cm",
-      "type": "continuous"
-    },
-    {
-      "key": "height",
-      "unit": "m",
-      "type": "continuous"
-    },
-    {
-      "key": "crown_ratio",
-      "unit": null,
-      "type": "continuous"
-    }
-  ],
-  "source": {
-    "seed": 43114239,
-    "source_pim_grid_id": "static-test-blue-mtn-pim-treemap",
-    "point_process": "inhomogeneous_poisson",
-    "name": "pim"
-  },
-  "error": null,
   "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "name": "pim",
+    "point_process": "inhomogeneous_poisson",
+    "seed": 898870608,
+    "source_pim_grid_id": "static-test-blue-mtn-pim-treemap"
+  },
+  "status": "completed",
+  "tags": [],
   "type": "tree"
 }

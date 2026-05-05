@@ -9,8 +9,10 @@ These are pure unit tests with no external dependencies.
 import pytest
 from api.resources.grids.fbfm40.schema import (
     FBFM40_BAND,
+    NB_CODE_MAP,
     CreateLandfireFbfm40Request,
     LandfireFbfm40Source,
+    NonBurnableFuelModel,
 )
 from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.schema import BandType
@@ -103,21 +105,26 @@ class TestCreateLandfireFbfm40Request:
     def test_minimal_valid_request(self):
         """Minimal request with no required body fields."""
         request = CreateLandfireFbfm40Request()
-        assert request.version == "2022"
+        assert request.version == "2024"
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
         assert request.modifications == []
 
     def test_version_defaults_to_2022(self):
-        """version defaults to '2022'."""
+        """version defaults to '2024'."""
         request = CreateLandfireFbfm40Request()
-        assert request.version == "2022"
+        assert request.version == "2024"
 
     def test_version_can_be_overridden(self):
-        """version can be set to a different value."""
+        """version can be set to a different valid value."""
         request = CreateLandfireFbfm40Request(version="2020")
         assert request.version == "2020"
+
+    def test_invalid_version_rejected(self):
+        """version must be a valid LANDFIRE FBFM40 version."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(version="2021")
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""
@@ -150,3 +157,76 @@ class TestFbfm40Band:
     def test_index_is_zero(self):
         """Band index is 0."""
         assert FBFM40_BAND.index == 0
+
+
+class TestNonBurnableFuelModel:
+    """Tests for NonBurnableFuelModel enum."""
+
+    def test_all_codes_present(self):
+        """All five non-burnable fuel model codes are defined."""
+        assert set(NonBurnableFuelModel) == {"NB1", "NB2", "NB3", "NB8", "NB9"}
+
+    def test_nb_code_map_matches_enum(self):
+        """NB_CODE_MAP has an entry for every enum member."""
+        assert set(NB_CODE_MAP.keys()) == {m.value for m in NonBurnableFuelModel}
+
+    def test_nb_code_map_values(self):
+        """NB_CODE_MAP maps to the correct FBFM40 numeric codes."""
+        assert NB_CODE_MAP == {
+            "NB1": 91,
+            "NB2": 92,
+            "NB3": 93,
+            "NB8": 98,
+            "NB9": 99,
+        }
+
+
+class TestRemoveNonBurnable:
+    """Tests for remove_non_burnable on request and source models."""
+
+    def test_request_defaults_to_none(self):
+        """remove_non_burnable defaults to None."""
+        request = CreateLandfireFbfm40Request()
+        assert request.remove_non_burnable is None
+
+    def test_request_accepts_valid_codes(self):
+        """A list of valid non-burnable codes is accepted."""
+        request = CreateLandfireFbfm40Request(remove_non_burnable=["NB1", "NB3", "NB9"])
+        assert request.remove_non_burnable == ["NB1", "NB3", "NB9"]
+
+    def test_request_accepts_all_codes(self):
+        """All five codes can be specified together."""
+        request = CreateLandfireFbfm40Request(
+            remove_non_burnable=["NB1", "NB2", "NB3", "NB8", "NB9"]
+        )
+        assert len(request.remove_non_burnable) == 5
+
+    def test_request_accepts_empty_list(self):
+        """An empty list is accepted (no codes to remove)."""
+        request = CreateLandfireFbfm40Request(remove_non_burnable=[])
+        assert request.remove_non_burnable == []
+
+    def test_request_rejects_invalid_code(self):
+        """An invalid non-burnable code is rejected."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(remove_non_burnable=["NB4"])
+
+    def test_request_rejects_duplicates(self):
+        """Duplicate codes are rejected."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(remove_non_burnable=["NB1", "NB1"])
+
+    def test_source_round_trip(self):
+        """remove_non_burnable survives source model_dump round-trip."""
+        source = LandfireFbfm40Source(
+            version="2022",
+            remove_non_burnable=["NB1", "NB9"],
+        )
+        data = source.model_dump()
+        assert data["remove_non_burnable"] == ["NB1", "NB9"]
+
+    def test_source_none_round_trip(self):
+        """None remove_non_burnable survives source model_dump round-trip."""
+        source = LandfireFbfm40Source(version="2022")
+        data = source.model_dump()
+        assert data["remove_non_burnable"] is None

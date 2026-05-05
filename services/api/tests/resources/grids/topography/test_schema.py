@@ -12,6 +12,7 @@ from api.resources.grids.topography.schema import (
     CreateLandfireTopographyRequest,
     CreateThreeDepTopographyRequest,
     LandfireTopographySource,
+    LandfireTopographyVersion,
     ThreeDepResolution,
     ThreeDepTopographySource,
     TopographyBand,
@@ -34,6 +35,16 @@ class TestTopographyBand:
 
     def test_has_exactly_three_members(self):
         assert len(TopographyBand) == 3
+
+
+class TestLandfireTopographyVersion:
+    """Tests for LandfireTopographyVersion enum."""
+
+    def test_has_2020(self):
+        assert LandfireTopographyVersion.v2020 == "2020"
+
+    def test_has_exactly_one_member(self):
+        assert len(LandfireTopographyVersion) == 1
 
 
 class TestLandfireTopographySource:
@@ -106,9 +117,9 @@ class TestCreateLandfireTopographyRequest:
         request = CreateLandfireTopographyRequest()
         assert request.version == "2020"
 
-    def test_version_can_be_overridden(self):
-        request = CreateLandfireTopographyRequest(version="2022")
-        assert request.version == "2022"
+    def test_invalid_version_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireTopographyRequest(version="2022")
 
     def test_bands_default_to_all_three(self):
         request = CreateLandfireTopographyRequest()

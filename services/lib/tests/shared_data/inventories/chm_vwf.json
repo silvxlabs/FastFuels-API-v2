@@ -1,0 +1,20 @@
+{
+  "description": "Integration test for Variable Window Filter (VWF) CHM extraction",
+  "modifications": [],
+  "name": "Test VWF CHM Inventory",
+  "source": {
+    "algorithm": {
+      "crown_offset": 1.0,
+      "crown_ratio": 0.1,
+      "min_height": 2.0,
+      "name": "vwf"
+    },
+    "name": "chm",
+    "source_chm_grid_id": "placeholder"
+  },
+  "tags": [
+    "test",
+    "vwf"
+  ],
+  "type": "tree"
+}

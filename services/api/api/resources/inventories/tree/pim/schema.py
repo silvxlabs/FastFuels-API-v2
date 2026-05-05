@@ -1,5 +1,5 @@
 """
-api/v2/resources/inventories/pim/schema.py
+api/v2/resources/inventories/tree/pim/schema.py
 
 Schema models for PIM expansion inventory creation.
 """

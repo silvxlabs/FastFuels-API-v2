@@ -200,6 +200,40 @@ EXAMPLE_BONDURANT = {
 
 
 # =============================================================================
+# Example: Padded Domain (pad_to_resolution)
+# =============================================================================
+# Demonstrates pad_to_resolution=30 for cross-resolution grid alignment.
+# When set, the domain bounding box is snapped to multiples of 30 meters.
+# Grids at 30m, 10m, 5m, 2m, 1m (any divisor of 30) will share an aligned
+# extent on this domain.
+
+EXAMPLE_PADDED = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-114.09545796676623, 46.8324794598619],
+                        [-114.11217537297199, 46.8324794598619],
+                        [-114.11217537297199, 46.82496749915157],
+                        [-114.09545796676623, 46.82496749915157],
+                        [-114.09545796676623, 46.8324794598619],
+                    ]
+                ],
+            },
+        }
+    ],
+    "name": "Padded Domain Example",
+    "description": "Domain with pad_to_resolution=30 for cross-resolution grid alignment.",
+    "pad_to_resolution": 30,
+}
+
+
+# =============================================================================
 # OpenAPI Examples Dictionary
 # =============================================================================
 
@@ -255,6 +289,16 @@ CREATE_DOMAIN_OPENAPI_EXAMPLES = {
             "coverage. Use this area to test 1m resolution topography grid requests."
         ),
     },
+    "padded": {
+        "value": EXAMPLE_PADDED,
+        "summary": "Padded Domain (pad_to_resolution=30)",
+        "description": (
+            "Creates a domain with pad_to_resolution=30. The domain bounding box is "
+            "snapped to multiples of 30 meters, so grids at 30m, 10m, 5m, 2m, 1m (any "
+            "divisor of 30) on this domain will share an aligned extent. Use this "
+            "pattern when you need to compare or compose grids at multiple resolutions."
+        ),
+    },
 }
 
 
@@ -271,4 +315,5 @@ ALL_EXAMPLE_VALUES = [
     ("utm", EXAMPLE_UTM),
     ("blackfoot", EXAMPLE_BLACKFOOT),
     ("bondurant", EXAMPLE_BONDURANT),
+    ("padded", EXAMPLE_PADDED),
 ]

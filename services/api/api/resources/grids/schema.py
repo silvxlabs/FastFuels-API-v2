@@ -90,6 +90,29 @@ class Georeference3D(Georeference):
     z_origin: float
 
 
+class Chunks(BaseModel):
+    """Chunk layout for a grid."""
+
+    shape: tuple[int, int] | tuple[int, int, int] = Field(
+        ...,
+        description=(
+            "Size of a single chunk. 2D grids: (y, x). 3D grids: (z, y, x). "
+            "Edge chunks may be smaller."
+        ),
+    )
+    count: int | None = Field(
+        default=None,
+        description="Total number of chunks in the grid.",
+    )
+    count_by_axis: dict[str, int] | None = Field(
+        default=None,
+        description=(
+            "Number of chunks along each axis. Keys are 'y','x' for 2D grids "
+            "and 'z','y','x' for 3D grids."
+        ),
+    )
+
+
 class CreateGridRequestBase(BaseModel):
     """Base fields for grid creation requests.
 
@@ -155,9 +178,12 @@ class Grid(BaseModel):
     )
 
     # Storage
-    chunk_shape: tuple[int, int] | None = Field(
+    chunks: Chunks | None = Field(
         default=None,
-        description="Zarr chunk shape (height, width).",
+        description=(
+            "Chunk layout. Null until the grid finishes processing. "
+            "Use chunks.count to know how many chunks are available to fetch."
+        ),
     )
 
     # User organization
@@ -170,9 +196,9 @@ class ListGridsResponse(PaginatedResponse):
     grids: list[Grid]
 
 
-class GridDataFormat(StrEnum):
-    json = "json"
-    binary = "binary"
+class GridDataArrayFormat(StrEnum):
+    dense = "dense"
+    sparse = "sparse"
 
 
 class GridDataOrder(StrEnum):
@@ -182,12 +208,26 @@ class GridDataOrder(StrEnum):
 
 class GridDataChunkMetadata(BaseModel):
     index: int
-    shape: tuple[int, int]
-    offset: tuple[int, int]
+    shape: tuple[int, int] | tuple[int, int, int]
+    offset: tuple[int, int] | tuple[int, int, int]
     transform: tuple[float, float, float, float, float, float]
+    z_origin: float | None = None
+    z_resolution: float | None = None
+
+
+class DenseGridData(BaseModel):
+    format: Literal["dense"]
+    values: list[float | int]
+
+
+class SparseGridData(BaseModel):
+    format: Literal["sparse"]
+    fill_value: float | int | None
+    indices: list[int]
+    values: list[float | int]
 
 
 class GridDataResponse(BaseModel):
     shape: list[int]
     order: Literal["C", "F"]
-    data: list[float | int]
+    data: DenseGridData | SparseGridData = Field(discriminator="format")

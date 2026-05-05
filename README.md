@@ -9,6 +9,7 @@ services/
 ├── api/          # FastAPI REST API (Cloud Run)
 ├── griddle/      # Grid processing service (Cloud Run)
 ├── exporter/     # Export processing service (Cloud Run)
+├── standgen/     # Tree inventory service (Cloud Run)
 ├── lib/          # Shared library code
 docs/             # Design and planning documents
 ```

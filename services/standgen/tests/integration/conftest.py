@@ -204,6 +204,39 @@ def module_pim_grid(request):
     delete_document(GRIDS_COLLECTION, grid_id)
 
 
+@pytest.fixture(scope="module")
+def module_chm_grid(request):
+    """Module-scoped variant of a source CHM grid.
+
+    Copies a static CHM grid (Zarr store) to a test-specific GCS path and creates the
+    Firestore document. Shared across all tests in a module for efficiency.
+
+    Used with ``@pytest.mark.parametrize("module_chm_grid", [...], indirect=True)``
+    or requested directly from module-scoped fixtures.
+    """
+    static_name = request.param
+    grid_id = f"test-{uuid4().hex}"
+
+    fs = gcsfs.GCSFileSystem()
+
+    src = f"{GRIDS_BUCKET}/{static_name}"
+    dst = f"{GRIDS_BUCKET}/{grid_id}"
+    fs.cp(src, dst, recursive=True)
+
+    # Assumes you have a static JSON representation in your test data folder
+    grid_data = load_json(GRIDS_DIR / f"{static_name}.json")
+    grid_data["id"] = grid_id
+    set_document(GRIDS_COLLECTION, grid_id, grid_data)
+
+    yield grid_id
+
+    # Teardown
+    gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
+    if exists(gcs_path):
+        delete_directory(gcs_path)
+    delete_document(GRIDS_COLLECTION, grid_id)
+
+
 @pytest.fixture
 def source_pim_grid(request):
     """Copy a static PIM grid fixture to a test-specific path.
@@ -245,18 +278,6 @@ def standgen_runner():
     Handles the full lifecycle: Firestore document creation, standgen
     execution, polling (deployed mode), and output verification. Cleans up
     all Firestore documents and GCS data on teardown.
-
-    Usage::
-
-        @pytest.mark.parametrize(
-            "source_pim_grid", ["static-test-blue-mtn-pim-treemap"], indirect=True
-        )
-        def test_something(standgen_runner, source_pim_grid):
-            inventory = standgen_runner(
-                "blue_mtn.json", "pim_treemap.json",
-                source_pim_grid_id=source_pim_grid,
-            )
-            assert inventory["georeference"] is not None
     """
     domain_ids = []
     inventory_ids = []
@@ -264,9 +285,9 @@ def standgen_runner():
     def _run(
         domain_file: str,
         inventory_file: str,
-        source_pim_grid_id: str,
         timeout: int = 300,
         source_overrides: dict | None = None,
+        **source_kwargs,  # <-- Catch any source grid ID dynamically
     ) -> dict:
         # Create domain document
         domain_data = load_json(DOMAINS_DIR / domain_file)
@@ -279,9 +300,13 @@ def standgen_runner():
         # Create inventory document
         inventory_data = load_json(INVENTORIES_DIR / inventory_file)
         inventory_data["domain_id"] = domain_id
-        inventory_data["source"]["source_pim_grid_id"] = source_pim_grid_id
+
+        # --- MODIFIED: Dynamically inject kwargs into the source dict ---
+        inventory_data["source"].update(source_kwargs)
+
         if source_overrides:
             inventory_data["source"].update(source_overrides)
+
         inventory_id = f"test-{uuid4().hex}"
         inventory_data["id"] = inventory_id
         set_document(INVENTORIES_COLLECTION, inventory_id, inventory_data)

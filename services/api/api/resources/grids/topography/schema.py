@@ -23,6 +23,12 @@ from api.resources.grids.schema import (
 )
 
 
+class LandfireTopographyVersion(StrEnum):
+    """Available LANDFIRE topography data versions."""
+
+    v2020 = "2020"
+
+
 class TopographyBand(StrEnum):
     """Available bands for topographic data."""
 
@@ -71,7 +77,7 @@ class CreateLandfireTopographyRequest(CreateGridRequestBase):
     slope (degrees), and/or aspect (degrees).
     """
 
-    version: str = "2020"
+    version: LandfireTopographyVersion = LandfireTopographyVersion.v2020
     bands: list[TopographyBand] = Field(
         default=[
             TopographyBand.elevation,

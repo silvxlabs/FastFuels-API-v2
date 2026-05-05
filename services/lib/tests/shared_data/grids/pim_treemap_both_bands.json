@@ -1,22 +1,42 @@
 {
-  "name": "test-pim-treemap-both-bands",
+  "bands": [
+    {
+      "index": 0,
+      "key": "tm_id",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "index": 1,
+      "key": "plt_cn",
+      "type": "categorical",
+      "unit": null
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
   "description": "",
-  "status": "pending",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-pim-treemap-both-bands",
   "progress": null,
   "source": {
+    "bands": [
+      "tm_id",
+      "plt_cn"
+    ],
+    "description": "TreeMap plot imputation raster (FIA plot IDs at 30m)",
     "name": "pim",
     "product": "treemap",
-    "version": "2022",
-    "bands": ["tm_id", "plt_cn"],
-    "description": "TreeMap plot imputation raster (FIA plot IDs at 30m)"
+    "version": "2022"
   },
-  "modifications": [],
-  "bands": [
-    {"key": "tm_id", "type": "categorical", "unit": null, "index": 0},
-    {"key": "plt_cn", "type": "categorical", "unit": null, "index": 1}
-  ],
-  "georeference": null,
-  "error": null,
-  "tags": [],
-  "chunk_shape": [512, 512]
+  "status": "pending",
+  "tags": []
 }

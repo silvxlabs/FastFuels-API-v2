@@ -46,11 +46,11 @@ def fetch_topography(
         resolution: Resolution in meters (1, 10, or 30)
         bands: List of band names ("elevation", "slope", "aspect")
         progress: Progress callback
-        extent_buffer_cells: Native-resolution cells of buffer around the ROI in
-            the returned dataset. When slope or aspect is requested, the
-            handler fetches a few extra DEM cells under the hood so
-            numpy.gradient produces central differences at the boundary; those
-            extra cells are clipped away before returning.
+        extent_buffer_cells: Result-grid cells of buffer around the ROI in the
+            returned dataset. When slope or aspect is requested, the handler
+            fetches a few extra DEM cells under the hood so numpy.gradient
+            produces central differences at the boundary; those extra cells
+            are clipped away before returning.
 
     Returns:
         Tuple of (Dataset with named variables, tile metadata dict)
@@ -161,7 +161,7 @@ def _fetch_and_mosaic_tiles(
         tile_urls: S3/HTTPS URLs to COG tiles
         resolution: Target resolution in meters
         progress: Progress callback
-        extent_buffer_cells: Extra cells of buffer around the ROI
+        extent_buffer_cells: Output DEM cells of buffer around the ROI
 
     Returns:
         DataArray with dims (y, x) in ROI's CRS at target resolution
@@ -266,8 +266,8 @@ def _clip_to_roi(
     Args:
         da: DataArray to clip. Must have a CRS and affine transform.
         roi: Region of interest (any CRS).
-        extent_buffer_cells: Cells of buffer to keep around the ROI. 0 strips all
-            padding back to the ROI extent.
+        extent_buffer_cells: Cells at the DataArray's current resolution to
+            keep around the ROI. 0 strips all padding back to the ROI extent.
     """
     roi_projected = roi.to_crs(da.rio.crs)
     minx, miny, maxx, maxy = roi_projected.total_bounds

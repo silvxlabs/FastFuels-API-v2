@@ -68,11 +68,7 @@ class RasterConnection:
         roi: GeoDataFrame,
         interpolation_padding_cells: int,
     ) -> DataArray:
-        """
-        Extract the window of the raster that contains the ROI.
-
-        kwargs passed to the
-        """
+        """Extract the raster window covering the ROI plus result-cell padding."""
         if self.connection_type == "rioxarray":
             return self._extract_window_rioxarray(roi, interpolation_padding_cells)
 
@@ -84,6 +80,9 @@ class RasterConnection:
         """
         Extract the window of the raster that contains the ROI using rioxarray.
         Only reproject if the ROI CRS differs from the raster CRS.
+
+        interpolation_padding_cells is measured in final result-grid cells in
+        the ROI CRS, not in source raster cells.
         """
         window = self.raster.rio.clip_box(
             *self._source_clip_bounds(roi, interpolation_padding_cells)
@@ -127,7 +126,12 @@ class RasterConnection:
         roi: GeoDataFrame,
         interpolation_padding_cells: int,
     ) -> tuple[float, float, float, float]:
-        """Return final output clip bounds in the ROI CRS."""
+        """Return final output clip bounds in the ROI CRS.
+
+        Padding is measured in final result-grid cells. For reprojected
+        rasters, this means the source raster's cell size is first estimated
+        in the ROI CRS.
+        """
         if interpolation_padding_cells == 0:
             return tuple(roi.total_bounds)
 

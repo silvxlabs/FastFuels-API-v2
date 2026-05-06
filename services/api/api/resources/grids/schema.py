@@ -136,11 +136,14 @@ class CreateSourceGridRequestBase(CreateGridRequestBase):
         ge=0,
         le=10,
         description=(
-            "Number of native-resolution cells included as a buffer around the "
-            "domain extent in the stored grid. Provides context for later "
-            "operations (resample, reproject, focal filters, derivative "
-            "calculations) that are sensitive to edges. If omitted, no buffer "
-            "is added. Maximum: 10 cells."
+            "Number of result-grid cells included as a buffer around the "
+            "domain extent in the stored grid. The buffer is measured after "
+            "the source raster is projected into the domain CRS, so a cell "
+            "means one cell in the returned grid rather than one source "
+            "raster cell. Provides context for later operations (resample, "
+            "reproject, focal filters, derivative calculations) that are "
+            "sensitive to edges. If omitted, no buffer is added. Maximum: "
+            "10 cells."
         ),
     )
 

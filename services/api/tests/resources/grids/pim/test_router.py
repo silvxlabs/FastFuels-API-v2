@@ -124,3 +124,35 @@ class TestCreateTreeMap:
         data = response.json()
         assert data["source"]["name"] == "pim"
         assert data["source"]["product"] == "treemap"
+
+    def test_extent_buffer_cells_defaults_to_zero(self, client, domain_for_testing):
+        response = client.post(self.route(domain_for_testing["id"]), json={})
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 10])
+    def test_extent_buffer_cells_explicit_value_persisted(
+        self, client, domain_for_testing, buffer
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": buffer},
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_cells"] == buffer
+
+    def test_extent_buffer_cells_negative_rejected(self, client, domain_for_testing):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": -1},
+        )
+        assert response.status_code == 422
+
+    def test_extent_buffer_cells_above_maximum_rejected(
+        self, client, domain_for_testing
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": 11},
+        )
+        assert response.status_code == 422

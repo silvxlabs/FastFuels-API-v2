@@ -234,6 +234,46 @@ EXAMPLE_PADDED = {
 
 
 # =============================================================================
+# Example: Styled Domain
+# =============================================================================
+# Demonstrates the optional `style` field carrying client-defined render hints.
+# Color strings are not format-validated — any short string the renderer
+# understands works (hex, named, rgb(), hsl(), ...). Numeric ranges are
+# enforced: opacities in [0, 1], stroke_width >= 0.
+
+EXAMPLE_STYLED = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-114.09545796676623, 46.8324794598619],
+                        [-114.11217537297199, 46.8324794598619],
+                        [-114.11217537297199, 46.82496749915157],
+                        [-114.09545796676623, 46.82496749915157],
+                        [-114.09545796676623, 46.8324794598619],
+                    ]
+                ],
+            },
+        }
+    ],
+    "name": "Styled Domain Example",
+    "description": "Domain with explicit map render style (auxiliary metadata).",
+    "style": {
+        "stroke_color": "#70e2ff",
+        "stroke_opacity": 1.0,
+        "stroke_width": 2,
+        "fill_color": "#70e2ff",
+        "fill_opacity": 0.4,
+    },
+}
+
+
+# =============================================================================
 # OpenAPI Examples Dictionary
 # =============================================================================
 
@@ -299,6 +339,17 @@ CREATE_DOMAIN_OPENAPI_EXAMPLES = {
             "pattern when you need to compare or compose grids at multiple resolutions."
         ),
     },
+    "styled": {
+        "value": EXAMPLE_STYLED,
+        "summary": "Styled Domain (custom map render style)",
+        "description": (
+            "Creates a domain with an explicit `style` block. Sub-fields: "
+            "`stroke_color`, `stroke_opacity` (0-1), `stroke_width` (>= 0), "
+            "`fill_color`, `fill_opacity` (0-1). Color strings accept any "
+            "format the renderer understands (hex, named colors, `rgb()`, "
+            "...). The field is optional — omit it to store no style."
+        ),
+    },
 }
 
 
@@ -316,4 +367,5 @@ ALL_EXAMPLE_VALUES = [
     ("blackfoot", EXAMPLE_BLACKFOOT),
     ("bondurant", EXAMPLE_BONDURANT),
     ("padded", EXAMPLE_PADDED),
+    ("styled", EXAMPLE_STYLED),
 ]

@@ -22,16 +22,16 @@
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [
-      1479,
-      2186
+      1471,
+      2178
     ],
     "transform": [
-      0.5999999999981885,
+      0.5999999999977861,
       0.0,
-      720224.9999980736,
+      720227.3999980732,
       0.0,
-      -0.5999999999979836,
-      5190648.0001211995
+      -0.5999999999980994,
+      5190645.600121199
     ]
   },
   "modifications": [],
@@ -42,6 +42,7 @@
   },
   "source": {
     "description": "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)",
+    "extent_buffer_cells": 0,
     "name": "chm",
     "product": "naip",
     "tile_metadata": {

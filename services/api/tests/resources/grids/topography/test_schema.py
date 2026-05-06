@@ -154,6 +154,34 @@ class TestCreateLandfireTopographyRequest:
         assert request.tags == ["topo"]
         assert request.bands == [TopographyBand.elevation, TopographyBand.slope]
 
+    def test_extent_buffer_cells_defaults_to_none(self):
+        request = CreateLandfireTopographyRequest()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        request = CreateLandfireTopographyRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        request = CreateLandfireTopographyRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireTopographyRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireTopographyRequest(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        request = CreateLandfireTopographyRequest()
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_zero(self):
+        request = CreateLandfireTopographyRequest(extent_buffer_cells=0)
+        assert request.resolved_extent_buffer_cells(0) == 0
+
 
 class TestTopographyBandDefs:
     """Tests for TOPOGRAPHY_BAND_DEFS constant."""
@@ -378,3 +406,39 @@ class TestCreateThreeDepTopographyRequest:
         assert request.tags == ["3dep"]
         assert request.resolution == 1
         assert request.bands == [TopographyBand.elevation, TopographyBand.slope]
+
+    def test_extent_buffer_cells_defaults_to_none(self):
+        request = CreateThreeDepTopographyRequest()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_accepts_maximum(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        request = CreateThreeDepTopographyRequest()
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_zero(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=0)
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_explicit_value(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=10)
+        assert request.resolved_extent_buffer_cells(0) == 10

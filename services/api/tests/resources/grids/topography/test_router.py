@@ -138,6 +138,38 @@ class TestCreateLandfireTopography:
         assert data["source"]["name"] == "landfire"
         assert data["source"]["product"] == "topography"
 
+    def test_extent_buffer_cells_defaults_to_zero(self, client, domain_for_testing):
+        response = client.post(self.route(domain_for_testing["id"]), json={})
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 10])
+    def test_extent_buffer_cells_explicit_value_persisted(
+        self, client, domain_for_testing, buffer
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": buffer},
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_cells"] == buffer
+
+    def test_extent_buffer_cells_negative_rejected(self, client, domain_for_testing):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": -1},
+        )
+        assert response.status_code == 422
+
+    def test_extent_buffer_cells_above_maximum_rejected(
+        self, client, domain_for_testing
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": 11},
+        )
+        assert response.status_code == 422
+
 
 class TestCreate3DepTopography:
     """Test the POST /domains/{domain_id}/grids/topography/3dep endpoint."""
@@ -264,3 +296,47 @@ class TestCreate3DepTopography:
         data = response.json()
         assert data["source"]["name"] == "3dep"
         assert data["source"]["product"] == "topography"
+
+    def test_extent_buffer_cells_defaults_to_zero(self, client, domain_for_testing):
+        """Omitted extent_buffer_cells persists 0 regardless of band selection."""
+        response = client.post(self.route(domain_for_testing["id"]), json={})
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_cells"] == 0
+
+    def test_extent_buffer_cells_default_unchanged_by_derivatives(
+        self, client, domain_for_testing
+    ):
+        """Slope/aspect do NOT bump the persisted buffer; gradient overhead is internal."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"bands": ["elevation", "slope", "aspect"]},
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 10])
+    def test_extent_buffer_cells_explicit_value_persisted(
+        self, client, domain_for_testing, buffer
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": buffer},
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_cells"] == buffer
+
+    def test_extent_buffer_cells_negative_rejected(self, client, domain_for_testing):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": -1},
+        )
+        assert response.status_code == 422
+
+    def test_extent_buffer_cells_above_maximum_rejected(
+        self, client, domain_for_testing
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"extent_buffer_cells": 11},
+        )
+        assert response.status_code == 422

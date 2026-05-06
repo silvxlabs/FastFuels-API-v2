@@ -83,7 +83,11 @@ async def create_landfire_topography(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = LandfireTopographySource(version=body.version, bands=body.bands)
+    source = LandfireTopographySource(
+        version=body.version,
+        bands=body.bands,
+        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+    )
     bands = build_topography_bands(body.bands)
 
     grid_data = {
@@ -161,7 +165,11 @@ async def create_3dep_topography(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = ThreeDepTopographySource(resolution=body.resolution, bands=body.bands)
+    source = ThreeDepTopographySource(
+        resolution=body.resolution,
+        bands=body.bands,
+        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+    )
     bands = build_topography_bands(body.bands)
 
     grid_data = {

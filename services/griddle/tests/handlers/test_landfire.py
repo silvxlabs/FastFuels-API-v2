@@ -65,8 +65,8 @@ class TestFetchFbfm40:
     """Integration tests for fetch_fbfm40."""
 
     @patch("griddle.handlers.landfire.RasterConnection")
-    def test_extract_window_has_output_padding_only(self, mock_raster_cls, roi):
-        """LANDFIRE extraction leaves reprojection padding to RasterConnection."""
+    def test_extract_window_default_buffer_is_zero(self, mock_raster_cls, roi):
+        """When extent_buffer_cells is omitted, extract_window receives 0."""
         data = xr.DataArray(
             np.array([[[101]]], dtype=np.int16),
             dims=("band", "y", "x"),
@@ -80,36 +80,56 @@ class TestFetchFbfm40:
 
         call_kwargs = mock_raster.extract_window.call_args[1]
         assert "projection_padding_meters" not in call_kwargs
-        assert call_kwargs["interpolation_padding_cells"] == 8
+        assert call_kwargs["interpolation_padding_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 1, 12])
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_extent_buffer_cells_threaded_through(self, mock_raster_cls, roi, buffer):
+        """Caller-supplied extent_buffer_cells reaches extract_window unchanged."""
+        data = xr.DataArray(
+            np.array([[[101]]], dtype=np.int16),
+            dims=("band", "y", "x"),
+            coords={"band": [1], "y": [0.0], "x": [0.0]},
+        ).rio.write_crs(roi.crs)
+        mock_raster = MagicMock()
+        mock_raster.extract_window.return_value = data
+        mock_raster_cls.return_value = mock_raster
+
+        _fetch_landfire_raster(roi, "FBFM40", "2024", extent_buffer_cells=buffer)
+
+        assert (
+            mock_raster.extract_window.call_args[1]["interpolation_padding_cells"]
+            == buffer
+        )
 
     def test_returns_dataset(self, roi):
         """fetch_fbfm40 returns a Dataset."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert isinstance(result, xr.Dataset)
 
     def test_has_fbfm_variable(self, roi):
         """Dataset contains a 'fbfm' variable."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert "fbfm" in result.data_vars
 
     def test_fbfm_shape(self, test_domain, roi):
         """The fbfm variable has the expected spatial shape."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result["fbfm"].shape == test_domain.expected_shape
 
     def test_fbfm_dtype(self, roi):
         """The fbfm variable is int16 (categorical codes)."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result["fbfm"].dtype == "int16"
 
     def test_crs_preserved(self, roi):
         """CRS is preserved via rioxarray."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result.rio.crs == roi.crs
 
     def test_fbfm_values_in_range(self, roi):
         """FBFM40 codes should be <= 204."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result["fbfm"].values.max() <= 204
 
 
@@ -118,32 +138,32 @@ class TestFetchFccs:
 
     def test_returns_dataset(self, roi):
         """fetch_fccs returns a Dataset."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert isinstance(result, xr.Dataset)
 
     def test_has_fccs_variable(self, roi):
         """Dataset contains a 'fccs' variable."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert "fccs" in result.data_vars
 
     def test_fccs_shape(self, test_domain, roi):
         """The fccs variable has the expected spatial shape."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert result["fccs"].shape == test_domain.expected_shape
 
     def test_fccs_dtype(self, roi):
         """The fccs variable is int32 (codes up to 12990133 exceed int16 range)."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert result["fccs"].dtype == "int32"
 
     def test_crs_preserved(self, roi):
         """CRS is preserved via rioxarray."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert result.rio.crs == roi.crs
 
     def test_fccs_valid_values_in_range(self, roi):
         """Mapped FCCS codes should be between 0 and 12990133."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         values = result["fccs"].values
         valid_mask = ~np.isin(values, [-1111, -9999])
         assert values[valid_mask].min() >= 0
@@ -151,7 +171,7 @@ class TestFetchFccs:
 
     def test_fccs_fill_values_are_expected(self, roi):
         """Any negative values are only the known fill values (-1111, -9999)."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         values = result["fccs"].values
         negative_values = np.unique(values[values < 0])
         assert set(negative_values).issubset({-1111, -9999})
@@ -167,6 +187,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
         assert isinstance(result, xr.Dataset)
@@ -178,6 +199,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation", "slope", "aspect"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -193,6 +215,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -207,6 +230,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["slope", "aspect"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -219,6 +243,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["aspect", "elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -231,6 +256,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -243,6 +269,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation", "slope"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 

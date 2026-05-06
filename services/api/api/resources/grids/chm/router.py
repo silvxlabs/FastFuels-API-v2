@@ -72,7 +72,10 @@ async def create_meta_chm(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = MetaChmSource(version=body.version)
+    source = MetaChmSource(
+        version=body.version,
+        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+    )
     bands = build_chm_bands()
 
     grid_data = {
@@ -135,7 +138,7 @@ async def create_naip_chm(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = NaipChmSource()
+    source = NaipChmSource(extent_buffer_cells=body.resolved_extent_buffer_cells(0))
     bands = build_chm_bands()
 
     grid_data = {

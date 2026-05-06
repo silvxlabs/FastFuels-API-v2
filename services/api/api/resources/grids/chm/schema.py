@@ -16,7 +16,7 @@ from api.resources.grids.providers.chm import ChmSource
 from api.resources.grids.schema import (
     Band,
     BandType,
-    CreateGridRequestBase,
+    CreateSourceGridRequestBase,
     TileMetadata,
 )
 
@@ -58,7 +58,7 @@ class MetaChmSource(ChmSource):
     attribution: Attribution | None = None
 
 
-class CreateMetaChmRequest(CreateGridRequestBase):
+class CreateMetaChmRequest(CreateSourceGridRequestBase):
     """Request to create a grid from Meta CHM.
 
     Returns a grid with a single continuous band:
@@ -88,7 +88,7 @@ class NaipChmSource(ChmSource):
     tile_metadata: TileMetadata | None = None
 
 
-class CreateNaipChmRequest(CreateGridRequestBase):
+class CreateNaipChmRequest(CreateSourceGridRequestBase):
     """Request to create a grid from NAIP CHM.
 
     Returns a grid with a single continuous band:

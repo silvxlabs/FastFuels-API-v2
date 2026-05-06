@@ -1,8 +1,4 @@
-"""
-api/v2/resources/grids/schema.py
-
-Core schema models for the Grid resource.
-"""
+"""Core schema models for the Grid resource."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -126,6 +122,31 @@ class CreateGridRequestBase(BaseModel):
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
     modifications: list[GridModification] = Field(default_factory=list)
+
+
+class CreateSourceGridRequestBase(CreateGridRequestBase):
+    """Base for raster-backed source grid creation requests.
+
+    Adds the optional `extent_buffer_cells` field shared by every endpoint that
+    fetches data from an external raster (LANDFIRE, PIM, CHM, 3DEP).
+    """
+
+    extent_buffer_cells: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Number of native-resolution cells included as a buffer around the "
+            "domain extent in the stored grid. Provides context for later "
+            "operations (resample, reproject, focal filters, derivative "
+            "calculations) that are sensitive to edges. If omitted, no buffer "
+            "is added. Maximum: 10 cells."
+        ),
+    )
+
+    def resolved_extent_buffer_cells(self, default: int) -> int:
+        """Return the user-supplied buffer or the caller-supplied default."""
+        return default if self.extent_buffer_cells is None else self.extent_buffer_cells
 
 
 class UpdateGridRequestBody(BaseModel):

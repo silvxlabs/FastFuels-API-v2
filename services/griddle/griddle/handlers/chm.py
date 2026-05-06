@@ -61,6 +61,7 @@ def _process_intersecting_tiles(
     scale_factors: list[float],
     gdal_env: dict[str, str],
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int,
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Shared core processing logic for CHM extractions."""
     n_tiles = len(fetch_urls)
@@ -76,7 +77,7 @@ def _process_intersecting_tiles(
             raster = RasterConnection(url, connection_type="rioxarray", cache=True)
             data = raster.extract_window(
                 roi=roi,
-                interpolation_padding_cells=4,
+                interpolation_padding_cells=extent_buffer_cells,
             )
 
             # Squeeze band dimension to satisfy strict 2D requirements
@@ -119,6 +120,7 @@ def fetch_meta_chm(
     roi: gpd.GeoDataFrame,
     version: str,
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int = 0,
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch Meta global canopy height model data."""
     progress("Loading Meta CHM parquet index...", 10)
@@ -151,12 +153,14 @@ def fetch_meta_chm(
         scale_factors=scale_factors,
         gdal_env={"AWS_NO_SIGN_REQUEST": "YES"},
         progress=progress,
+        extent_buffer_cells=extent_buffer_cells,
     )
 
 
 def fetch_naip_chm(
     roi: gpd.GeoDataFrame,
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int = 0,
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch NAIP high-resolution canopy height model data."""
     progress("Loading NAIP CHM parquet index...", 10)
@@ -192,4 +196,5 @@ def fetch_naip_chm(
         scale_factors=scale_factors,
         gdal_env={},  # Standard HTTP requests require no auth config
         progress=progress,
+        extent_buffer_cells=extent_buffer_cells,
     )

@@ -51,6 +51,18 @@ class TestChmSource:
         )
         assert source.description == "Test description"
 
+    def test_extent_buffer_cells_defaults_to_zero(self):
+        source = ChmSource(product="meta")
+        assert source.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_can_be_set(self):
+        source = ChmSource(product="meta", extent_buffer_cells=10)
+        assert source.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            ChmSource(product="meta", extent_buffer_cells=-1)
+
 
 class TestMetaChmSource:
     """Tests for MetaChmSource model."""
@@ -145,6 +157,34 @@ class TestCreateMetaChmRequest:
         """Version can be explicitly set to v1."""
         request = CreateMetaChmRequest(version="1")
         assert request.version == "1"
+
+    def test_extent_buffer_cells_defaults_to_none(self):
+        request = CreateMetaChmRequest()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        request = CreateMetaChmRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        request = CreateMetaChmRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            CreateMetaChmRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        with pytest.raises(ValidationError):
+            CreateMetaChmRequest(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        request = CreateMetaChmRequest()
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_zero(self):
+        request = CreateMetaChmRequest(extent_buffer_cells=0)
+        assert request.resolved_extent_buffer_cells(0) == 0
 
 
 class TestAttribution:
@@ -250,3 +290,27 @@ class TestCreateNaipChmRequest:
         assert request.name == "Test NAIP Grid"
         assert request.description == "A test grid"
         assert request.tags == ["test", "chm", "naip"]
+
+    def test_extent_buffer_cells_defaults_to_none(self):
+        request = CreateNaipChmRequest()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        request = CreateNaipChmRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        request = CreateNaipChmRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            CreateNaipChmRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        with pytest.raises(ValidationError):
+            CreateNaipChmRequest(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        request = CreateNaipChmRequest()
+        assert request.resolved_extent_buffer_cells(0) == 0

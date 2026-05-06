@@ -10,7 +10,7 @@ product directories and inherit from ChmSource.
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChmSource(BaseModel):
@@ -19,3 +19,4 @@ class ChmSource(BaseModel):
     name: Literal["chm"] = "chm"
     product: str
     description: str = ""
+    extent_buffer_cells: int = Field(0, ge=0, le=10)

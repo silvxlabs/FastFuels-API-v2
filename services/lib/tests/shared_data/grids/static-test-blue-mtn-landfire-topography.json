@@ -34,16 +34,16 @@
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [
-      47,
-      60
+      30,
+      45
     ],
     "transform": [
-      29.945424601110094,
+      29.938292578193465,
       0.0,
-      719983.8421513903,
+      720204.4533727885,
       0.0,
-      -29.94542460111172,
-      5190913.867581626
+      -29.938292578183884,
+      5190659.976881766
     ]
   },
   "modifications": [],
@@ -59,6 +59,7 @@
       "aspect"
     ],
     "description": "LANDFIRE topographic data (elevation, slope, aspect)",
+    "extent_buffer_cells": 0,
     "name": "landfire",
     "product": "topography",
     "version": "2020"

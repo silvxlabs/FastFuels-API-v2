@@ -22,16 +22,16 @@
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [
-      47,
-      60
+      30,
+      45
     ],
     "transform": [
-      29.945424601117985,
+      29.93829257818288,
       0.0,
-      719983.8421513904,
+      720204.4533727871,
       0.0,
-      -29.94542460111172,
-      5190913.867581628
+      -29.938292578183884,
+      5190659.976881769
     ]
   },
   "modifications": [],
@@ -45,6 +45,7 @@
       "tm_id"
     ],
     "description": "TreeMap plot imputation raster (FIA plot IDs at 30m)",
+    "extent_buffer_cells": 0,
     "name": "pim",
     "product": "treemap",
     "version": "2022"

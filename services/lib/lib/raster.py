@@ -1,8 +1,10 @@
 # External imports
+import math
+
 import rasterio
 import rioxarray
 from geopandas import GeoDataFrame
-from rasterio.warp import transform_bounds
+from rasterio.warp import calculate_default_transform, transform_bounds
 from xarray import DataArray
 
 # Reduce HTTP round trips when opening remote Cloud Optimized GeoTIFFs.
@@ -66,11 +68,7 @@ class RasterConnection:
         roi: GeoDataFrame,
         interpolation_padding_cells: int,
     ) -> DataArray:
-        """
-        Extract the window of the raster that contains the ROI.
-
-        kwargs passed to the
-        """
+        """Extract the raster window covering the ROI plus result-cell padding."""
         if self.connection_type == "rioxarray":
             return self._extract_window_rioxarray(roi, interpolation_padding_cells)
 
@@ -82,6 +80,9 @@ class RasterConnection:
         """
         Extract the window of the raster that contains the ROI using rioxarray.
         Only reproject if the ROI CRS differs from the raster CRS.
+
+        interpolation_padding_cells is measured in final result-grid cells in
+        the ROI CRS, not in source raster cells.
         """
         window = self.raster.rio.clip_box(
             *self._source_clip_bounds(roi, interpolation_padding_cells)
@@ -125,11 +126,44 @@ class RasterConnection:
         roi: GeoDataFrame,
         interpolation_padding_cells: int,
     ) -> tuple[float, float, float, float]:
-        """Return final output clip bounds in the ROI CRS."""
-        padding = interpolation_padding_cells * self.raster_resolution
+        """Return final output clip bounds in the ROI CRS.
+
+        Padding is measured in final result-grid cells. For reprojected
+        rasters, this means the source raster's cell size is first estimated
+        in the ROI CRS.
+        """
+        if interpolation_padding_cells == 0:
+            return tuple(roi.total_bounds)
+
+        x_resolution, y_resolution = self._target_resolution(roi)
+        x_padding = interpolation_padding_cells * x_resolution
+        y_padding = interpolation_padding_cells * y_resolution
         return (
-            roi.total_bounds[0] - padding,
-            roi.total_bounds[1] - padding,
-            roi.total_bounds[2] + padding,
-            roi.total_bounds[3] + padding,
+            roi.total_bounds[0] - x_padding,
+            roi.total_bounds[1] - y_padding,
+            roi.total_bounds[2] + x_padding,
+            roi.total_bounds[3] + y_padding,
         )
+
+    def _target_resolution(self, roi: GeoDataFrame) -> tuple[float, float]:
+        """Estimate output pixel size in the ROI CRS."""
+        if roi.crs == self.raster_crs:
+            return self.raster_x_resolution, self.raster_y_resolution
+
+        source_bounds = transform_bounds(roi.crs, self.raster_crs, *roi.total_bounds)
+        source_width = max(
+            1,
+            math.ceil((source_bounds[2] - source_bounds[0]) / self.raster_x_resolution),
+        )
+        source_height = max(
+            1,
+            math.ceil((source_bounds[3] - source_bounds[1]) / self.raster_y_resolution),
+        )
+        target_transform, _, _ = calculate_default_transform(
+            self.raster_crs,
+            roi.crs,
+            source_width,
+            source_height,
+            *source_bounds,
+        )
+        return abs(target_transform.a), abs(target_transform.e)

@@ -40,7 +40,7 @@ DOMAIN_FIXTURES = [
         name="Blue Mountain",
         description="~1 sq km in Blue Mountain Recreation Area, Montana",
         file_name="blue_mtn.json",
-        expected_shape=(47, 61),
+        expected_shape=(46, 61),
     ),
 ]
 

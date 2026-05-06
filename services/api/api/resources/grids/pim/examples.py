@@ -54,8 +54,8 @@ CREATE_TREEMAP_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_TREEMAP_WITH_BUFFER,
         "summary": "With output buffer",
         "description": (
-            "Includes 8 native-resolution cells of buffer beyond the domain "
-            "extent. Useful when downstream resampling, reprojection, or "
+            "Includes 8 result-grid cells of buffer beyond the domain extent. "
+            "Useful when downstream resampling, reprojection, or "
             "edge-sensitive processing needs context past the domain edge."
         ),
     },

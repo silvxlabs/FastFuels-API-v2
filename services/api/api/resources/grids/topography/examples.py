@@ -55,9 +55,9 @@ CREATE_LANDFIRE_TOPOGRAPHY_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_TOPOGRAPHY_WITH_BUFFER,
         "summary": "With output buffer",
         "description": (
-            "Includes 8 native-resolution cells of buffer beyond the domain "
-            "extent. Useful when downstream resampling, reprojection, or "
-            "derivative recomputation needs context beyond the domain edge."
+            "Includes 8 result-grid cells of buffer beyond the domain extent. "
+            "Useful when downstream resampling, reprojection, or derivative "
+            "recomputation needs context beyond the domain edge."
         ),
     },
 }
@@ -129,7 +129,7 @@ CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_3DEP_WITH_BUFFER,
         "summary": "With output buffer for derivatives",
         "description": (
-            "Includes 10 native-resolution cells of buffer around the domain. "
+            "Includes 10 result-grid cells of buffer around the domain. "
             "Helps reduce edge artifacts in slope/aspect computed from the DEM."
         ),
     },

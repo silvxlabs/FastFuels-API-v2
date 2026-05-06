@@ -9,6 +9,7 @@ import pytest
 from api.resources.domains.schema import (
     CreateDomainRequestBody,
     Domain,
+    DomainStyle,
     GeoJsonCRS,
     GeoJsonCRSProperties,
     UpdateDomainRequestBody,
@@ -320,6 +321,88 @@ class TestParseCoordinates:
 
 
 # =============================================================================
+# DomainStyle Tests
+# =============================================================================
+
+
+class TestDomainStyle:
+    def test_all_fields_optional(self):
+        """All fields default to None so partial styles validate."""
+        style = DomainStyle()
+        assert style.stroke_color is None
+        assert style.stroke_opacity is None
+        assert style.stroke_width is None
+        assert style.fill_color is None
+        assert style.fill_opacity is None
+
+    def test_accepts_full_style(self):
+        """A full set of valid fields validates."""
+        style = DomainStyle(
+            stroke_color="#000000",
+            stroke_opacity=0.5,
+            stroke_width=2.0,
+            fill_color="#ffffff",
+            fill_opacity=0.25,
+        )
+        assert style.stroke_color == "#000000"
+        assert style.fill_opacity == 0.25
+
+    @pytest.mark.parametrize(
+        "color",
+        [
+            "#70e2ff",
+            "#FFF",
+            "red",
+            "rgb(0, 0, 0)",
+            "rgba(255, 255, 255, 0.5)",
+            "hsl(360, 100%, 50%)",
+            "transparent",
+            "",
+        ],
+    )
+    def test_accepts_arbitrary_color_strings(self, color):
+        """Color strings are not format-validated — any short string is fine."""
+        style = DomainStyle(fill_color=color, stroke_color=color)
+        assert style.fill_color == color
+        assert style.stroke_color == color
+
+    def test_rejects_overlong_color_string(self):
+        """Color strings beyond max_length are rejected as a defensive measure."""
+        too_long = "a" * 65
+        with pytest.raises(Exception):  # ValidationError
+            DomainStyle(fill_color=too_long)
+        with pytest.raises(Exception):  # ValidationError
+            DomainStyle(stroke_color=too_long)
+
+    @pytest.mark.parametrize("opacity", [0.0, 0.5, 1.0])
+    def test_accepts_opacity_in_range(self, opacity):
+        style = DomainStyle(fill_opacity=opacity, stroke_opacity=opacity)
+        assert style.fill_opacity == opacity
+        assert style.stroke_opacity == opacity
+
+    @pytest.mark.parametrize("opacity", [-0.01, 1.01, -1, 2])
+    def test_rejects_opacity_out_of_range(self, opacity):
+        with pytest.raises(Exception):  # ValidationError
+            DomainStyle(fill_opacity=opacity)
+        with pytest.raises(Exception):  # ValidationError
+            DomainStyle(stroke_opacity=opacity)
+
+    def test_accepts_zero_stroke_width(self):
+        style = DomainStyle(stroke_width=0)
+        assert style.stroke_width == 0
+
+    def test_rejects_negative_stroke_width(self):
+        with pytest.raises(Exception):  # ValidationError
+            DomainStyle(stroke_width=-1)
+
+    def test_model_dump_exclude_none_drops_unset_fields(self):
+        """Partial style dumps to a dict containing only the set fields."""
+        style = DomainStyle(fill_color="#abcdef")
+        dumped = style.model_dump(exclude_none=True)
+        assert dumped == {"fill_color": "#abcdef"}
+
+
+# =============================================================================
 # CreateDomainRequestBody Tests
 # =============================================================================
 
@@ -399,6 +482,39 @@ class TestCreateDomainRequestBody:
         with pytest.raises(Exception):  # ValidationError
             CreateDomainRequestBody(**sample_feature_collection, pad_to_resolution=-1)
 
+    def test_style_default_none(self, sample_feature_collection):
+        """style defaults to None when not provided (server fills in default)."""
+        body = CreateDomainRequestBody(**sample_feature_collection)
+        assert body.style is None
+
+    def test_style_accepts_full_object(self, sample_feature_collection):
+        body = CreateDomainRequestBody(
+            **sample_feature_collection,
+            style={
+                "stroke_color": "#000000",
+                "stroke_opacity": 1.0,
+                "stroke_width": 2,
+                "fill_color": "#ffffff",
+                "fill_opacity": 0.4,
+            },
+        )
+        assert body.style.fill_color == "#ffffff"
+        assert body.style.stroke_width == 2
+
+    def test_style_accepts_partial_object(self, sample_feature_collection):
+        body = CreateDomainRequestBody(
+            **sample_feature_collection,
+            style={"fill_color": "#abcdef"},
+        )
+        assert body.style.fill_color == "#abcdef"
+        assert body.style.stroke_color is None
+
+    def test_style_out_of_range_opacity_raises(self, sample_feature_collection):
+        with pytest.raises(Exception):  # ValidationError
+            CreateDomainRequestBody(
+                **sample_feature_collection, style={"fill_opacity": 1.5}
+            )
+
 
 # =============================================================================
 # UpdateDomainRequestBody Tests
@@ -412,6 +528,29 @@ class TestUpdateDomainRequestBody:
         assert body.name is None
         assert body.description is None
         assert body.tags is None
+        assert body.style is None
+
+    def test_style_only(self):
+        """Should accept body with only style."""
+        body = UpdateDomainRequestBody(style={"fill_color": "#abcdef"})
+        assert body.name is None
+        assert body.style is not None
+        assert body.style.fill_color == "#abcdef"
+        assert body.style.stroke_color is None
+
+    def test_style_dump_excludes_none_subfields(self):
+        """exclude_none on the body drops the None sub-fields inside style."""
+        body = UpdateDomainRequestBody(style={"fill_color": "#abcdef"})
+        dumped = body.model_dump(exclude_none=True)
+        assert dumped == {"style": {"fill_color": "#abcdef"}}
+
+    def test_style_out_of_range_opacity_raises(self):
+        with pytest.raises(Exception):  # ValidationError
+            UpdateDomainRequestBody(style={"fill_opacity": 1.5})
+
+    def test_style_overlong_color_raises(self):
+        with pytest.raises(Exception):  # ValidationError
+            UpdateDomainRequestBody(style={"fill_color": "a" * 65})
 
     def test_name_only(self):
         """Should accept body with only name."""

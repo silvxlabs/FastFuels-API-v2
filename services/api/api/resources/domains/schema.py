@@ -37,6 +37,34 @@ def default_crs_factory():
     return GeoJsonCRS(properties=GeoJsonCRSProperties(name="EPSG:4326"))
 
 
+class DomainStyle(BaseModel):
+    """Optional visual style for rendering a domain on a map.
+
+    All fields are optional. On PATCH only the provided fields are merged
+    into the stored style; unspecified fields preserve their current values.
+    """
+
+    stroke_color: str | None = Field(
+        None,
+        max_length=64,
+        description="Stroke color in any renderer-supported format.",
+    )
+    stroke_opacity: float | None = Field(
+        None, ge=0, le=1, description="Stroke opacity in [0, 1]."
+    )
+    stroke_width: float | None = Field(
+        None, ge=0, description="Stroke width in pixels (non-negative)."
+    )
+    fill_color: str | None = Field(
+        None,
+        max_length=64,
+        description="Fill color in any renderer-supported format.",
+    )
+    fill_opacity: float | None = Field(
+        None, ge=0, le=1, description="Fill opacity in [0, 1]."
+    )
+
+
 def _stringify_coordinates(data: dict) -> dict:
     """Convert nested coordinate arrays to JSON strings for Firestore storage.
 
@@ -103,6 +131,10 @@ class CreateDomainRequestBody(FeatureCollection):
             "evenly into this value will produce identical, aligned footprints on "
             "this domain."
         ),
+    )
+    style: DomainStyle | None = Field(
+        None,
+        description="Optional visual style for rendering the domain on a map.",
     )
 
 
@@ -198,6 +230,14 @@ class UpdateDomainRequestBody(BaseModel):
     )
     tags: list[str] | None = Field(
         None, max_length=50, description="A list of tags associated with the domain."
+    )
+    style: DomainStyle | None = Field(
+        None,
+        description=(
+            "Update visual style fields. Only provided sub-fields are merged "
+            "into the existing style; unspecified sub-fields preserve their "
+            "current values."
+        ),
     )
 
 

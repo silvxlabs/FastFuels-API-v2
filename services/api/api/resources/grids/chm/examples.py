@@ -42,8 +42,8 @@ CREATE_META_CHM_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_META_CHM_WITH_BUFFER,
         "summary": "With output buffer",
         "description": (
-            "Includes 4 native-resolution cells of buffer beyond the domain "
-            "extent. Useful when downstream resampling, reprojection, or "
+            "Includes 4 result-grid cells of buffer beyond the domain extent. "
+            "Useful when downstream resampling, reprojection, or "
             "edge-sensitive processing needs context past the domain edge."
         ),
     },

@@ -38,7 +38,7 @@ def _fetch_landfire_raster(
         roi: GeoDataFrame defining the region of interest
         product: Product name as it appears in the GCS filename
         version: LANDFIRE version year
-        extent_buffer_cells: Native-resolution cells of buffer around the ROI
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
 
     Returns:
         DataArray with dims (y, x)
@@ -84,7 +84,7 @@ def fetch_fbfm40(
         remove_non_burnable: List of non-burnable fuel model names to remove
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.
-        extent_buffer_cells: Native-resolution cells of buffer around the ROI
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
 
     Returns:
         Dataset with a single "fbfm" variable (int16 categorical codes)
@@ -109,7 +109,7 @@ def fetch_fccs(
     Args:
         roi: GeoDataFrame defining the region of interest
         version: LANDFIRE version year (default "2023")
-        extent_buffer_cells: Native-resolution cells of buffer around the ROI
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
 
     Returns:
         Dataset with a single "fccs" variable (int32 categorical codes)
@@ -199,7 +199,7 @@ def fetch_topography(
         version: LANDFIRE version year (default "2020")
         bands: List of band names to fetch ("elevation", "slope", "aspect")
         progress: Progress callback
-        extent_buffer_cells: Native-resolution cells of buffer around the ROI
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
 
     Returns:
         Dataset with one named variable per requested band, each with

@@ -38,7 +38,7 @@ def fetch_treemap(
         version: TreeMap version year
         bands: List of band names to produce ("tm_id", "plt_cn")
         progress: Progress callback
-        extent_buffer_cells: Native-resolution cells of buffer around the ROI
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
 
     Returns:
         Dataset with one named variable per requested band

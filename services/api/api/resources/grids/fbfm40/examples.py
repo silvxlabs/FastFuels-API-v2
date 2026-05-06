@@ -60,9 +60,9 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_FBFM40_WITH_BUFFER,
         "summary": "With output buffer",
         "description": (
-            "Includes 8 native-resolution cells of buffer beyond the domain "
-            "extent. Useful when the grid will later be resampled, reprojected, "
-            "or processed by focal filters / derivative calculations that are "
+            "Includes 8 result-grid cells of buffer beyond the domain extent. "
+            "Useful when the grid will later be resampled, reprojected, or "
+            "processed by focal filters / derivative calculations that are "
             "sensitive to edges."
         ),
     },

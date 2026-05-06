@@ -198,7 +198,10 @@ class TestFetchTopography:
         assert "elevation" in ds.data_vars
         assert ds.rio.crs is not None
 
-    @patch("griddle.handlers.threedep._clip_to_roi", side_effect=lambda da, roi: da)
+    @patch(
+        "griddle.handlers.threedep._clip_to_roi",
+        side_effect=lambda da, roi, extent_buffer_cells=0: da,
+    )
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_slope_aspect_computed(self, mock_discover, mock_fetch, _mock_clip):
@@ -210,7 +213,10 @@ class TestFetchTopography:
         assert "slope" in ds.data_vars
         assert "aspect" in ds.data_vars
 
-    @patch("griddle.handlers.threedep._clip_to_roi", side_effect=lambda da, roi: da)
+    @patch(
+        "griddle.handlers.threedep._clip_to_roi",
+        side_effect=lambda da, roi, extent_buffer_cells=0: da,
+    )
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_all_bands(self, mock_discover, mock_fetch, _mock_clip):
@@ -222,6 +228,48 @@ class TestFetchTopography:
         )
 
         assert set(ds.data_vars) == {"elevation", "slope", "aspect"}
+
+    @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
+    def test_elevation_only_passes_buffer_unchanged(self, mock_discover, mock_fetch):
+        """Without derivatives, the user's extent_buffer_cells reaches the fetch verbatim."""
+        mock_discover.return_value = ["https://example.com/tile.tif"]
+        mock_fetch.return_value = _make_mock_dem()
+
+        fetch_topography(
+            _make_roi(), 10, ["elevation"], MagicMock(), extent_buffer_cells=4
+        )
+
+        assert mock_fetch.call_args[0][4] == 4
+
+    @patch(
+        "griddle.handlers.threedep._clip_to_roi",
+        side_effect=lambda da, roi, extent_buffer_cells=0: da,
+    )
+    @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
+    def test_derivatives_fetch_extra_cells_internally(
+        self, mock_discover, mock_fetch, mock_clip
+    ):
+        """With derivatives, the fetch buffer is extent_buffer_cells + gradient overhead.
+
+        The user's extent_buffer_cells is honored for the *output* extent — the
+        extra DEM cells are clipped away by _clip_to_roi.
+        """
+        mock_discover.return_value = ["https://example.com/tile.tif"]
+        mock_fetch.return_value = _make_mock_dem()
+
+        from griddle.handlers.threedep import _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+
+        fetch_topography(
+            _make_roi(), 10, ["slope", "aspect"], MagicMock(), extent_buffer_cells=4
+        )
+
+        # _fetch_and_mosaic_tiles is called with extent_buffer_cells + overhead
+        assert mock_fetch.call_args[0][4] == 4 + _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+        # Each clip call uses extent_buffer_cells=4 (the user-requested output buffer)
+        for call in mock_clip.call_args_list:
+            assert call.args[2] == 4 or call.kwargs.get("extent_buffer_cells") == 4
 
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
@@ -286,7 +334,7 @@ class TestFetchAndMosaicTiles:
             _make_roi(),
             ["https://example.com/tile.tif"],
             resolution=10,
-            pad_cells=0,
+            extent_buffer_cells=0,
             progress=MagicMock(),
         )
 
@@ -295,6 +343,24 @@ class TestFetchAndMosaicTiles:
         call_kwargs = mock_rc_class.return_value.extract_window.call_args[1]
         assert "projection_padding_meters" not in call_kwargs
         assert call_kwargs["interpolation_padding_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 1, 12])
+    @patch("griddle.handlers.threedep.RasterConnection")
+    def test_extent_buffer_cells_threaded_through(self, mock_rc_class, buffer):
+        """Caller-supplied extent_buffer_cells reaches extract_window unchanged."""
+        values = np.full((50, 50), 1234.0, dtype=np.float32)
+        mock_rc_class.return_value = _make_mock_raster(values)
+
+        _fetch_and_mosaic_tiles(
+            _make_roi(),
+            ["https://example.com/tile.tif"],
+            resolution=10,
+            extent_buffer_cells=buffer,
+            progress=MagicMock(),
+        )
+
+        call_kwargs = mock_rc_class.return_value.extract_window.call_args[1]
+        assert call_kwargs["interpolation_padding_cells"] == buffer
 
     @patch("griddle.handlers.threedep.merge_arrays")
     @patch("griddle.handlers.threedep.RasterConnection")
@@ -307,7 +373,7 @@ class TestFetchAndMosaicTiles:
             _make_roi(),
             ["https://example.com/a.tif", "https://example.com/b.tif"],
             resolution=10,
-            pad_cells=0,
+            extent_buffer_cells=0,
             progress=MagicMock(),
         )
 

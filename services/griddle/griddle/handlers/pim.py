@@ -29,6 +29,7 @@ def fetch_treemap(
     version: str,
     bands: list[str],
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int = 0,
 ) -> xr.Dataset:
     """Fetch TreeMap plot imputation raster data.
 
@@ -37,6 +38,7 @@ def fetch_treemap(
         version: TreeMap version year
         bands: List of band names to produce ("tm_id", "plt_cn")
         progress: Progress callback
+        extent_buffer_cells: Native-resolution cells of buffer around the ROI
 
     Returns:
         Dataset with one named variable per requested band
@@ -47,7 +49,7 @@ def fetch_treemap(
         raster = RasterConnection(url, connection_type="rioxarray", cache=True)
         data = raster.extract_window(
             roi=roi,
-            interpolation_padding_cells=8,
+            interpolation_padding_cells=extent_buffer_cells,
         )
     tm_id_da = data.squeeze("band", drop=True)
 

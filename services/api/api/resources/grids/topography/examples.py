@@ -22,6 +22,11 @@ EXAMPLE_TOPOGRAPHY_WITH_METADATA = {
     "bands": ["elevation", "slope", "aspect"],
 }
 
+EXAMPLE_TOPOGRAPHY_WITH_BUFFER = {
+    "bands": ["elevation", "slope", "aspect"],
+    "extent_buffer_cells": 8,
+}
+
 CREATE_LANDFIRE_TOPOGRAPHY_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_TOPOGRAPHY_MINIMAL,
@@ -46,12 +51,22 @@ CREATE_LANDFIRE_TOPOGRAPHY_OPENAPI_EXAMPLES = {
             "Creates a named grid with all topography bands and tags for organization."
         ),
     },
+    "with_buffer": {
+        "value": EXAMPLE_TOPOGRAPHY_WITH_BUFFER,
+        "summary": "With output buffer",
+        "description": (
+            "Includes 8 native-resolution cells of buffer beyond the domain "
+            "extent. Useful when downstream resampling, reprojection, or "
+            "derivative recomputation needs context beyond the domain edge."
+        ),
+    },
 }
 
 ALL_TOPOGRAPHY_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_TOPOGRAPHY_MINIMAL),
     ("elevation_only", EXAMPLE_TOPOGRAPHY_ELEVATION_ONLY),
     ("with_metadata", EXAMPLE_TOPOGRAPHY_WITH_METADATA),
+    ("with_buffer", EXAMPLE_TOPOGRAPHY_WITH_BUFFER),
 ]
 
 # 3DEP examples
@@ -73,6 +88,12 @@ EXAMPLE_3DEP_WITH_METADATA = {
     "tags": ["topography", "3dep"],
     "resolution": 10,
     "bands": ["elevation", "slope", "aspect"],
+}
+
+EXAMPLE_3DEP_WITH_BUFFER = {
+    "resolution": 10,
+    "bands": ["elevation", "slope", "aspect"],
+    "extent_buffer_cells": 10,
 }
 
 CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES = {
@@ -104,6 +125,14 @@ CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES = {
         "summary": "With name and tags",
         "description": ("Creates a named 10m grid with all topography bands and tags."),
     },
+    "with_buffer": {
+        "value": EXAMPLE_3DEP_WITH_BUFFER,
+        "summary": "With output buffer for derivatives",
+        "description": (
+            "Includes 10 native-resolution cells of buffer around the domain. "
+            "Helps reduce edge artifacts in slope/aspect computed from the DEM."
+        ),
+    },
 }
 
 ALL_3DEP_EXAMPLE_VALUES = [
@@ -111,4 +140,5 @@ ALL_3DEP_EXAMPLE_VALUES = [
     ("all_bands", EXAMPLE_3DEP_ALL_BANDS),
     ("1m_elevation", EXAMPLE_3DEP_1M),
     ("with_metadata", EXAMPLE_3DEP_WITH_METADATA),
+    ("with_buffer", EXAMPLE_3DEP_WITH_BUFFER),
 ]

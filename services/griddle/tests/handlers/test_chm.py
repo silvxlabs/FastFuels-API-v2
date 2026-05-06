@@ -270,7 +270,24 @@ class TestFetchMetaChm:
         assert len(tile_metadata["tiles"]) == 1
         call_kwargs = mock_raster_cls.return_value.extract_window.call_args[1]
         assert "projection_padding_meters" not in call_kwargs
-        assert call_kwargs["interpolation_padding_cells"] == 4
+        assert call_kwargs["interpolation_padding_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 1, 12])
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_extent_buffer_cells_threaded_through(
+        self, mock_query, mock_raster_cls, buffer
+    ):
+        """Caller-supplied extent_buffer_cells reaches extract_window unchanged."""
+        chm_values = np.array([[10.5, 20.3]], dtype=np.float32)
+        mock_raster_cls.return_value = _make_mock_raster(chm_values)
+        mock_query.return_value = _make_meta_query_result()
+        progress = MagicMock()
+
+        fetch_meta_chm(_make_roi(), "2", progress, extent_buffer_cells=buffer)
+
+        call_kwargs = mock_raster_cls.return_value.extract_window.call_args[1]
+        assert call_kwargs["interpolation_padding_cells"] == buffer
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm._query_tile_index")

@@ -17,7 +17,7 @@ from api.resources.grids.providers.threedep import ThreeDepSource
 from api.resources.grids.schema import (
     Band,
     BandType,
-    CreateGridRequestBase,
+    CreateSourceGridRequestBase,
     TileMetadata,
     validate_no_duplicates,
 )
@@ -70,7 +70,7 @@ class LandfireTopographySource(LandfireSource):
     )
 
 
-class CreateLandfireTopographyRequest(CreateGridRequestBase):
+class CreateLandfireTopographyRequest(CreateSourceGridRequestBase):
     """Request to create a grid from LANDFIRE topographic data.
 
     Returns a grid with one or more continuous bands: elevation (m),
@@ -119,7 +119,7 @@ class ThreeDepTopographySource(ThreeDepSource):
     tile_metadata: TileMetadata | None = None
 
 
-class CreateThreeDepTopographyRequest(CreateGridRequestBase):
+class CreateThreeDepTopographyRequest(CreateSourceGridRequestBase):
     """Request to create a grid from 3DEP topographic data.
 
     Returns a grid with one or more continuous bands: elevation (m),

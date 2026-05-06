@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.pim import TREEMAP_COLUMNS, fetch_treemap
@@ -137,8 +138,8 @@ class TestFetchTreemapTmIdOnly:
         assert "TreeMap2016.tif" in url
 
     @patch("griddle.handlers.pim.RasterConnection")
-    def test_extract_window_padding(self, mock_raster_cls):
-        """extract_window is called with correct padding parameters."""
+    def test_extract_window_default_buffer_is_zero(self, mock_raster_cls):
+        """When extent_buffer_cells is omitted, extract_window receives 0."""
         tm_ids = np.array([[1, 2]], dtype=np.int16)
         mock_raster = _make_mock_raster(tm_ids)
         mock_raster_cls.return_value = mock_raster
@@ -148,7 +149,24 @@ class TestFetchTreemapTmIdOnly:
         fetch_treemap(roi, "2022", ["tm_id"], progress)
 
         call_kwargs = mock_raster.extract_window.call_args[1]
-        assert call_kwargs["interpolation_padding_cells"] == 8
+        assert call_kwargs["interpolation_padding_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 1, 12])
+    @patch("griddle.handlers.pim.RasterConnection")
+    def test_extent_buffer_cells_threaded_through(self, mock_raster_cls, buffer):
+        """Caller-supplied extent_buffer_cells reaches extract_window unchanged."""
+        tm_ids = np.array([[1, 2]], dtype=np.int16)
+        mock_raster = _make_mock_raster(tm_ids)
+        mock_raster_cls.return_value = mock_raster
+        roi = MagicMock()
+        progress = MagicMock()
+
+        fetch_treemap(roi, "2022", ["tm_id"], progress, extent_buffer_cells=buffer)
+
+        assert (
+            mock_raster.extract_window.call_args[1]["interpolation_padding_cells"]
+            == buffer
+        )
 
 
 class TestFetchTreemapPltCn:

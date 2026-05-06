@@ -25,12 +25,19 @@ from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
 
 logger = logging.getLogger(__name__)
 
+# Extra DEM cells fetched beyond the user's requested extent_buffer_cells when
+# slope/aspect are requested. numpy.gradient falls back to one-sided
+# differences at the boundary, so we fetch a couple extra cells, compute
+# derivatives, then clip back to the user-requested extent. Internal only.
+_DERIVATIVE_GRADIENT_OVERHEAD_CELLS = 3
+
 
 def fetch_topography(
     roi: gpd.GeoDataFrame,
     resolution: int,
     bands: list[str],
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int = 0,
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch 3DEP topographic data for a domain extent.
 
@@ -39,6 +46,11 @@ def fetch_topography(
         resolution: Resolution in meters (1, 10, or 30)
         bands: List of band names ("elevation", "slope", "aspect")
         progress: Progress callback
+        extent_buffer_cells: Native-resolution cells of buffer around the ROI in
+            the returned dataset. When slope or aspect is requested, the
+            handler fetches a few extra DEM cells under the hood so
+            numpy.gradient produces central differences at the boundary; those
+            extra cells are clipped away before returning.
 
     Returns:
         Tuple of (Dataset with named variables, tile metadata dict)
@@ -47,6 +59,11 @@ def fetch_topography(
         ProcessingError: If no tiles found or fetch fails
     """
     needs_derivatives = "slope" in bands or "aspect" in bands
+    fetch_buffer = (
+        extent_buffer_cells + _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+        if needs_derivatives
+        else extent_buffer_cells
+    )
 
     progress(f"Discovering 3DEP {resolution}m tiles...", 10)
 
@@ -82,13 +99,8 @@ def fetch_topography(
         "acquisition_dates": acquisition_dates,
     }
 
-    # Extra cells around the ROI so slope/aspect don't have edge artifacts.
-    # Derivatives need more padding than elevation-only because the gradient
-    # computation consumes border cells.
-    pad_cells = 10 if needs_derivatives else 4
-
     progress(f"Fetching {len(tile_urls)} 3DEP tile(s)...", 20)
-    dem_da = _fetch_and_mosaic_tiles(roi, tile_urls, resolution, pad_cells, progress)
+    dem_da = _fetch_and_mosaic_tiles(roi, tile_urls, resolution, progress, fetch_buffer)
 
     # Validate that we got actual data, not just nodata fill
     _validate_dem_has_data(dem_da, resolution)
@@ -97,8 +109,9 @@ def fetch_topography(
 
     if "elevation" in bands:
         if needs_derivatives:
-            # Clip elevation to actual domain (remove padding)
-            variables["elevation"] = _clip_to_roi(dem_da, roi)
+            # Strip the gradient overhead so the elevation output matches the
+            # user-requested extent_buffer_cells.
+            variables["elevation"] = _clip_to_roi(dem_da, roi, extent_buffer_cells)
         else:
             variables["elevation"] = dem_da
 
@@ -106,8 +119,8 @@ def fetch_topography(
         progress("Computing slope and aspect...", 75)
         cell_size = abs(float(dem_da.rio.transform().a))
         slope_da, aspect_da = _compute_slope_aspect(dem_da, cell_size)
-        slope_da = _clip_to_roi(slope_da, roi)
-        aspect_da = _clip_to_roi(aspect_da, roi)
+        slope_da = _clip_to_roi(slope_da, roi, extent_buffer_cells)
+        aspect_da = _clip_to_roi(aspect_da, roi, extent_buffer_cells)
 
         if "slope" in bands:
             variables["slope"] = slope_da
@@ -138,8 +151,8 @@ def _fetch_and_mosaic_tiles(
     roi: gpd.GeoDataFrame,
     tile_urls: list[str],
     resolution: int,
-    pad_cells: int,
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int,
 ) -> DataArray:
     """Fetch tiles and mosaic into a single DataArray.
 
@@ -147,8 +160,8 @@ def _fetch_and_mosaic_tiles(
         roi: Region of interest
         tile_urls: S3/HTTPS URLs to COG tiles
         resolution: Target resolution in meters
-        pad_cells: Extra cells of padding (for slope/aspect edge effects)
         progress: Progress callback
+        extent_buffer_cells: Extra cells of buffer around the ROI
 
     Returns:
         DataArray with dims (y, x) in ROI's CRS at target resolution
@@ -165,7 +178,7 @@ def _fetch_and_mosaic_tiles(
 
             data = raster.extract_window(
                 roi=roi,
-                interpolation_padding_cells=pad_cells,
+                interpolation_padding_cells=extent_buffer_cells,
             )
             tile_arrays.append(data.squeeze("band", drop=True))
 
@@ -245,14 +258,27 @@ def _validate_dem_has_data(dem_da: DataArray, resolution: int) -> None:
         )
 
 
-def _clip_to_roi(da: DataArray, roi: gpd.GeoDataFrame) -> DataArray:
-    """Clip a DataArray to the ROI extent (removing padding)."""
-    # Use rioxarray clip_box with the ROI bounds in its native CRS
+def _clip_to_roi(
+    da: DataArray, roi: gpd.GeoDataFrame, extent_buffer_cells: int = 0
+) -> DataArray:
+    """Clip a DataArray to the ROI extent (plus optional cell buffer).
+
+    Args:
+        da: DataArray to clip. Must have a CRS and affine transform.
+        roi: Region of interest (any CRS).
+        extent_buffer_cells: Cells of buffer to keep around the ROI. 0 strips all
+            padding back to the ROI extent.
+    """
     roi_projected = roi.to_crs(da.rio.crs)
-    bounds = roi_projected.total_bounds
-    return da.rio.clip_box(
-        minx=bounds[0], miny=bounds[1], maxx=bounds[2], maxy=bounds[3]
-    )
+    minx, miny, maxx, maxy = roi_projected.total_bounds
+    if extent_buffer_cells > 0:
+        cell_size = abs(float(da.rio.transform().a))
+        pad = extent_buffer_cells * cell_size
+        minx -= pad
+        miny -= pad
+        maxx += pad
+        maxy += pad
+    return da.rio.clip_box(minx=minx, miny=miny, maxx=maxx, maxy=maxy)
 
 
 def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:

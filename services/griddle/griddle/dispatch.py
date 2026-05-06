@@ -92,6 +92,7 @@ def handle_landfire(
 ) -> xr.Dataset:
     """Handle LANDFIRE source grids."""
     product = source["product"]
+    extent_buffer_cells = source.get("extent_buffer_cells", 0)
 
     match product:
         case "fbfm40":
@@ -99,17 +100,26 @@ def handle_landfire(
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
             return landfire.fetch_fbfm40(
-                domain_gdf, version, remove_non_burnable=remove_non_burnable
+                domain_gdf,
+                version,
+                remove_non_burnable=remove_non_burnable,
+                extent_buffer_cells=extent_buffer_cells,
             )
         case "fccs":
             version = source.get("version", "2023")
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
-            return landfire.fetch_fccs(domain_gdf, version)
+            return landfire.fetch_fccs(
+                domain_gdf, version, extent_buffer_cells=extent_buffer_cells
+            )
         case "topography":
             version = source.get("version", "2020")
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             return landfire.fetch_topography(
-                domain_gdf, version, source["bands"], progress
+                domain_gdf,
+                version,
+                source["bands"],
+                progress,
+                extent_buffer_cells=extent_buffer_cells,
             )
         case _:
             raise ProcessingError(
@@ -128,12 +138,19 @@ def handle_pim(
     product = source["product"]
     version = source.get("version", "2022")
     bands = source.get("bands", ["tm_id"])
+    extent_buffer_cells = source.get("extent_buffer_cells", 0)
 
     progress(f"Fetching PIM {product} v{version}...", 10)
 
     match product:
         case "treemap":
-            return pim.fetch_treemap(domain_gdf, version, bands, progress)
+            return pim.fetch_treemap(
+                domain_gdf,
+                version,
+                bands,
+                progress,
+                extent_buffer_cells=extent_buffer_cells,
+            )
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
@@ -207,12 +224,15 @@ def handle_chm(
     """Handle CHM source grids."""
     product = source["product"]
     version = source.get("version", "2")
+    extent_buffer_cells = source.get("extent_buffer_cells", 0)
 
     progress(f"Fetching CHM {product} v{version}...", 10)
 
     match product:
         case "meta":
-            dataset, tile_metadata = chm.fetch_meta_chm(domain_gdf, version, progress)
+            dataset, tile_metadata = chm.fetch_meta_chm(
+                domain_gdf, version, progress, extent_buffer_cells=extent_buffer_cells
+            )
             source["tile_metadata"] = tile_metadata
             attribution = META_CHM_ATTRIBUTION[version].copy()
             attribution["accessed_on"] = date.today().isoformat()
@@ -223,7 +243,9 @@ def handle_chm(
 
             return dataset
         case "naip":
-            dataset, tile_metadata = chm.fetch_naip_chm(domain_gdf, progress)
+            dataset, tile_metadata = chm.fetch_naip_chm(
+                domain_gdf, progress, extent_buffer_cells=extent_buffer_cells
+            )
             source["tile_metadata"] = tile_metadata
             return dataset
         case _:
@@ -252,8 +274,13 @@ def handle_3dep(
 
     match product:
         case "topography":
+            extent_buffer_cells = source.get("extent_buffer_cells", 0)
             dataset, tile_metadata = threedep.fetch_topography(
-                domain_gdf, resolution, source["bands"], progress
+                domain_gdf,
+                resolution,
+                source["bands"],
+                progress,
+                extent_buffer_cells=extent_buffer_cells,
             )
             source["tile_metadata"] = tile_metadata
             return dataset

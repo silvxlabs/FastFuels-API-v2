@@ -72,7 +72,11 @@ async def create_treemap(
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = TreeMapSource(version=body.version, bands=body.bands)
+    source = TreeMapSource(
+        version=body.version,
+        bands=body.bands,
+        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+    )
     bands = build_treemap_bands(body.bands)
 
     grid_data = {

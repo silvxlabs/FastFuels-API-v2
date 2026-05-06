@@ -47,7 +47,9 @@ class TestHandleLandfire:
 
         result = handle_landfire(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2022", remove_non_burnable=None)
+        mock_fetch.assert_called_once_with(
+            mock_gdf, "2022", remove_non_burnable=None, extent_buffer_cells=0
+        )
         assert result == mock_result
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
@@ -91,7 +93,7 @@ class TestHandleLandfire:
 
         result = handle_landfire(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2023")
+        mock_fetch.assert_called_once_with(mock_gdf, "2023", extent_buffer_cells=0)
         assert result == mock_result
 
     @patch("griddle.dispatch.landfire.fetch_fccs")
@@ -141,7 +143,11 @@ class TestHandleLandfire:
         result = handle_landfire(mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
-            mock_gdf, "2020", ["elevation", "slope", "aspect"], progress
+            mock_gdf,
+            "2020",
+            ["elevation", "slope", "aspect"],
+            progress,
+            extent_buffer_cells=0,
         )
         assert result == mock_result
 
@@ -285,7 +291,7 @@ class TestHandlePim:
         result = handle_pim(mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
-            mock_gdf, "2022", ["tm_id", "plt_cn"], progress
+            mock_gdf, "2022", ["tm_id", "plt_cn"], progress, extent_buffer_cells=0
         )
         assert result == mock_result
 
@@ -624,7 +630,9 @@ class TestHandleChm:
 
         result = handle_chm(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2", progress)
+        mock_fetch.assert_called_once_with(
+            mock_gdf, "2", progress, extent_buffer_cells=0
+        )
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
 
@@ -677,7 +685,7 @@ class TestHandleChm:
 
         result = handle_chm(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, progress)
+        mock_fetch.assert_called_once_with(mock_gdf, progress, extent_buffer_cells=0)
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
 
@@ -798,7 +806,11 @@ class TestHandle3dep:
         result = handle_3dep(mock_gdf, grid["source"], progress)
 
         mock_fetch.assert_called_once_with(
-            mock_gdf, 10, ["elevation", "slope", "aspect"], progress
+            mock_gdf,
+            10,
+            ["elevation", "slope", "aspect"],
+            progress,
+            extent_buffer_cells=0,
         )
         assert result == mock_dataset
 

@@ -22,6 +22,11 @@ EXAMPLE_FBFM40_REMOVE_NON_BURNABLE = {
     "remove_non_burnable": ["NB1", "NB2", "NB8", "NB9"],
 }
 
+EXAMPLE_FBFM40_WITH_BUFFER = {
+    "name": "FBFM40 with buffer",
+    "extent_buffer_cells": 8,
+}
+
 CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_FBFM40_MINIMAL,
@@ -51,10 +56,21 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
             "sources such as OpenStreetMap."
         ),
     },
+    "with_buffer": {
+        "value": EXAMPLE_FBFM40_WITH_BUFFER,
+        "summary": "With output buffer",
+        "description": (
+            "Includes 8 native-resolution cells of buffer beyond the domain "
+            "extent. Useful when the grid will later be resampled, reprojected, "
+            "or processed by focal filters / derivative calculations that are "
+            "sensitive to edges."
+        ),
+    },
 }
 
 ALL_FBFM40_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_FBFM40_MINIMAL),
     ("with_metadata", EXAMPLE_FBFM40_WITH_METADATA),
     ("remove_non_burnable", EXAMPLE_FBFM40_REMOVE_NON_BURNABLE),
+    ("with_buffer", EXAMPLE_FBFM40_WITH_BUFFER),
 ]

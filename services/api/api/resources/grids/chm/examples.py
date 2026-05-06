@@ -17,6 +17,10 @@ EXAMPLE_META_CHM_WITH_METADATA = {
     "version": "2",
 }
 
+EXAMPLE_META_CHM_WITH_BUFFER = {
+    "extent_buffer_cells": 4,
+}
+
 CREATE_META_CHM_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_META_CHM_MINIMAL,
@@ -34,11 +38,21 @@ CREATE_META_CHM_OPENAPI_EXAMPLES = {
             "maintaining multiple grids for scenario comparison."
         ),
     },
+    "with_buffer": {
+        "value": EXAMPLE_META_CHM_WITH_BUFFER,
+        "summary": "With output buffer",
+        "description": (
+            "Includes 4 native-resolution cells of buffer beyond the domain "
+            "extent. Useful when downstream resampling, reprojection, or "
+            "edge-sensitive processing needs context past the domain edge."
+        ),
+    },
 }
 
 META_CHM_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_META_CHM_MINIMAL),
     ("with_metadata", EXAMPLE_META_CHM_WITH_METADATA),
+    ("with_buffer", EXAMPLE_META_CHM_WITH_BUFFER),
 ]
 
 EXAMPLE_NAIP_CHM_MINIMAL = {}

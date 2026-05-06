@@ -75,6 +75,7 @@ async def create_landfire_fbfm40(
     source = LandfireFbfm40Source(
         version=body.version,
         remove_non_burnable=body.remove_non_burnable,
+        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
     )
 
     grid_data = {

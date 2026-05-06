@@ -30,6 +30,7 @@ def _fetch_landfire_raster(
     roi: gpd.GeoDataFrame,
     product: str,
     version: str,
+    extent_buffer_cells: int = 0,
 ) -> DataArray:
     """Fetch a single LANDFIRE raster product.
 
@@ -37,6 +38,7 @@ def _fetch_landfire_raster(
         roi: GeoDataFrame defining the region of interest
         product: Product name as it appears in the GCS filename
         version: LANDFIRE version year
+        extent_buffer_cells: Native-resolution cells of buffer around the ROI
 
     Returns:
         DataArray with dims (y, x)
@@ -46,7 +48,7 @@ def _fetch_landfire_raster(
         raster = RasterConnection(url, connection_type="rioxarray", cache=True)
         data = raster.extract_window(
             roi=roi,
-            interpolation_padding_cells=8,
+            interpolation_padding_cells=extent_buffer_cells,
         )
     return data.squeeze("band", drop=True)
 
@@ -72,6 +74,7 @@ def fetch_fbfm40(
     roi: gpd.GeoDataFrame,
     version: str = "2024",
     remove_non_burnable: list[str] | None = None,
+    extent_buffer_cells: int = 0,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM40 fuel model codes.
 
@@ -81,11 +84,12 @@ def fetch_fbfm40(
         remove_non_burnable: List of non-burnable fuel model names to remove
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.
+        extent_buffer_cells: Native-resolution cells of buffer around the ROI
 
     Returns:
         Dataset with a single "fbfm" variable (int16 categorical codes)
     """
-    data = _fetch_landfire_raster(roi, "FBFM40", version)
+    data = _fetch_landfire_raster(roi, "FBFM40", version, extent_buffer_cells)
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
@@ -98,17 +102,19 @@ def fetch_fbfm40(
 def fetch_fccs(
     roi: gpd.GeoDataFrame,
     version: str = "2023",
+    extent_buffer_cells: int = 0,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FCCS fuel model codes.
 
     Args:
         roi: GeoDataFrame defining the region of interest
         version: LANDFIRE version year (default "2023")
+        extent_buffer_cells: Native-resolution cells of buffer around the ROI
 
     Returns:
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
-    data = _fetch_landfire_raster(roi, "FCCS", version)
+    data = _fetch_landfire_raster(roi, "FCCS", version, extent_buffer_cells)
 
     return _to_dataset({"fccs": data})
 
@@ -184,6 +190,7 @@ def fetch_topography(
     version: str,
     bands: list[str],
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int = 0,
 ) -> xr.Dataset:
     """Fetch LANDFIRE topographic data.
 
@@ -192,6 +199,7 @@ def fetch_topography(
         version: LANDFIRE version year (default "2020")
         bands: List of band names to fetch ("elevation", "slope", "aspect")
         progress: Progress callback
+        extent_buffer_cells: Native-resolution cells of buffer around the ROI
 
     Returns:
         Dataset with one named variable per requested band, each with
@@ -202,6 +210,8 @@ def fetch_topography(
     for i, band in enumerate(bands):
         pct = 10 + int(70 * i / len(bands))
         progress(f"Fetching LANDFIRE {band}...", pct)
-        variables[band] = _fetch_landfire_raster(roi, band, version)
+        variables[band] = _fetch_landfire_raster(
+            roi, band, version, extent_buffer_cells
+        )
 
     return _to_dataset(variables)

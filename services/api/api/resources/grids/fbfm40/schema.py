@@ -14,7 +14,7 @@ from typing import Literal
 from pydantic import field_validator
 
 from api.resources.grids.providers.landfire import LandfireSource
-from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
+from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
 
 
 class LandfireFbfm40Version(StrEnum):
@@ -60,7 +60,7 @@ class LandfireFbfm40Source(LandfireSource):
     remove_non_burnable: list[str] | None = None
 
 
-class CreateLandfireFbfm40Request(CreateGridRequestBase):
+class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
     """Request to create a grid from LANDFIRE FBFM40.
 
     Returns a single-band grid with categorical fuel model codes.

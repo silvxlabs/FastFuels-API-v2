@@ -130,8 +130,9 @@ async def create_domain(
       multiple grids at different resolutions need to share an extent.
     - **style**: (object) Optional visual style for rendering the domain on a
       map. Sub-fields: `stroke_color`, `stroke_opacity` (0-1), `stroke_width`
-      (>= 0), `fill_color`, `fill_opacity` (0-1). Hex colors only (e.g.
-      `#70e2ff`).
+      (>= 0), `fill_color`, `fill_opacity` (0-1). Color strings accept any
+      format the renderer understands (hex, named, `rgb()`, ...) and are
+      capped at 64 characters.
 
     ## Response
 
@@ -224,9 +225,6 @@ async def create_domain(
         "features": validation_result.features,
         "bbox": list(validation_result.bbox),
         "pad_to_resolution": body.pad_to_resolution,
-        "style": (
-            body.style.model_dump(exclude_none=True) if body.style is not None else None
-        ),
     }
 
     domain = Domain(**domain_data)
@@ -604,11 +602,6 @@ async def update_domain(
     - **description**: (string, optional) The new description for the domain.
     - **tags**: (array of strings, optional) The new tags for the domain.
       This replaces the existing tags array entirely.
-    - **style**: (object, optional) Visual style sub-fields to merge into the
-      stored style. Only sub-fields present in the request are updated;
-      omitted sub-fields keep their current values. Sub-fields:
-      `stroke_color`, `stroke_opacity` (0-1), `stroke_width` (>= 0),
-      `fill_color`, `fill_opacity` (0-1).
 
     ## What Cannot Be Updated
 
@@ -654,13 +647,6 @@ async def update_domain(
 
     # Build update data from provided fields only
     update_data = body.model_dump(exclude_none=True)
-
-    # Style needs nested merge semantics. exclude_none=True already drops
-    # sub-fields the client didn't send; merging on top of the existing
-    # style preserves any sub-fields the client also didn't mention.
-    if "style" in update_data:
-        existing_style = document_snapshot.to_dict().get("style") or {}
-        update_data["style"] = {**existing_style, **update_data["style"]}
 
     # Always update modified_on timestamp
     update_data["modified_on"] = datetime.now()

@@ -104,6 +104,20 @@ jobs:
             --format "value(status.url)")
           echo "service_url=$URL" >> $GITHUB_OUTPUT
 
+      - name: Wait for new revision to be reachable
+        run: |
+          #          URL="${{ steps.get-url.outputs.service_url }}"
+          #          deadline=$((SECONDS + 120))
+          #          until curl -fsS --max-time 10 "$URL/" >/dev/null 2>&1; do
+          #            if [ $SECONDS -ge $deadline ]; then
+          #              echo "Service did not respond within 120s"; exit 1
+          #            fi
+          #            echo "Waiting for $URL ..."
+          #            sleep 5
+          #          done
+          #          echo "Service is reachable. Sleeping 15s to let the revision settle."
+               sleep 60
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest

@@ -60,43 +60,47 @@ STRIP_FIELDS = {"id", "domain_id", "owner_id", "created_on", "modified_on"}
 
 
 def _poll_for_completion(
-    fs_client: firestore.Client, grid_id: str, timeout: int = 300
+    client,
+    domain_id: str,
+    resource_type: str,
+    resource_id: str,
+    timeout: int = 120,
+    interval: float = 1,
 ) -> dict:
-    """Poll Firestore until the grid reaches a terminal status.
-
-    Uses exponential backoff starting at 2s, maxing at 10s.
-    """
+    """Poll the API until the resource reaches a terminal status."""
+    url = f"/domains/{domain_id}/{resource_type}/{resource_id}"
     start = time.time()
-    interval = 1.0
 
     while True:
         elapsed = time.time() - start
         if elapsed > timeout:
-            pytest.fail(f"Grid {grid_id} did not complete within {timeout}s")
+            pytest.fail(
+                f"{resource_type}/{resource_id} did not complete within {timeout}s"
+            )
 
-        doc = fs_client.collection(GRIDS_COLLECTION).document(grid_id).get()
-        if not doc.exists:
-            pytest.fail(f"Grid document {grid_id} does not exist")
+        response = client.get(url)
+        if response.status_code != 200:
+            pytest.fail(f"GET {url} returned {response.status_code}: {response.text}")
 
-        grid = doc.to_dict()
-        status = grid.get("status")
-        progress = grid.get("progress")
+        resource = response.json()
+        status = resource.get("status")
+        progress = resource.get("progress")
 
         logger.info(
-            f"Grid {grid_id}: status={status}, progress={progress}, "
+            f"{resource_type}/{resource_id}: status={status}, progress={progress}, "
             f"elapsed={elapsed:.0f}s"
         )
 
         if status == "completed":
-            return grid
+            return resource
         if status == "failed":
-            error = grid.get("error", {})
+            error = resource.get("error") or {}
             pytest.fail(
-                f"Grid {grid_id} failed: {error.get('code')} - {error.get('message')}"
+                f"{resource_type}/{resource_id} failed: "
+                f"{error.get('code')} - {error.get('message')}"
             )
 
         time.sleep(interval)
-        interval = min(interval * 1.5, 10.0)
 
 
 def _save_json_file(path: Path, template: dict) -> None:
@@ -238,7 +242,7 @@ def create_static_fixture(firestore_client, test_owner_id):
             logger.info(f"Created grid {grid_id} via {url}")
 
             # Poll until completed
-            completed_grid = _poll_for_completion(firestore_client, grid_id)
+            completed_grid = _poll_for_completion(client, domain_id, "grids", grid_id)
 
             # Copy zarr to static path
             fs = gcsfs.GCSFileSystem()
@@ -266,44 +270,6 @@ def create_static_fixture(firestore_client, test_owner_id):
                 _unregister_static_resource(firestore_client, resource_type, ref)
 
     yield _create
-
-
-def _poll_inventory_for_completion(
-    fs_client: firestore.Client, inventory_id: str, timeout: int = 300
-) -> dict:
-    """Poll Firestore until the inventory reaches a terminal status."""
-    start = time.time()
-    interval = 1.0
-
-    while True:
-        elapsed = time.time() - start
-        if elapsed > timeout:
-            pytest.fail(f"Inventory {inventory_id} did not complete within {timeout}s")
-
-        doc = fs_client.collection(INVENTORIES_COLLECTION).document(inventory_id).get()
-        if not doc.exists:
-            pytest.fail(f"Inventory document {inventory_id} does not exist")
-
-        inventory = doc.to_dict()
-        status = inventory.get("status")
-        progress = inventory.get("progress")
-
-        logger.info(
-            f"Inventory {inventory_id}: status={status}, progress={progress}, "
-            f"elapsed={elapsed:.0f}s"
-        )
-
-        if status == "completed":
-            return inventory
-        if status == "failed":
-            error = inventory.get("error", {})
-            pytest.fail(
-                f"Inventory {inventory_id} failed: "
-                f"{error.get('code')} - {error.get('message')}"
-            )
-
-        time.sleep(interval)
-        interval = min(interval * 1.5, 10.0)
 
 
 def _save_inventory_json_template(inventory: dict, static_name: str) -> None:
@@ -356,8 +322,8 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
             logger.info(f"Created inventory {inventory_id} via {url}")
 
             # Poll until completed
-            completed_inventory = _poll_inventory_for_completion(
-                firestore_client, inventory_id
+            completed_inventory = _poll_for_completion(
+                client, domain_id, "inventories", inventory_id
             )
 
             # Copy parquet to static path

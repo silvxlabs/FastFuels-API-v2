@@ -4,11 +4,15 @@ api/v2/resources/grids/utils.py
 Shared validation and computation utilities for grid endpoints.
 """
 
-from math import ceil
+from math import ceil, isclose
 
 from fastapi import HTTPException, status
 
 from api.resources.grids.schema import GridDataChunkMetadata
+
+# Tolerance for comparing floating-point grid transform coefficients in meters.
+# 1e-6 m = 1 micrometer; well below any realistic raster precision.
+_TRANSFORM_ABS_TOL = 1e-6
 
 
 def validate_grid_has_band(
@@ -34,6 +38,103 @@ def validate_grid_has_band(
             detail=(
                 f"Source grid {grid_id} is missing required bands: {missing}. "
                 f"Available bands: {sorted(band_keys)}"
+            ),
+        )
+
+
+def validate_band_unit(
+    grid_data: dict, grid_id: str, band_key: str, expected_unit: str
+) -> None:
+    """Validate that a band on a grid has the expected unit.
+
+    Assumes the band already exists on the grid; callers should run
+    `validate_grid_has_band` first.
+
+    Args:
+        grid_data: Grid document data from Firestore.
+        grid_id: Grid ID (for error messages).
+        band_key: The band key to check.
+        expected_unit: The unit string the band must carry (e.g. 'kg/m³').
+
+    Raises:
+        HTTPException(422): If the band's unit does not match.
+    """
+    band = next(b for b in grid_data["bands"] if b["key"] == band_key)
+    actual = band.get("unit")
+    if actual != expected_unit:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Grid {grid_id} band {band_key!r} has unit {actual!r}, "
+                f"expected {expected_unit!r}."
+            ),
+        )
+
+
+def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -> None:
+    """Validate that a grid is 2D or 3D as expected.
+
+    Dimensionality is read from the grid's georeference shape: 2 for (h, w),
+    3 for (z, h, w).
+
+    Args:
+        grid_data: Grid document data from Firestore.
+        grid_id: Grid ID (for error messages).
+        expected: 2 or 3.
+
+    Raises:
+        HTTPException(422): If the grid has no georeference or the wrong rank.
+    """
+    if expected not in {2, 3}:
+        raise ValueError("expected must be 2 or 3")
+    georeference = grid_data.get("georeference")
+    if not georeference:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Grid {grid_id} has no georeference. The grid must be fully "
+                f"processed before it can be used in a combined export."
+            ),
+        )
+    rank = len(georeference.get("shape", []))
+    if rank != expected:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(f"Grid {grid_id} is {rank}D, expected {expected}D for this role."),
+        )
+
+
+def validate_grid_resolution_matches(
+    grid_data: dict,
+    grid_id: str,
+    reference_data: dict,
+    reference_id: str,
+) -> None:
+    """Validate that a grid has the same cell size as a reference grid.
+
+    All grids in a domain share the same CRS and the same domain bbox (v2
+    invariants). So matching `dx` (transform[0]) is sufficient to confirm
+    two grids share a lattice — origin and shape follow.
+
+    Args:
+        grid_data: Grid document data from Firestore.
+        grid_id: Grid ID (for error messages).
+        reference_data: Reference grid document data (the canopy grid).
+        reference_id: Reference grid ID (for error messages).
+
+    Raises:
+        HTTPException(422): On cell-size mismatch.
+    """
+    grid_dx = grid_data["georeference"]["transform"][0]
+    ref_dx = reference_data["georeference"]["transform"][0]
+    if not isclose(grid_dx, ref_dx, abs_tol=_TRANSFORM_ABS_TOL):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Grid {grid_id} cell size ({grid_dx} m) does not match "
+                f"canopy grid {reference_id} ({ref_dx} m). Run "
+                f"POST /v2/domains/{{domain_id}}/grids/{grid_id}/resample "
+                f"before exporting."
             ),
         )
 

@@ -15,16 +15,11 @@ Exports let users download v2 data in usable formats (GeoTIFF, QUIC-Fire, etc.).
 
 ### Creation (domain-scoped, under grids)
 
-| Endpoint                                                       | Body field for grid(s)    | Use case                 |
-|----------------------------------------------------------------|---------------------------|--------------------------|
-| `POST /v2/domains/{domain_id}/grids/exports/geotiff`           | `grid_ids: list[str]`     | Export one or more grids |
-| `POST /v2/domains/{domain_id}/grids/{grid_id}/exports/geotiff` | *(none — grid_id in URL)* | Export a single grid     |
-
-Future formats:
-
-```
-POST /v2/domains/{domain_id}/grids/exports/quicfire    # (future) Multi-grid → QUIC-Fire
-```
+| Endpoint                                                       | Body field for grid(s)    | Use case                                    |
+|----------------------------------------------------------------|---------------------------|---------------------------------------------|
+| `POST /v2/domains/{domain_id}/grids/exports/geotiff`           | `grid_ids: list[str]`     | Export one or more grids                    |
+| `POST /v2/domains/{domain_id}/grids/{grid_id}/exports/geotiff` | *(none — grid_id in URL)* | Export a single grid                        |
+| `POST /v2/domains/{domain_id}/grids/exports/quicfire`          | typed roles (see below)   | Combined surface + canopy fuel (+ terrain)  |
 
 ### Lifecycle (top-level)
 
@@ -67,6 +62,42 @@ POST /v2/domains/{domain_id}/grids/exports/geotiff
 }
 ```
 
+### QUIC-Fire combined export (typed roles)
+
+```
+POST /v2/domains/{domain_id}/grids/exports/quicfire
+```
+
+Each role is `{grid_id, band}`. Five roles are required (`canopy_bulk_density`,
+`canopy_moisture`, `surface_fuel_load`, `surface_fuel_depth`, `surface_moisture`)
+and three are optional (`topography`, `canopy_savr`, `surface_savr`). The SAVR
+roles are paired — supply both or neither.
+
+```json
+{
+    "canopy_bulk_density": {"grid_id": "tree_xyz",    "band": "bulk_density.foliage.live"},
+    "canopy_moisture":     {"grid_id": "tree_xyz",    "band": "fuel_moisture.live"},
+    "surface_fuel_load":   {"grid_id": "lookup_abc",  "band": "fuel_load.1hr"},
+    "surface_fuel_depth":  {"grid_id": "lookup_abc",  "band": "fuel_depth"},
+    "surface_moisture":    {"grid_id": "uniform_def", "band": "fuel_moisture.1hr"},
+    "topography":          {"grid_id": "topo_xyz",    "band": "elevation"}
+}
+```
+
+Validation (router pre-write):
+- Every grid exists, is owned by the user, lives in this domain, has `status="completed"`.
+- Every named band exists on its grid and carries the role-required unit
+  (`canopy_bulk_density` → `kg/m³`, moisture → `%`, fuel_load → `kg/m²`,
+  depth/elevation → `m`, SAVR → `m⁻¹`).
+- Canopy roles are 3D, surface and topography roles are 2D.
+- Every grid's cell size matches the canopy grid's `dx`. On mismatch the
+  router returns 422 with a pointer to `POST .../grids/{id}/resample`; the
+  exporter never resamples silently.
+
+Output zip contains `treesrhof.dat`, `treesmoist.dat`, `treesfueldepth.dat`,
+`metadata.json`, `domain.geojson`; plus `topo.dat` when `topography` is set,
+plus `treesss.dat` when both SAVR roles are set.
+
 ## Export Schema
 
 ```python
@@ -107,6 +138,44 @@ Each export format has its own source schema with `name` identifying the format:
 - `grid_ids` is always a list, even for single-grid exports via the per-grid endpoint
 - `bands` is optional — `null` means all bands from the grid(s)
 
+### QUIC-Fire
+
+```json
+{
+    "source": {
+        "name": "quicfire",
+        "domain_id": "abc123",
+        "canopy_bulk_density": {"grid_id": "tree_xyz",    "band": "bulk_density.foliage.live"},
+        "canopy_moisture":     {"grid_id": "tree_xyz",    "band": "fuel_moisture.live"},
+        "canopy_savr":         null,
+        "surface_fuel_load":   {"grid_id": "lookup_abc",  "band": "fuel_load.1hr"},
+        "surface_fuel_depth":  {"grid_id": "lookup_abc",  "band": "fuel_depth"},
+        "surface_moisture":    {"grid_id": "uniform_def", "band": "fuel_moisture.1hr"},
+        "surface_savr":        null,
+        "topography":          {"grid_id": "topo_xyz",    "band": "elevation"},
+        "resolved": {
+            "domain": {"crs": "...", "bbox": [...]},
+            "fire_grid": {"nx": ..., "ny": ..., "nz": ..., "transform": [...], "z_origin": ..., "z_resolution": ..., "crs": "..."},
+            "roles": {
+                "canopy_bulk_density": {"grid_id": "tree_xyz", "band": "bulk_density.foliage.live", "unit": "kg/m³", "dimensionality": 3, "shape": [...], "transform": [...], "crs": "..."},
+                "canopy_moisture":     {"...": "..."},
+                "...": "..."
+            }
+        }
+    }
+}
+```
+
+The `resolved` block snapshots CRS / transform / shape / units per role at
+request time so the exporter consumes pre-validated data and the export
+remains reproducible if a source grid is later modified or deleted.
+
+Forward extensibility for `nfuel>1` (when QUIC-Fire's multi-fuel-type
+capability becomes relevant): each per-fuel-type role accepts
+`FieldSource | dict[FuelType, FieldSource]` keyed by the canonical names
+(`dead_thin`, `live_thin`, `dead_thick`, `unburnable`). Today's scalar
+requests keep working unchanged.
+
 ## Lifecycle
 
 1. User creates export via either creation endpoint
@@ -134,7 +203,7 @@ See [services/exporter-v2/README.md](../../../../../exporter-v2/README.md).
 
 ## Future Work
 
-- **QUIC-Fire format**: Multi-grid export with role assignment (surface_fuel, canopy_fuel, topography)
 - **Multi-grid alignment**: Truth grid concept for CRS/resolution matching across grids
 - **Signed URL regeneration**: Endpoint to regenerate expired signed URLs
 - **FDS/FIRETEC formats**: Additional fire model input formats
+- **QUIC-Fire `nfuel>1`**: Multi-fuel-type slabs in `treesrhof.dat` / `treesmoist.dat` / `treesfueldepth.dat` / `treesss.dat`, additive to today's per-role schema

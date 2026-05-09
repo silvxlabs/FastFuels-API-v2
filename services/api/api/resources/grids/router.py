@@ -28,6 +28,9 @@ from api.db.documents import (
 from api.dependencies import VerifiedDomain
 from api.resources.grids.cache import get_grid_array
 from api.resources.grids.chm.router import router as chm_router
+from api.resources.grids.exports.quicfire.router import (
+    router as quicfire_export_router,
+)
 from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.lookup.router import router as lookup_router
@@ -792,6 +795,11 @@ async def get_grid_data_binary(
 
 router.include_router(
     grid_exports_router, prefix="/{grid_id}/exports", tags=["Grids - Exports"]
+)
+router.include_router(
+    quicfire_export_router,
+    prefix="/exports/quicfire",
+    tags=["Grids - Exports"],
 )
 router.include_router(fbfm40_router, prefix="/fbfm40", tags=["Grids - FBFM40"])
 router.include_router(

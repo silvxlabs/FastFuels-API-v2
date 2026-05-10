@@ -174,5 +174,8 @@ async def validate_quicfire_request(
         surface_moisture=request.surface_moisture,
         surface_savr=request.surface_savr,
         topography=request.topography,
+        rhof_merge=request.rhof_merge,
+        moist_merge=request.moist_merge,
+        savr_merge=request.savr_merge,
         resolved=resolved,
     )

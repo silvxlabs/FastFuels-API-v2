@@ -7,7 +7,7 @@ Routes export requests to the appropriate handler based on source format.
 from collections.abc import Callable
 
 from exporter.errors import ProcessingError
-from exporter.handlers import grid, inventory
+from exporter.handlers import grid, inventory, quicfire
 
 
 def dispatch_handler(
@@ -42,9 +42,11 @@ def dispatch_handler(
             return inventory.export_geojson(export, source, progress)
         case "geopackage":
             return inventory.export_geopackage(export, source, progress)
+        case "quicfire":
+            return quicfire.export_quicfire(export, source, progress)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_FORMAT",
                 message=f"Unknown export format: {source_name}",
-                suggestion="Supported formats: geotiff, zarr, parquet, csv, geojson, geopackage",
+                suggestion="Supported formats: geotiff, zarr, parquet, csv, geojson, geopackage, quicfire",
             )

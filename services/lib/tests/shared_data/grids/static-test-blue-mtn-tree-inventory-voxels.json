@@ -11,6 +11,18 @@
       "key": "bulk_density.foliage.live",
       "type": "continuous",
       "unit": "kg/m\u00b3"
+    },
+    {
+      "index": 2,
+      "key": "fuel_moisture.live",
+      "type": "continuous",
+      "unit": "%"
+    },
+    {
+      "index": 3,
+      "key": "savr.foliage",
+      "type": "continuous",
+      "unit": "m\u207b\u00b9"
     }
   ],
   "chunks": {
@@ -27,6 +39,7 @@
     ]
   },
   "description": "",
+  "error": null,
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [
@@ -54,7 +67,9 @@
   "source": {
     "bands": [
       "volume_fraction",
-      "bulk_density.foliage.live"
+      "bulk_density.foliage.live",
+      "fuel_moisture.live",
+      "savr.foliage"
     ],
     "biomass_source": {
       "component_states": {
@@ -73,6 +88,12 @@
     "description": "3D tree fuel grid from tree inventory voxelization",
     "max_crown_radius_source": {
       "type": "allometry"
+    },
+    "moisture_model": {
+      "live": {
+        "method": "uniform",
+        "value": 100.0
+      }
     },
     "name": "inventory",
     "product": "tree",

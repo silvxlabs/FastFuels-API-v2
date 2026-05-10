@@ -29,6 +29,14 @@ EXAMPLE_QUICFIRE_WITH_SAVR = {
     "name": "QUIC-Fire inputs (with terrain and SAVR)",
 }
 
+EXAMPLE_QUICFIRE_EXPLICIT_MERGE = {
+    **EXAMPLE_QUICFIRE_WITH_SAVR,
+    "rhof_merge": "sum",
+    "moist_merge": "weighted_avg",
+    "savr_merge": "weighted_avg",
+    "name": "QUIC-Fire inputs (explicit merge fields)",
+}
+
 CREATE_QUICFIRE_EXPORT_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_QUICFIRE_MINIMAL,
@@ -50,6 +58,16 @@ CREATE_QUICFIRE_EXPORT_OPENAPI_EXAMPLES = {
         "description": (
             "Adds treesss.dat to the output zip. Requires both canopy_savr "
             "and surface_savr to be provided together."
+        ),
+    },
+    "explicit_merge": {
+        "value": EXAMPLE_QUICFIRE_EXPLICIT_MERGE,
+        "summary": "With explicit merge fields",
+        "description": (
+            "Same as 'with_savr' but with the surface/canopy stitching fields "
+            "set to their defaults explicitly. The defaults implement "
+            "additive semantics: rhof sums, moisture and SAVR are mass-weighted "
+            "averages at the bottom slab."
         ),
     },
 }

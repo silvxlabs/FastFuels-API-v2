@@ -67,7 +67,13 @@ def test_create_blue_mtn_pim_inventory(
 def test_create_blue_mtn_tree_inventory_voxels(
     create_static_fixture, client, blue_mountain_domain
 ):
-    """Create static 3D tree voxel grid fixture from Blue Mountain PIM inventory."""
+    """Create static 3D tree voxel grid fixture from Blue Mountain PIM inventory.
+
+    Bands cover both general 3D-grid testing (volume_fraction,
+    bulk_density.foliage.live) and the canopy roles QUIC-Fire export needs
+    (fuel_moisture.live, savr.foliage). Adding bands to one shared fixture
+    avoids storing duplicate near-identical zarrs in GCS.
+    """
     create_static_fixture(
         client=client,
         domain_id=blue_mountain_domain["id"],
@@ -78,6 +84,8 @@ def test_create_blue_mtn_tree_inventory_voxels(
             "bands": [
                 "volume_fraction",
                 "bulk_density.foliage.live",
+                "fuel_moisture.live",
+                "savr.foliage",
             ],
             "biomass_source": {
                 "type": "allometry",

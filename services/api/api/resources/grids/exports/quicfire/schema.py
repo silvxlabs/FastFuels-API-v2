@@ -89,6 +89,34 @@ class QuicfireExportRequest(BaseModel):
         description=("2D elevation (m), optional. When provided, produces `topo.dat`."),
     )
 
+    rhof_merge: Literal["sum"] = Field(
+        default="sum",
+        description=(
+            "How to combine canopy and surface bulk density at the bottom slab "
+            "(k=0). Currently only 'sum' is supported: "
+            "`merged[0] = canopy[0] + surface_load / dz`. Mass-additive."
+        ),
+    )
+    moist_merge: Literal["weighted_avg"] = Field(
+        default="weighted_avg",
+        description=(
+            "How to combine canopy and surface fuel moisture at the bottom "
+            "slab. Currently only 'weighted_avg' is supported: "
+            "`merged[0] = (canopy_rhof[0] * canopy_moist[0] + surface_rhof_layer * surface_moist) / "
+            "(canopy_rhof[0] + surface_rhof_layer)` with both moistures already "
+            "converted to fraction. Mass-weighted average."
+        ),
+    )
+    savr_merge: Literal["weighted_avg"] = Field(
+        default="weighted_avg",
+        description=(
+            "How to combine canopy and surface SAVR at the bottom slab. "
+            "Currently only 'weighted_avg' is supported (mass-weighted SAVR, "
+            "then converted to particle size scale `2/SAVR` before write). "
+            "Only applies when both `canopy_savr` and `surface_savr` are set."
+        ),
+    )
+
     expiration_days: int = Field(
         default=7,
         ge=1,
@@ -128,6 +156,10 @@ class QuicfireExportSource(BaseModel):
     surface_moisture: FieldSource
     surface_savr: FieldSource | None = None
     topography: FieldSource | None = None
+
+    rhof_merge: Literal["sum"] = "sum"
+    moist_merge: Literal["weighted_avg"] = "weighted_avg"
+    savr_merge: Literal["weighted_avg"] = "weighted_avg"
 
     resolved: dict = Field(
         ...,

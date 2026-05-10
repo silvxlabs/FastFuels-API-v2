@@ -128,6 +128,40 @@ class TestQuicfireExportRequest:
         assert request.description == "for QF run"
         assert request.tags == ["a", "b"]
 
+    def test_merge_field_defaults(self):
+        request = QuicfireExportRequest(**_minimal_request_kwargs())
+        assert request.rhof_merge == "sum"
+        assert request.moist_merge == "weighted_avg"
+        assert request.savr_merge == "weighted_avg"
+
+    def test_merge_field_explicit_defaults(self):
+        request = QuicfireExportRequest(
+            **_minimal_request_kwargs(),
+            rhof_merge="sum",
+            moist_merge="weighted_avg",
+            savr_merge="weighted_avg",
+        )
+        assert request.rhof_merge == "sum"
+        assert request.moist_merge == "weighted_avg"
+        assert request.savr_merge == "weighted_avg"
+
+    @pytest.mark.parametrize(
+        "field,bad_value",
+        [
+            ("rhof_merge", "overwrite"),
+            ("rhof_merge", "max"),
+            ("moist_merge", "max"),
+            ("moist_merge", "overwrite"),
+            ("savr_merge", "overwrite"),
+            ("savr_merge", "additive"),
+        ],
+    )
+    def test_merge_field_rejects_unsupported_values(self, field, bad_value):
+        kwargs = _minimal_request_kwargs()
+        kwargs[field] = bad_value
+        with pytest.raises(ValidationError):
+            QuicfireExportRequest(**kwargs)
+
 
 class TestQuicfireExportSource:
     def test_minimal(self):
@@ -141,6 +175,9 @@ class TestQuicfireExportSource:
         assert source.canopy_savr is None
         assert source.surface_savr is None
         assert source.topography is None
+        assert source.rhof_merge == "sum"
+        assert source.moist_merge == "weighted_avg"
+        assert source.savr_merge == "weighted_avg"
 
     def test_name_is_pinned(self):
         # `name` is a Literal["quicfire"]; assigning anything else fails.

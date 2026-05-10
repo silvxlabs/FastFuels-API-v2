@@ -86,6 +86,12 @@ def resample_grid(
             resolution=target_resolution,
             resampling=resampling,
         )
+        # rio.reproject preserves the source's zarr encoding (including
+        # chunks=(src_ny, src_nx)). Save_zarr re-chunks the dask graph to
+        # the target chunk shape, which then mismatches the stale
+        # encoding and trips xarray's safe-chunks alignment check on
+        # write. Clear the encoding so save_zarr can re-encode cleanly.
+        resampled.encoding.pop("chunks", None)
         resampled_vars[var_name] = resampled
 
     progress("Resample complete.", 80)

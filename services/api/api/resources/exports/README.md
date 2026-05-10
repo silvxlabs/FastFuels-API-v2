@@ -80,9 +80,37 @@ roles are paired — supply both or neither.
     "surface_fuel_load":   {"grid_id": "lookup_abc",  "band": "fuel_load.1hr"},
     "surface_fuel_depth":  {"grid_id": "lookup_abc",  "band": "fuel_depth"},
     "surface_moisture":    {"grid_id": "uniform_def", "band": "fuel_moisture.1hr"},
-    "topography":          {"grid_id": "topo_xyz",    "band": "elevation"}
+    "topography":          {"grid_id": "topo_xyz",    "band": "elevation"},
+    "rhof_merge":          "sum",
+    "moist_merge":         "weighted_avg",
+    "savr_merge":          "weighted_avg"
 }
 ```
+
+### Surface and canopy stitching
+
+The `rhof_merge`, `moist_merge`, and `savr_merge` fields control how
+the bottom slab (k=0) is computed when both canopy and surface roles
+contribute. All three default to additive semantics:
+
+- `rhof_merge: "sum"` — `merged[0] = canopy_rhof[0] + surface_load / dz`.
+  Mass-additive (the canopy's bottom slab and the surface fuel layer
+  occupy the same fire-grid voxel).
+- `moist_merge: "weighted_avg"` — moisture is mass-weighted by
+  `canopy_rhof[0]` and `surface_load / dz` (surface bulk density),
+  then written as a fraction (input `%` divided by 100).
+- `savr_merge: "weighted_avg"` — SAVR is mass-weighted the same way,
+  then converted to particle size scale (`2/SAVR`, in meters) before
+  being written to `treesss.dat`.
+
+Surface bulk density is computed as `fuel_load / dz` (kg/m³ averaged
+over the fire-grid cell volume), per QUIC-Fire convention. The actual
+surface fuel layer thickness is encoded separately in
+`treesfueldepth.dat`.
+
+Today the merge fields accept only the values shown above. The fields
+exist so future strategies (e.g. `"overwrite"`, `"max"`) become
+backwards-compatible additions to the `Literal` type.
 
 Validation (router pre-write):
 - Every grid exists, is owned by the user, lives in this domain, has `status="completed"`.

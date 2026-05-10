@@ -63,6 +63,30 @@ class TestDispatchHandler:
         if isinstance(exc_info.value, ProcessingError):
             assert exc_info.value.code != "UNKNOWN_FORMAT"
 
+    def test_quicfire_source_name_recognized(self):
+        """quicfire source name is dispatched (will fail on missing grid, but not UNKNOWN_FORMAT)."""
+        export = {
+            "id": "test-export",
+            "source": {
+                "name": "quicfire",
+                "domain_id": "nonexistent",
+                "canopy_bulk_density": {"grid_id": "x", "band": "b"},
+                "canopy_moisture": {"grid_id": "x", "band": "b"},
+                "surface_fuel_load": {"grid_id": "y", "band": "b"},
+                "surface_fuel_depth": {"grid_id": "y", "band": "b"},
+                "surface_moisture": {"grid_id": "z", "band": "b"},
+                "resolved": {
+                    "fire_grid": {"nx": 1, "ny": 1, "nz": 1, "z_resolution": 1.0}
+                },
+            },
+        }
+
+        with pytest.raises(Exception) as exc_info:
+            dispatch_handler(export, self._noop_progress)
+
+        if isinstance(exc_info.value, ProcessingError):
+            assert exc_info.value.code != "UNKNOWN_FORMAT"
+
     @pytest.mark.parametrize("fmt", ["parquet", "csv", "geojson", "geopackage"])
     def test_inventory_format_recognized(self, fmt):
         """Inventory format names are dispatched (will fail on missing inventory, but not UNKNOWN_FORMAT)."""

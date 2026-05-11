@@ -220,7 +220,7 @@ class RasterConnection:
         if destination_resolution is not None:
             x_resolution = y_resolution = destination_resolution
         else:
-            x_resolution, y_resolution = self._target_resolution(roi)
+            x_resolution, y_resolution = self.target_native_resolution(roi)
 
         x_padding = interpolation_padding_cells * x_resolution
         y_padding = interpolation_padding_cells * y_resolution
@@ -231,8 +231,14 @@ class RasterConnection:
             roi.total_bounds[3] + y_padding,
         )
 
-    def _target_resolution(self, roi: GeoDataFrame) -> tuple[float, float]:
-        """Estimate output pixel size in the ROI CRS."""
+    def target_native_resolution(self, roi: GeoDataFrame) -> tuple[float, float]:
+        """Estimate the source raster's native pixel size in the ROI CRS.
+
+        Used by alignment paths so that ``source_native_resolution`` passed
+        to ``resolve_alignment_destination`` is in domain CRS units, not
+        source CRS units. For a geographic source (degrees) feeding a UTM
+        domain (meters), this returns metres-per-pixel.
+        """
         if roi.crs == self.raster_crs:
             return self.raster_x_resolution, self.raster_y_resolution
 

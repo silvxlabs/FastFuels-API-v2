@@ -65,7 +65,7 @@ def fetch_treemap(
             alignment,
             roi,
             target_grid_doc,
-            raster.raster_x_resolution,
+            raster.target_native_resolution(roi)[0],
             extent_buffer_cells=extent_buffer_cells,
         )
         data = raster.extract_window(

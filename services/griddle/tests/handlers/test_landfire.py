@@ -40,12 +40,14 @@ DOMAIN_FIXTURES = [
         name="Blue Mountain",
         description="~1 sq km in Blue Mountain Recreation Area, Montana",
         file_name="blue_mtn.json",
-        # Shape produced by `target="domain"` at LANDFIRE's ~30m source
-        # resolution, anchored at the domain's lower-left, covering the
-        # bbox via ceil(), with the test's `extent_buffer_cells=8` baked
-        # into the destination lattice (8 cells of buffer on each side ⇒
-        # 30 + 16 = 46 rows, 44 + 16 = 60 cols).
-        expected_shape=(46, 60),
+        # Shape produced by `target="domain"` at LANDFIRE's native pixel
+        # size projected into the domain CRS. LANDFIRE is in EPSG:5070
+        # (Contiguous Albers) at 30m; over Montana, the equivalent cell
+        # size in EPSG:32611 (UTM 11N) is ~29.44m via
+        # calculate_default_transform. The unbuffered baseline is
+        # (30, 45) cells, plus the test's extent_buffer_cells=8 on each
+        # side ⇒ (30 + 16, 45 + 16) = (46, 61).
+        expected_shape=(46, 61),
     ),
 ]
 

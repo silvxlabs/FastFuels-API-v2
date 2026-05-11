@@ -34,9 +34,10 @@ def lattice_from_bounds(
 def target_grid_bounds(georef: dict) -> tuple[float, float, float, float]:
     """Return (minx, miny, maxx, maxy) for the lattice described by a
     persisted georeference dict (``transform``: 6-tuple, ``shape``:
-    (height, width))."""
+    ``(height, width)`` for 2D rasters or ``(z, height, width)`` for 3D
+    voxel grids — only the trailing two dims are read)."""
     a, _, c, _, e, f = georef["transform"]
-    h, w = georef["shape"]
+    h, w = georef["shape"][-2:]
     return (c, f + h * e, c + w * a, f)
 
 

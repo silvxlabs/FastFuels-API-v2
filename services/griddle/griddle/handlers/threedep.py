@@ -130,8 +130,8 @@ def fetch_topography(
 
     if "elevation" in bands:
         if needs_derivatives:
-            variables["elevation"] = _strip_overhead_cells(
-                dem_da, _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+            variables["elevation"] = _trim_derivative_overhead(
+                dem_da, alignment, roi, extent_buffer_cells
             )
         else:
             variables["elevation"] = dem_da
@@ -140,9 +140,11 @@ def fetch_topography(
         progress("Computing slope and aspect...", 80)
         cell_size = abs(float(dem_da.rio.transform().a))
         slope_da, aspect_da = _compute_slope_aspect(dem_da, cell_size)
-        slope_da = _strip_overhead_cells(slope_da, _DERIVATIVE_GRADIENT_OVERHEAD_CELLS)
-        aspect_da = _strip_overhead_cells(
-            aspect_da, _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+        slope_da = _trim_derivative_overhead(
+            slope_da, alignment, roi, extent_buffer_cells
+        )
+        aspect_da = _trim_derivative_overhead(
+            aspect_da, alignment, roi, extent_buffer_cells
         )
 
         if "slope" in bands:
@@ -307,17 +309,35 @@ def _validate_dem_has_data(dem_da: DataArray, resolution: int) -> None:
         )
 
 
-def _strip_overhead_cells(da: DataArray, cells: int) -> DataArray:
-    """Drop ``cells`` rows/columns from each side of a DataArray.
+def _trim_derivative_overhead(
+    da: DataArray,
+    alignment: dict,
+    roi: gpd.GeoDataFrame,
+    extent_buffer_cells: int,
+) -> DataArray:
+    """Remove the gradient-overhead ring fetched for numpy.gradient.
 
-    Used after slope/aspect computation to remove the gradient-overhead ring
-    fetched by ``fetch_topography``. Index-based so it works regardless of
-    alignment target — the destination lattice was grown by exactly
-    ``cells`` per side at fetch time.
+    For ``target="domain"`` / ``target="grid"`` the destination lattice
+    was sized exactly via ``lattice_from_bounds``, so the ring is exactly
+    ``_DERIVATIVE_GRADIENT_OVERHEAD_CELLS`` rows/columns per side — we
+    index-slice. For ``target="native"`` the lattice depends on where the
+    pixel anchor falls relative to the buffered bounds, so the ring count
+    can vary per edge; we clip-box back to the same bounds
+    ``extract_window`` would use for an elevation-only fetch.
     """
-    if cells == 0:
-        return da
-    return da.isel(y=slice(cells, -cells), x=slice(cells, -cells))
+    if alignment["target"] in ("domain", "grid"):
+        n = _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+        return da.isel(y=slice(n, -n), x=slice(n, -n))
+
+    cell_size = abs(float(da.rio.transform().a))
+    pad = extent_buffer_cells * cell_size
+    minx, miny, maxx, maxy = roi.to_crs(da.rio.crs).total_bounds
+    return da.rio.clip_box(
+        minx=minx - pad,
+        miny=miny - pad,
+        maxx=maxx + pad,
+        maxy=maxy + pad,
+    )
 
 
 def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:

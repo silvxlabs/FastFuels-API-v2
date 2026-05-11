@@ -32,10 +32,21 @@ def _domain_gdf(crs="EPSG:32611"):
     )
 
 
-def _mock_raster(crs="EPSG:32611", source_resolution=30.0, dtype=np.int16):
+def _mock_raster(
+    crs="EPSG:32611",
+    source_resolution=30.0,
+    dtype=np.int16,
+    native_in_roi_resolution=None,
+):
     """Mock RasterConnection that mimics a 30m LANDFIRE COG covering the test
     domain. The ``extract_window`` mock returns a small DataArray; the test
-    inspects the destination kwargs the handler passed in."""
+    inspects the destination kwargs the handler passed in.
+
+    ``native_in_roi_resolution`` overrides the value returned by
+    ``target_native_resolution(roi)`` — useful when the source CRS differs
+    from the ROI CRS so the source's native resolution maps to a different
+    number in ROI units.
+    """
     height, width = 20, 25
     transform = from_bounds(
         720000.0,
@@ -53,8 +64,14 @@ def _mock_raster(crs="EPSG:32611", source_resolution=30.0, dtype=np.int16):
     da = da.rio.write_crs(crs)
     da = da.rio.write_transform(transform)
 
+    res = (
+        native_in_roi_resolution
+        if native_in_roi_resolution is not None
+        else source_resolution
+    )
     raster = MagicMock()
     raster.raster_x_resolution = source_resolution
+    raster.target_native_resolution.return_value = (res, res)
     raster.extract_window.return_value = da
     return raster
 
@@ -92,6 +109,30 @@ class TestLandfireAlignmentDomain:
         kwargs = mock_cls.return_value.extract_window.call_args[1]
         transform = kwargs["destination_transform"]
         assert abs(transform.a) == pytest.approx(30.0)
+
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_domain_target_default_uses_source_native_in_roi_crs_units(self, mock_cls):
+        # Source raster is geographic (e.g. ~0.00027° / 30 m); domain is UTM in
+        # metres. The handler must hand the alignment helper the source's native
+        # resolution converted to ROI CRS units (here ~30 m), not the raw
+        # 0.00027 — otherwise the destination lattice ends up with millions of
+        # cells per axis.
+        mock_cls.return_value = _mock_raster(
+            source_resolution=0.00027,
+            native_in_roi_resolution=30.0,
+        )
+        roi = _domain_gdf()
+
+        fetch_fbfm40(roi, version="2024", alignment={"target": "domain"})
+
+        kwargs = mock_cls.return_value.extract_window.call_args[1]
+        transform = kwargs["destination_transform"]
+        assert abs(transform.a) == pytest.approx(30.0)
+        # 600 m / 30 m -> 20 cells; 400 m / 30 m -> ~14 cells (ceil).
+        assert kwargs["destination_shape"] == (14, 20)
+        # Helper was queried with the actual roi (not None / a different crs).
+        called_with = mock_cls.return_value.target_native_resolution.call_args[0][0]
+        assert called_with is roi
 
 
 class TestLandfireAlignmentNative:

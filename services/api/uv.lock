@@ -11,6 +11,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "affine"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/98/d2f0bb06385069e799fc7d2870d9e078cfa0fa396dc8a2b81227d0da08b9/affine-2.4.0.tar.gz", hash = "sha256:a24d818d6a836c131976d22f8c27b8d3ca32d0af64c1d8d29deb7bafa4da1eea", size = 17132, upload-time = "2023-01-19T23:44:30.696Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/f7/85273299ab57117850cc0a936c64151171fac4da49bc6fba0dad984a7c5f/affine-2.4.0-py3-none-any.whl", hash = "sha256:8a3df80e2b2378aef598a83c1392efd47967afec4242021a0b06b4c7cbc61a92", size = 15662, upload-time = "2023-01-19T23:44:28.833Z" },
+]
+
+[[package]]
 name = "aiobotocore"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -161,6 +170,7 @@ name = "api"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "affine" },
     { name = "dask" },
     { name = "dask-expr" },
     { name = "fastapi" },
@@ -194,6 +204,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "affine", specifier = ">=2.4.0" },
     { name = "dask", specifier = ">=2026.1.2" },
     { name = "dask-expr", specifier = ">=2.0.0" },
     { name = "fastapi", specifier = ">=0.128.0" },

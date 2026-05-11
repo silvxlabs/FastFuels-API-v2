@@ -5,7 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "affine>=2.4.0",
     "dask>=2026.1.2",
     "dask-expr>=2.0.0",
     "fastapi>=0.128.0",
@@ -20,7 +19,7 @@ dependencies = [
     "google-cloud-storage>=3.9.0",
     "google-cloud-tasks>=2.21.0",
     "gunicorn>=25.0.1",
-    "lib[threedep]",
+    "lib[raster,threedep]",
     "pandas>=3.0.0",
     "pandera>=0.29.0",
     "pillow>=12.2.0",

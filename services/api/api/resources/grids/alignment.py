@@ -12,12 +12,22 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from lib.alignment import RESAMPLING_METHOD_MAP
 
-ResamplingMethod = StrEnum(
-    "ResamplingMethod",
-    [(name, name) for name in RESAMPLING_METHOD_MAP],
-)
+class ResamplingMethod(StrEnum):
+    nearest = "nearest"
+    bilinear = "bilinear"
+    cubic = "cubic"
+    cubic_spline = "cubic_spline"
+    lanczos = "lanczos"
+    average = "average"
+    mode = "mode"
+    max = "max"
+    min = "min"
+    median = "median"
+    first_quartile = "first_quartile"
+    third_quartile = "third_quartile"
+    sum = "sum"
+    root_mean_square = "root_mean_square"
 
 
 class GridAlignmentDomainTarget(BaseModel):

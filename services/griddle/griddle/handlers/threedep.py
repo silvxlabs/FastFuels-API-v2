@@ -45,10 +45,13 @@ def fetch_topography(
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch 3DEP topographic data for a domain extent.
 
-    Tiles are fetched at native ``resolution`` and slope/aspect are computed
-    via ``numpy.gradient`` at that native resolution to preserve derivative
-    quality. A single end-of-pipeline ``rio.reproject`` then lands every
-    band on the alignment destination.
+    Each tile's ``extract_window`` reprojects directly into the alignment
+    destination lattice — that is the single reprojection. Slope/aspect
+    are then computed via ``numpy.gradient`` on the aligned mosaic at the
+    destination cell size. When derivatives are requested the destination
+    lattice is grown by ``_DERIVATIVE_GRADIENT_OVERHEAD_CELLS`` cells per
+    side so ``numpy.gradient`` has central differences at the user-requested
+    boundary; those extra cells are stripped from every band before return.
 
     Args:
         roi: GeoDataFrame defining the region of interest
@@ -56,10 +59,7 @@ def fetch_topography(
         bands: List of band names ("elevation", "slope", "aspect")
         progress: Progress callback
         extent_buffer_cells: Result-grid cells of buffer around the ROI in the
-            returned dataset. When slope or aspect is requested, the handler
-            fetches a few extra DEM cells under the hood so numpy.gradient
-            produces central differences at the boundary; those extra cells
-            are clipped away before returning.
+            returned dataset.
         alignment: Alignment specification dict. Defaults to
             ``{"target": "domain"}`` when omitted.
         target_grid_doc: Loaded grid document used when
@@ -114,7 +114,15 @@ def fetch_topography(
     }
 
     progress(f"Fetching {len(tile_urls)} 3DEP tile(s)...", 20)
-    dem_da = _fetch_and_mosaic_tiles(roi, tile_urls, resolution, progress, fetch_buffer)
+    dem_da = _fetch_and_mosaic_tiles(
+        roi,
+        tile_urls,
+        resolution,
+        progress,
+        fetch_buffer,
+        alignment,
+        target_grid_doc,
+    )
 
     # Validate that we got actual data, not just nodata fill
     _validate_dem_has_data(dem_da, resolution)
@@ -123,88 +131,29 @@ def fetch_topography(
 
     if "elevation" in bands:
         if needs_derivatives:
-            # Strip the gradient overhead so the elevation output matches the
-            # user-requested extent_buffer_cells.
-            variables["elevation"] = _clip_to_roi(dem_da, roi, extent_buffer_cells)
+            variables["elevation"] = _strip_overhead_cells(
+                dem_da, _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+            )
         else:
             variables["elevation"] = dem_da
 
     if needs_derivatives:
-        progress("Computing slope and aspect...", 75)
+        progress("Computing slope and aspect...", 80)
         cell_size = abs(float(dem_da.rio.transform().a))
         slope_da, aspect_da = _compute_slope_aspect(dem_da, cell_size)
-        slope_da = _clip_to_roi(slope_da, roi, extent_buffer_cells)
-        aspect_da = _clip_to_roi(aspect_da, roi, extent_buffer_cells)
+        slope_da = _strip_overhead_cells(slope_da, _DERIVATIVE_GRADIENT_OVERHEAD_CELLS)
+        aspect_da = _strip_overhead_cells(
+            aspect_da, _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+        )
 
         if "slope" in bands:
             variables["slope"] = slope_da
         if "aspect" in bands:
             variables["aspect"] = aspect_da
 
-    progress("Aligning output...", 85)
-    variables = _apply_alignment_to_vars(
-        variables, alignment, roi, target_grid_doc, extent_buffer_cells
-    )
-
     progress("Building dataset...", 90)
     ds = _to_dataset(variables)
     return ds, tile_metadata
-
-
-def _apply_alignment_to_vars(
-    variables: dict[str, DataArray],
-    alignment: dict,
-    roi: gpd.GeoDataFrame,
-    target_grid_doc: dict | None,
-    extent_buffer_cells: int = 0,
-) -> dict[str, DataArray]:
-    """Reproject each variable to the alignment destination.
-
-    Called once at the end of 3DEP processing. Slope/aspect have already
-    been computed at native resolution; this is the single reprojection
-    that aligns the output to the chosen lattice. All variables are
-    continuous (categorical default does not apply here).
-
-    ``extent_buffer_cells`` is forwarded to ``resolve_alignment_destination``
-    so the destination lattice on the domain/grid paths includes the buffer.
-    On the native paths the per-variable buffer was applied earlier via
-    ``_clip_to_roi`` and the alignment helper's pass-through preserves it.
-    """
-    sample = next(iter(variables.values()))
-    native_resolution = abs(float(sample.rio.transform().a))
-    dest = resolve_alignment_destination(
-        alignment,
-        roi,
-        target_grid_doc,
-        native_resolution,
-        extent_buffer_cells=extent_buffer_cells,
-    )
-    if not dest:
-        return variables  # target="native" with no resolution change
-
-    method_name = alignment.get("method") or "bilinear"
-    resampling = Resampling[method_name]
-
-    aligned: dict[str, DataArray] = {}
-    for name, da in variables.items():
-        if "destination_transform" in dest and "destination_shape" in dest:
-            aligned[name] = da.rio.reproject(
-                dest["destination_crs"],
-                transform=dest["destination_transform"],
-                shape=dest["destination_shape"],
-                resampling=resampling,
-            )
-        elif alignment.get("resolution") is not None:
-            aligned[name] = da.rio.reproject(
-                dest["destination_crs"],
-                resolution=alignment["resolution"],
-                resampling=resampling,
-            )
-        else:
-            aligned[name] = da.rio.reproject(
-                dest["destination_crs"], resampling=resampling
-            )
-    return aligned
 
 
 def _discover_tiles_1m(
@@ -228,21 +177,36 @@ def _fetch_and_mosaic_tiles(
     resolution: int,
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int,
+    alignment: dict,
+    target_grid_doc: dict | None,
 ) -> DataArray:
-    """Fetch tiles and mosaic into a single DataArray.
+    """Fetch tiles and mosaic them onto the alignment destination lattice.
+
+    Each tile's ``extract_window`` reprojects directly into the destination
+    transform/shape resolved from ``alignment`` — all tiles land on the same
+    output grid, so the mosaic is a nodata-aware composite of identically
+    shaped arrays with no second interpolation pass.
 
     Args:
         roi: Region of interest
         tile_urls: S3/HTTPS URLs to COG tiles
-        resolution: Target resolution in meters
+        resolution: Source product resolution in meters (informational only;
+            the actual output cell size comes from ``alignment``)
         progress: Progress callback
-        extent_buffer_cells: Output DEM cells of buffer around the ROI
+        extent_buffer_cells: Output DEM cells of buffer around the ROI in the
+            destination CRS, baked into ``destination_transform``/``shape``
+            for ``target='domain'`` and ``target='grid'``
+        alignment: Alignment specification dict (see ``GridAlignmentSpecification``)
+        target_grid_doc: Loaded grid document used as the alignment target
+            when ``alignment["target"] == "grid"``. Required in that case.
 
     Returns:
-        DataArray with dims (y, x) in ROI's CRS at target resolution
+        DataArray with dims (y, x) in the alignment destination CRS at the
+        alignment destination resolution
     """
     n_tiles = len(tile_urls)
     tile_arrays = []
+    method_name = alignment.get("method") or "bilinear"
 
     with cog_env(AWS_NO_SIGN_REQUEST="YES"):
         for i, url in enumerate(tile_urls):
@@ -250,10 +214,21 @@ def _fetch_and_mosaic_tiles(
             progress(f"Fetching 3DEP tile {i + 1}/{n_tiles}...", pct)
 
             raster = RasterConnection(url, connection_type="rioxarray", cache=False)
-
+            dest = resolve_alignment_destination(
+                alignment,
+                roi,
+                target_grid_doc,
+                raster.target_native_resolution(roi)[0],
+                extent_buffer_cells=extent_buffer_cells,
+            )
             data = raster.extract_window(
                 roi=roi,
                 interpolation_padding_cells=extent_buffer_cells,
+                resampling=Resampling[method_name],
+                destination_resolution=alignment.get("resolution")
+                if alignment["target"] == "native"
+                else None,
+                **dest,
             )
             tile_arrays.append(data.squeeze("band", drop=True))
 
@@ -333,27 +308,17 @@ def _validate_dem_has_data(dem_da: DataArray, resolution: int) -> None:
         )
 
 
-def _clip_to_roi(
-    da: DataArray, roi: gpd.GeoDataFrame, extent_buffer_cells: int = 0
-) -> DataArray:
-    """Clip a DataArray to the ROI extent (plus optional cell buffer).
+def _strip_overhead_cells(da: DataArray, cells: int) -> DataArray:
+    """Drop ``cells`` rows/columns from each side of a DataArray.
 
-    Args:
-        da: DataArray to clip. Must have a CRS and affine transform.
-        roi: Region of interest (any CRS).
-        extent_buffer_cells: Cells at the DataArray's current resolution to
-            keep around the ROI. 0 strips all padding back to the ROI extent.
+    Used after slope/aspect computation to remove the gradient-overhead ring
+    fetched by ``fetch_topography``. Index-based so it works regardless of
+    alignment target — the destination lattice was grown by exactly
+    ``cells`` per side at fetch time.
     """
-    roi_projected = roi.to_crs(da.rio.crs)
-    minx, miny, maxx, maxy = roi_projected.total_bounds
-    if extent_buffer_cells > 0:
-        cell_size = abs(float(da.rio.transform().a))
-        pad = extent_buffer_cells * cell_size
-        minx -= pad
-        miny -= pad
-        maxx += pad
-        maxy += pad
-    return da.rio.clip_box(minx=minx, miny=miny, maxx=maxx, maxy=maxy)
+    if cells == 0:
+        return da
+    return da.isel(y=slice(cells, -cells), x=slice(cells, -cells))
 
 
 def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:

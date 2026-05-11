@@ -79,6 +79,15 @@ class TestTargetGridBounds:
         }
         assert target_grid_bounds(georef) == pytest.approx((0.0, 0.0, 30.0, 20.0))
 
+    def test_3d_shape_uses_xy_only(self):
+        # Static voxel grids persist a (z, y, x) shape; only the trailing
+        # two dims describe the raster footprint.
+        georef = {
+            "transform": (10.0, 0.0, 0.0, 0.0, -10.0, 20.0),
+            "shape": (50, 2, 3),
+        }
+        assert target_grid_bounds(georef) == pytest.approx((0.0, 0.0, 30.0, 20.0))
+
 
 class TestResolveAlignmentDomain:
     def test_default_resolution_uses_source_native(self):
@@ -175,6 +184,45 @@ class TestResolveAlignmentGrid:
                 None,
                 30.0,
             )
+
+    def test_3d_target_grid_no_resolution_uses_xy_shape(self):
+        # A persisted static voxel grid stores ``shape`` as (z, y, x). The
+        # alignment math is purely raster, so it must read the trailing two
+        # dims for the destination footprint.
+        target_doc = {
+            "georeference": {
+                "crs": "EPSG:32610",
+                "transform": (10.0, 0.0, 0.0, 0.0, -10.0, 20.0),
+                "shape": (50, 2, 3),
+            }
+        }
+        dest = resolve_alignment_destination(
+            {"target": "grid", "grid_id": "x"},
+            _make_domain(),
+            target_doc,
+            30.0,
+        )
+        # destination_shape is the 2D raster footprint, never (z, y, x).
+        assert dest["destination_shape"] == (2, 3)
+        assert dest["destination_transform"] == Affine(10.0, 0.0, 0.0, 0.0, -10.0, 20.0)
+
+    def test_3d_target_grid_with_resolution_uses_xy_shape(self):
+        target_doc = {
+            "georeference": {
+                "crs": "EPSG:32610",
+                # 30m cells, 10x10 footprint, 50 z-layers.
+                "transform": (30.0, 0.0, 0.0, 0.0, -30.0, 300.0),
+                "shape": (50, 10, 10),
+            }
+        }
+        dest = resolve_alignment_destination(
+            {"target": "grid", "grid_id": "x", "resolution": 1.0},
+            _make_domain(),
+            target_doc,
+            30.0,
+        )
+        # 300m bounds at 1m -> 300x300 footprint.
+        assert dest["destination_shape"] == (300, 300)
 
 
 class TestResolveAlignmentInvalid:

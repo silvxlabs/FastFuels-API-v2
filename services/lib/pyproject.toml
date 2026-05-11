@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Shared library for FastFuels API v2"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["affine>=2.4.0", "python-dotenv>=1.0.0"]
+dependencies = ["python-dotenv>=1.0.0"]
 
 [project.optional-dependencies]
 firestore = ["google-cloud-firestore>=2.23.0"]
 gcs = ["gcsfs>=2026.2.0", "google-cloud-storage>=3.9.0"]
 zarr = ["dask>=2024.0.0", "gcsfs>=2026.2.0", "xarray>=2025.1.0", "zarr>=3.1.5"]
-raster = ["rioxarray>=0.21.0", "rasterio>=1.5.0", "geopandas>=1.1.2", "numpy>=2.0.0", "xarray>=2025.1.0"]
+raster = ["affine>=2.4.0", "rioxarray>=0.21.0", "rasterio>=1.5.0", "geopandas>=1.1.2", "numpy>=2.0.0", "xarray>=2025.1.0"]
 threedep = ["s3fs>=2024.2.0", "geopandas>=1.1.2"]
 
 [dependency-groups]

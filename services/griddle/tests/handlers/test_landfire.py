@@ -40,6 +40,13 @@ DOMAIN_FIXTURES = [
         name="Blue Mountain",
         description="~1 sq km in Blue Mountain Recreation Area, Montana",
         file_name="blue_mtn.json",
+        # Shape produced by `target="domain"` at LANDFIRE's native pixel
+        # size projected into the domain CRS. LANDFIRE is in EPSG:5070
+        # (Contiguous Albers) at 30m; over Montana, the equivalent cell
+        # size in EPSG:32611 (UTM 11N) is ~29.44m via
+        # calculate_default_transform. The unbuffered baseline is
+        # (30, 45) cells, plus the test's extent_buffer_cells=8 on each
+        # side ⇒ (30 + 16, 45 + 16) = (46, 61).
         expected_shape=(46, 61),
     ),
 ]
@@ -73,10 +80,19 @@ class TestFetchFbfm40:
             coords={"band": [1], "y": [0.0], "x": [0.0]},
         ).rio.write_crs(roi.crs)
         mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
         mock_raster.extract_window.return_value = data
         mock_raster_cls.return_value = mock_raster
 
-        _fetch_landfire_raster(roi, "FBFM40", "2024")
+        _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
 
         call_kwargs = mock_raster.extract_window.call_args[1]
         assert "projection_padding_meters" not in call_kwargs
@@ -92,10 +108,19 @@ class TestFetchFbfm40:
             coords={"band": [1], "y": [0.0], "x": [0.0]},
         ).rio.write_crs(roi.crs)
         mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
         mock_raster.extract_window.return_value = data
         mock_raster_cls.return_value = mock_raster
 
-        _fetch_landfire_raster(roi, "FBFM40", "2024", extent_buffer_cells=buffer)
+        _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=buffer,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
 
         assert (
             mock_raster.extract_window.call_args[1]["interpolation_padding_cells"]

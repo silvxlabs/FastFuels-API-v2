@@ -11,7 +11,8 @@ import geopandas as gpd
 import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
-from rasterio.transform import from_bounds
+
+from lib.domain_utils import domain_anchored_transform
 
 
 def create_uniform_grid(
@@ -38,16 +39,11 @@ def create_uniform_grid(
     progress("Preparing uniform grid...", 10)
 
     crs = domain_gdf.crs
-    minx, miny, maxx, maxy = domain_gdf.total_bounds
+    minx, miny, _, _ = domain_gdf.total_bounds
 
-    # Compute grid dimensions
-    width = max(1, int(np.ceil((maxx - minx) / resolution)))
-    height = max(1, int(np.ceil((maxy - miny) / resolution)))
-
-    # Build affine transform (north-up convention)
-    transform = from_bounds(
-        minx, miny, minx + width * resolution, miny + height * resolution, width, height
-    )
+    # Compute the domain-anchored lattice (transform + shape) shared with
+    # every external-source fetcher.
+    transform, (height, width) = domain_anchored_transform(domain_gdf, resolution)
 
     # Map quantity values to their band keys
     # The quantity enum value IS the key (e.g., "fuel_moisture.1hr")

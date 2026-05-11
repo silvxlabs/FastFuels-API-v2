@@ -28,7 +28,7 @@
     "description": "3DEP topographic data (elevation, slope, aspect)",
     "name": "3dep",
     "product": "topography",
-    "resolution": 30,
+    "source_resolution": 30,
     "tile_metadata": null
   },
   "status": "pending",

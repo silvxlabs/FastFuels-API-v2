@@ -78,7 +78,7 @@ EXAMPLE_3DEP_ALL_BANDS = {
 }
 
 EXAMPLE_3DEP_1M = {
-    "resolution": 1,
+    "source_resolution": 1,
     "bands": ["elevation"],
 }
 
@@ -86,14 +86,29 @@ EXAMPLE_3DEP_WITH_METADATA = {
     "name": "High-res terrain",
     "description": "10m elevation for wind flow modeling",
     "tags": ["topography", "3dep"],
-    "resolution": 10,
+    "source_resolution": 10,
     "bands": ["elevation", "slope", "aspect"],
 }
 
 EXAMPLE_3DEP_WITH_BUFFER = {
-    "resolution": 10,
+    "source_resolution": 10,
     "bands": ["elevation", "slope", "aspect"],
     "extent_buffer_cells": 10,
+}
+
+EXAMPLE_3DEP_DOMAIN_2M = {
+    "source_resolution": 1,
+    "bands": ["elevation"],
+    "alignment": {"target": "domain", "resolution": 2.0},
+    "name": "1m 3DEP downsampled to 2m at domain origin",
+    "description": "Composes with other 2m grids on the same domain.",
+}
+
+EXAMPLE_3DEP_NATIVE = {
+    "source_resolution": 1,
+    "bands": ["elevation"],
+    "alignment": {"target": "native"},
+    "name": "1m elevation at native source pixel anchor",
 }
 
 CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES = {
@@ -133,6 +148,24 @@ CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES = {
             "Helps reduce edge artifacts in slope/aspect computed from the DEM."
         ),
     },
+    "domain_aligned_2m": {
+        "value": EXAMPLE_3DEP_DOMAIN_2M,
+        "summary": "1m source resampled to 2m at the domain origin",
+        "description": (
+            "Picks the 1m source product, then aligns the output to the "
+            "domain origin at a 2m cell size. Composes with other 2m "
+            "domain-anchored grids."
+        ),
+    },
+    "native_anchor": {
+        "value": EXAMPLE_3DEP_NATIVE,
+        "summary": "Preserve source pixel anchor",
+        "description": (
+            "Disables the default domain anchor. Output preserves the "
+            "source raster's pixel grid; will not compose with "
+            "domain-anchored grids without further alignment."
+        ),
+    },
 }
 
 ALL_3DEP_EXAMPLE_VALUES = [
@@ -141,4 +174,6 @@ ALL_3DEP_EXAMPLE_VALUES = [
     ("1m_elevation", EXAMPLE_3DEP_1M),
     ("with_metadata", EXAMPLE_3DEP_WITH_METADATA),
     ("with_buffer", EXAMPLE_3DEP_WITH_BUFFER),
+    ("domain_aligned_2m", EXAMPLE_3DEP_DOMAIN_2M),
+    ("native_anchor", EXAMPLE_3DEP_NATIVE),
 ]

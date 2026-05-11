@@ -27,6 +27,16 @@ EXAMPLE_FBFM40_WITH_BUFFER = {
     "extent_buffer_cells": 8,
 }
 
+EXAMPLE_FBFM40_DOMAIN_2M = {
+    "name": "FBFM40 at 2m on domain origin",
+    "alignment": {"target": "domain", "resolution": 2.0, "method": "mode"},
+}
+
+EXAMPLE_FBFM40_NATIVE = {
+    "name": "FBFM40 at native source pixel anchor",
+    "alignment": {"target": "native"},
+}
+
 CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_FBFM40_MINIMAL,
@@ -66,6 +76,24 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
             "sensitive to edges."
         ),
     },
+    "domain_aligned_2m": {
+        "value": EXAMPLE_FBFM40_DOMAIN_2M,
+        "summary": "2m output anchored to the domain origin",
+        "description": (
+            "Reprojects the 30m source FBFM40 to a 2m grid anchored at the "
+            "domain origin using mode aggregation. Composes with other 2m "
+            "domain-anchored grids."
+        ),
+    },
+    "native_anchor": {
+        "value": EXAMPLE_FBFM40_NATIVE,
+        "summary": "Preserve source pixel anchor",
+        "description": (
+            "Disables the default domain anchor. Output preserves the "
+            "source raster's pixel grid; will not compose with "
+            "domain-anchored grids without further alignment."
+        ),
+    },
 }
 
 ALL_FBFM40_EXAMPLE_VALUES = [
@@ -73,4 +101,6 @@ ALL_FBFM40_EXAMPLE_VALUES = [
     ("with_metadata", EXAMPLE_FBFM40_WITH_METADATA),
     ("remove_non_burnable", EXAMPLE_FBFM40_REMOVE_NON_BURNABLE),
     ("with_buffer", EXAMPLE_FBFM40_WITH_BUFFER),
+    ("domain_aligned_2m", EXAMPLE_FBFM40_DOMAIN_2M),
+    ("native_anchor", EXAMPLE_FBFM40_NATIVE),
 ]

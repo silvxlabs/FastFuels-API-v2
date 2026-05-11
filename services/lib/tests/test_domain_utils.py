@@ -12,9 +12,11 @@ import json
 import geopandas as gpd
 import pytest
 
+from lib.alignment import lattice_from_bounds
 from lib.domain_utils import (
     EmptyDomainError,
     InvalidGeometryError,
+    domain_anchored_transform,
     parse_domain_gdf,
 )
 from lib.testing import SHARED_TEST_DOMAINS_DIR
@@ -315,3 +317,25 @@ class TestErrorHandling:
         }
         with pytest.raises(InvalidGeometryError):
             parse_domain_gdf(data)
+
+
+class TestDomainAnchoredTransform:
+    """Tests for ``domain_anchored_transform`` — the thin wrapper that ties
+    a domain GeoDataFrame to ``lattice_from_bounds``."""
+
+    @pytest.fixture
+    def blue_mtn_gdf(self):
+        return parse_domain_gdf(_load_domain_json("blue_mtn.json"))
+
+    def test_matches_lattice_from_bounds(self, blue_mtn_gdf):
+        transform_a, shape_a = domain_anchored_transform(blue_mtn_gdf, 30.0)
+        transform_b, shape_b = lattice_from_bounds(
+            tuple(blue_mtn_gdf.total_bounds), 30.0
+        )
+        assert tuple(transform_a)[:6] == tuple(transform_b)[:6]
+        assert shape_a == shape_b
+
+    def test_resolution_drives_cell_size(self, blue_mtn_gdf):
+        transform, _ = domain_anchored_transform(blue_mtn_gdf, 5.0)
+        assert transform.a == pytest.approx(5.0)
+        assert transform.e == pytest.approx(-5.0)

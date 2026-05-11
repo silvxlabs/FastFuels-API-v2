@@ -14,6 +14,7 @@ from numpy import ndarray
 from scipy.ndimage import generic_filter
 from xarray import DataArray
 
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET
 from lib.raster import RasterConnection, cog_env
 
@@ -25,12 +26,18 @@ NB_CODE_MAP: dict[str, int] = {
     "NB9": 99,
 }
 
+CATEGORICAL_DEFAULT = "nearest"
+CONTINUOUS_DEFAULT = "bilinear"
+
 
 def _fetch_landfire_raster(
     roi: gpd.GeoDataFrame,
     product: str,
     version: str,
-    extent_buffer_cells: int = 0,
+    extent_buffer_cells: int,
+    alignment: dict,
+    target_grid_doc: dict | None,
+    is_categorical: bool,
 ) -> DataArray:
     """Fetch a single LANDFIRE raster product.
 
@@ -39,6 +46,14 @@ def _fetch_landfire_raster(
         product: Product name as it appears in the GCS filename
         version: LANDFIRE version year
         extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict (see ``GridAlignmentSpecification``).
+            Threaded into the single ``rio.reproject`` performed by
+            ``extract_window`` — no second reprojection is layered on top.
+        target_grid_doc: Loaded grid document used as the alignment target
+            when ``alignment["target"] == "grid"``. Required in that case.
+        is_categorical: Drives the role-aware default for the resampling
+            method when ``alignment.method`` is unset (categorical →
+            ``nearest``; continuous → ``bilinear``).
 
     Returns:
         DataArray with dims (y, x)
@@ -46,9 +61,24 @@ def _fetch_landfire_raster(
     url = f"gs://{RASTERS_BUCKET}/LF{version}_{product}_CONUS.tif"
     with cog_env():
         raster = RasterConnection(url, connection_type="rioxarray", cache=True)
+        method_name = alignment.get("method") or (
+            CATEGORICAL_DEFAULT if is_categorical else CONTINUOUS_DEFAULT
+        )
+        dest = resolve_alignment_destination(
+            alignment,
+            roi,
+            target_grid_doc,
+            raster.target_native_resolution(roi)[0],
+            extent_buffer_cells=extent_buffer_cells,
+        )
         data = raster.extract_window(
             roi=roi,
             interpolation_padding_cells=extent_buffer_cells,
+            resampling=RESAMPLING_METHOD_MAP[method_name],
+            destination_resolution=alignment.get("resolution")
+            if alignment["target"] == "native"
+            else None,
+            **dest,
         )
     return data.squeeze("band", drop=True)
 
@@ -75,6 +105,8 @@ def fetch_fbfm40(
     version: str = "2024",
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM40 fuel model codes.
 
@@ -85,11 +117,24 @@ def fetch_fbfm40(
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.
         extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
 
     Returns:
         Dataset with a single "fbfm" variable (int16 categorical codes)
     """
-    data = _fetch_landfire_raster(roi, "FBFM40", version, extent_buffer_cells)
+    alignment = alignment or {"target": "domain"}
+    data = _fetch_landfire_raster(
+        roi,
+        "FBFM40",
+        version,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+        is_categorical=True,
+    )
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
@@ -103,6 +148,8 @@ def fetch_fccs(
     roi: gpd.GeoDataFrame,
     version: str = "2023",
     extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FCCS fuel model codes.
 
@@ -110,11 +157,24 @@ def fetch_fccs(
         roi: GeoDataFrame defining the region of interest
         version: LANDFIRE version year (default "2023")
         extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
 
     Returns:
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
-    data = _fetch_landfire_raster(roi, "FCCS", version, extent_buffer_cells)
+    alignment = alignment or {"target": "domain"}
+    data = _fetch_landfire_raster(
+        roi,
+        "FCCS",
+        version,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+        is_categorical=True,
+    )
 
     return _to_dataset({"fccs": data})
 
@@ -191,6 +251,8 @@ def fetch_topography(
     bands: list[str],
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE topographic data.
 
@@ -200,18 +262,29 @@ def fetch_topography(
         bands: List of band names to fetch ("elevation", "slope", "aspect")
         progress: Progress callback
         extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
 
     Returns:
         Dataset with one named variable per requested band, each with
         dims (y, x). Variable names match band keys so they appear as
         correct band descriptions in GeoTIFF exports.
     """
+    alignment = alignment or {"target": "domain"}
     variables = {}
     for i, band in enumerate(bands):
         pct = 10 + int(70 * i / len(bands))
         progress(f"Fetching LANDFIRE {band}...", pct)
         variables[band] = _fetch_landfire_raster(
-            roi, band, version, extent_buffer_cells
+            roi,
+            band,
+            version,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+            is_categorical=False,
         )
 
     return _to_dataset(variables)

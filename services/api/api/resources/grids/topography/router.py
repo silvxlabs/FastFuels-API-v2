@@ -27,6 +27,7 @@ from api.resources.grids.topography.schema import (
     ThreeDepTopographySource,
     build_topography_bands,
 )
+from api.resources.grids.utils import validate_target_grid_alignment
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -81,12 +82,15 @@ async def create_landfire_topography(
     owner_id = request.state.id
     domain_id = domain["id"]
 
+    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
+
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
     source = LandfireTopographySource(
         version=body.version,
         bands=body.bands,
         extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+        alignment=body.alignment,
     )
     bands = build_topography_bands(body.bands)
 
@@ -149,8 +153,11 @@ async def create_3dep_topography(
 
     ## Request Body
 
-    - **resolution**: (optional) Resolution in meters: 1, 10, or 30. Default: 10.
+    - **source_resolution**: (optional) Source product family in meters:
+      1, 10, or 30. Default: 10. To change the *output* cell size, set
+      ``alignment.resolution``.
     - **bands**: (optional) Which bands to include. Default: elevation only.
+    - **alignment**: (optional) Output alignment target. See alignment docs.
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
@@ -163,12 +170,15 @@ async def create_3dep_topography(
     owner_id = request.state.id
     domain_id = domain["id"]
 
+    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
+
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
     source = ThreeDepTopographySource(
-        resolution=body.resolution,
+        source_resolution=body.source_resolution,
         bands=body.bands,
         extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+        alignment=body.alignment,
     )
     bands = build_topography_bands(body.bands)
 

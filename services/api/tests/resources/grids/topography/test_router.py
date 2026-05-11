@@ -195,7 +195,7 @@ class TestCreate3DepTopography:
         # Check source
         assert data["source"]["name"] == "3dep"
         assert data["source"]["product"] == "topography"
-        assert data["source"]["resolution"] == 10
+        assert data["source"]["source_resolution"] == 10
         assert data["source"]["bands"] == ["elevation"]
 
         # Check single continuous band
@@ -222,27 +222,27 @@ class TestCreate3DepTopography:
         assert data["bands"][2]["key"] == "aspect"
         assert data["source"]["bands"] == ["elevation", "slope", "aspect"]
 
-    def test_1m_resolution(self, client, domain_for_testing):
-        """Request with 1m resolution."""
-        request_body = {"resolution": 1, "bands": ["elevation"]}
+    def test_1m_source_resolution(self, client, domain_for_testing):
+        """Request with 1m source product."""
+        request_body = {"source_resolution": 1, "bands": ["elevation"]}
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
 
         assert response.status_code == 201
-        assert response.json()["source"]["resolution"] == 1
+        assert response.json()["source"]["source_resolution"] == 1
 
-    def test_30m_resolution(self, client, domain_for_testing):
-        """Request with 30m resolution."""
-        request_body = {"resolution": 30}
+    def test_30m_source_resolution(self, client, domain_for_testing):
+        """Request with 30m source product."""
+        request_body = {"source_resolution": 30}
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
 
         assert response.status_code == 201
-        assert response.json()["source"]["resolution"] == 30
+        assert response.json()["source"]["source_resolution"] == 30
 
-    def test_invalid_resolution_rejected(self, client, domain_for_testing):
-        """Invalid resolution returns 422."""
-        request_body = {"resolution": 5}
+    def test_invalid_source_resolution_rejected(self, client, domain_for_testing):
+        """Invalid source_resolution returns 422."""
+        request_body = {"source_resolution": 5}
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
 
@@ -254,7 +254,7 @@ class TestCreate3DepTopography:
             "name": "High-res terrain",
             "description": "10m DEM for fire modeling",
             "tags": ["3dep", "topography"],
-            "resolution": 10,
+            "source_resolution": 10,
             "bands": ["elevation", "slope"],
         }
 
@@ -266,7 +266,7 @@ class TestCreate3DepTopography:
         assert data["name"] == "High-res terrain"
         assert data["description"] == "10m DEM for fire modeling"
         assert data["tags"] == ["3dep", "topography"]
-        assert data["source"]["resolution"] == 10
+        assert data["source"]["source_resolution"] == 10
         assert len(data["bands"]) == 2
 
     def test_georeference_is_null_on_creation(self, client, domain_for_testing):

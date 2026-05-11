@@ -14,6 +14,7 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.errors import ProcessingError
 from griddle.handlers.threedep import (
+    _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,
     _compute_slope_aspect,
     _fetch_and_mosaic_tiles,
     _validate_dem_has_data,
@@ -59,6 +60,8 @@ def _make_mock_raster(
 
     mock_raster = MagicMock()
     mock_raster.raster_resolution = resolution
+    mock_raster.raster_x_resolution = resolution
+    mock_raster.target_native_resolution.return_value = (resolution, resolution)
     mock_raster.extract_window.return_value = da
     return mock_raster
 
@@ -198,30 +201,27 @@ class TestFetchTopography:
         assert "elevation" in ds.data_vars
         assert ds.rio.crs is not None
 
-    @patch(
-        "griddle.handlers.threedep._clip_to_roi",
-        side_effect=lambda da, roi, extent_buffer_cells=0: da,
-    )
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
-    def test_slope_aspect_computed(self, mock_discover, mock_fetch, _mock_clip):
+    def test_slope_aspect_computed(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem()
+        # Mosaic carries the gradient overhead; output strips it back down.
+        mock_fetch.return_value = _make_mock_dem(
+            shape=(50 + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,) * 2
+        )
 
         ds, _ = fetch_topography(_make_roi(), 10, ["slope", "aspect"], MagicMock())
 
         assert "slope" in ds.data_vars
         assert "aspect" in ds.data_vars
 
-    @patch(
-        "griddle.handlers.threedep._clip_to_roi",
-        side_effect=lambda da, roi, extent_buffer_cells=0: da,
-    )
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
-    def test_all_bands(self, mock_discover, mock_fetch, _mock_clip):
+    def test_all_bands(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem()
+        mock_fetch.return_value = _make_mock_dem(
+            shape=(50 + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,) * 2
+        )
 
         ds, _ = fetch_topography(
             _make_roi(), 10, ["elevation", "slope", "aspect"], MagicMock()
@@ -242,34 +242,29 @@ class TestFetchTopography:
 
         assert mock_fetch.call_args[0][4] == 4
 
-    @patch(
-        "griddle.handlers.threedep._clip_to_roi",
-        side_effect=lambda da, roi, extent_buffer_cells=0: da,
-    )
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
-    def test_derivatives_fetch_extra_cells_internally(
-        self, mock_discover, mock_fetch, mock_clip
-    ):
+    def test_derivatives_fetch_extra_cells_internally(self, mock_discover, mock_fetch):
         """With derivatives, the fetch buffer is extent_buffer_cells + gradient overhead.
 
-        The user's extent_buffer_cells is honored for the *output* extent — the
-        extra DEM cells are clipped away by _clip_to_roi.
+        The user's extent_buffer_cells is honored for the output extent — the
+        extra cells are stripped by _trim_derivative_overhead after the gradient.
         """
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem()
+        # Output should be 50x50 after stripping overhead from each side.
+        out_size = 50
+        in_size = out_size + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
+        mock_fetch.return_value = _make_mock_dem(shape=(in_size, in_size))
 
-        from griddle.handlers.threedep import _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
-
-        fetch_topography(
+        ds, _ = fetch_topography(
             _make_roi(), 10, ["slope", "aspect"], MagicMock(), extent_buffer_cells=4
         )
 
         # _fetch_and_mosaic_tiles is called with extent_buffer_cells + overhead
         assert mock_fetch.call_args[0][4] == 4 + _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
-        # Each clip call uses extent_buffer_cells=4 (the user-requested output buffer)
-        for call in mock_clip.call_args_list:
-            assert call.args[2] == 4 or call.kwargs.get("extent_buffer_cells") == 4
+        # Output bands are stripped back down to the user-requested extent size.
+        assert ds["slope"].shape == (out_size, out_size)
+        assert ds["aspect"].shape == (out_size, out_size)
 
     @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
@@ -336,6 +331,8 @@ class TestFetchAndMosaicTiles:
             resolution=10,
             extent_buffer_cells=0,
             progress=MagicMock(),
+            alignment={"target": "domain"},
+            target_grid_doc=None,
         )
 
         assert isinstance(result, DataArray)
@@ -357,6 +354,8 @@ class TestFetchAndMosaicTiles:
             resolution=10,
             extent_buffer_cells=buffer,
             progress=MagicMock(),
+            alignment={"target": "domain"},
+            target_grid_doc=None,
         )
 
         call_kwargs = mock_rc_class.return_value.extract_window.call_args[1]
@@ -375,9 +374,61 @@ class TestFetchAndMosaicTiles:
             resolution=10,
             extent_buffer_cells=0,
             progress=MagicMock(),
+            alignment={"target": "domain"},
+            target_grid_doc=None,
         )
 
         mock_merge.assert_called_once()
+
+    @patch("griddle.handlers.threedep.RasterConnection")
+    def test_alignment_threaded_to_extract_window(self, mock_rc_class):
+        """Each tile reprojects directly onto the alignment lattice — single
+        reproject, no second alignment pass downstream.
+
+        Domain target with explicit resolution: extract_window receives
+        destination_transform/destination_shape derived from the ROI bounds,
+        not the source's native cell size.
+        """
+        values = np.full((50, 50), 1234.0, dtype=np.float32)
+        mock_rc_class.return_value = _make_mock_raster(values)
+
+        _fetch_and_mosaic_tiles(
+            _make_roi(),
+            ["https://example.com/tile.tif"],
+            resolution=10,
+            extent_buffer_cells=0,
+            progress=MagicMock(),
+            alignment={"target": "domain", "resolution": 4.0},
+            target_grid_doc=None,
+        )
+
+        call_kwargs = mock_rc_class.return_value.extract_window.call_args[1]
+        # ROI is 80m x 80m at 4m -> 20 x 20 destination cells.
+        assert call_kwargs["destination_shape"] == (20, 20)
+        assert abs(call_kwargs["destination_transform"].a) == pytest.approx(4.0)
+        assert call_kwargs["destination_crs"] == _make_roi().crs
+
+    @patch("griddle.handlers.threedep.RasterConnection")
+    def test_native_alignment_passes_no_destination_lattice(self, mock_rc_class):
+        """target='native' without resolution: no destination override, the
+        default extract_window path runs (single reproject to ROI CRS)."""
+        values = np.full((50, 50), 1234.0, dtype=np.float32)
+        mock_rc_class.return_value = _make_mock_raster(values)
+
+        _fetch_and_mosaic_tiles(
+            _make_roi(),
+            ["https://example.com/tile.tif"],
+            resolution=10,
+            extent_buffer_cells=0,
+            progress=MagicMock(),
+            alignment={"target": "native"},
+            target_grid_doc=None,
+        )
+
+        call_kwargs = mock_rc_class.return_value.extract_window.call_args[1]
+        assert "destination_transform" not in call_kwargs
+        assert "destination_shape" not in call_kwargs
+        assert call_kwargs.get("destination_crs") is None
 
 
 # DEM data validation

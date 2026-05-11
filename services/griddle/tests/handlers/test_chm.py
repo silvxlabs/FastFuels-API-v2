@@ -263,7 +263,9 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
+        ds, tile_metadata = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
 
         assert isinstance(ds, xr.Dataset)
         assert tile_metadata["tile_count"] == 1
@@ -284,7 +286,13 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        fetch_meta_chm(_make_roi(), "2", progress, extent_buffer_cells=buffer)
+        fetch_meta_chm(
+            _make_roi(),
+            "2",
+            progress,
+            extent_buffer_cells=buffer,
+            alignment={"target": "native"},
+        )
 
         call_kwargs = mock_raster_cls.return_value.extract_window.call_args[1]
         assert call_kwargs["interpolation_padding_cells"] == buffer
@@ -298,7 +306,9 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
+        ds, _ = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
 
         assert "chm" in ds.data_vars
 
@@ -311,7 +321,9 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
+        ds, _ = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
 
         np.testing.assert_array_almost_equal(ds["chm"].values, chm_values)
 
@@ -324,7 +336,9 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
+        ds, _ = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
 
         assert ds.rio.crs == CRS.from_epsg(32611)
 
@@ -337,7 +351,9 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_meta_chm(_make_roi(), "2", progress)
+        ds, _ = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
 
         assert ds["chm"].dims == ("y", "x")
 
@@ -362,7 +378,7 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        fetch_meta_chm(_make_roi(), version, progress)
+        fetch_meta_chm(_make_roi(), version, progress, alignment={"target": "native"})
 
         url = mock_raster_cls.call_args[0][0]
         assert expected_s3_base in url
@@ -379,7 +395,7 @@ class TestFetchMetaChm:
 
         os.environ.pop("AWS_NO_SIGN_REQUEST", None)
 
-        fetch_meta_chm(_make_roi(), "2", progress)
+        fetch_meta_chm(_make_roi(), "2", progress, alignment={"target": "native"})
 
         assert "AWS_NO_SIGN_REQUEST" not in os.environ
 
@@ -392,7 +408,7 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        fetch_meta_chm(_make_roi(), "2", progress)
+        fetch_meta_chm(_make_roi(), "2", progress, alignment={"target": "native"})
 
         assert progress.call_count >= 2
 
@@ -403,7 +419,7 @@ class TestFetchMetaChm:
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_meta_chm(_make_roi(), "2", progress)
+            fetch_meta_chm(_make_roi(), "2", progress, alignment={"target": "native"})
 
         assert exc_info.value.code == "COVERAGE_ERROR"
 
@@ -414,7 +430,7 @@ class TestFetchMetaChm:
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_meta_chm(_make_roi(), "2", progress)
+            fetch_meta_chm(_make_roi(), "2", progress, alignment={"target": "native"})
 
         assert exc_info.value.code == "INDEX_FETCH_FAILED"
 
@@ -432,7 +448,9 @@ class TestFetchMetaChm:
         mock_merge.return_value = merged_da
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
+        ds, tile_metadata = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
 
         assert mock_raster_cls.call_count == 2
         mock_merge.assert_called_once()
@@ -457,7 +475,7 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        fetch_meta_chm(_make_roi(), version, progress)
+        fetch_meta_chm(_make_roi(), version, progress, alignment={"target": "native"})
 
         path = mock_query.call_args[0][0]
         assert expected_index in path
@@ -472,7 +490,9 @@ class TestFetchMetaChm:
         mock_query.return_value = _make_meta_query_result()
         progress = MagicMock()
 
-        _, tile_metadata = fetch_meta_chm(_make_roi(), "2", progress)
+        _, tile_metadata = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
 
         assert tile_metadata["native_crs"] is not None
         assert "32611" in tile_metadata["native_crs"]
@@ -493,7 +513,9 @@ class TestFetchNaipChm:
         mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_naip_chm(_make_roi(), progress)
+        ds, tile_metadata = fetch_naip_chm(
+            _make_roi(), progress, alignment={"target": "native"}
+        )
 
         assert isinstance(ds, xr.Dataset)
         assert tile_metadata["tile_count"] == 1
@@ -508,7 +530,7 @@ class TestFetchNaipChm:
         mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress)
+        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         assert "chm" in ds.data_vars
 
@@ -523,7 +545,7 @@ class TestFetchNaipChm:
         mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress)
+        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         np.testing.assert_array_almost_equal(ds["chm"].values, expected_values)
 
@@ -536,7 +558,7 @@ class TestFetchNaipChm:
         mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress)
+        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         assert ds.rio.crs == CRS.from_epsg(32611)
 
@@ -549,7 +571,7 @@ class TestFetchNaipChm:
         mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress)
+        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         assert ds["chm"].dims == ("y", "x")
 
@@ -562,7 +584,7 @@ class TestFetchNaipChm:
         mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
-        fetch_naip_chm(_make_roi(), progress)
+        fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         url = mock_raster_cls.call_args[0][0]
         assert url == "http://fake-ntsg-server.com/tile_001.tif"
@@ -576,7 +598,7 @@ class TestFetchNaipChm:
         mock_query.return_value = _make_naip_query_result()
         progress = MagicMock()
 
-        fetch_naip_chm(_make_roi(), progress)
+        fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         assert progress.call_count >= 2
 
@@ -587,7 +609,7 @@ class TestFetchNaipChm:
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), progress)
+            fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         assert exc_info.value.code == "COVERAGE_ERROR"
 
@@ -598,7 +620,7 @@ class TestFetchNaipChm:
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), progress)
+            fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
 
         assert exc_info.value.code == "INDEX_FETCH_FAILED"
 
@@ -620,7 +642,9 @@ class TestFetchNaipChm:
 
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_naip_chm(_make_roi(), progress)
+        ds, tile_metadata = fetch_naip_chm(
+            _make_roi(), progress, alignment={"target": "native"}
+        )
 
         assert mock_raster_cls.call_count == 2
         mock_merge.assert_called_once()

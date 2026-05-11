@@ -187,6 +187,52 @@ to 2m. Without alignment, these resources have different footprints. With
 on the domain inherits the same padded extent and the export grid is
 unambiguous.
 
+## Grid alignment
+
+Every external-source grid endpoint (`landfire/*`, `3dep/*`, `pim/*`,
+`chm/*`) and the `resample` endpoint accept an `alignment` field — a
+discriminated union on `target` with three variants:
+
+| Target    | Behavior |
+|-----------|----------|
+| `domain`  | Default. Output cells are anchored at the domain's lower-left corner; the grid's `transform` and `shape` are derived from the (optionally `pad_to_resolution`-snapped) domain bbox plus the requested cell size. Domain-anchored grids on the same domain at the same `resolution` compose by integer slicing — no further reprojection. |
+| `native`  | Preserve the source raster's pixel anchor. With no `resolution`, this is exactly the pre-#205 behavior. With an explicit `resolution`, the output is resampled to a new cell size while keeping the source pixel anchor — so two `native`-aligned grids generally won't compose. |
+| `grid`    | Align to an existing grid by `grid_id`. With no `resolution`, the output is byte-equal in CRS, transform, and shape to the target grid. With an explicit `resolution`, the output keeps the target grid's CRS and origin but is resampled to the new cell size — useful for nesting (e.g. fetch a 0.6m CHM aligned to a 30m FBFM40's origin). |
+
+Each variant also accepts an optional `method` (any
+`rasterio.enums.Resampling` member); when omitted, categorical bands
+default to `nearest` and continuous bands default to `bilinear`.
+
+### Example: a QUIC-Fire-ready stack
+
+```http
+POST /v2/domains
+{ "pad_to_resolution": 2, ...feature collection... }
+```
+
+```http
+POST /v2/domains/{id}/grids/landfire/fbfm40
+{ "alignment": { "target": "domain", "resolution": 2.0 } }
+
+POST /v2/domains/{id}/grids/landfire/topography
+{ "bands": ["elevation"], "alignment": { "target": "domain", "resolution": 2.0 } }
+
+POST /v2/domains/{id}/grids/uniform
+{ "resolution": 2.0, "bands": [ {"quantity": "fuel_moisture.1hr", "value": 6.0} ] }
+```
+
+All four grids share CRS and transform exactly. The QUIC-Fire export
+validates that and stitches by integer arithmetic — no second
+reprojection. See `services/api/api/resources/grids/exports/README.md`.
+
+### Interaction with `pad_to_resolution`
+
+`pad_to_resolution` is applied at *domain* creation, snapping
+`gdf.total_bounds`. `alignment.target="domain"` uses those bounds as the
+anchor. So padding the domain to 2m and fetching at 2m yields exact
+nesting; padding to 30m and fetching at 2m yields 15-cell nesting (each
+30m cell is exactly 15×15 2m cells).
+
 ## File Structure
 
 ```

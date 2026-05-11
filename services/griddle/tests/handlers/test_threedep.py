@@ -248,7 +248,7 @@ class TestFetchTopography:
         """With derivatives, the fetch buffer is extent_buffer_cells + gradient overhead.
 
         The user's extent_buffer_cells is honored for the output extent — the
-        extra cells are stripped by _strip_overhead_cells after the gradient.
+        extra cells are stripped by _trim_derivative_overhead after the gradient.
         """
         mock_discover.return_value = ["https://example.com/tile.tif"]
         # Output should be 50x50 after stripping overhead from each side.

@@ -123,7 +123,11 @@ from lib.alignment import resolve_alignment_destination
 from rasterio.enums import Resampling
 
 dest = resolve_alignment_destination(
-    alignment, roi, target_grid_doc, raster.raster_x_resolution
+    alignment,
+    roi,
+    target_grid_doc,
+    raster.raster_x_resolution,
+    extent_buffer_cells=extent_buffer_cells,
 )
 data = raster.extract_window(
     roi=roi,
@@ -135,14 +139,21 @@ data = raster.extract_window(
 )
 ```
 
+`extent_buffer_cells` must be passed to *both* `resolve_alignment_destination`
+(so the destination lattice for `target="domain"` and `target="grid"`
+includes the buffer — the trailing clip is skipped on those paths) and
+`extract_window` (so the source clip and the CRS-only-override clip are
+sized correctly).
+
 `resolve_alignment_destination` returns:
 - `{}` for `target="native"` with no resolution change → `extract_window`
   takes its default branch (reproject to ROI CRS, clip).
 - `{destination_crs}` for `target="native"` with a custom resolution →
-  CRS-only branch (reproject preserving anchor, then clip).
+  CRS-only branch (reproject preserving anchor, then clip — clip uses
+  `destination_resolution` for the buffer).
 - `{destination_crs, destination_transform, destination_shape}` for
   `target="domain"` and `target="grid"` → reproject directly to the
-  exact lattice; the trailing clip is skipped (destination defines extent).
+  exact lattice; the buffer is baked into the lattice.
 
 The 3DEP topography handler is the one exception. It fetches at native
 source resolution so `numpy.gradient` produces correct slope/aspect

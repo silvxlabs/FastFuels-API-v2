@@ -14,77 +14,8 @@ The resample endpoint requires a source grid that:
 import pytest
 from api.resources.grids.resample.examples import ALL_RESAMPLE_EXAMPLE_VALUES
 
-from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
-from tests.fixtures import make_domain_data, make_grid_data
-
-
-@pytest.fixture(scope="session")
-def complete_grid(firestore_client, domain_for_testing):
-    """A complete grid with bands and georeference for use as a resample source."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
-        name="Source grid for resample tests",
-        status="completed",
-    )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def pending_grid(firestore_client, domain_for_testing):
-    """A grid with status "pending" (not yet complete)."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
-        name="Pending grid for resample tests",
-        status="pending",
-    )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def complete_grid_no_georeference(firestore_client, domain_for_testing):
-    """A complete grid without a georeference."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
-        name="Complete grid without georeference",
-        status="completed",
-    )
-    grid_data["georeference"] = None
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def second_domain(firestore_client):
-    """A second domain owned by test-owner for cross-domain tests."""
-    domain_data = make_domain_data(name="Second Test Domain")
-    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
-        domain_data["id"]
-    )
-    doc_ref.set(domain_data)
-    yield domain_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def grid_in_different_domain(firestore_client, second_domain):
-    """A complete grid with georeference in a different domain."""
-    grid_data = make_grid_data(
-        domain_id=second_domain["id"],
-        name="Grid in different domain for resample tests",
-        status="completed",
-    )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
+from lib.config import GRIDS_COLLECTION
+from tests.fixtures import make_grid_data
 
 
 @pytest.fixture(scope="session")

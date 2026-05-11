@@ -19,6 +19,9 @@ test = [
     "google-cloud-tasks>=2.16.0",
     "google-cloud-run>=0.10.0",
 ]
+viz = [
+    "matplotlib>=3.10",
+]
 
 [tool.pytest.ini_options]
 markers = [

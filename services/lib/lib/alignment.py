@@ -41,11 +41,21 @@ def target_grid_bounds(georef: dict) -> tuple[float, float, float, float]:
     return (c, f + h * e, c + w * a, f)
 
 
+def _expand_bounds(
+    bounds: tuple[float, float, float, float],
+    padding: float,
+) -> tuple[float, float, float, float]:
+    """Symmetrically grow ``bounds`` by ``padding`` meters on every side."""
+    minx, miny, maxx, maxy = bounds
+    return (minx - padding, miny - padding, maxx + padding, maxy + padding)
+
+
 def resolve_alignment_destination(
     alignment: dict,
     domain_gdf: gpd.GeoDataFrame,
     target_grid_doc: dict | None,
     source_native_resolution: float,
+    extent_buffer_cells: int = 0,
 ) -> dict:
     """Map a persisted alignment dict to ``rio.reproject``-style destination
     kwargs.
@@ -53,14 +63,25 @@ def resolve_alignment_destination(
     Returns a dict that may include ``destination_crs``,
     ``destination_transform``, ``destination_shape``. An empty dict means
     "no override; let the caller use its default reprojection path."
+
+    ``extent_buffer_cells`` extends the destination lattice by N output
+    cells on every side for ``target='domain'`` and ``target='grid'`` —
+    the destination-override branch in ``extract_window`` skips the
+    trailing ROI-clip step, so the buffer must be baked into the
+    destination spec itself. Origin shifts by exactly
+    ``extent_buffer_cells * resolution`` meters, so buffered output cells
+    still nest cleanly with the same-anchor unbuffered lattice. For
+    ``target='native'`` the buffer is applied at the clip step inside
+    ``extract_window``, so the helper passes through unchanged.
     """
     target = alignment["target"]
 
     if target == "domain":
         resolution = alignment.get("resolution") or source_native_resolution
-        transform, shape = lattice_from_bounds(
-            tuple(domain_gdf.total_bounds), resolution
+        bounds = _expand_bounds(
+            tuple(domain_gdf.total_bounds), extent_buffer_cells * resolution
         )
+        transform, shape = lattice_from_bounds(bounds, resolution)
         return {
             "destination_crs": domain_gdf.crs,
             "destination_transform": transform,
@@ -73,15 +94,23 @@ def resolve_alignment_destination(
                 "alignment.target='grid' requires the target grid document"
             )
         georef = target_grid_doc["georeference"]
-        if alignment.get("resolution") is None:
+        resolution = alignment.get("resolution")
+        if resolution is None:
+            # Cell size matches the target grid's transform.
+            cell_size = abs(Affine(*georef["transform"]).a)
+            bounds = _expand_bounds(
+                target_grid_bounds(georef), extent_buffer_cells * cell_size
+            )
+            transform, shape = lattice_from_bounds(bounds, cell_size)
             return {
                 "destination_crs": georef["crs"],
-                "destination_transform": Affine(*georef["transform"]),
-                "destination_shape": tuple(georef["shape"]),
+                "destination_transform": transform,
+                "destination_shape": shape,
             }
-        transform, shape = lattice_from_bounds(
-            target_grid_bounds(georef), alignment["resolution"]
+        bounds = _expand_bounds(
+            target_grid_bounds(georef), extent_buffer_cells * resolution
         )
+        transform, shape = lattice_from_bounds(bounds, resolution)
         return {
             "destination_crs": georef["crs"],
             "destination_transform": transform,

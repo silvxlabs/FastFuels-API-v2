@@ -95,10 +95,21 @@ class TestCreateMetaChm:
 
     @pytest.mark.parametrize("example_name,example_value", META_CHM_EXAMPLE_VALUES)
     def test_documented_example_creates_grid(
-        self, client, domain_for_testing, example_name, example_value
+        self, client, domain_for_testing, complete_grid, example_name, example_value
     ):
-        """Each documented Meta CHM example should successfully create a grid."""
-        response = client.post(self.route(domain_for_testing["id"]), json=example_value)
+        """Each documented Meta CHM example should successfully create a grid.
+
+        Examples that align to a target grid use a placeholder grid id; we
+        substitute ``complete_grid["id"]`` so the validator finds a real grid.
+        """
+        body = dict(example_value)
+        if (
+            isinstance(body.get("alignment"), dict)
+            and body["alignment"].get("target") == "grid"
+        ):
+            body["alignment"] = {**body["alignment"], "grid_id": complete_grid["id"]}
+
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
 
         assert response.status_code == 201, (
             f"Example '{example_name}' failed with status {response.status_code}: "

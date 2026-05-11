@@ -116,8 +116,21 @@ class RasterConnection:
         ``interpolation_padding_cells`` is measured in final result-grid
         cells in the ROI CRS, not in source raster cells.
         """
+        # On the destination-override path the buffer is already baked into
+        # ``destination_transform``/``destination_shape`` by the alignment
+        # helper. On the CRS-only override path the clip step expands by
+        # N cells of the requested ``destination_resolution``. Both must
+        # propagate to the source clip so we fetch enough source pixels.
+        effective_destination_resolution = destination_resolution
+        if destination_transform is not None:
+            effective_destination_resolution = abs(destination_transform.a)
+
         window = self.raster.rio.clip_box(
-            *self._source_clip_bounds(roi, interpolation_padding_cells)
+            *self._source_clip_bounds(
+                roi,
+                interpolation_padding_cells,
+                destination_resolution=effective_destination_resolution,
+            )
         )
 
         # Destination override: reproject directly to the requested lattice.
@@ -144,7 +157,11 @@ class RasterConnection:
                 window_reprojected = window.rio.reproject(
                     destination_crs, resampling=resampling
                 )
-            roi_padded = self._target_clip_bounds(roi, interpolation_padding_cells)
+            roi_padded = self._target_clip_bounds(
+                roi,
+                interpolation_padding_cells,
+                destination_resolution=destination_resolution,
+            )
             return window_reprojected.rio.clip_box(*roi_padded)
 
         # Default behavior: reproject to ROI CRS (if needed) and clip.
@@ -160,9 +177,14 @@ class RasterConnection:
         self,
         roi: GeoDataFrame,
         interpolation_padding_cells: int = 0,
+        destination_resolution: float | None = None,
     ) -> tuple[float, float, float, float]:
         """Return source raster bounds needed to cover the ROI after reprojection."""
-        target_bounds = self._target_clip_bounds(roi, interpolation_padding_cells)
+        target_bounds = self._target_clip_bounds(
+            roi,
+            interpolation_padding_cells,
+            destination_resolution=destination_resolution,
+        )
         if roi.crs != self.raster_crs:
             bounds = transform_bounds(roi.crs, self.raster_crs, *target_bounds)
         else:
@@ -182,17 +204,24 @@ class RasterConnection:
         self,
         roi: GeoDataFrame,
         interpolation_padding_cells: int,
+        destination_resolution: float | None = None,
     ) -> tuple[float, float, float, float]:
         """Return final output clip bounds in the ROI CRS.
 
-        Padding is measured in final result-grid cells. For reprojected
-        rasters, this means the source raster's cell size is first estimated
-        in the ROI CRS.
+        Padding is measured in final result-grid cells. When
+        ``destination_resolution`` is supplied (alignment paths that change
+        the output cell size), the buffer is sized in destination cells.
+        Otherwise the source raster's cell size is estimated in the ROI
+        CRS, preserving pre-#205 behavior on the default path.
         """
         if interpolation_padding_cells == 0:
             return tuple(roi.total_bounds)
 
-        x_resolution, y_resolution = self._target_resolution(roi)
+        if destination_resolution is not None:
+            x_resolution = y_resolution = destination_resolution
+        else:
+            x_resolution, y_resolution = self._target_resolution(roi)
+
         x_padding = interpolation_padding_cells * x_resolution
         y_padding = interpolation_padding_cells * y_resolution
         return (

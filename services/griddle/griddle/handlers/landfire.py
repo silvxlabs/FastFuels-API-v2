@@ -11,11 +11,10 @@ import geopandas as gpd
 import numpy as np
 import xarray as xr
 from numpy import ndarray
-from rasterio.enums import Resampling
 from scipy.ndimage import generic_filter
 from xarray import DataArray
 
-from lib.alignment import resolve_alignment_destination
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET
 from lib.raster import RasterConnection, cog_env
 
@@ -75,7 +74,7 @@ def _fetch_landfire_raster(
         data = raster.extract_window(
             roi=roi,
             interpolation_padding_cells=extent_buffer_cells,
-            resampling=Resampling[method_name],
+            resampling=RESAMPLING_METHOD_MAP[method_name],
             destination_resolution=alignment.get("resolution")
             if alignment["target"] == "native"
             else None,

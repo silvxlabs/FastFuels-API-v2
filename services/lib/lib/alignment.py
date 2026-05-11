@@ -7,7 +7,26 @@ runtime) to compute output lattices for raster reprojection.
 import geopandas as gpd
 import numpy as np
 from affine import Affine
+from rasterio.enums import Resampling
 from rasterio.transform import from_bounds
+
+# Excludes gauss (in Resampling but rejected by rasterio.warp.reproject).
+RESAMPLING_METHOD_MAP: dict[str, Resampling] = {
+    "nearest": Resampling.nearest,
+    "bilinear": Resampling.bilinear,
+    "cubic": Resampling.cubic,
+    "cubic_spline": Resampling.cubic_spline,
+    "lanczos": Resampling.lanczos,
+    "average": Resampling.average,
+    "mode": Resampling.mode,
+    "max": Resampling.max,
+    "min": Resampling.min,
+    "median": Resampling.med,
+    "first_quartile": Resampling.q1,
+    "third_quartile": Resampling.q3,
+    "sum": Resampling.sum,
+    "root_mean_square": Resampling.rms,
+}
 
 
 def lattice_from_bounds(

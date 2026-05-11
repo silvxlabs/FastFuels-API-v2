@@ -69,9 +69,7 @@ class TestGridTargetResolution:
             _AlignmentAdapter.validate_python({"target": "grid"})
 
 
-class TestResamplingMethodMatchesRasterio:
-    """Ensures ResamplingMethod stays in sync with rasterio.enums.Resampling."""
-
+class TestResamplingMethod:
     def test_includes_common_methods(self):
         names = {m.value for m in ResamplingMethod}
         assert "nearest" in names
@@ -79,6 +77,12 @@ class TestResamplingMethodMatchesRasterio:
         assert "cubic" in names
         assert "mode" in names
         assert "average" in names
+        assert "median" in names
+        assert "root_mean_square" in names
+
+    def test_gauss_not_exposed(self):
+        names = {m.value for m in ResamplingMethod}
+        assert "gauss" not in names
 
     def test_method_field_accepts_string(self):
         spec = _AlignmentAdapter.validate_python(

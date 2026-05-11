@@ -14,12 +14,11 @@ import gcsfs
 import geopandas as gpd
 import pandas as pd
 import xarray as xr
-from rasterio.enums import Resampling
 from rioxarray.merge import merge_arrays
 
 from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
-from lib.alignment import resolve_alignment_destination
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import TABLES_BUCKET
 from lib.raster import RasterConnection, cog_env
 
@@ -95,7 +94,7 @@ def _process_intersecting_tiles(
             data = raster.extract_window(
                 roi=roi,
                 interpolation_padding_cells=extent_buffer_cells,
-                resampling=Resampling[method_name],
+                resampling=RESAMPLING_METHOD_MAP[method_name],
                 destination_resolution=alignment.get("resolution")
                 if alignment["target"] == "native"
                 else None,

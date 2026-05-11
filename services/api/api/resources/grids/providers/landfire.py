@@ -12,6 +12,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from api.resources.grids.alignment import (
+    GridAlignmentDomainTarget,
+    GridAlignmentSpecification,
+)
+
 
 class LandfireSource(BaseModel):
     """Base source specification for LANDFIRE data products."""
@@ -21,3 +26,6 @@ class LandfireSource(BaseModel):
     version: str
     description: str = ""
     extent_buffer_cells: int = Field(0, ge=0, le=10)
+    alignment: GridAlignmentSpecification = Field(
+        default_factory=GridAlignmentDomainTarget
+    )

@@ -40,7 +40,10 @@ DOMAIN_FIXTURES = [
         name="Blue Mountain",
         description="~1 sq km in Blue Mountain Recreation Area, Montana",
         file_name="blue_mtn.json",
-        expected_shape=(46, 61),
+        # Shape produced by the default `target="domain"` alignment at LANDFIRE's
+        # ~30m source resolution, anchored at the domain's lower-left and
+        # covering the domain bbox via ceil().
+        expected_shape=(30, 44),
     ),
 ]
 
@@ -73,10 +76,19 @@ class TestFetchFbfm40:
             coords={"band": [1], "y": [0.0], "x": [0.0]},
         ).rio.write_crs(roi.crs)
         mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
         mock_raster.extract_window.return_value = data
         mock_raster_cls.return_value = mock_raster
 
-        _fetch_landfire_raster(roi, "FBFM40", "2024")
+        _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
 
         call_kwargs = mock_raster.extract_window.call_args[1]
         assert "projection_padding_meters" not in call_kwargs
@@ -92,10 +104,19 @@ class TestFetchFbfm40:
             coords={"band": [1], "y": [0.0], "x": [0.0]},
         ).rio.write_crs(roi.crs)
         mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
         mock_raster.extract_window.return_value = data
         mock_raster_cls.return_value = mock_raster
 
-        _fetch_landfire_raster(roi, "FBFM40", "2024", extent_buffer_cells=buffer)
+        _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=buffer,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
 
         assert (
             mock_raster.extract_window.call_args[1]["interpolation_padding_cells"]

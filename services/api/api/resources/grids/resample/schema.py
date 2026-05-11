@@ -3,43 +3,21 @@ api/v2/resources/grids/resample/schema.py
 
 Schema models for grid resampling operations.
 
-Resample endpoints change a grid's spatial resolution while preserving its
-bands. For example, resampling a 30m LANDFIRE grid to 2m for QUIC-Fire input.
+Resample endpoints change a grid's spatial resolution and/or anchor while
+preserving its bands. The new shape is controlled by the shared
+``alignment`` discriminated union; see ``api.resources.grids.alignment``.
 """
 
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from api.resources.grids.alignment import (
+    GridAlignmentDomainTarget,
+    GridAlignmentSpecification,
+    ResamplingMethod,
+)
 from api.resources.grids.modifications import GridModification
-
-
-class ResamplingMethod(StrEnum):
-    """Resampling methods supported by the resample endpoint.
-
-    Includes both interpolation methods (for upsampling) and aggregation
-    methods (for downsampling), though any method can be used in either
-    direction.
-    """
-
-    # Interpolation methods
-    nearest = "nearest"
-    bilinear = "bilinear"
-    cubic = "cubic"
-    cubic_spline = "cubic_spline"
-    lanczos = "lanczos"
-
-    # Aggregation methods
-    average = "average"
-    mode = "mode"
-    max = "max"
-    min = "min"
-    median = "median"
-    first_quartile = "first_quartile"
-    third_quartile = "third_quartile"
-    sum = "sum"
-    root_mean_square = "root_mean_square"
 
 
 class ResampleSource(BaseModel):
@@ -47,10 +25,10 @@ class ResampleSource(BaseModel):
 
     name: Literal["resample"] = "resample"
     source_grid_id: str = Field(..., description="Grid to resample")
-    target_resolution: float = Field(
-        ..., description="Target resolution after resampling (meters)"
+    alignment: GridAlignmentSpecification = Field(
+        ...,
+        description="Output alignment target.",
     )
-    method: ResamplingMethod = Field(..., description="Default resampling method")
     method_overrides: dict[str, ResamplingMethod] = Field(
         default_factory=dict,
         description="Per-band resampling method overrides keyed by band key",
@@ -60,29 +38,31 @@ class ResampleSource(BaseModel):
 class CreateResampleRequest(BaseModel):
     """Request to create a grid by resampling an existing grid.
 
-    Unlike entry-point grid creation requests, domain_id is not required
+    Unlike entry-point grid creation requests, ``domain_id`` is not required
     because derived grids carry the same domain reference as their source.
+
+    The ``alignment`` field controls the output lattice. ``alignment.resolution``
+    is required for ``target="domain"`` and ``target="native"``; for
+    ``target="grid"`` it is optional (defaults to the target grid's exact
+    transform/shape; if supplied, keeps the target's CRS and origin and
+    recomputes shape at the new cell size).
     """
 
     source_grid_id: str = Field(..., description="Grid to resample")
-    resolution: float = Field(
-        ...,
-        ge=1,
+    alignment: GridAlignmentSpecification = Field(
+        default_factory=GridAlignmentDomainTarget,
         description=(
-            "Target resolution in meters. Minimum 1m. "
-            "Contact the developers if you need sub-meter resolution."
+            'Output alignment target. Default `target="domain"` anchors the '
+            "resampled grid to the domain origin."
         ),
-    )
-    method: ResamplingMethod = Field(
-        default=ResamplingMethod.bilinear,
-        description="Default resampling method",
     )
     method_overrides: dict[str, ResamplingMethod] = Field(
         default_factory=dict,
         description=(
             "Per-band resampling method overrides keyed by band key. "
-            "For example, use nearest-neighbor for categorical bands "
-            "while using bilinear for continuous bands."
+            "Wins over ``alignment.method`` for the listed bands. Useful "
+            "for using nearest-neighbor on categorical bands while using "
+            "bilinear on continuous bands."
         ),
     )
     name: str = Field("", max_length=255)

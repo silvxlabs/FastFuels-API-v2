@@ -3,7 +3,10 @@ import math
 
 import rasterio
 import rioxarray
+from affine import Affine
 from geopandas import GeoDataFrame
+from rasterio.crs import CRS
+from rasterio.enums import Resampling
 from rasterio.warp import calculate_default_transform, transform_bounds
 from xarray import DataArray
 
@@ -67,37 +70,91 @@ class RasterConnection:
         self,
         roi: GeoDataFrame,
         interpolation_padding_cells: int,
+        destination_crs: CRS | None = None,
+        destination_transform: Affine | None = None,
+        destination_shape: tuple[int, int] | None = None,
+        destination_resolution: float | None = None,
+        resampling: Resampling = Resampling.nearest,
     ) -> DataArray:
-        """Extract the raster window covering the ROI plus result-cell padding."""
+        """Extract the raster window covering the ROI plus result-cell padding.
+
+        Destination semantics (single rio.reproject path):
+
+        - ``destination_transform`` and ``destination_shape`` both set:
+          reproject directly into that lattice. The destination defines
+          the extent, so the trailing clip step is skipped.
+        - ``destination_crs`` set without transform/shape: reproject to
+          that CRS at ``destination_resolution`` (if given) or the source's
+          native cell size, then clip to the ROI extent + padding.
+        - All None: today's behavior — reproject to ``roi.crs`` (or skip
+          if equal) and clip to the ROI.
+        """
         if self.connection_type == "rioxarray":
-            return self._extract_window_rioxarray(roi, interpolation_padding_cells)
+            return self._extract_window_rioxarray(
+                roi,
+                interpolation_padding_cells,
+                destination_crs=destination_crs,
+                destination_transform=destination_transform,
+                destination_shape=destination_shape,
+                destination_resolution=destination_resolution,
+                resampling=resampling,
+            )
 
     def _extract_window_rioxarray(
         self,
         roi: GeoDataFrame,
         interpolation_padding_cells: int,
+        destination_crs: CRS | None = None,
+        destination_transform: Affine | None = None,
+        destination_shape: tuple[int, int] | None = None,
+        destination_resolution: float | None = None,
+        resampling: Resampling = Resampling.nearest,
     ) -> DataArray:
-        """
-        Extract the window of the raster that contains the ROI using rioxarray.
-        Only reproject if the ROI CRS differs from the raster CRS.
+        """Extract the window of the raster that contains the ROI using
+        rioxarray. Performs a single reprojection.
 
-        interpolation_padding_cells is measured in final result-grid cells in
-        the ROI CRS, not in source raster cells.
+        ``interpolation_padding_cells`` is measured in final result-grid
+        cells in the ROI CRS, not in source raster cells.
         """
         window = self.raster.rio.clip_box(
             *self._source_clip_bounds(roi, interpolation_padding_cells)
         )
 
+        # Destination override: reproject directly to the requested lattice.
+        if destination_transform is not None and destination_shape is not None:
+            dst_crs = destination_crs if destination_crs is not None else roi.crs
+            return window.rio.reproject(
+                dst_crs,
+                transform=destination_transform,
+                shape=destination_shape,
+                resampling=resampling,
+            )
+
+        # CRS-only override (e.g. target="native" with a custom resolution):
+        # reproject preserving source-pixel anchor, optionally at a new
+        # resolution, then clip to the ROI extent + padding.
+        if destination_crs is not None:
+            if destination_resolution is not None:
+                window_reprojected = window.rio.reproject(
+                    destination_crs,
+                    resolution=destination_resolution,
+                    resampling=resampling,
+                )
+            else:
+                window_reprojected = window.rio.reproject(
+                    destination_crs, resampling=resampling
+                )
+            roi_padded = self._target_clip_bounds(roi, interpolation_padding_cells)
+            return window_reprojected.rio.clip_box(*roi_padded)
+
+        # Default behavior: reproject to ROI CRS (if needed) and clip.
         if roi.crs != self.raster_crs:
-            window_reprojected = window.rio.reproject(roi.crs)
+            window_reprojected = window.rio.reproject(roi.crs, resampling=resampling)
         else:
             window_reprojected = window
 
         roi_padded = self._target_clip_bounds(roi, interpolation_padding_cells)
-
-        clip = window_reprojected.rio.clip_box(*roi_padded)
-
-        return clip
+        return window_reprojected.rio.clip_box(*roi_padded)
 
     def _source_clip_bounds(
         self,

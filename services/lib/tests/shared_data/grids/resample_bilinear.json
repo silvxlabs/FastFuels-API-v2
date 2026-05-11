@@ -34,11 +34,14 @@
   "name": "test-resample-bilinear",
   "progress": null,
   "source": {
-    "method": "bilinear",
+    "alignment": {
+      "target": "domain",
+      "resolution": 60.0,
+      "method": "bilinear"
+    },
     "method_overrides": {},
     "name": "resample",
-    "source_grid_id": "PLACEHOLDER",
-    "target_resolution": 60.0
+    "source_grid_id": "PLACEHOLDER"
   },
   "status": "pending",
   "tags": []

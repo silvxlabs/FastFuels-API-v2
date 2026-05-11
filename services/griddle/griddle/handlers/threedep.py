@@ -15,11 +15,13 @@ import geopandas as gpd
 import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
+from rasterio.enums import Resampling
 from rioxarray.merge import merge_arrays
 from xarray import DataArray
 
 from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
+from lib.alignment import resolve_alignment_destination
 from lib.raster import RasterConnection, cog_env
 from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
 
@@ -38,12 +40,19 @@ def fetch_topography(
     bands: list[str],
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
 ) -> tuple[xr.Dataset, TileMetadata]:
     """Fetch 3DEP topographic data for a domain extent.
 
+    Tiles are fetched at native ``resolution`` and slope/aspect are computed
+    via ``numpy.gradient`` at that native resolution to preserve derivative
+    quality. A single end-of-pipeline ``rio.reproject`` then lands every
+    band on the alignment destination.
+
     Args:
         roi: GeoDataFrame defining the region of interest
-        resolution: Resolution in meters (1, 10, or 30)
+        resolution: Source product resolution in meters (1, 10, or 30)
         bands: List of band names ("elevation", "slope", "aspect")
         progress: Progress callback
         extent_buffer_cells: Result-grid cells of buffer around the ROI in the
@@ -51,6 +60,10 @@ def fetch_topography(
             fetches a few extra DEM cells under the hood so numpy.gradient
             produces central differences at the boundary; those extra cells
             are clipped away before returning.
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
 
     Returns:
         Tuple of (Dataset with named variables, tile metadata dict)
@@ -58,6 +71,7 @@ def fetch_topography(
     Raises:
         ProcessingError: If no tiles found or fetch fails
     """
+    alignment = alignment or {"target": "domain"}
     needs_derivatives = "slope" in bands or "aspect" in bands
     fetch_buffer = (
         extent_buffer_cells + _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
@@ -127,9 +141,58 @@ def fetch_topography(
         if "aspect" in bands:
             variables["aspect"] = aspect_da
 
-    progress("Building dataset...", 85)
+    progress("Aligning output...", 85)
+    variables = _apply_alignment_to_vars(variables, alignment, roi, target_grid_doc)
+
+    progress("Building dataset...", 90)
     ds = _to_dataset(variables)
     return ds, tile_metadata
+
+
+def _apply_alignment_to_vars(
+    variables: dict[str, DataArray],
+    alignment: dict,
+    roi: gpd.GeoDataFrame,
+    target_grid_doc: dict | None,
+) -> dict[str, DataArray]:
+    """Reproject each variable to the alignment destination.
+
+    Called once at the end of 3DEP processing. Slope/aspect have already
+    been computed at native resolution; this is the single reprojection
+    that aligns the output to the chosen lattice. All variables are
+    continuous (categorical default does not apply here).
+    """
+    sample = next(iter(variables.values()))
+    native_resolution = abs(float(sample.rio.transform().a))
+    dest = resolve_alignment_destination(
+        alignment, roi, target_grid_doc, native_resolution
+    )
+    if not dest:
+        return variables  # target="native" with no resolution change
+
+    method_name = alignment.get("method") or "bilinear"
+    resampling = Resampling[method_name]
+
+    aligned: dict[str, DataArray] = {}
+    for name, da in variables.items():
+        if "destination_transform" in dest and "destination_shape" in dest:
+            aligned[name] = da.rio.reproject(
+                dest["destination_crs"],
+                transform=dest["destination_transform"],
+                shape=dest["destination_shape"],
+                resampling=resampling,
+            )
+        elif alignment.get("resolution") is not None:
+            aligned[name] = da.rio.reproject(
+                dest["destination_crs"],
+                resolution=alignment["resolution"],
+                resampling=resampling,
+            )
+        else:
+            aligned[name] = da.rio.reproject(
+                dest["destination_crs"], resampling=resampling
+            )
+    return aligned
 
 
 def _discover_tiles_1m(

@@ -25,6 +25,15 @@ EXAMPLE_TREEMAP_WITH_BUFFER = {
     "extent_buffer_cells": 8,
 }
 
+EXAMPLE_TREEMAP_NATIVE = {
+    "alignment": {"target": "native"},
+    "name": "TreeMap at native source pixel anchor",
+    "description": (
+        "Preserves TreeMap's pixel anchor. Useful for downstream tree-list "
+        "extraction expecting exact source pixels."
+    ),
+}
+
 CREATE_TREEMAP_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_TREEMAP_MINIMAL,
@@ -59,6 +68,15 @@ CREATE_TREEMAP_OPENAPI_EXAMPLES = {
             "edge-sensitive processing needs context past the domain edge."
         ),
     },
+    "native_anchor": {
+        "value": EXAMPLE_TREEMAP_NATIVE,
+        "summary": "Preserve source pixel anchor",
+        "description": (
+            "Disables the default domain anchor. Output preserves "
+            "TreeMap's native pixel grid; will not compose with "
+            "domain-anchored grids without further alignment."
+        ),
+    },
 }
 
 ALL_TREEMAP_EXAMPLE_VALUES = [
@@ -66,4 +84,5 @@ ALL_TREEMAP_EXAMPLE_VALUES = [
     ("with_metadata", EXAMPLE_TREEMAP_WITH_METADATA),
     ("both_bands", EXAMPLE_TREEMAP_BOTH_BANDS),
     ("with_buffer", EXAMPLE_TREEMAP_WITH_BUFFER),
+    ("native_anchor", EXAMPLE_TREEMAP_NATIVE),
 ]

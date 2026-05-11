@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import rasterio
 from rasterio.crs import CRS
-from rasterio.transform import from_origin
+from rasterio.transform import from_bounds, from_origin
 from rasterio.warp import transform_bounds as rio_transform_bounds
 from shapely.geometry import box
 
@@ -212,3 +212,171 @@ def test_source_clip_bounds_non_square_resolution_expands_axes_independently():
         300.0 + x_guard,
         400.0 + y_guard,
     )
+
+
+def test_target_clip_bounds_uses_destination_resolution_when_provided():
+    """When the caller supplies a ``destination_resolution`` (e.g. for
+    ``alignment.target='native'`` with an explicit resolution), the buffer
+    must be sized in destination cells, not source-projected cells."""
+    roi = _make_roi("EPSG:32611", (100.0, 200.0, 300.0, 400.0))
+    conn = _make_connection("EPSG:32611", (30.0, -30.0))  # source: 30 m
+
+    # 4 cells of buffer at the requested 5 m destination = ±20 m.
+    result = conn._target_clip_bounds(
+        roi, interpolation_padding_cells=4, destination_resolution=5.0
+    )
+
+    assert result == (100.0 - 20.0, 200.0 - 20.0, 300.0 + 20.0, 400.0 + 20.0)
+
+
+def test_target_clip_bounds_falls_back_to_source_resolution_when_unspecified():
+    """Existing semantics for the default branch — buffer in source-derived
+    cells — must be preserved when ``destination_resolution`` is omitted."""
+    roi = _make_roi("EPSG:32611", (100.0, 200.0, 300.0, 400.0))
+    conn = _make_connection("EPSG:32611", (30.0, -30.0))
+
+    result = conn._target_clip_bounds(roi, interpolation_padding_cells=4)
+
+    # 4 cells * 30 m source resolution = ±120 m.
+    assert result == (100.0 - 120.0, 200.0 - 120.0, 300.0 + 120.0, 400.0 + 120.0)
+
+
+class TestExtractWindowDestinationBoundsClip:
+    """Bug repro for the source-clip behavior when the destination lattice
+    extends beyond the ROI.
+
+    Triggered by ``alignment.target='grid'`` aligned to a target grid that
+    has its own footprint buffer (so the destination lattice covers more
+    ground than the ROI). The destination-override branch in
+    ``_extract_window_rioxarray`` was clipping the source to ROI bounds
+    instead of destination bounds, leaving nodata in the destination's
+    collar after reprojection.
+    """
+
+    def test_destination_override_fills_destination_when_lattice_exceeds_roi(
+        self, tmp_path
+    ):
+        """End-to-end: source clip must cover the full destination lattice
+        so reproject produces no nodata cells, even when the lattice extends
+        well beyond the ROI."""
+        raster_path = tmp_path / "wide_coverage.tif"
+        _write_test_raster(
+            raster_path,
+            crs="EPSG:32611",
+            transform=from_origin(0.0, 1000.0, 1.0, 1.0),
+            width=1000,
+            height=1000,
+        )
+
+        roi = _make_roi("EPSG:32611", (400.0, 400.0, 600.0, 600.0))
+        dest_minx, dest_miny, dest_maxx, dest_maxy = 300.0, 300.0, 700.0, 700.0
+        destination_resolution = 5.0
+        width = int((dest_maxx - dest_minx) / destination_resolution)
+        height = int((dest_maxy - dest_miny) / destination_resolution)
+        destination_transform = from_bounds(
+            dest_minx, dest_miny, dest_maxx, dest_maxy, width, height
+        )
+
+        conn = RasterConnection(str(raster_path))
+        result = conn.extract_window(
+            roi,
+            interpolation_padding_cells=0,
+            destination_crs=roi.crs,
+            destination_transform=destination_transform,
+            destination_shape=(height, width),
+        )
+
+        values = result.values
+        nodata = result.rio.nodata
+        assert (result.sizes["y"], result.sizes["x"]) == (height, width)
+        assert not np.any(np.isnan(values)), (
+            "Destination has NaN cells outside the source clip"
+        )
+        if nodata is not None:
+            assert not np.any(values == nodata), (
+                f"Destination has nodata ({nodata}) cells outside the source clip"
+            )
+        # Source raster is filled with arange — every covered cell is finite
+        # and >= 0; assert the full destination is populated.
+        assert (values >= 0).all()
+
+    def test_destination_override_source_clip_uses_destination_bounds(self, tmp_path):
+        """Same-CRS unit check: clip_box is called with destination bounds
+        (plus reprojection guard), not ROI bounds + padding."""
+        raster_path = tmp_path / "src.tif"
+        _write_test_raster(
+            raster_path,
+            crs="EPSG:32611",
+            transform=from_origin(0.0, 1000.0, 1.0, 1.0),
+            width=1000,
+            height=1000,
+        )
+        conn = RasterConnection(str(raster_path))
+
+        clip_calls: list[tuple] = []
+        original_clip_box = conn.raster.rio.clip_box
+
+        def recording_clip_box(*args, **kwargs):
+            clip_calls.append(args)
+            return original_clip_box(*args, **kwargs)
+
+        with patch.object(conn.raster.rio, "clip_box", side_effect=recording_clip_box):
+            roi = _make_roi("EPSG:32611", (400.0, 400.0, 600.0, 600.0))
+            destination_transform = from_bounds(300.0, 300.0, 700.0, 700.0, 80, 80)
+            conn.extract_window(
+                roi,
+                interpolation_padding_cells=0,
+                destination_crs=roi.crs,
+                destination_transform=destination_transform,
+                destination_shape=(80, 80),
+            )
+
+        assert clip_calls, "clip_box was not called"
+        clip_args = clip_calls[0]
+        guard = REPROJECTION_GUARD_CELLS * 1.0
+        assert clip_args == pytest.approx(
+            (300.0 - guard, 300.0 - guard, 700.0 + guard, 700.0 + guard)
+        ), (
+            "Destination-override path must clip the source to the destination "
+            "bounds (not the ROI bounds) so reproject can fill the full lattice."
+        )
+
+
+def test_extract_window_native_with_resolution_buffers_at_destination_resolution(
+    tmp_path,
+):
+    """Integration check for the CRS-only override path. With a 1 m source,
+    a 5 m destination resolution, and 4 cells of buffer, the output extent
+    must be ROI ± 4 * 5 m = ±20 m — sized in destination cells, not source
+    cells."""
+    raster_path = tmp_path / "native_with_resolution.tif"
+    _write_test_raster(
+        raster_path,
+        crs="EPSG:32611",
+        transform=from_origin(0.0, 1000.0, 1.0, 1.0),  # 1 m source pixels
+        width=1000,
+        height=1000,
+    )
+    roi = _make_roi("EPSG:32611", (400.0, 400.0, 600.0, 600.0))
+    conn = RasterConnection(str(raster_path))
+
+    result = conn.extract_window(
+        roi,
+        interpolation_padding_cells=4,
+        destination_crs=roi.crs,
+        destination_resolution=5.0,
+    )
+
+    # ROI is 200 m x 200 m. Buffer = 4 * 5 m = 20 m. Padded extent = 240 m.
+    # At 5 m cells that is 48 cells per axis. (Cell counts at the edges may
+    # vary by ±1 due to rio.reproject snapping; assert the buffered footprint.)
+    minx, miny, maxx, maxy = (
+        float(result.x.min()) - 2.5,
+        float(result.y.min()) - 2.5,
+        float(result.x.max()) + 2.5,
+        float(result.y.max()) + 2.5,
+    )
+    assert minx == pytest.approx(380.0, abs=5.0)
+    assert maxx == pytest.approx(620.0, abs=5.0)
+    assert miny == pytest.approx(380.0, abs=5.0)
+    assert maxy == pytest.approx(620.0, abs=5.0)

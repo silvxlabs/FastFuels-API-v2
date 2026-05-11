@@ -8,7 +8,13 @@ from math import ceil, isclose
 
 from fastapi import HTTPException, status
 
+from api.db.documents import get_document_async
+from api.resources.grids.alignment import (
+    GridAlignmentGridTarget,
+    GridAlignmentSpecification,
+)
 from api.resources.grids.schema import GridDataChunkMetadata
+from lib.config import GRIDS_COLLECTION
 
 # Tolerance for comparing floating-point grid transform coefficients in meters.
 # 1e-6 m = 1 micrometer; well below any realistic raster precision.
@@ -110,11 +116,15 @@ def validate_grid_resolution_matches(
     reference_data: dict,
     reference_id: str,
 ) -> None:
-    """Validate that a grid has the same cell size as a reference grid.
+    """Validate that a grid shares CRS, transform, and shape (XY plane) with
+    a reference grid.
 
-    All grids in a domain share the same CRS and the same domain bbox (v2
-    invariants). So matching `dx` (transform[0]) is sufficient to confirm
-    two grids share a lattice — origin and shape follow.
+    Once the alignment field landed (#205), grids on a domain are not
+    guaranteed to share an origin — different fetchers can opt into
+    ``target="native"`` and end up offset. Composition therefore requires
+    matching the full transform (cell size *and* origin) along with CRS.
+    For 3D grids, only the XY transform/shape are compared (z is checked
+    elsewhere).
 
     Args:
         grid_data: Grid document data from Firestore.
@@ -123,20 +133,84 @@ def validate_grid_resolution_matches(
         reference_id: Reference grid ID (for error messages).
 
     Raises:
-        HTTPException(422): On cell-size mismatch.
+        HTTPException(422): On CRS, transform, or XY shape mismatch.
     """
-    grid_dx = grid_data["georeference"]["transform"][0]
-    ref_dx = reference_data["georeference"]["transform"][0]
-    if not isclose(grid_dx, ref_dx, abs_tol=_TRANSFORM_ABS_TOL):
+    grid_georef = grid_data["georeference"]
+    ref_georef = reference_data["georeference"]
+
+    grid_crs = grid_georef.get("crs")
+    ref_crs = ref_georef.get("crs")
+    if grid_crs != ref_crs:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                f"Grid {grid_id} cell size ({grid_dx} m) does not match "
-                f"canopy grid {reference_id} ({ref_dx} m). Run "
-                f"POST /v2/domains/{{domain_id}}/grids/{grid_id}/resample "
-                f"before exporting."
+                f"Grid {grid_id} CRS ({grid_crs}) does not match "
+                f"reference grid {reference_id} ({ref_crs}). Run "
+                f"POST /v2/domains/{{domain_id}}/grids/resample "
+                f'with alignment.target="grid" to align.'
             ),
         )
+
+    grid_transform = grid_georef["transform"]
+    ref_transform = ref_georef["transform"]
+    transforms_match = all(
+        isclose(g, r, abs_tol=_TRANSFORM_ABS_TOL)
+        for g, r in zip(grid_transform, ref_transform)
+    )
+    if not transforms_match:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Grid {grid_id} transform {grid_transform} does not match "
+                f"reference grid {reference_id} {ref_transform}. The grids "
+                f"have different cell sizes or origins. Run "
+                f"POST /v2/domains/{{domain_id}}/grids/resample "
+                f'with alignment.target="grid" to align.'
+            ),
+        )
+
+    grid_xy_shape = tuple(grid_georef["shape"][-2:])
+    ref_xy_shape = tuple(ref_georef["shape"][-2:])
+    if grid_xy_shape != ref_xy_shape:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Grid {grid_id} XY shape {grid_xy_shape} does not match "
+                f"reference grid {reference_id} {ref_xy_shape}. Run "
+                f"POST /v2/domains/{{domain_id}}/grids/resample "
+                f'with alignment.target="grid" to align.'
+            ),
+        )
+
+
+async def validate_target_grid_alignment(
+    alignment: GridAlignmentSpecification,
+    owner_id: str,
+    domain_id: str,
+) -> None:
+    """When ``alignment.target == "grid"``, verify the named target grid
+    exists, is owned by ``owner_id``, lives in ``domain_id``, is completed,
+    and has a georeference. No-op for other alignment targets.
+
+    Owner and domain mismatches return 404 (not 403) to avoid leaking
+    document existence. Status mismatches return 422.
+
+    Raises:
+        HTTPException(404): Target grid missing, owned by another user, or
+            in another domain.
+        HTTPException(422): Target grid is not completed or has no
+            georeference.
+    """
+    if not isinstance(alignment, GridAlignmentGridTarget):
+        return
+    _, snapshot = await get_document_async(
+        GRIDS_COLLECTION,
+        alignment.grid_id,
+        owner_id=owner_id,
+        domain_id=domain_id,
+        document_status="completed",
+    )
+    validate_grid_has_georeference(snapshot.to_dict(), alignment.grid_id)
 
 
 def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:

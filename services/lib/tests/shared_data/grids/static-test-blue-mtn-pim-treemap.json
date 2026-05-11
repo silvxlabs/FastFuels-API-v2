@@ -19,6 +19,7 @@
     ]
   },
   "description": "",
+  "error": null,
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [
@@ -26,12 +27,12 @@
       45
     ],
     "transform": [
-      29.93829257818288,
+      29.438767164252283,
       0.0,
-      720204.4533727871,
+      720227.9398802927,
       0.0,
-      -29.938292578183884,
-      5190659.976881769
+      -29.438767164262632,
+      5190646.487014395
     ]
   },
   "modifications": [],
@@ -41,6 +42,11 @@
     "percent": 100
   },
   "source": {
+    "alignment": {
+      "method": null,
+      "resolution": null,
+      "target": "domain"
+    },
     "bands": [
       "tm_id"
     ],

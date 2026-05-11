@@ -106,7 +106,66 @@ rioxarray handles:
 - Clipping: `data.rio.clip()`
 - Writing: `data.rio.to_raster()` or `data.to_zarr()`
 
-### 4. Infrastructure in the Orchestrator
+### 4. Single reprojection per fetch
+
+Every external-source handler reprojects data exactly once per band. The
+fold happens inside `RasterConnection.extract_window`: pass an alignment
+destination (`destination_crs` + `destination_transform` + `destination_shape`)
+and the single `rio.reproject` call lands the source pixels at the right
+lattice. There is no second alignment pass on top.
+
+The handler is responsible for resolving the alignment dict (from the
+persisted grid source document) into destination kwargs via
+`lib.alignment.resolve_alignment_destination`:
+
+```python
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
+
+dest = resolve_alignment_destination(
+    alignment,
+    roi,
+    target_grid_doc,
+    raster.raster_x_resolution,
+    extent_buffer_cells=extent_buffer_cells,
+)
+data = raster.extract_window(
+    roi=roi,
+    interpolation_padding_cells=extent_buffer_cells,
+    resampling=RESAMPLING_METHOD_MAP[method_name],
+    destination_resolution=alignment.get("resolution")
+        if alignment["target"] == "native" else None,
+    **dest,
+)
+```
+
+`method_name` is one of the public API names (`"nearest"`, `"bilinear"`,
+…, `"median"`, `"root_mean_square"`, etc.) — `RESAMPLING_METHOD_MAP`
+translates them to `rasterio.enums.Resampling` members and excludes
+`gauss`, which `rasterio.warp.reproject` rejects.
+
+`extent_buffer_cells` must be passed to *both* `resolve_alignment_destination`
+(so the destination lattice for `target="domain"` and `target="grid"`
+includes the buffer — the trailing clip is skipped on those paths) and
+`extract_window` (so the source clip and the CRS-only-override clip are
+sized correctly).
+
+`resolve_alignment_destination` returns:
+- `{}` for `target="native"` with no resolution change → `extract_window`
+  takes its default branch (reproject to ROI CRS, clip).
+- `{destination_crs}` for `target="native"` with a custom resolution →
+  CRS-only branch (reproject preserving anchor, then clip — clip uses
+  `destination_resolution` for the buffer).
+- `{destination_crs, destination_transform, destination_shape}` for
+  `target="domain"` and `target="grid"` → reproject directly to the
+  exact lattice; the buffer is baked into the lattice.
+
+The 3DEP topography handler is the one exception. It fetches at native
+source resolution so `numpy.gradient` produces correct slope/aspect
+values, then performs a single end-of-pipeline `rio.reproject` to the
+alignment destination — two reprojections by design, justified by the
+gradient computation.
+
+### 5. Infrastructure in the Orchestrator
 
 All infrastructure concerns (Firestore, GCS, progress, status) live in `main.py`. Handlers never touch infrastructure.
 
@@ -298,14 +357,7 @@ def lookup_fbfm40(
 ```python
 # handlers/resample.py
 
-from rasterio.enums import Resampling
-
-RESAMPLING_METHODS = {
-    "nearest": Resampling.nearest,
-    "bilinear": Resampling.bilinear,
-    "cubic": Resampling.cubic,
-    "lanczos": Resampling.lanczos,
-}
+from lib.alignment import RESAMPLING_METHOD_MAP
 
 def resample(
     source: xr.DataArray,
@@ -318,26 +370,24 @@ def resample(
     Args:
         source: Input DataArray
         resolution: Target resolution in CRS units (usually meters)
-        method: Default resampling method
+        method: Default resampling method (public API name, e.g. "bilinear")
         method_overrides: Per-band overrides, e.g., {"fbfm": "nearest"}
     """
     overrides = method_overrides or {}
 
     if "band" not in source.dims:
-        # Single band
-        resampling = RESAMPLING_METHODS[method]
+        resampling = RESAMPLING_METHOD_MAP[method]
         return source.rio.reproject(source.rio.crs, resolution=resolution, resampling=resampling)
 
-    # Multi-band: handle overrides
     bands = []
     for band_name in source.coords["band"].values:
         band_data = source.sel(band=band_name)
         method_name = overrides.get(band_name, method)
-        method = RESAMPLING_METHODS[method_name]
+        resampling = RESAMPLING_METHOD_MAP[method_name]
         resampled = band_data.rio.reproject(
             band_data.rio.crs,
             resolution=resolution,
-            resampling=method,
+            resampling=resampling,
         )
         bands.append(resampled)
     return xr.concat(bands, dim="band")

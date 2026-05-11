@@ -18,6 +18,7 @@ from rioxarray.merge import merge_arrays
 
 from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import TABLES_BUCKET
 from lib.raster import RasterConnection, cog_env
 
@@ -62,10 +63,18 @@ def _process_intersecting_tiles(
     gdal_env: dict[str, str],
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int,
+    alignment: dict,
+    target_grid_doc: dict | None,
 ) -> tuple[xr.Dataset, TileMetadata]:
-    """Shared core processing logic for CHM extractions."""
+    """Shared core processing logic for CHM extractions.
+
+    Each tile's ``extract_window`` is called with the alignment destination
+    so all tiles share the same output transform/shape; ``merge_arrays``
+    then mosaics them with nodata-aware compositing.
+    """
     n_tiles = len(fetch_urls)
     tile_arrays = []
+    method_name = alignment.get("method") or "bilinear"
 
     with cog_env(**gdal_env):
         for i, (url, scale) in enumerate(zip(fetch_urls, scale_factors)):
@@ -75,9 +84,21 @@ def _process_intersecting_tiles(
             )
 
             raster = RasterConnection(url, connection_type="rioxarray", cache=True)
+            dest = resolve_alignment_destination(
+                alignment,
+                roi,
+                target_grid_doc,
+                raster.target_native_resolution(roi)[0],
+                extent_buffer_cells=extent_buffer_cells,
+            )
             data = raster.extract_window(
                 roi=roi,
                 interpolation_padding_cells=extent_buffer_cells,
+                resampling=RESAMPLING_METHOD_MAP[method_name],
+                destination_resolution=alignment.get("resolution")
+                if alignment["target"] == "native"
+                else None,
+                **dest,
             )
 
             # Squeeze band dimension to satisfy strict 2D requirements
@@ -121,8 +142,25 @@ def fetch_meta_chm(
     version: str,
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
 ) -> tuple[xr.Dataset, TileMetadata]:
-    """Fetch Meta global canopy height model data."""
+    """Fetch Meta global canopy height model data.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest
+        version: Meta CHM version ("1" or "2")
+        progress: Progress callback
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+
+    Returns:
+        Tuple of (Dataset with the ``chm`` variable, tile metadata dict).
+    """
+    alignment = alignment or {"target": "domain"}
     progress("Loading Meta CHM parquet index...", 10)
 
     config = META_VERSION_CONFIG[version]
@@ -154,6 +192,8 @@ def fetch_meta_chm(
         gdal_env={"AWS_NO_SIGN_REQUEST": "YES"},
         progress=progress,
         extent_buffer_cells=extent_buffer_cells,
+        alignment=alignment,
+        target_grid_doc=target_grid_doc,
     )
 
 
@@ -161,8 +201,24 @@ def fetch_naip_chm(
     roi: gpd.GeoDataFrame,
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
 ) -> tuple[xr.Dataset, TileMetadata]:
-    """Fetch NAIP high-resolution canopy height model data."""
+    """Fetch NAIP high-resolution canopy height model data.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest
+        progress: Progress callback
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+
+    Returns:
+        Tuple of (Dataset with the ``chm`` variable, tile metadata dict).
+    """
+    alignment = alignment or {"target": "domain"}
     progress("Loading NAIP CHM parquet index...", 10)
 
     try:
@@ -197,4 +253,6 @@ def fetch_naip_chm(
         gdal_env={},  # Standard HTTP requests require no auth config
         progress=progress,
         extent_buffer_cells=extent_buffer_cells,
+        alignment=alignment,
+        target_grid_doc=target_grid_doc,
     )

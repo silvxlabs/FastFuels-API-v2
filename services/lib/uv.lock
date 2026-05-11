@@ -767,6 +767,7 @@ gcs = [
     { name = "google-cloud-storage" },
 ]
 raster = [
+    { name = "affine" },
     { name = "geopandas" },
     { name = "numpy" },
     { name = "rasterio" },
@@ -791,6 +792,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "affine", marker = "extra == 'raster'", specifier = ">=2.4.0" },
     { name = "dask", marker = "extra == 'zarr'", specifier = ">=2024.0.0" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.2.0" },

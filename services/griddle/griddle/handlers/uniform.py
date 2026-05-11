@@ -12,7 +12,7 @@ import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
 
-from lib.domain_utils import domain_anchored_transform
+from lib.alignment import lattice_from_bounds
 
 
 def create_uniform_grid(
@@ -43,7 +43,9 @@ def create_uniform_grid(
 
     # Compute the domain-anchored lattice (transform + shape) shared with
     # every external-source fetcher.
-    transform, (height, width) = domain_anchored_transform(domain_gdf, resolution)
+    transform, (height, width) = lattice_from_bounds(
+        tuple(domain_gdf.total_bounds), resolution
+    )
 
     # Map quantity values to their band keys
     # The quantity enum value IS the key (e.g., "fuel_moisture.1hr")

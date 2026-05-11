@@ -9,6 +9,9 @@ Handles Firestore serialization quirks:
 import json
 
 import geopandas as gpd
+from affine import Affine
+
+from lib.alignment import lattice_from_bounds
 
 
 class EmptyDomainError(Exception):
@@ -66,3 +69,13 @@ def parse_domain_gdf(domain_data: dict) -> gpd.GeoDataFrame:
         raise InvalidGeometryError(f"Failed to parse domain geometry: {e}") from e
 
     return gdf
+
+
+def domain_anchored_transform(
+    domain_gdf: gpd.GeoDataFrame,
+    resolution: float,
+) -> tuple[Affine, tuple[int, int]]:
+    """Return (transform, (height, width)) for a grid anchored at the
+    domain's lower-left corner with cell size `resolution`. The shape is
+    sized to cover the domain bounds via ceil()."""
+    return lattice_from_bounds(tuple(domain_gdf.total_bounds), resolution)

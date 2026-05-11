@@ -9,16 +9,22 @@ Tests cover:
 - Error handling for missing/empty source grids
 - Progress callback behavior
 - Zarr round-trip with Dataset.rio.to_raster()
+
+All tests use ``alignment={"target": "native", "resolution": ...}`` so the
+output preserves the source pixel anchor; the resolution change is what's
+under test, not the lattice anchor (covered by alignment-specific tests).
 """
 
 from unittest.mock import MagicMock, patch
 
+import geopandas as gpd
 import numpy as np
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.errors import ProcessingError
 from griddle.handlers.resample import resample_grid
+from shapely.geometry import box
 
 from lib.zarr_utils import load_zarr, save_zarr
 
@@ -65,6 +71,26 @@ def _make_mock_source_ds(
     return ds
 
 
+def _domain_gdf(crs="EPSG:32611"):
+    """Domain covering the synthetic source-data extent (Blue Mountain area)."""
+    return gpd.GeoDataFrame(
+        {
+            "geometry": [
+                box(719959.803, 5190907.682 - 300.0, 719959.803 + 300.0, 5190907.682)
+            ]
+        },
+        crs=crs,
+    )
+
+
+def _native_alignment(resolution: float) -> dict:
+    return {"target": "native", "resolution": resolution}
+
+
+def _band_types(*names: str, kind: str = "continuous") -> dict[str, str]:
+    return {n: kind for n in names}
+
+
 class TestResampleGrid:
     """Tests for the resample_grid function."""
 
@@ -79,9 +105,11 @@ class TestResampleGrid:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment=_native_alignment(10.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("elevation"),
             progress=progress,
         )
 
@@ -106,9 +134,11 @@ class TestResampleGrid:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=30.0,
-            method="bilinear",
+            alignment=_native_alignment(30.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("elevation"),
             progress=progress,
         )
 
@@ -134,9 +164,11 @@ class TestResampleGrid:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment=_native_alignment(10.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("fbfm", "canopy_cover", "canopy_height"),
             progress=progress,
         )
 
@@ -172,11 +204,15 @@ class TestResampleGrid:
         mock_load_zarr.return_value = _make_mock_source_ds(variables, resolution=30.0)
         progress = MagicMock()
 
+        # alignment.method=bilinear is the global default; method_overrides flips
+        # fbfm to nearest. This exercises both overrides and continuous fallback.
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment={"target": "native", "resolution": 10.0, "method": "bilinear"},
             method_overrides={"fbfm": "nearest"},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("fbfm", "canopy_cover"),
             progress=progress,
         )
 
@@ -212,9 +248,11 @@ class TestResampleGrid:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment=_native_alignment(10.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("elevation"),
             progress=progress,
         )
 
@@ -232,9 +270,11 @@ class TestResampleGrid:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment=_native_alignment(10.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("elevation"),
             progress=progress,
         )
 
@@ -253,9 +293,11 @@ class TestResampleGrid:
         with pytest.raises(ProcessingError) as exc_info:
             resample_grid(
                 source_grid_id="missing-grid",
-                target_resolution=10.0,
-                method="bilinear",
+                alignment=_native_alignment(10.0),
                 method_overrides={},
+                domain_gdf=_domain_gdf(),
+                target_grid_doc=None,
+                band_types=_band_types("elevation"),
                 progress=progress,
             )
 
@@ -270,9 +312,11 @@ class TestResampleGrid:
         with pytest.raises(ProcessingError) as exc_info:
             resample_grid(
                 source_grid_id="test-grid",
-                target_resolution=10.0,
-                method="bilinear",
+                alignment=_native_alignment(10.0),
                 method_overrides={},
+                domain_gdf=_domain_gdf(),
+                target_grid_doc=None,
+                band_types={},
                 progress=progress,
             )
 
@@ -289,9 +333,11 @@ class TestResampleGrid:
 
         resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment=_native_alignment(10.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("elevation"),
             progress=progress,
         )
 
@@ -312,15 +358,116 @@ class TestResampleGrid:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment={"target": "native", "resolution": 10.0, "method": "bilinear"},
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("fbfm", "canopy_cover"),
             progress=progress,
         )
 
         assert set(result.data_vars) == {"fbfm", "canopy_cover"}
         for var_name in result.data_vars:
             assert result[var_name].dims == ("y", "x")
+
+
+class TestResampleAlignment:
+    """Coverage for the three alignment targets supported by resample."""
+
+    @patch("griddle.handlers.resample.load_zarr")
+    def test_domain_target_anchors_at_domain_origin(self, mock_load_zarr):
+        """target='domain' lands the output at the domain's lower-left."""
+        data = np.random.rand(20, 20)
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            {"elevation": data}, resolution=30.0
+        )
+        domain = _domain_gdf()
+        progress = MagicMock()
+
+        result = resample_grid(
+            source_grid_id="test-grid",
+            alignment={"target": "domain", "resolution": 10.0},
+            method_overrides={},
+            domain_gdf=domain,
+            target_grid_doc=None,
+            band_types=_band_types("elevation"),
+            progress=progress,
+        )
+
+        transform = result["elevation"].rio.transform()
+        domain_minx = domain.total_bounds[0]
+        domain_maxy = domain.total_bounds[3]
+        # Anchor: transform.c == domain.minx, transform.f == domain.maxy.
+        assert transform.c == pytest.approx(domain_minx)
+        assert transform.f == pytest.approx(domain_maxy)
+        assert abs(transform.a) == pytest.approx(10.0)
+
+    @patch("griddle.handlers.resample.load_zarr")
+    def test_grid_target_exact_match(self, mock_load_zarr):
+        """target='grid' with no resolution yields exact transform/shape."""
+        data = np.random.rand(20, 20)
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            {"elevation": data}, resolution=30.0
+        )
+        target_grid_doc = {
+            "georeference": {
+                "crs": "EPSG:32611",
+                "transform": (5.0, 0.0, 720100.0, 0.0, -5.0, 5190800.0),
+                "shape": (40, 40),
+            }
+        }
+        progress = MagicMock()
+
+        result = resample_grid(
+            source_grid_id="test-grid",
+            alignment={"target": "grid", "grid_id": "x"},
+            method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=target_grid_doc,
+            band_types=_band_types("elevation"),
+            progress=progress,
+        )
+
+        transform = result["elevation"].rio.transform()
+        assert transform.c == pytest.approx(720100.0)
+        assert transform.f == pytest.approx(5190800.0)
+        assert abs(transform.a) == pytest.approx(5.0)
+        assert result["elevation"].shape == (40, 40)
+
+    @patch("griddle.handlers.resample.load_zarr")
+    def test_grid_target_with_new_resolution(self, mock_load_zarr):
+        """target='grid' with explicit resolution preserves origin, recomputes shape."""
+        data = np.random.rand(20, 20)
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            {"elevation": data}, resolution=30.0
+        )
+        # Target grid: 30m cells, 10x10, anchored at (720100, 5190200) lower-left.
+        target_grid_doc = {
+            "georeference": {
+                "crs": "EPSG:32611",
+                "transform": (30.0, 0.0, 720100.0, 0.0, -30.0, 5190500.0),
+                "shape": (10, 10),
+            }
+        }
+        progress = MagicMock()
+
+        result = resample_grid(
+            source_grid_id="test-grid",
+            alignment={"target": "grid", "grid_id": "x", "resolution": 10.0},
+            method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=target_grid_doc,
+            band_types=_band_types("elevation"),
+            progress=progress,
+        )
+
+        transform = result["elevation"].rio.transform()
+        # Anchor is preserved (target's lower-left); cell size is 10m.
+        assert transform.c == pytest.approx(720100.0)
+        assert transform.f == pytest.approx(5190500.0)
+        assert abs(transform.a) == pytest.approx(10.0)
+        # Shape: target bounds 300x300 / 10m = 30x30
+        assert result["elevation"].shape == (30, 30)
 
 
 class TestResampleZarrRoundTrip:
@@ -343,9 +490,11 @@ class TestResampleZarrRoundTrip:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment=_native_alignment(10.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("fuel_load.1hr", "fuel_depth", "savr.1hr"),
             progress=progress,
         )
 
@@ -372,9 +521,11 @@ class TestResampleZarrRoundTrip:
 
         result = resample_grid(
             source_grid_id="test-grid",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment=_native_alignment(10.0),
             method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("fuel_load.1hr", "fuel_depth", "savr.1hr"),
             progress=progress,
         )
 

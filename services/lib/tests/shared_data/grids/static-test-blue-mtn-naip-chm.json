@@ -19,19 +19,20 @@
     ]
   },
   "description": "",
+  "error": null,
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [
-      1471,
-      2178
+      1470,
+      2177
     ],
     "transform": [
-      0.5999999999977861,
+      0.5999999999999787,
       0.0,
-      720227.3999980732,
+      720227.9398802927,
       0.0,
-      -0.5999999999980994,
-      5190645.600121199
+      -0.6,
+      5190645.323999467
     ]
   },
   "modifications": [],
@@ -41,6 +42,11 @@
     "percent": 100
   },
   "source": {
+    "alignment": {
+      "method": null,
+      "resolution": null,
+      "target": "domain"
+    },
     "description": "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)",
     "extent_buffer_cells": 0,
     "name": "chm",

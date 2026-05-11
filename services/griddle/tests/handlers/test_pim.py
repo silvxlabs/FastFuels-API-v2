@@ -72,7 +72,9 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id"], progress, alignment={"target": "native"}
+        )
 
         assert isinstance(result, xr.Dataset)
 
@@ -84,7 +86,9 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id"], progress, alignment={"target": "native"}
+        )
 
         assert "tm_id" in result.data_vars
 
@@ -96,7 +100,9 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id"], progress, alignment={"target": "native"}
+        )
 
         assert "plt_cn" not in result.data_vars
 
@@ -108,7 +114,9 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id"], progress, alignment={"target": "native"}
+        )
 
         np.testing.assert_array_equal(result["tm_id"].values, tm_ids)
 
@@ -120,7 +128,9 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id"], progress, alignment={"target": "native"}
+        )
 
         assert result.rio.crs == CRS.from_epsg(32611)
 
@@ -132,7 +142,7 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        fetch_treemap(roi, "2016", ["tm_id"], progress)
+        fetch_treemap(roi, "2016", ["tm_id"], progress, alignment={"target": "native"})
 
         url = mock_raster_cls.call_args[0][0]
         assert "TreeMap2016.tif" in url
@@ -146,7 +156,7 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        fetch_treemap(roi, "2022", ["tm_id"], progress)
+        fetch_treemap(roi, "2022", ["tm_id"], progress, alignment={"target": "native"})
 
         call_kwargs = mock_raster.extract_window.call_args[1]
         assert call_kwargs["interpolation_padding_cells"] == 0
@@ -161,7 +171,14 @@ class TestFetchTreemapTmIdOnly:
         roi = MagicMock()
         progress = MagicMock()
 
-        fetch_treemap(roi, "2022", ["tm_id"], progress, extent_buffer_cells=buffer)
+        fetch_treemap(
+            roi,
+            "2022",
+            ["tm_id"],
+            progress,
+            extent_buffer_cells=buffer,
+            alignment={"target": "native"},
+        )
 
         assert (
             mock_raster.extract_window.call_args[1]["interpolation_padding_cells"]
@@ -184,7 +201,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id", "plt_cn"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
+        )
 
         assert "plt_cn" in result.data_vars
 
@@ -201,7 +220,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id", "plt_cn"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
+        )
 
         expected = np.array(
             [[2232677010690, 2232677010691], [2232677010692, 2232677010693]],
@@ -221,7 +242,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id", "plt_cn"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
+        )
 
         assert result["plt_cn"].shape == result["tm_id"].shape
 
@@ -236,7 +259,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id", "plt_cn"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
+        )
 
         # TM_ID=99 is within lookup range (max TM_ID=2) -> out of range -> 0
         # Actually 99 > max(1,2)=2, so it gets clipped and then zeroed
@@ -255,7 +280,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["tm_id", "plt_cn"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
+        )
 
         assert result["plt_cn"].values[0, 1] == 0  # TM_ID=-1 -> 0
         # TM_ID=0 -> lookup[0] which is 0 (initialized to zero)
@@ -271,7 +298,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["plt_cn"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["plt_cn"], progress, alignment={"target": "native"}
+        )
 
         assert "plt_cn" in result.data_vars
         assert "tm_id" not in result.data_vars
@@ -286,7 +315,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        result = fetch_treemap(roi, "2022", ["plt_cn"], progress)
+        result = fetch_treemap(
+            roi, "2022", ["plt_cn"], progress, alignment={"target": "native"}
+        )
 
         assert result.rio.crs == CRS.from_epsg(32610)
 
@@ -300,7 +331,9 @@ class TestFetchTreemapPltCn:
         roi = MagicMock()
         progress = MagicMock()
 
-        fetch_treemap(roi, "2022", ["tm_id", "plt_cn"], progress)
+        fetch_treemap(
+            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
+        )
 
         progress.assert_called()
         messages = [call[0][0] for call in progress.call_args_list]
@@ -338,7 +371,7 @@ class TestTreemapVersionColumns:
         roi = MagicMock()
         progress = MagicMock()
 
-        fetch_treemap(roi, "2016", ["plt_cn"], progress)
+        fetch_treemap(roi, "2016", ["plt_cn"], progress, alignment={"target": "native"})
 
         # Check parquet was read with correct column names
         call_kwargs = mock_read_parquet.call_args[1]
@@ -356,7 +389,7 @@ class TestTreemapVersionColumns:
         roi = MagicMock()
         progress = MagicMock()
 
-        fetch_treemap(roi, "2016", ["plt_cn"], progress)
+        fetch_treemap(roi, "2016", ["plt_cn"], progress, alignment={"target": "native"})
 
         url = mock_read_parquet.call_args[0][0]
         assert "TreeMap2016_tree_table.parquet" in url

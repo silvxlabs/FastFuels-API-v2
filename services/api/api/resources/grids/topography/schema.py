@@ -123,11 +123,13 @@ class CreateThreeDepTopographyRequest(CreateSourceGridRequestBase):
     """Request to create a grid from 3DEP topographic data.
 
     Returns a grid with one or more continuous bands: elevation (m),
-    slope (degrees), and/or aspect (degrees). Resolution is user-selectable:
-    1m, 10m (default), or 30m.
+    slope (degrees), and/or aspect (degrees).
+
+    `source_resolution` selects the 3DEP product family (1m, 10m, or 30m).
+    To change the *output* cell size, set ``alignment.resolution`` instead.
     """
 
-    resolution: ThreeDepResolution = ThreeDepResolution.ten_meter
+    source_resolution: ThreeDepResolution = ThreeDepResolution.ten_meter
     bands: list[TopographyBand] = Field(
         default=[TopographyBand.elevation],
         min_length=1,

@@ -146,8 +146,7 @@ def test_create_blue_mtn_fbfm40_2m(create_static_fixture, client, blue_mountain_
         endpoint="/grids/resample",
         body={
             "source_grid_id": "static-test-blue-mtn-landfire-fbfm40",
-            "resolution": 2,
-            "method": "nearest",
+            "alignment": {"target": "domain", "resolution": 2, "method": "nearest"},
         },
         static_name="static-test-blue-mtn-fbfm40-2m",
         dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm40"]},

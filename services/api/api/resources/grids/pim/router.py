@@ -76,6 +76,7 @@ async def create_treemap(
         version=body.version,
         bands=body.bands,
         extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+        alignment=body.alignment,
     )
     bands = build_treemap_bands(body.bands)
 

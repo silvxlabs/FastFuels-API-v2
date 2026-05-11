@@ -6,6 +6,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from api.resources.grids.alignment import (
+    GridAlignmentDomainTarget,
+    GridAlignmentSpecification,
+)
 from api.resources.grids.modifications import GridModification
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
@@ -127,8 +131,9 @@ class CreateGridRequestBase(BaseModel):
 class CreateSourceGridRequestBase(CreateGridRequestBase):
     """Base for raster-backed source grid creation requests.
 
-    Adds the optional `extent_buffer_cells` field shared by every endpoint that
-    fetches data from an external raster (LANDFIRE, PIM, CHM, 3DEP).
+    Adds the optional `extent_buffer_cells` field and the `alignment`
+    discriminated union shared by every endpoint that fetches data from
+    an external raster (LANDFIRE, PIM, CHM, 3DEP).
     """
 
     extent_buffer_cells: int | None = Field(
@@ -144,6 +149,16 @@ class CreateSourceGridRequestBase(CreateGridRequestBase):
             "reproject, focal filters, derivative calculations) that are "
             "sensitive to edges. If omitted, no buffer is added. Maximum: "
             "10 cells."
+        ),
+    )
+
+    alignment: GridAlignmentSpecification = Field(
+        default_factory=GridAlignmentDomainTarget,
+        description=(
+            'Per-fetch alignment target. Default `target="domain"` anchors '
+            "output cells to the domain origin so cross-source composition "
+            'works by construction. `target="native"` preserves the source '
+            'pixel anchor. `target="grid"` aligns to an existing grid by id.'
         ),
     )
 

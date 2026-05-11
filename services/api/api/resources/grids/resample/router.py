@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.resources.grids.alignment import GridAlignmentGridTarget
 from api.resources.grids.resample.examples import CREATE_RESAMPLE_OPENAPI_EXAMPLES
 from api.resources.grids.resample.schema import (
     CreateResampleRequest,
@@ -45,47 +46,44 @@ async def create_resample(
     """
     # Create Resampled Grid
 
-    Resamples an existing grid to a new spatial resolution. This is the key
-    operation for unifying grids at a common resolution (e.g., LANDFIRE 30m
-    to 2m for QUIC-Fire input).
+    Resamples an existing grid to a new spatial resolution and/or anchor.
+    This is the key operation for unifying grids on a common lattice
+    (e.g., LANDFIRE 30m to 2m for QUIC-Fire input).
 
-    The resampled grid propagates domain_id and bands from the source grid.
+    The resampled grid propagates ``domain_id`` and bands from the source grid.
 
     ## Request Body
 
     - **source_grid_id**: (required) Grid to resample. Must have status
       "completed" and a georeference.
-    - **resolution**: (required) Target resolution in meters. Minimum 1m.
-      Contact the developers if you need sub-meter resolution.
-    - **method**: (optional) Default resampling method. One of:
-      `nearest`, `bilinear`, `cubic`, `cubic_spline`, `lanczos`,
-      `average`, `mode`, `max`, `min`, `median`, `first_quartile`,
-      `third_quartile`, `sum`, `root_mean_square`. Default: `bilinear`.
-    - **method_overrides**: (optional) Per-band resampling method overrides
-      keyed by band key. Useful for using nearest-neighbor on categorical
-      bands while using bilinear on continuous bands.
-    - **name**: (optional) Name for the grid.
-    - **description**: (optional) Description.
-    - **tags**: (optional) Tags for organizing grids.
+    - **alignment**: Output alignment target. Default ``target="domain"``.
+      ``alignment.resolution`` is required for ``target="domain"`` and
+      ``target="native"``; optional for ``target="grid"`` (defaults to the
+      target grid's exact transform/shape).
+    - **method_overrides**: (optional) Per-band resampling method overrides.
+    - **name**, **description**, **tags**: (optional)
 
     ## Response
 
     Returns the created Grid with status "pending". The backend performs the
-    resampling and updates status to "completed" when ready. The georeference
-    will be null until processing completes, since the exact output shape
-    depends on the resampling result.
-
-    ## Notes
-
-    - Domain is propagated from the source grid (resampling doesn't change
-      geographic extent).
-    - Bands are propagated from the source grid (resampling only changes
-      resolution).
+    resampling and updates status to "completed" when ready.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
 
-    # Validate source grid: exists, owned, in this domain, and completed
+    alignment = body.alignment
+
+    # alignment.resolution is required for non-grid targets.
+    if alignment.target in ("domain", "native") and alignment.resolution is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"alignment.resolution is required when alignment.target is "
+                f"'{alignment.target}'."
+            ),
+        )
+
+    # Validate source grid: exists, owned, in this domain, and completed.
     _, source_snapshot = await get_document_async(
         COLLECTION,
         body.source_grid_id,
@@ -95,11 +93,9 @@ async def create_resample(
     )
     source_grid_data = source_snapshot.to_dict()
 
-    # Validate source grid has a georeference
     validate_grid_has_georeference(source_grid_data, body.source_grid_id)
 
-    # Reject 3D sources — resampling is a 2D operation. 3D grid products
-    # (e.g. tree/inventory) set a 3-tuple shape on their georeference.
+    # Reject 3D sources — resampling is a 2D operation.
     source_shape = source_grid_data["georeference"].get("shape")
     if source_shape is not None and len(source_shape) == 3:
         raise HTTPException(
@@ -110,7 +106,19 @@ async def create_resample(
             ),
         )
 
-    # Validate method override keys exist in source bands
+    # Validate target grid for alignment.target="grid".
+    if isinstance(alignment, GridAlignmentGridTarget):
+        _, target_snapshot = await get_document_async(
+            COLLECTION,
+            alignment.grid_id,
+            owner_id=owner_id,
+            domain_id=domain_id,
+            document_status="completed",
+        )
+        target_grid_data = target_snapshot.to_dict()
+        validate_grid_has_georeference(target_grid_data, alignment.grid_id)
+
+    # Validate method override keys exist in source bands.
     source_band_keys = {b["key"] for b in source_grid_data.get("bands", [])}
     invalid_keys = set(body.method_overrides.keys()) - source_band_keys
     if invalid_keys:
@@ -123,16 +131,14 @@ async def create_resample(
             ),
         )
 
-    # Propagate bands from source grid
+    # Propagate bands from source grid.
     bands = source_grid_data.get("bands", [])
 
-    # Build the new grid document
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
     source = ResampleSource(
         source_grid_id=body.source_grid_id,
-        target_resolution=body.resolution,
-        method=body.method,
+        alignment=alignment,
         method_overrides=body.method_overrides,
     )
     grid_data = {
@@ -152,10 +158,7 @@ async def create_resample(
         "owner_id": owner_id,
     }
 
-    # Write the data to Firestore
     await set_document_async(COLLECTION, grid_id, grid_data)
-
-    # Enqueue the griddle task
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
 
     return Grid(**grid_data)

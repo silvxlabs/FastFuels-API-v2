@@ -103,9 +103,9 @@ async def validate_quicfire_request(
     for role_name, source in roles:
         grid_data = grid_cache[source.grid_id]
         expected_rank, expected_unit = _ROLE_CONTRACT[role_name]
-        validate_grid_dimensionality(grid_data, source.grid_id, expected_rank)
         validate_grid_has_band(grid_data, source.grid_id, source.band)
         validate_band_unit(grid_data, source.grid_id, source.band, expected_unit)
+        validate_grid_dimensionality(grid_data, source.grid_id, expected_rank)
 
     # 5. Cell-size match against the canopy grid (which sets dx, dy, dz, nz).
     canopy_grid_id = request.canopy_bulk_density.grid_id

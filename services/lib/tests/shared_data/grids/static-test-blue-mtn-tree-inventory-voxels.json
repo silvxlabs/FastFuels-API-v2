@@ -27,6 +27,7 @@
     ]
   },
   "description": "",
+  "error": null,
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [

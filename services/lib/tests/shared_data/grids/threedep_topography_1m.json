@@ -28,7 +28,7 @@
     "description": "3DEP topographic data (elevation) at 1m from S1M",
     "name": "3dep",
     "product": "topography",
-    "resolution": 1,
+    "source_resolution": 1,
     "tile_metadata": null
   },
   "status": "pending",

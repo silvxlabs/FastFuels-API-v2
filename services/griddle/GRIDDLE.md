@@ -106,7 +106,51 @@ rioxarray handles:
 - Clipping: `data.rio.clip()`
 - Writing: `data.rio.to_raster()` or `data.to_zarr()`
 
-### 4. Infrastructure in the Orchestrator
+### 4. Single reprojection per fetch
+
+Every external-source handler reprojects data exactly once per band. The
+fold happens inside `RasterConnection.extract_window`: pass an alignment
+destination (`destination_crs` + `destination_transform` + `destination_shape`)
+and the single `rio.reproject` call lands the source pixels at the right
+lattice. There is no second alignment pass on top.
+
+The handler is responsible for resolving the alignment dict (from the
+persisted grid source document) into destination kwargs via
+`lib.alignment.resolve_alignment_destination`:
+
+```python
+from lib.alignment import resolve_alignment_destination
+from rasterio.enums import Resampling
+
+dest = resolve_alignment_destination(
+    alignment, roi, target_grid_doc, raster.raster_x_resolution
+)
+data = raster.extract_window(
+    roi=roi,
+    interpolation_padding_cells=extent_buffer_cells,
+    resampling=Resampling[method_name],
+    destination_resolution=alignment.get("resolution")
+        if alignment["target"] == "native" else None,
+    **dest,
+)
+```
+
+`resolve_alignment_destination` returns:
+- `{}` for `target="native"` with no resolution change → `extract_window`
+  takes its default branch (reproject to ROI CRS, clip).
+- `{destination_crs}` for `target="native"` with a custom resolution →
+  CRS-only branch (reproject preserving anchor, then clip).
+- `{destination_crs, destination_transform, destination_shape}` for
+  `target="domain"` and `target="grid"` → reproject directly to the
+  exact lattice; the trailing clip is skipped (destination defines extent).
+
+The 3DEP topography handler is the one exception. It fetches at native
+source resolution so `numpy.gradient` produces correct slope/aspect
+values, then performs a single end-of-pipeline `rio.reproject` to the
+alignment destination — two reprojections by design, justified by the
+gradient computation.
+
+### 5. Infrastructure in the Orchestrator
 
 All infrastructure concerns (Firestore, GCS, progress, status) live in `main.py`. Handlers never touch infrastructure.
 

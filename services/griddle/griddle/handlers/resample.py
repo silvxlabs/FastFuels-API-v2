@@ -11,11 +11,10 @@ from collections.abc import Callable
 import geopandas as gpd
 import rioxarray  # noqa: F401
 import xarray as xr
-from rasterio.enums import Resampling
 
 from griddle.errors import ProcessingError
 from griddle.storage import load_zarr
-from lib.alignment import resolve_alignment_destination
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 
 
 def resample_grid(
@@ -93,7 +92,7 @@ def resample_grid(
             method_name = (
                 "nearest" if band_types.get(var_name) == "categorical" else "bilinear"
             )
-        resampling = Resampling[method_name]
+        resampling = RESAMPLING_METHOD_MAP[method_name]
 
         if "destination_transform" in dest and "destination_shape" in dest:
             resampled = da.rio.reproject(

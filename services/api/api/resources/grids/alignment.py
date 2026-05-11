@@ -5,20 +5,18 @@ The default (`target="domain"`) lands output cells on the domain-origin
 lattice so cross-source composition works by construction. Users can opt
 into source-pixel preservation (`target="native"`) or exact alignment to
 an existing grid (`target="grid"`).
-
-`ResamplingMethod` is generated from `rasterio.enums.Resampling` so the
-supported set stays in sync with the underlying library.
 """
 
 from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
-from rasterio.enums import Resampling
+
+from lib.alignment import RESAMPLING_METHOD_MAP
 
 ResamplingMethod = StrEnum(
     "ResamplingMethod",
-    [(r.name, r.name) for r in Resampling],
+    [(name, name) for name in RESAMPLING_METHOD_MAP],
 )
 
 

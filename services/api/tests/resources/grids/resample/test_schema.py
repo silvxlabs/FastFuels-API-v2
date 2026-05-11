@@ -2,9 +2,7 @@
 Unit tests for api/v2/resources/grids/resample/schema.py
 
 Tests the resample schema models against the alignment-based design
-introduced in #205. ``ResamplingMethod`` is generated from rasterio's
-canonical enum, so the tests focus on members the project depends on
-rather than asserting an exact count.
+introduced in #205.
 """
 
 import pytest
@@ -23,11 +21,10 @@ from pydantic import ValidationError
 
 
 class TestResamplingMethod:
-    """Tests for ResamplingMethod enum (generated from rasterio.enums.Resampling)."""
+    """Tests for ResamplingMethod enum."""
 
-    def test_includes_common_methods(self):
-        names = {m.value for m in ResamplingMethod}
-        for name in (
+    def test_members(self):
+        assert {m.value for m in ResamplingMethod} == {
             "nearest",
             "bilinear",
             "cubic",
@@ -37,11 +34,12 @@ class TestResamplingMethod:
             "mode",
             "max",
             "min",
-            "med",
+            "median",
+            "first_quartile",
+            "third_quartile",
             "sum",
-            "rms",
-        ):
-            assert name in names
+            "root_mean_square",
+        }
 
     def test_can_create_from_string(self):
         method = ResamplingMethod("bilinear")
@@ -50,6 +48,12 @@ class TestResamplingMethod:
     def test_invalid_string_raises(self):
         with pytest.raises(ValueError):
             ResamplingMethod("invalid")
+
+    def test_gauss_rejected(self):
+        # gauss is in rasterio.enums.Resampling but rejected by
+        # rasterio.warp.reproject, so it must not appear in the API.
+        with pytest.raises(ValueError):
+            ResamplingMethod("gauss")
 
 
 class TestResampleSource:

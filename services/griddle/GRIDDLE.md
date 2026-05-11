@@ -119,8 +119,7 @@ persisted grid source document) into destination kwargs via
 `lib.alignment.resolve_alignment_destination`:
 
 ```python
-from lib.alignment import resolve_alignment_destination
-from rasterio.enums import Resampling
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 
 dest = resolve_alignment_destination(
     alignment,
@@ -132,12 +131,17 @@ dest = resolve_alignment_destination(
 data = raster.extract_window(
     roi=roi,
     interpolation_padding_cells=extent_buffer_cells,
-    resampling=Resampling[method_name],
+    resampling=RESAMPLING_METHOD_MAP[method_name],
     destination_resolution=alignment.get("resolution")
         if alignment["target"] == "native" else None,
     **dest,
 )
 ```
+
+`method_name` is one of the public API names (`"nearest"`, `"bilinear"`,
+…, `"median"`, `"root_mean_square"`, etc.) — `RESAMPLING_METHOD_MAP`
+translates them to `rasterio.enums.Resampling` members and excludes
+`gauss`, which `rasterio.warp.reproject` rejects.
 
 `extent_buffer_cells` must be passed to *both* `resolve_alignment_destination`
 (so the destination lattice for `target="domain"` and `target="grid"`
@@ -353,14 +357,7 @@ def lookup_fbfm40(
 ```python
 # handlers/resample.py
 
-from rasterio.enums import Resampling
-
-RESAMPLING_METHODS = {
-    "nearest": Resampling.nearest,
-    "bilinear": Resampling.bilinear,
-    "cubic": Resampling.cubic,
-    "lanczos": Resampling.lanczos,
-}
+from lib.alignment import RESAMPLING_METHOD_MAP
 
 def resample(
     source: xr.DataArray,
@@ -373,26 +370,24 @@ def resample(
     Args:
         source: Input DataArray
         resolution: Target resolution in CRS units (usually meters)
-        method: Default resampling method
+        method: Default resampling method (public API name, e.g. "bilinear")
         method_overrides: Per-band overrides, e.g., {"fbfm": "nearest"}
     """
     overrides = method_overrides or {}
 
     if "band" not in source.dims:
-        # Single band
-        resampling = RESAMPLING_METHODS[method]
+        resampling = RESAMPLING_METHOD_MAP[method]
         return source.rio.reproject(source.rio.crs, resolution=resolution, resampling=resampling)
 
-    # Multi-band: handle overrides
     bands = []
     for band_name in source.coords["band"].values:
         band_data = source.sel(band=band_name)
         method_name = overrides.get(band_name, method)
-        method = RESAMPLING_METHODS[method_name]
+        resampling = RESAMPLING_METHOD_MAP[method_name]
         resampled = band_data.rio.reproject(
             band_data.rio.crs,
             resolution=resolution,
-            resampling=method,
+            resampling=resampling,
         )
         bands.append(resampled)
     return xr.concat(bands, dim="band")

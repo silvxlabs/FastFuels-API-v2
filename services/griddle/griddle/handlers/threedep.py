@@ -15,13 +15,12 @@ import geopandas as gpd
 import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
-from rasterio.enums import Resampling
 from rioxarray.merge import merge_arrays
 from xarray import DataArray
 
 from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
-from lib.alignment import resolve_alignment_destination
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.raster import RasterConnection, cog_env
 from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
 
@@ -224,7 +223,7 @@ def _fetch_and_mosaic_tiles(
             data = raster.extract_window(
                 roi=roi,
                 interpolation_padding_cells=extent_buffer_cells,
-                resampling=Resampling[method_name],
+                resampling=RESAMPLING_METHOD_MAP[method_name],
                 destination_resolution=alignment.get("resolution")
                 if alignment["target"] == "native"
                 else None,

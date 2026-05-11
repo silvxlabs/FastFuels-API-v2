@@ -11,9 +11,8 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import xarray as xr
-from rasterio.enums import Resampling
 
-from lib.alignment import resolve_alignment_destination
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET, TABLES_BUCKET
 from lib.raster import RasterConnection, cog_env
 
@@ -71,7 +70,7 @@ def fetch_treemap(
         data = raster.extract_window(
             roi=roi,
             interpolation_padding_cells=extent_buffer_cells,
-            resampling=Resampling[method_name],
+            resampling=RESAMPLING_METHOD_MAP[method_name],
             destination_resolution=alignment.get("resolution")
             if alignment["target"] == "native"
             else None,

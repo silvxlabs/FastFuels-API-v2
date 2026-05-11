@@ -114,34 +114,41 @@ class RasterConnection:
         rioxarray. Performs a single reprojection.
 
         ``interpolation_padding_cells`` is measured in final result-grid
-        cells in the ROI CRS, not in source raster cells.
+        cells in the ROI CRS, not in source raster cells. On the
+        destination-override path the buffer is already baked into
+        ``destination_transform``/``destination_shape`` by the alignment
+        helper, so ``interpolation_padding_cells`` is effectively unused
+        there — the source clip is sized from the destination bounds
+        instead, which may extend beyond the ROI (e.g. ``target='grid'``
+        with a buffered target grid).
         """
-        # On the destination-override path the buffer is already baked into
-        # ``destination_transform``/``destination_shape`` by the alignment
-        # helper. On the CRS-only override path the clip step expands by
-        # N cells of the requested ``destination_resolution``. Both must
-        # propagate to the source clip so we fetch enough source pixels.
-        effective_destination_resolution = destination_resolution
-        if destination_transform is not None:
-            effective_destination_resolution = abs(destination_transform.a)
-
-        window = self.raster.rio.clip_box(
-            *self._source_clip_bounds(
-                roi,
-                interpolation_padding_cells,
-                destination_resolution=effective_destination_resolution,
-            )
-        )
-
         # Destination override: reproject directly to the requested lattice.
+        # Source clip must cover the full destination bounds — not the ROI —
+        # so reproject can fill every destination cell. The destination may
+        # extend beyond the ROI when target='grid' aligns to a grid with its
+        # own footprint buffer, or when extent_buffer_cells expanded the
+        # destination lattice.
         if destination_transform is not None and destination_shape is not None:
             dst_crs = destination_crs if destination_crs is not None else roi.crs
+            window = self.raster.rio.clip_box(
+                *self._source_clip_bounds_for_destination(
+                    destination_transform, destination_shape, dst_crs
+                )
+            )
             return window.rio.reproject(
                 dst_crs,
                 transform=destination_transform,
                 shape=destination_shape,
                 resampling=resampling,
             )
+
+        window = self.raster.rio.clip_box(
+            *self._source_clip_bounds(
+                roi,
+                interpolation_padding_cells,
+                destination_resolution=destination_resolution,
+            )
+        )
 
         # CRS-only override (e.g. target="native" with a custom resolution):
         # reproject preserving source-pixel anchor, optionally at a new
@@ -172,6 +179,46 @@ class RasterConnection:
 
         roi_padded = self._target_clip_bounds(roi, interpolation_padding_cells)
         return window_reprojected.rio.clip_box(*roi_padded)
+
+    def _source_clip_bounds_for_destination(
+        self,
+        destination_transform: Affine,
+        destination_shape: tuple[int, int],
+        destination_crs: CRS,
+    ) -> tuple[float, float, float, float]:
+        """Return source raster bounds covering a destination lattice.
+
+        Used by the destination-override path so the source clip covers
+        every cell ``rio.reproject`` will need to fill — including cells
+        outside the ROI when the destination lattice extends beyond it
+        (e.g. ``target='grid'`` aligned to a grid with its own footprint
+        buffer, or ``extent_buffer_cells > 0``). The destination footprint
+        is north-up by construction (``alignment.lattice_from_bounds``),
+        so ``e < 0`` and ``a > 0`` here.
+        """
+        h, w = destination_shape
+        a = destination_transform.a
+        e = destination_transform.e
+        minx = destination_transform.c
+        maxy = destination_transform.f
+        maxx = minx + w * a
+        miny = maxy + h * e
+
+        if destination_crs != self.raster_crs:
+            bounds = transform_bounds(
+                destination_crs, self.raster_crs, minx, miny, maxx, maxy
+            )
+        else:
+            bounds = (minx, miny, maxx, maxy)
+
+        x_guard = REPROJECTION_GUARD_CELLS * self.raster_x_resolution
+        y_guard = REPROJECTION_GUARD_CELLS * self.raster_y_resolution
+        return (
+            bounds[0] - x_guard,
+            bounds[1] - y_guard,
+            bounds[2] + x_guard,
+            bounds[3] + y_guard,
+        )
 
     def _source_clip_bounds(
         self,

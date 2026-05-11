@@ -12,14 +12,16 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.resources.grids.alignment import GridAlignmentGridTarget
 from api.resources.grids.resample.examples import CREATE_RESAMPLE_OPENAPI_EXAMPLES
 from api.resources.grids.resample.schema import (
     CreateResampleRequest,
     ResampleSource,
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
-from api.resources.grids.utils import validate_grid_has_georeference
+from api.resources.grids.utils import (
+    validate_grid_has_georeference,
+    validate_target_grid_alignment,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -106,17 +108,7 @@ async def create_resample(
             ),
         )
 
-    # Validate target grid for alignment.target="grid".
-    if isinstance(alignment, GridAlignmentGridTarget):
-        _, target_snapshot = await get_document_async(
-            COLLECTION,
-            alignment.grid_id,
-            owner_id=owner_id,
-            domain_id=domain_id,
-            document_status="completed",
-        )
-        target_grid_data = target_snapshot.to_dict()
-        validate_grid_has_georeference(target_grid_data, alignment.grid_id)
+    await validate_target_grid_alignment(alignment, owner_id, domain_id)
 
     # Validate method override keys exist in source bands.
     source_band_keys = {b["key"] for b in source_grid_data.get("bands", [])}

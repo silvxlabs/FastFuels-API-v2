@@ -234,3 +234,114 @@ class TestResolveAlignmentInvalid:
                 None,
                 30.0,
             )
+
+
+class TestResolveAlignmentExtentBuffer:
+    """``extent_buffer_cells`` must extend the destination lattice by N
+    output cells on every side for ``target='domain'`` and ``target='grid'``.
+    For ``target='native'`` the buffer is applied at the clip step inside
+    ``extract_window`` and the helper passes through unchanged.
+    """
+
+    def test_domain_target_expands_lattice_by_n_cells(self):
+        domain = _make_domain()
+        dest = resolve_alignment_destination(
+            {"target": "domain", "resolution": 2.0},
+            domain,
+            None,
+            30.0,
+            extent_buffer_cells=4,
+        )
+        # 500 / 2 = 250 cells + 8 buffer = 258; 400 / 2 = 200 + 8 = 208.
+        assert dest["destination_shape"] == (208, 258)
+        # Origin shifts by 4 cells * 2 m = 8 m left/down.
+        assert dest["destination_transform"].c == pytest.approx(500_000.0 - 8.0)
+
+    def test_domain_target_expands_at_native_resolution_when_unspecified(self):
+        domain = _make_domain()
+        dest = resolve_alignment_destination(
+            {"target": "domain"},
+            domain,
+            None,
+            source_native_resolution=30.0,
+            extent_buffer_cells=2,
+        )
+        # 500/30 ceil = 17 + 4 buffer = 21 along x; 400/30 ceil = 14 + 4 = 18 along y.
+        assert dest["destination_shape"] == (18, 21)
+        # Origin shifts by 2 cells * 30 m = 60 m.
+        assert dest["destination_transform"].c == pytest.approx(500_000.0 - 60.0)
+
+    def test_grid_target_no_resolution_expands_in_target_cells(self):
+        target_doc = {
+            "georeference": {
+                "crs": "EPSG:32610",
+                # 30m cells, anchored lower-left at (0, 0), shape (10, 10) -> 300x300.
+                "transform": (30.0, 0.0, 0.0, 0.0, -30.0, 300.0),
+                "shape": (10, 10),
+            }
+        }
+        dest = resolve_alignment_destination(
+            {"target": "grid", "grid_id": "x"},
+            _make_domain(),
+            target_doc,
+            30.0,
+            extent_buffer_cells=3,
+        )
+        # 10 + 6 = 16 cells per axis. Origin shifts 3 cells * 30 m = 90 m left/down.
+        assert dest["destination_shape"] == (16, 16)
+        assert dest["destination_transform"].c == pytest.approx(-90.0)
+        # Cells stay 30 m and origin shift is exactly an integer multiple, so
+        # buffered cells nest with the unbuffered target lattice.
+        assert dest["destination_transform"].a == pytest.approx(30.0)
+
+    def test_grid_target_with_resolution_expands_in_new_cells(self):
+        target_doc = {
+            "georeference": {
+                "crs": "EPSG:32610",
+                "transform": (30.0, 0.0, 0.0, 0.0, -30.0, 300.0),
+                "shape": (10, 10),
+            }
+        }
+        dest = resolve_alignment_destination(
+            {"target": "grid", "grid_id": "x", "resolution": 1.0},
+            _make_domain(),
+            target_doc,
+            30.0,
+            extent_buffer_cells=5,
+        )
+        # 300 m at 1 m = 300 cells; +10 buffer = 310 per axis.
+        assert dest["destination_shape"] == (310, 310)
+        # Origin shifts 5 cells * 1 m = 5 m left/down.
+        assert dest["destination_transform"].c == pytest.approx(-5.0)
+        assert dest["destination_transform"].a == pytest.approx(1.0)
+
+    def test_native_target_passes_through_buffer_unchanged(self):
+        # Native target relies on extract_window's clip path for buffering;
+        # the alignment destination is unchanged by extent_buffer_cells.
+        domain = _make_domain()
+        dest_no_buffer = resolve_alignment_destination(
+            {"target": "native", "resolution": 5.0}, domain, None, 30.0
+        )
+        dest_with_buffer = resolve_alignment_destination(
+            {"target": "native", "resolution": 5.0},
+            domain,
+            None,
+            30.0,
+            extent_buffer_cells=4,
+        )
+        assert dest_no_buffer == dest_with_buffer
+
+    def test_zero_buffer_matches_no_buffer(self):
+        domain = _make_domain()
+        baseline = resolve_alignment_destination(
+            {"target": "domain", "resolution": 2.0}, domain, None, 30.0
+        )
+        with_zero = resolve_alignment_destination(
+            {"target": "domain", "resolution": 2.0},
+            domain,
+            None,
+            30.0,
+            extent_buffer_cells=0,
+        )
+        assert baseline["destination_shape"] == with_zero["destination_shape"]
+        assert baseline["destination_transform"] == with_zero["destination_transform"]

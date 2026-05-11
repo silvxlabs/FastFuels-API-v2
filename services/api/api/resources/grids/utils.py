@@ -8,7 +8,13 @@ from math import ceil, isclose
 
 from fastapi import HTTPException, status
 
+from api.db.documents import get_document_async
+from api.resources.grids.alignment import (
+    GridAlignmentGridTarget,
+    GridAlignmentSpecification,
+)
 from api.resources.grids.schema import GridDataChunkMetadata
+from lib.config import GRIDS_COLLECTION
 
 # Tolerance for comparing floating-point grid transform coefficients in meters.
 # 1e-6 m = 1 micrometer; well below any realistic raster precision.
@@ -175,6 +181,36 @@ def validate_grid_resolution_matches(
                 f'with alignment.target="grid" to align.'
             ),
         )
+
+
+async def validate_target_grid_alignment(
+    alignment: GridAlignmentSpecification,
+    owner_id: str,
+    domain_id: str,
+) -> None:
+    """When ``alignment.target == "grid"``, verify the named target grid
+    exists, is owned by ``owner_id``, lives in ``domain_id``, is completed,
+    and has a georeference. No-op for other alignment targets.
+
+    Owner and domain mismatches return 404 (not 403) to avoid leaking
+    document existence. Status mismatches return 422.
+
+    Raises:
+        HTTPException(404): Target grid missing, owned by another user, or
+            in another domain.
+        HTTPException(422): Target grid is not completed or has no
+            georeference.
+    """
+    if not isinstance(alignment, GridAlignmentGridTarget):
+        return
+    _, snapshot = await get_document_async(
+        GRIDS_COLLECTION,
+        alignment.grid_id,
+        owner_id=owner_id,
+        domain_id=domain_id,
+        document_status="completed",
+    )
+    validate_grid_has_georeference(snapshot.to_dict(), alignment.grid_id)
 
 
 def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:

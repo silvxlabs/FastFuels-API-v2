@@ -19,6 +19,7 @@ from api.resources.grids.pim.schema import (
     build_treemap_bands,
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
+from api.resources.grids.utils import validate_target_grid_alignment
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -69,6 +70,8 @@ async def create_treemap(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

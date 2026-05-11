@@ -86,7 +86,11 @@ def _process_intersecting_tiles(
 
             raster = RasterConnection(url, connection_type="rioxarray", cache=True)
             dest = resolve_alignment_destination(
-                alignment, roi, target_grid_doc, raster.raster_x_resolution
+                alignment,
+                roi,
+                target_grid_doc,
+                raster.raster_x_resolution,
+                extent_buffer_cells=extent_buffer_cells,
             )
             data = raster.extract_window(
                 roi=roi,

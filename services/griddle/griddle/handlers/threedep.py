@@ -142,7 +142,9 @@ def fetch_topography(
             variables["aspect"] = aspect_da
 
     progress("Aligning output...", 85)
-    variables = _apply_alignment_to_vars(variables, alignment, roi, target_grid_doc)
+    variables = _apply_alignment_to_vars(
+        variables, alignment, roi, target_grid_doc, extent_buffer_cells
+    )
 
     progress("Building dataset...", 90)
     ds = _to_dataset(variables)
@@ -154,6 +156,7 @@ def _apply_alignment_to_vars(
     alignment: dict,
     roi: gpd.GeoDataFrame,
     target_grid_doc: dict | None,
+    extent_buffer_cells: int = 0,
 ) -> dict[str, DataArray]:
     """Reproject each variable to the alignment destination.
 
@@ -161,11 +164,20 @@ def _apply_alignment_to_vars(
     been computed at native resolution; this is the single reprojection
     that aligns the output to the chosen lattice. All variables are
     continuous (categorical default does not apply here).
+
+    ``extent_buffer_cells`` is forwarded to ``resolve_alignment_destination``
+    so the destination lattice on the domain/grid paths includes the buffer.
+    On the native paths the per-variable buffer was applied earlier via
+    ``_clip_to_roi`` and the alignment helper's pass-through preserves it.
     """
     sample = next(iter(variables.values()))
     native_resolution = abs(float(sample.rio.transform().a))
     dest = resolve_alignment_destination(
-        alignment, roi, target_grid_doc, native_resolution
+        alignment,
+        roi,
+        target_grid_doc,
+        native_resolution,
+        extent_buffer_cells=extent_buffer_cells,
     )
     if not dest:
         return variables  # target="native" with no resolution change

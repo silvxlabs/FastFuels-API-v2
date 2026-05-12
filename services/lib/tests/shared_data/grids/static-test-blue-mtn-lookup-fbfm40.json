@@ -2,21 +2,21 @@
   "bands": [
     {
       "index": 0,
-      "key": "elevation",
+      "key": "fuel_load.1hr",
+      "type": "continuous",
+      "unit": "kg/m\u00b2"
+    },
+    {
+      "index": 1,
+      "key": "fuel_depth",
       "type": "continuous",
       "unit": "m"
     },
     {
-      "index": 1,
-      "key": "slope",
-      "type": "continuous",
-      "unit": "degrees"
-    },
-    {
       "index": 2,
-      "key": "aspect",
+      "key": "savr.1hr",
       "type": "continuous",
-      "unit": "degrees"
+      "unit": "m\u207b\u00b9"
     }
   ],
   "chunks": {
@@ -54,21 +54,10 @@
     "percent": 100
   },
   "source": {
-    "alignment": {
-      "method": null,
-      "resolution": 2.0,
-      "target": "domain"
-    },
-    "bands": [
-      "elevation",
-      "slope",
-      "aspect"
-    ],
-    "description": "LANDFIRE topographic data (elevation, slope, aspect)",
-    "extent_buffer_cells": 0,
-    "name": "landfire",
-    "product": "topography",
-    "version": "2020"
+    "name": "lookup",
+    "source_band": "fbfm",
+    "source_grid_id": "static-test-blue-mtn-landfire-fbfm40",
+    "table": "fbfm40"
   },
   "status": "completed",
   "tags": []

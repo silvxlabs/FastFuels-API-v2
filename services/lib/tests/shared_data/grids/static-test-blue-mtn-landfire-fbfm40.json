@@ -8,9 +8,9 @@
     }
   ],
   "chunks": {
-    "count": 1,
+    "count": 2,
     "count_by_axis": {
-      "x": 1,
+      "x": 2,
       "y": 1
     },
     "shape": [
@@ -23,16 +23,16 @@
   "georeference": {
     "crs": "EPSG:32611",
     "shape": [
-      30,
-      45
+      442,
+      654
     ],
     "transform": [
-      29.438767164252283,
+      2.0,
       0.0,
-      720227.9398802927,
+      720226.0,
       0.0,
-      -29.438767164262632,
-      5190646.487014395
+      -2.0,
+      5190646.0
     ]
   },
   "modifications": [],
@@ -43,8 +43,8 @@
   },
   "source": {
     "alignment": {
-      "method": null,
-      "resolution": null,
+      "method": "nearest",
+      "resolution": 2.0,
       "target": "domain"
     },
     "description": "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",

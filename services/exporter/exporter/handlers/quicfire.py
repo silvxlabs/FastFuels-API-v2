@@ -55,11 +55,6 @@ from lib.firestore.documents import get_document
 
 logger = logging.getLogger(__name__)
 
-# Tiny constant guarding the divide in the mass-weighted average. Smaller than
-# any plausible bulk density value (kg/m³); preserves the canopy-only and
-# surface-only limits exactly when the corresponding mass term is zero.
-_EPS = 1e-12
-
 
 def export_quicfire(
     export: dict,
@@ -129,16 +124,14 @@ def export_quicfire(
     rhof = canopy_rhof.copy()
     rhof[0] = canopy_rhof[0] + surf_rhof_layer
 
-    # k=0 moisture: v1-parity `max` is the default; `weighted_avg` is the
-    # mass-weighted alternative.
     moist = canopy_moist.copy()
     if source.get("moist_merge", "max") == "max":
         moist[0] = np.maximum(canopy_moist[0], surf_moist)
     else:
-        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer + _EPS
-        moist[0] = (
-            canopy_rhof[0] * canopy_moist[0] + surf_rhof_layer * surf_moist
-        ) / total_rhof_k0
+        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer
+        numerator = canopy_rhof[0] * canopy_moist[0] + surf_rhof_layer * surf_moist
+        with np.errstate(divide="ignore", invalid="ignore"):
+            moist[0] = np.where(total_rhof_k0 > 0, numerator / total_rhof_k0, 0.0)
 
     fueldepth = np.zeros_like(canopy_rhof)
     fueldepth[0] = surf_depth
@@ -149,16 +142,16 @@ def export_quicfire(
         canopy_savr = load_band(source["canopy_savr"], rank=3)
         surf_savr = load_band(source["surface_savr"], rank=2)
         savr_arr = canopy_savr.copy()
-        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer + _EPS
-        savr_arr[0] = (
-            canopy_rhof[0] * canopy_savr[0] + surf_rhof_layer * surf_savr
-        ) / total_rhof_k0
-        # Convert SAVR (m⁻¹) → particle size scale (m): radius = 2/SAVR.
-        # Zeros where SAVR is non-positive or NaN.
+        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer
+        savr_numerator = canopy_rhof[0] * canopy_savr[0] + surf_rhof_layer * surf_savr
         with np.errstate(divide="ignore", invalid="ignore"):
-            treesss = np.where(
-                savr_arr > 0, 2.0 / np.maximum(savr_arr, _EPS), 0.0
-            ).astype(np.float32)
+            savr_arr[0] = np.where(
+                total_rhof_k0 > 0, savr_numerator / total_rhof_k0, 0.0
+            )
+            # SAVR (m⁻¹) → particle size scale (m): 2 / SAVR. Zero where SAVR
+            # is non-positive or NaN — those cells carry no resolvable fuel
+            # geometry.
+            treesss = np.where(savr_arr > 0, 2.0 / savr_arr, 0.0).astype(np.float32)
 
     topo_arr = None
     if source.get("topography"):

@@ -206,19 +206,20 @@ class TestQuicfireExport:
 
         # Above k=0: size_scale = 2 / canopy_savr (zero where SAVR<=0).
         canopy_above = canopy_savr[1:]
-        expected_above = np.where(
-            canopy_above > 0, 2.0 / np.maximum(canopy_above, 1e-12), 0.0
-        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            expected_above = np.where(canopy_above > 0, 2.0 / canopy_above, 0.0)
         np.testing.assert_allclose(treesss[1:], expected_above, rtol=0, atol=1e-4)
 
-        # At k=0: mass-weighted SAVR → 2/SAVR.
+        # At k=0: mass-weighted SAVR → 2/SAVR. Cells with no fuel mass collapse
+        # to zero (matches the handler's `np.where(total_rhof_k0 > 0, …, 0.0)`).
         surf_rhof_layer = surf_load / _DZ
-        eps = 1e-12
-        total = canopy_rhof[0] + surf_rhof_layer + eps
-        savr_k0 = (
-            canopy_rhof[0] * canopy_savr[0] + surf_rhof_layer * surf_savr
-        ) / total
-        expected_k0 = np.where(savr_k0 > 0, 2.0 / np.maximum(savr_k0, eps), 0.0)
+        total = canopy_rhof[0] + surf_rhof_layer
+        with np.errstate(divide="ignore", invalid="ignore"):
+            savr_numerator = (
+                canopy_rhof[0] * canopy_savr[0] + surf_rhof_layer * surf_savr
+            )
+            savr_k0 = np.where(total > 0, savr_numerator / total, 0.0)
+            expected_k0 = np.where(savr_k0 > 0, 2.0 / savr_k0, 0.0)
         np.testing.assert_allclose(treesss[0], expected_k0, rtol=0, atol=1e-4)
 
 

@@ -358,10 +358,13 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
 def blue_mountain_domain(client):
     """Create the Blue Mountain domain via the API, clean up after.
 
-    Uses EXAMPLE_WGS84_DEFAULT — the canonical Blue Mountain Recreation Area
-    (~1 sq km near Missoula, Montana). The API auto-projects to UTM zone 11N.
+    Uses EXAMPLE_WGS84_DEFAULT with `pad_to_resolution=2` — the canonical
+    ~1 sq km Blue Mountain Recreation Area near Missoula, MT, with the
+    UTM bbox snapped to a clean 2 m lattice so every 2 m Domain-anchored
+    grid created from this Domain lands on a uniform integer-2 m corner.
     """
-    response = client.post("/domains", json=EXAMPLE_WGS84_DEFAULT, timeout=30.0)
+    payload = {**EXAMPLE_WGS84_DEFAULT, "pad_to_resolution": 2}
+    response = client.post("/domains", json=payload, timeout=30.0)
     assert response.status_code == 201, (
         f"POST /domains returned {response.status_code}: {response.text}"
     )
@@ -370,38 +373,9 @@ def blue_mountain_domain(client):
 
     yield domain
 
-    # Clean up
     del_response = client.delete(
         f"/domains/{domain['id']}", params={"force": True}, timeout=30.0
     )
     logger.info(
         f"Deleted Blue Mountain domain {domain['id']}: {del_response.status_code}"
-    )
-
-
-@pytest.fixture(scope="session")
-def blue_mountain_padded_domain(client):
-    """Same Blue Mountain extent, but the bbox is padded to a clean 2 m lattice.
-
-    Use this for fixtures the QUIC-Fire export consumes — every 2 m
-    Domain-anchored fetch lands on the same lattice as the existing 3D
-    canopy voxels (which the voxelizer already snapped to integer-2 m
-    coordinates).
-    """
-    payload = {**EXAMPLE_WGS84_DEFAULT, "pad_to_resolution": 2}
-    response = client.post("/domains", json=payload, timeout=30.0)
-    assert response.status_code == 201, (
-        f"POST /domains returned {response.status_code}: {response.text}"
-    )
-    domain = response.json()
-    logger.info(f"Created Blue Mountain padded (2 m) domain {domain['id']}")
-
-    yield domain
-
-    del_response = client.delete(
-        f"/domains/{domain['id']}", params={"force": True}, timeout=30.0
-    )
-    logger.info(
-        f"Deleted Blue Mountain padded domain {domain['id']}: "
-        f"{del_response.status_code}"
     )

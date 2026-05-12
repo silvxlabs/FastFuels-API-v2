@@ -1,5 +1,5 @@
 """
-Example request bodies for canopy endpoints (Meta CHM, NAIP CHM).
+Example request bodies for canopy endpoints (Meta CHM, NAIP CHM, LANDFIRE).
 
 These examples are used in:
 1. OpenAPI/Swagger documentation - Users see these as example payloads
@@ -115,4 +115,100 @@ CREATE_NAIP_CHM_OPENAPI_EXAMPLES = {
 NAIP_CHM_EXAMPLE_VALUES = [
     ("naip_minimal", EXAMPLE_NAIP_CHM_MINIMAL),
     ("naip_with_metadata", EXAMPLE_NAIP_CHM_WITH_METADATA),
+]
+
+# LANDFIRE canopy examples
+
+EXAMPLE_LANDFIRE_CANOPY_MINIMAL = {}
+
+EXAMPLE_LANDFIRE_CANOPY_CROWN_FIRE_INPUTS = {
+    "bands": ["cbd", "cbh"],
+}
+
+EXAMPLE_LANDFIRE_CANOPY_COVER_ONLY = {
+    "bands": ["cc"],
+}
+
+EXAMPLE_LANDFIRE_CANOPY_WITH_METADATA = {
+    "name": "LANDFIRE canopy fuels",
+    "description": "Canopy bulk density, base height, height, and cover for crown fire modeling",
+    "tags": ["canopy", "landfire"],
+    "version": "2024",
+    "bands": ["chm", "cbd", "cbh", "cc"],
+}
+
+EXAMPLE_LANDFIRE_CANOPY_WITH_BUFFER = {
+    "bands": ["chm", "cbd", "cbh", "cc"],
+    "extent_buffer_cells": 6,
+}
+
+EXAMPLE_LANDFIRE_CANOPY_NATIVE_ALIGNMENT = {
+    "alignment": {"target": "native"},
+    "name": "LANDFIRE canopy preserving native pixel anchor",
+    "bands": ["chm", "cbd", "cbh", "cc"],
+}
+
+CREATE_LANDFIRE_CANOPY_OPENAPI_EXAMPLES = {
+    "minimal": {
+        "value": EXAMPLE_LANDFIRE_CANOPY_MINIMAL,
+        "summary": "Minimal request (all bands)",
+        "description": (
+            "Creates a grid with default settings. Returns all four canopy "
+            "bands (chm, cbd, cbh, cc) at 30m resolution."
+        ),
+    },
+    "crown_fire_inputs": {
+        "value": EXAMPLE_LANDFIRE_CANOPY_CROWN_FIRE_INPUTS,
+        "summary": "Crown fire inputs (cbd + cbh)",
+        "description": (
+            "Returns canopy bulk density and canopy base height — the "
+            "canopy fuel inputs most relevant to crown fire propagation."
+        ),
+    },
+    "cover_only": {
+        "value": EXAMPLE_LANDFIRE_CANOPY_COVER_ONLY,
+        "summary": "Canopy cover only",
+        "description": (
+            "Returns just the canopy cover band (percent), useful for "
+            "horizontal masking and overstory-vs-understory partitioning."
+        ),
+    },
+    "with_metadata": {
+        "value": EXAMPLE_LANDFIRE_CANOPY_WITH_METADATA,
+        "summary": "With name and tags",
+        "description": (
+            "Creates a named grid with all four canopy bands and tags for organization."
+        ),
+    },
+    "with_buffer": {
+        "value": EXAMPLE_LANDFIRE_CANOPY_WITH_BUFFER,
+        "summary": "With output buffer",
+        "description": (
+            "Includes 6 result-grid cells of buffer beyond the domain extent. "
+            "Useful when downstream resampling or focal operations need "
+            "context past the domain edge."
+        ),
+    },
+    "native_alignment": {
+        "value": EXAMPLE_LANDFIRE_CANOPY_NATIVE_ALIGNMENT,
+        "summary": "Preserve the native LANDFIRE pixel anchor",
+        "description": (
+            'Sets `alignment.target="native"` so the output keeps the '
+            "LANDFIRE source raster's pixel anchor instead of snapping to "
+            "the domain origin. Choose this when faithful representation "
+            "of LANDFIRE cell positions matters more than composing with "
+            "other domain-aligned grids — e.g. for cross-version LANDFIRE "
+            "comparisons or to minimize resampling artifacts in the "
+            "canopy bands."
+        ),
+    },
+}
+
+ALL_LANDFIRE_CANOPY_EXAMPLE_VALUES = [
+    ("minimal", EXAMPLE_LANDFIRE_CANOPY_MINIMAL),
+    ("crown_fire_inputs", EXAMPLE_LANDFIRE_CANOPY_CROWN_FIRE_INPUTS),
+    ("cover_only", EXAMPLE_LANDFIRE_CANOPY_COVER_ONLY),
+    ("with_metadata", EXAMPLE_LANDFIRE_CANOPY_WITH_METADATA),
+    ("with_buffer", EXAMPLE_LANDFIRE_CANOPY_WITH_BUFFER),
+    ("native_alignment", EXAMPLE_LANDFIRE_CANOPY_NATIVE_ALIGNMENT),
 ]

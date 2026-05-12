@@ -1,5 +1,5 @@
 """
-Example request bodies for CHM Meta endpoints.
+Example request bodies for canopy endpoints (Meta CHM, NAIP CHM).
 
 These examples are used in:
 1. OpenAPI/Swagger documentation - Users see these as example payloads

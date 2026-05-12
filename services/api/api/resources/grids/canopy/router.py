@@ -1,7 +1,7 @@
 """
-api/v2/resources/grids/chm/router.py
+api/v2/resources/grids/canopy/router.py
 
-Router for CHM grid product endpoints.
+Router for canopy grid product endpoints.
 """
 
 import uuid
@@ -12,11 +12,11 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
-from api.resources.grids.chm.examples import (
+from api.resources.grids.canopy.examples import (
     CREATE_META_CHM_OPENAPI_EXAMPLES,
     CREATE_NAIP_CHM_OPENAPI_EXAMPLES,
 )
-from api.resources.grids.chm.schema import (
+from api.resources.grids.canopy.schema import (
     CreateMetaChmRequest,
     CreateNaipChmRequest,
     MetaChmSource,

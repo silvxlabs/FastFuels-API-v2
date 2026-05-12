@@ -23,7 +23,7 @@
   "progress": null,
   "source": {
     "description": "Meta global canopy height model at ~1m resolution",
-    "name": "chm",
+    "name": "canopy",
     "product": "meta",
     "version": "2"
   },

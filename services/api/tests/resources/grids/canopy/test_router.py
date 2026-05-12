@@ -1,23 +1,23 @@
 """
-Integration tests for api/v2/resources/grids/chm/router.py
+Integration tests for api/v2/resources/grids/canopy/router.py
 
-Tests the Meta CHM endpoint.
+Tests the Meta and NAIP canopy endpoints.
 These tests make real HTTP requests to the API and interact with Firestore.
 """
 
 import pytest
-from api.resources.grids.chm.examples import (
+from api.resources.grids.canopy.examples import (
     META_CHM_EXAMPLE_VALUES,
     NAIP_CHM_EXAMPLE_VALUES,
 )
-from api.resources.grids.chm.schema import MetaCHMVersion
+from api.resources.grids.canopy.schema import MetaCHMVersion
 
 
 class TestCreateMetaChm:
-    """Test the POST /domains/{domain_id}/grids/chm/meta endpoint."""
+    """Test the POST /domains/{domain_id}/grids/canopy/meta endpoint."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/grids/chm/meta"
+        return f"/domains/{domain_id}/grids/canopy/meta"
 
     def test_minimal_request_creates_grid(self, client, domain_for_testing):
         """Minimal request creates a grid with default chm band."""
@@ -36,7 +36,7 @@ class TestCreateMetaChm:
         assert data["source"]["version"] == "2"
 
         # Check source
-        assert data["source"]["name"] == "chm"
+        assert data["source"]["name"] == "canopy"
         assert data["source"]["product"] == "meta"
 
         # Check single continuous band
@@ -117,7 +117,7 @@ class TestCreateMetaChm:
         )
 
         data = response.json()
-        assert data["source"]["name"] == "chm"
+        assert data["source"]["name"] == "canopy"
         assert data["source"]["product"] == "meta"
 
     @pytest.mark.parametrize("version", [v.value for v in MetaCHMVersion])
@@ -163,10 +163,10 @@ class TestCreateMetaChm:
 
 
 class TestCreateNaipChm:
-    """Test the POST /domains/{domain_id}/grids/chm/naip endpoint."""
+    """Test the POST /domains/{domain_id}/grids/canopy/naip endpoint."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/grids/chm/naip"
+        return f"/domains/{domain_id}/grids/canopy/naip"
 
     def test_minimal_request_creates_grid(self, client, domain_for_testing):
         """Minimal request creates a grid with default chm band."""
@@ -184,7 +184,7 @@ class TestCreateNaipChm:
         assert data["tags"] == []
 
         # Check source
-        assert data["source"]["name"] == "chm"
+        assert data["source"]["name"] == "canopy"
         assert data["source"]["product"] == "naip"
 
         # Check single continuous band
@@ -253,7 +253,7 @@ class TestCreateNaipChm:
         )
 
         data = response.json()
-        assert data["source"]["name"] == "chm"
+        assert data["source"]["name"] == "canopy"
         assert data["source"]["product"] == "naip"
 
     def test_extent_buffer_cells_defaults_to_zero(self, client, domain_for_testing):

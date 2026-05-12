@@ -1,10 +1,11 @@
 """
-api/v2/resources/grids/chm/schema.py
+api/v2/resources/grids/canopy/schema.py
 
-Schema models for the Meta CHM grid product.
+Schema models for Meta and NAIP canopy grid products.
 
-Meta provides a global canopy height model at ~1m resolution from satellite
-imagery. Single band: canopy height in meters.
+Both sources produce a single ``chm`` (canopy height in meters) band under
+the canopy product family. Future canopy sources (e.g. LANDFIRE) will add
+``cbd``/``cbh``/``cc`` bands alongside ``chm``.
 """
 
 from enum import StrEnum
@@ -12,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from api.resources.grids.providers.chm import ChmSource
+from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import (
     Band,
     BandType,
@@ -40,7 +41,7 @@ class Attribution(BaseModel):
     accessed_on: str
 
 
-class MetaChmSource(ChmSource):
+class MetaChmSource(CanopySource):
     """Source for Meta global canopy height data.
 
     Returns a continuous canopy height raster at ~1m resolution. Each pixel
@@ -73,7 +74,7 @@ def build_chm_bands() -> list[Band]:
     return [CHM_BAND]
 
 
-class NaipChmSource(ChmSource):
+class NaipChmSource(CanopySource):
     """Source for NAIP high-resolution canopy height data.
 
     Returns a continuous canopy height raster at ~0.6m resolution (CONUS).

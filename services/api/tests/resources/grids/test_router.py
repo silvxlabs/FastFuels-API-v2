@@ -132,7 +132,11 @@ class TestListGridsWildcard:
         """Grids spread across two domains, both owned by test-owner."""
         grids = []
         for domain_id in [domain_for_testing["id"], second_domain["id"]]:
-            grid_data = make_grid_data(domain_id=domain_id, name=f"Grid in {domain_id}")
+            grid_data = make_grid_data(
+                domain_id=domain_id,
+                name=f"Grid in {domain_id}",
+                tags=["wildcard-list-test"],
+            )
             doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
                 grid_data["id"]
             )
@@ -153,7 +157,7 @@ class TestListGridsWildcard:
         self, client, grids_across_domains
     ):
         """Grids from multiple domains are all returned."""
-        response = client.get(self.route())
+        response = client.get(f"{self.route()}?tag=wildcard-list-test&size=1000")
         assert response.status_code == 200
 
         grid_ids = [g["id"] for g in response.json()["grids"]]
@@ -172,7 +176,7 @@ class TestListGridsWildcard:
 
     def test_wildcard_excludes_owner_id(self, client, grids_across_domains):
         """Wildcard list does not expose owner_id."""
-        response = client.get(self.route())
+        response = client.get(f"{self.route()}?tag=wildcard-list-test&size=1000")
         assert response.status_code == 200
 
         for grid in response.json()["grids"]:

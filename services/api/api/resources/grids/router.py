@@ -27,7 +27,7 @@ from api.db.documents import (
 )
 from api.dependencies import VerifiedDomain
 from api.resources.grids.cache import get_grid_array
-from api.resources.grids.chm.router import router as chm_router
+from api.resources.grids.canopy.router import router as canopy_router
 from api.resources.grids.exports.quicfire.router import (
     router as quicfire_export_router,
 )
@@ -806,7 +806,7 @@ router.include_router(
     topography_router, prefix="/topography", tags=["Grids - Topography"]
 )
 router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
-router.include_router(chm_router, prefix="/chm", tags=["Grids - CHM"])
+router.include_router(canopy_router, prefix="/canopy", tags=["Grids - Canopy"])
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(tree_router, prefix="/tree")

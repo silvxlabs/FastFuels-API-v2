@@ -20,7 +20,7 @@
   },
   "name": "Static Test Blackfoot CHM",
   "source": {
-    "name": "chm",
+    "name": "canopy",
     "product": "naip"
   },
   "status": "completed",

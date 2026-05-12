@@ -9,7 +9,7 @@ import pytest
 from griddle.dispatch import (
     dispatch_handler,
     handle_3dep,
-    handle_chm,
+    handle_canopy,
     handle_landfire,
     handle_lookup,
     handle_pim,
@@ -624,20 +624,20 @@ class TestHandleUniform:
         assert "uniform" in call_args[0].lower()
 
 
-class TestDispatchHandlerChm:
-    """Tests for dispatch_handler routing to chm."""
+class TestDispatchHandlerCanopy:
+    """Tests for dispatch_handler routing to canopy."""
 
-    @patch("griddle.dispatch.handle_chm")
-    def test_routes_chm_source(self, mock_handle_chm):
-        """dispatch_handler routes chm source to handle_chm."""
+    @patch("griddle.dispatch.handle_canopy")
+    def test_routes_canopy_source(self, mock_handle_canopy):
+        """dispatch_handler routes canopy source to handle_canopy."""
         mock_result = MagicMock()
-        mock_handle_chm.return_value = mock_result
+        mock_handle_canopy.return_value = mock_result
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
 
         grid = {
             "source": {
-                "name": "chm",
+                "name": "canopy",
                 "product": "meta",
                 "version": "2",
             },
@@ -646,16 +646,16 @@ class TestDispatchHandlerChm:
 
         result = dispatch_handler(grid, mock_gdf, progress)
 
-        mock_handle_chm.assert_called_once_with(mock_gdf, grid["source"], progress)
+        mock_handle_canopy.assert_called_once_with(mock_gdf, grid["source"], progress)
         assert result == mock_result
 
 
-class TestHandleChm:
-    """Tests for handle_chm function."""
+class TestHandleCanopy:
+    """Tests for handle_canopy function."""
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_routes_meta_to_handler(self, mock_fetch):
-        """handle_chm routes meta product to fetch_meta_chm."""
+        """handle_canopy routes meta product to fetch_meta_chm."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_dataset = MagicMock()
         mock_metadata = {
@@ -673,7 +673,7 @@ class TestHandleChm:
             "version": "2",
         }
 
-        result = handle_chm(mock_gdf, source, progress)
+        result = handle_canopy(mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
@@ -688,34 +688,34 @@ class TestHandleChm:
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_default_version(self, mock_fetch):
-        """handle_chm uses 2 as default version."""
+        """handle_canopy uses 2 as default version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta"}  # No version specified
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         call_args = mock_fetch.call_args[0]
         assert call_args[1] == "2"
 
     def test_unknown_product_raises(self):
-        """handle_chm raises ProcessingError for unknown product."""
+        """handle_canopy raises ProcessingError for unknown product."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
 
         source = {"product": "unknown_product"}
 
         with pytest.raises(ProcessingError) as exc_info:
-            handle_chm(mock_gdf, source, progress)
+            handle_canopy(mock_gdf, source, progress)
 
         assert exc_info.value.code == "UNKNOWN_PRODUCT"
         assert "unknown_product" in exc_info.value.message
 
     @patch("griddle.dispatch.chm.fetch_naip_chm")
     def test_routes_naip_to_handler(self, mock_fetch):
-        """handle_chm routes naip product to fetch_naip_chm."""
+        """handle_canopy routes naip product to fetch_naip_chm."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_dataset = MagicMock()
         mock_metadata = {
@@ -733,7 +733,7 @@ class TestHandleChm:
             "version": "2020",
         }
 
-        result = handle_chm(mock_gdf, source, progress)
+        result = handle_canopy(mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
@@ -747,18 +747,18 @@ class TestHandleChm:
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_calls_progress_callback(self, mock_fetch):
-        """handle_chm reports progress."""
+        """handle_canopy reports progress."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta", "version": "2"}
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         progress.assert_called()
         call_args = progress.call_args_list[0][0]
-        assert "CHM" in call_args[0]
+        assert "canopy" in call_args[0]
         assert "meta" in call_args[0]
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
@@ -776,14 +776,14 @@ class TestHandleChm:
     def test_meta_populates_attribution(
         self, mock_fetch, version, expected_license, expected_license_url
     ):
-        """handle_chm populates attribution for each meta version."""
+        """handle_canopy populates attribution for each meta version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta", "version": version}
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         assert "attribution" in source
         attr = source["attribution"]
@@ -799,14 +799,14 @@ class TestHandleChm:
 
     @patch("griddle.dispatch.chm.fetch_naip_chm")
     def test_naip_does_not_populate_attribution(self, mock_fetch):
-        """handle_chm does not populate attribution for naip product."""
+        """handle_canopy does not populate attribution for naip product."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "naip", "version": "2020"}
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         assert "attribution" not in source
 

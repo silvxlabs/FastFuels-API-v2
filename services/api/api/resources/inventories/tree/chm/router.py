@@ -84,14 +84,14 @@ async def create_chm_inventory(
     )
     source_grid_data = source_snapshot.to_dict()
 
-    # Verify it is a CHM grid (source.name == "chm")
+    # Verify it is a canopy grid (source.name == "canopy")
     grid_source = source_grid_data.get("source", {})
-    if grid_source.get("name") != "chm":
+    if grid_source.get("name") != "canopy":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                f"Grid '{body.source_chm_grid_id}' is not a CHM grid. "
-                f"This endpoint requires a CHM grid as the source."
+                f"Grid '{body.source_chm_grid_id}' is not a canopy grid. "
+                f"This endpoint requires a canopy grid (with a 'chm' band) as the source."
             ),
         )
 

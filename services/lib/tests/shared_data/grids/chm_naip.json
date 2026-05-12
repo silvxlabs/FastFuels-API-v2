@@ -23,7 +23,7 @@
   "progress": null,
   "source": {
     "description": "NAIP CONUS canopy height model at 0.6m resolution",
-    "name": "chm",
+    "name": "canopy",
     "product": "naip",
     "version": "latest"
   },

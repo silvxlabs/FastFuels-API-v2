@@ -1,0 +1,47 @@
+{
+  "description": "Integration test QUIC-Fire export",
+  "domain_id": "test-domain",
+  "error": null,
+  "expiration_days": 1,
+  "expires_on": null,
+  "name": "Test QUIC-Fire Export",
+  "owner_id": "integration-test",
+  "progress": null,
+  "signed_url": null,
+  "source": {
+    "alignment": {
+      "target": "domain",
+      "dx": 2.0,
+      "dy": 2.0,
+      "dz": 1.0
+    },
+    "canopy_bulk_density": {"grid_id": "PLACEHOLDER", "band": "bulk_density.foliage.live"},
+    "canopy_moisture": {"grid_id": "PLACEHOLDER", "band": "fuel_moisture.live"},
+    "canopy_savr": null,
+    "domain_id": "test-domain",
+    "moist_merge": "max",
+    "name": "quicfire",
+    "resolved": {
+      "fire_grid": {
+        "nx": 654,
+        "ny": 442,
+        "nz": 37,
+        "dx": 2.0,
+        "dy": 2.0,
+        "dz": 1.0,
+        "transform": [2.0, 0.0, 720226.0, 0.0, -2.0, 5190646.0],
+        "z_origin": 0.0,
+        "crs": "EPSG:32611"
+      }
+    },
+    "rhof_merge": "sum",
+    "savr_merge": "weighted_avg",
+    "surface_fuel_depth": {"grid_id": "PLACEHOLDER", "band": "fuel_depth"},
+    "surface_fuel_load": {"grid_id": "PLACEHOLDER", "band": "fuel_load.1hr"},
+    "surface_moisture": {"grid_id": "PLACEHOLDER", "band": "fuel_moisture.1hr"},
+    "surface_savr": null,
+    "topography": null
+  },
+  "status": "pending",
+  "tags": []
+}

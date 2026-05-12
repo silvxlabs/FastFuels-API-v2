@@ -269,12 +269,17 @@ class TestCreateQuicfireExport:
         assert data["source"]["canopy_savr"] is None
         assert data["source"]["surface_savr"] is None
 
-        resolved = data["source"]["resolved"]
-        assert resolved["fire_grid"]["nx"] == NX
-        assert resolved["fire_grid"]["ny"] == NY
-        assert resolved["fire_grid"]["nz"] == NZ
-        assert "canopy_bulk_density" in resolved["roles"]
-        assert resolved["roles"]["canopy_bulk_density"]["unit"] == "kg/m³"
+        fire_grid = data["source"]["resolved"]["fire_grid"]
+        assert fire_grid["nx"] == NX
+        assert fire_grid["ny"] == NY
+        assert fire_grid["nz"] == NZ
+        # Alignment was omitted → defaults to QF-recommended 2 m / 1 m.
+        assert fire_grid["dx"] == DX
+        assert fire_grid["dy"] == DX
+        assert fire_grid["dz"] == 1.0
+        # Default alignment is recorded on the persisted source.
+        assert data["source"]["alignment"]["target"] == "domain"
+        assert data["source"]["alignment"]["dx"] == DX
 
         _cleanup_export(firestore_client, data["id"])
 
@@ -298,7 +303,7 @@ class TestCreateQuicfireExport:
 
         data = response.json()
         assert data["source"]["topography"]["grid_id"] == topography_grid["id"]
-        assert data["source"]["resolved"]["roles"]["topography"]["unit"] == "m"
+        assert data["source"]["topography"]["band"] == "elevation"
 
         _cleanup_export(firestore_client, data["id"])
 
@@ -323,9 +328,87 @@ class TestCreateQuicfireExport:
         data = response.json()
         assert data["source"]["canopy_savr"]["band"] == "savr.foliage"
         assert data["source"]["surface_savr"]["band"] == "savr.1hr"
-        assert data["source"]["resolved"]["roles"]["canopy_savr"]["unit"] == "m⁻¹"
+        assert data["source"]["canopy_savr"]["grid_id"] == canopy_grid["id"]
 
         _cleanup_export(firestore_client, data["id"])
+
+    def test_explicit_domain_alignment(
+        self,
+        client,
+        firestore_client,
+        domain_for_testing,
+        canopy_grid,
+        surface_grid,
+        surface_moisture_grid,
+    ):
+        """Explicit Domain alignment with default values matches omitting it."""
+        body = _minimal_body(
+            canopy_grid["id"], surface_grid["id"], surface_moisture_grid["id"]
+        )
+        body["alignment"] = {"target": "domain", "dx": DX, "dy": DX, "dz": 1.0}
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201, response.text
+
+        fire_grid = response.json()["source"]["resolved"]["fire_grid"]
+        assert fire_grid["dx"] == DX
+        assert fire_grid["dy"] == DX
+        assert fire_grid["dz"] == 1.0
+        assert fire_grid["nx"] == NX
+        assert fire_grid["ny"] == NY
+
+        _cleanup_export(firestore_client, response.json()["id"])
+
+    def test_grid_target_alignment(
+        self,
+        client,
+        firestore_client,
+        domain_for_testing,
+        canopy_grid,
+        surface_grid,
+        surface_moisture_grid,
+    ):
+        """target='grid' anchors the fire grid to a referenced grid's lattice."""
+        body = _minimal_body(
+            canopy_grid["id"], surface_grid["id"], surface_moisture_grid["id"]
+        )
+        # Anchor the fire grid to the surface grid's lattice. Since all
+        # fixtures share the same transform/shape, the resulting fire grid
+        # matches the Domain-padded one cell-for-cell.
+        body["alignment"] = {"target": "grid", "grid_id": surface_grid["id"]}
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201, response.text
+
+        data = response.json()
+        assert data["source"]["alignment"]["target"] == "grid"
+        assert data["source"]["alignment"]["grid_id"] == surface_grid["id"]
+        fire_grid = data["source"]["resolved"]["fire_grid"]
+        assert fire_grid["nx"] == NX
+        assert fire_grid["ny"] == NY
+        assert fire_grid["dx"] == DX
+        assert fire_grid["crs"] == "EPSG:32611"
+
+        _cleanup_export(firestore_client, data["id"])
+
+    def test_grid_target_not_found_returns_404(
+        self,
+        client,
+        domain_for_testing,
+        canopy_grid,
+        surface_grid,
+        surface_moisture_grid,
+    ):
+        body = _minimal_body(
+            canopy_grid["id"], surface_grid["id"], surface_moisture_grid["id"]
+        )
+        body["alignment"] = {
+            "target": "grid",
+            "grid_id": "00000000000000000000000000000000",
+        }
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 404
 
 
 # Negative paths

@@ -143,19 +143,84 @@ def test_create_blue_mtn_landfire_topography(
     )
 
 
-# TODO: Test is failing. Come back to this after fixing the underlying issue (in griddle resample handler).
-@pytest.mark.skip
-@pytest.mark.dependency(depends=["test_create_blue_mtn_landfire_fbfm40"])
-def test_create_blue_mtn_fbfm40_2m(create_static_fixture, client, blue_mountain_domain):
-    """Create static 2m resampled FBFM40 fixture on Blue Mountain domain."""
+# Fixtures dedicated to the QUIC-Fire export: every role grid the exporter
+# needs is fetched directly at 2 m, Domain-anchored. The canopy roles
+# (`bulk_density.foliage.live`, `fuel_moisture.live`, `savr.foliage`) are
+# already on `static-test-blue-mtn-tree-inventory-voxels`. The four fixtures
+# below provide the surface roles + topography for a default-aligned
+# (dx=dy=2 m, dz=1 m) QF export.
+
+
+@pytest.mark.dependency()
+def test_create_blue_mtn_fbfm40_2m(
+    create_static_fixture, client, blue_mountain_padded_domain
+):
+    """Create static FBFM40 fixture fetched directly at 2 m, Domain-anchored.
+
+    Exercises the inline `alignment.target="domain", resolution=2` path on
+    the LANDFIRE FBFM40 handler — no separate resample step.
+    """
     create_static_fixture(
         client=client,
-        domain_id=blue_mountain_domain["id"],
-        endpoint="/grids/resample",
+        domain_id=blue_mountain_padded_domain["id"],
+        endpoint="/grids/fbfm40/landfire",
         body={
-            "source_grid_id": "static-test-blue-mtn-landfire-fbfm40",
             "alignment": {"target": "domain", "resolution": 2, "method": "nearest"},
         },
         static_name="static-test-blue-mtn-fbfm40-2m",
-        dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm40"]},
+    )
+
+
+@pytest.mark.dependency(depends=["test_create_blue_mtn_fbfm40_2m"])
+def test_create_blue_mtn_lookup_fbfm40_2m(
+    create_static_fixture, client, blue_mountain_padded_domain
+):
+    """Create static FBFM40 lookup grid at 2 m with the three surface roles
+    the QUIC-Fire export needs (fuel_load.1hr, fuel_depth, savr.1hr)."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_padded_domain["id"],
+        endpoint="/grids/lookup/fbfm40",
+        body={
+            "source_grid_id": "static-test-blue-mtn-fbfm40-2m",
+            "quantities": ["fuel_load.1hr", "fuel_depth", "savr.1hr"],
+        },
+        static_name="static-test-blue-mtn-lookup-fbfm40-2m",
+        dependencies={"grids": ["static-test-blue-mtn-fbfm40-2m"]},
+    )
+
+
+@pytest.mark.dependency()
+def test_create_blue_mtn_landfire_topography_2m(
+    create_static_fixture, client, blue_mountain_padded_domain
+):
+    """Create static LANDFIRE topography fixture fetched directly at 2 m,
+    Domain-anchored. Single `elevation` band — that's all QUIC-Fire needs."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_padded_domain["id"],
+        endpoint="/grids/topography/landfire",
+        body={
+            "alignment": {"target": "domain", "resolution": 2},
+            "bands": ["elevation"],
+        },
+        static_name="static-test-blue-mtn-landfire-topography-2m",
+    )
+
+
+@pytest.mark.dependency()
+def test_create_blue_mtn_uniform_moisture_2m(
+    create_static_fixture, client, blue_mountain_padded_domain
+):
+    """Create static uniform surface-moisture fixture at 2 m with
+    `fuel_moisture.1hr = 6.0 %`."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_padded_domain["id"],
+        endpoint="/grids/uniform",
+        body={
+            "resolution": 2,
+            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+        },
+        static_name="static-test-blue-mtn-uniform-moisture-2m",
     )

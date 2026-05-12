@@ -29,6 +29,12 @@ EXAMPLE_QUICFIRE_WITH_SAVR = {
     "name": "QUIC-Fire inputs (with terrain and SAVR)",
 }
 
+EXAMPLE_QUICFIRE_EXPLICIT_DOMAIN = {
+    **EXAMPLE_QUICFIRE_MINIMAL,
+    "alignment": {"target": "domain", "dx": 1.0, "dy": 1.0, "dz": 1},
+    "name": "QUIC-Fire inputs (1m horizontal, 1m vertical)",
+}
+
 EXAMPLE_QUICFIRE_EXPLICIT_MERGE = {
     **EXAMPLE_QUICFIRE_WITH_SAVR,
     "rhof_merge": "sum",
@@ -37,14 +43,31 @@ EXAMPLE_QUICFIRE_EXPLICIT_MERGE = {
     "name": "QUIC-Fire inputs (explicit merge fields)",
 }
 
+EXAMPLE_QUICFIRE_GRID_ALIGNED = {
+    **EXAMPLE_QUICFIRE_MINIMAL,
+    "alignment": {"target": "grid", "grid_id": "master_native_fbfm40"},
+    "name": "QUIC-Fire inputs (aligned to master grid)",
+}
+
 CREATE_QUICFIRE_EXPORT_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_QUICFIRE_MINIMAL,
-        "summary": "Minimal: surface + canopy fuel only",
+        "summary": "Minimal: surface + canopy fuel only (default 2 m / 1 m fire grid)",
         "description": (
-            "The smallest valid QUIC-Fire export request. Produces "
-            "treesrhof.dat, treesmoist.dat, treesfueldepth.dat, "
-            "metadata.json, and domain.geojson."
+            "The smallest valid QUIC-Fire export request. Alignment defaults "
+            "to Domain-anchored at QUIC-Fire's recommended values "
+            "(dx=dy=2 m, dz=1 m). Produces treesrhof.dat, treesmoist.dat, "
+            "treesfueldepth.dat, metadata.json, and domain.geojson."
+        ),
+    },
+    "explicit_domain": {
+        "value": EXAMPLE_QUICFIRE_EXPLICIT_DOMAIN,
+        "summary": "Explicit Domain alignment with custom resolution",
+        "description": (
+            "Override the default 2 m / 1 m fire grid. Useful for coarser "
+            "simulations (e.g. dx=4 m) or finer vertical resolution (e.g. "
+            "dz=0.5 m). All role grids must still be lattice-aligned and "
+            "cover the resulting fire-grid extent."
         ),
     },
     "with_topography": {
@@ -65,9 +88,18 @@ CREATE_QUICFIRE_EXPORT_OPENAPI_EXAMPLES = {
         "summary": "With explicit merge fields",
         "description": (
             "Same as 'with_savr' but with the surface/canopy stitching fields "
-            "set to their defaults explicitly. The defaults implement "
-            "additive semantics: rhof sums, moisture and SAVR are mass-weighted "
-            "averages at the bottom slab."
+            "set explicitly. `moist_merge='weighted_avg'` opts into mass-"
+            "weighted moisture at k=0 (default is `'max'`, which matches v1)."
+        ),
+    },
+    "grid_aligned": {
+        "value": EXAMPLE_QUICFIRE_GRID_ALIGNED,
+        "summary": "Aligned to an existing grid's lattice",
+        "description": (
+            "Use `alignment.target='grid'` to anchor the fire grid to an "
+            "existing grid's CRS/transform/shape instead of the Domain bbox. "
+            "Useful when role grids share a non-Domain-anchored lattice "
+            "(e.g. all chained off a `target='native'` master grid)."
         ),
     },
 }

@@ -28,9 +28,12 @@ from scipy.io import FortranFile
 _NX = 4
 _NY = 3
 _NZ = 5
+_DX = 30.0
 _DZ = 1.0
+_WEST = 500000.0
+_NORTH = 5200000.0 + _NY * _DX  # 5200090
 _TRANSFORM = list(
-    from_bounds(500000, 5200000, 500000 + _NX * 30, 5200000 + _NY * 30, _NX, _NY)
+    from_bounds(_WEST, _NORTH - _NY * _DX, _WEST + _NX * _DX, _NORTH, _NX, _NY)
 )
 
 
@@ -38,27 +41,45 @@ def noop_progress(message: str, percent: int | None = None):
     pass
 
 
-def _make_3d_dataset(bands: dict[str, np.ndarray]) -> xr.Dataset:
-    """Build a tree-voxel-shaped Dataset with (z, y, x) dims."""
+def _xy_coords(nx: int, ny: int, west: float = _WEST, north: float = _NORTH):
+    """Cell-center UTM coords for the canonical fire grid lattice."""
+    return {
+        "y": north - _DX * (np.arange(ny) + 0.5),
+        "x": west + _DX * (np.arange(nx) + 0.5),
+    }
+
+
+def _make_3d_dataset(
+    bands: dict[str, np.ndarray],
+    *,
+    west: float = _WEST,
+    north: float = _NORTH,
+) -> xr.Dataset:
+    """Build a tree-voxel-shaped Dataset with (z, y, x) dims on the fire-grid lattice."""
+    sample = next(iter(bands.values()))
+    nz, ny, nx = sample.shape
     ds = xr.Dataset(
         data_vars={name: (("z", "y", "x"), arr) for name, arr in bands.items()},
         coords={
-            "z": np.arange(_NZ, dtype=np.float64),
-            "y": np.arange(_NY, dtype=np.float64),
-            "x": np.arange(_NX, dtype=np.float64),
+            "z": np.arange(nz, dtype=np.float64),
+            **_xy_coords(nx, ny, west=west, north=north),
         },
     )
     ds = ds.rio.write_crs("EPSG:32611")
     return ds
 
 
-def _make_2d_dataset(bands: dict[str, np.ndarray]) -> xr.Dataset:
+def _make_2d_dataset(
+    bands: dict[str, np.ndarray],
+    *,
+    west: float = _WEST,
+    north: float = _NORTH,
+) -> xr.Dataset:
+    sample = next(iter(bands.values()))
+    ny, nx = sample.shape
     ds = xr.Dataset(
         data_vars={name: (("y", "x"), arr) for name, arr in bands.items()},
-        coords={
-            "y": np.arange(_NY, dtype=np.float64),
-            "x": np.arange(_NX, dtype=np.float64),
-        },
+        coords=_xy_coords(nx, ny, west=west, north=north),
     )
     ds = ds.rio.write_crs("EPSG:32611")
     return ds
@@ -116,17 +137,17 @@ def _build_source(
         "moist_merge": "weighted_avg",
         "savr_merge": "weighted_avg",
         "resolved": {
-            "domain": {"crs": "EPSG:32611"},
             "fire_grid": {
                 "nx": _NX,
                 "ny": _NY,
                 "nz": _NZ,
+                "dx": _DX,
+                "dy": _DX,
+                "dz": _DZ,
                 "transform": _TRANSFORM,
                 "z_origin": 0.0,
-                "z_resolution": _DZ,
                 "crs": "EPSG:32611",
             },
-            "roles": {},
         },
     }
     if topo_grid_id:
@@ -614,3 +635,118 @@ class TestDomainGeojson:
         assert isinstance(coords[0], list)  # outer ring
         assert isinstance(coords[0][0], list)  # first vertex
         assert len(coords[0]) == 5  # closed polygon
+
+
+class TestMaxMerge:
+    """Default `moist_merge="max"` matches v1 behavior at k=0."""
+
+    def test_max_merge_used_when_unset(self, captured_zip, patch_load_grid):
+        canopy_moist = np.full((_NZ, _NY, _NX), 100.0, dtype=np.float32)  # 100%
+        tree_ds = _make_3d_dataset(
+            {
+                "bulk_density.foliage.live": np.full(
+                    (_NZ, _NY, _NX), 0.2, dtype=np.float32
+                ),
+                "fuel_moisture.live": canopy_moist,
+            }
+        )
+        surf_ds = _make_2d_dataset(
+            {
+                "fuel_load.1hr": np.full((_NY, _NX), 0.5, dtype=np.float32),
+                "fuel_depth": np.full((_NY, _NX), 0.1, dtype=np.float32),
+                "fuel_moisture.1hr": np.full((_NY, _NX), 6.0, dtype=np.float32),  # 6%
+            }
+        )
+
+        source = _build_source()
+        source.pop("moist_merge", None)  # exercise the default
+
+        with patch_load_grid({"tree": tree_ds, "uniform": surf_ds}):
+            export_quicfire({"id": "exp-max", "name": ""}, source, noop_progress)
+
+        moist = _read_3d(captured_zip["zip_path"], "treesmoist.dat")
+        # max(1.0, 0.06) = 1.0 at k=0; canopy 1.0 elsewhere.
+        assert np.allclose(moist[0], 1.0)
+        assert np.allclose(moist[1:], 1.0)
+
+    def test_max_merge_takes_surface_when_higher(self, captured_zip, patch_load_grid):
+        canopy_moist = np.full((_NZ, _NY, _NX), 5.0, dtype=np.float32)  # 5%
+        tree_ds = _make_3d_dataset(
+            {
+                "bulk_density.foliage.live": np.full(
+                    (_NZ, _NY, _NX), 0.1, dtype=np.float32
+                ),
+                "fuel_moisture.live": canopy_moist,
+            }
+        )
+        surf_ds = _make_2d_dataset(
+            {
+                "fuel_load.1hr": np.full((_NY, _NX), 0.5, dtype=np.float32),
+                "fuel_depth": np.full((_NY, _NX), 0.1, dtype=np.float32),
+                "fuel_moisture.1hr": np.full((_NY, _NX), 80.0, dtype=np.float32),
+            }
+        )
+
+        source = _build_source()
+        source["moist_merge"] = "max"
+
+        with patch_load_grid({"tree": tree_ds, "uniform": surf_ds}):
+            export_quicfire({"id": "exp-max2", "name": ""}, source, noop_progress)
+
+        moist = _read_3d(captured_zip["zip_path"], "treesmoist.dat")
+        # max(0.05, 0.80) = 0.80 at k=0; 0.05 above.
+        assert np.allclose(moist[0], 0.80, atol=1e-5)
+        assert np.allclose(moist[1:], 0.05, atol=1e-5)
+
+
+class TestCropOversizedRole:
+    """Role grids that extend beyond the fire-grid extent are cropped by
+    integer slicing — never resampled."""
+
+    def test_oversized_surface_grid_is_cropped(self, captured_zip, patch_load_grid):
+        # Build a surface dataset one full cell larger than the fire grid in
+        # every direction. The grid's UTM origin shifts west and north by one
+        # cell, so the fire-grid window starts at (i0=1, j0=1).
+        big_nx = _NX + 2
+        big_ny = _NY + 2
+        canopy_rhof = np.zeros((_NZ, _NY, _NX), dtype=np.float32)
+        tree_ds = _make_3d_dataset(
+            {
+                "bulk_density.foliage.live": canopy_rhof,
+                "fuel_moisture.live": np.full((_NZ, _NY, _NX), 100.0, dtype=np.float32),
+            }
+        )
+        # Fill the surface grid with a sentinel everywhere and place a unique
+        # marker (42.0) at the cell that should end up at fire-grid (0, 0).
+        # That cell is at outer-array index (j=1, i=1) — one row down from top,
+        # one col in from left — when the surface grid is offset one cell
+        # west / one cell north of the fire grid.
+        big_load = np.full((big_ny, big_nx), 99.0, dtype=np.float32)
+        big_load[1 : 1 + _NY, 1 : 1 + _NX] = 0.5
+        big_load[1, 1] = 42.0
+        surf_ds = _make_2d_dataset(
+            {
+                "fuel_load.1hr": big_load,
+                "fuel_depth": np.full((big_ny, big_nx), 0.1, dtype=np.float32),
+                "fuel_moisture.1hr": np.full((big_ny, big_nx), 6.0, dtype=np.float32),
+            },
+            west=_WEST - _DX,
+            north=_NORTH + _DX,
+        )
+
+        with patch_load_grid({"tree": tree_ds, "uniform": surf_ds}):
+            export_quicfire(
+                {"id": "exp-crop", "name": ""}, _build_source(), noop_progress
+            )
+
+        rhof = _read_3d(captured_zip["zip_path"], "treesrhof.dat")
+        # The export is Y-flipped, so what was fire-grid (j=0, i=0) lands at
+        # rhof[0, -1, 0]. Marker value 42.0/dz = 42.0 (dz=1).
+        assert rhof[0, -1, 0] == pytest.approx(42.0)
+        # Everywhere else at k=0 is the cropped inner sentinel 0.5.
+        inner = rhof[0].copy()
+        inner[-1, 0] = 0.5  # mask the marker we just checked
+        assert np.allclose(inner, 0.5)
+        # The surrounding 99.0 sentinels are nowhere in the output — the crop
+        # was correct.
+        assert not np.any(rhof == 99.0)

@@ -1,0 +1,64 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "fuel_load.1hr",
+      "type": "continuous",
+      "unit": "kg/m\u00b2"
+    },
+    {
+      "index": 1,
+      "key": "fuel_depth",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "index": 2,
+      "key": "savr.1hr",
+      "type": "continuous",
+      "unit": "m\u207b\u00b9"
+    }
+  ],
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "name": "lookup",
+    "source_band": "fbfm",
+    "source_grid_id": "static-test-blue-mtn-fbfm40-2m",
+    "table": "fbfm40"
+  },
+  "status": "completed",
+  "tags": []
+}

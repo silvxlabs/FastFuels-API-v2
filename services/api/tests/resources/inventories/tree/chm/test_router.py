@@ -22,7 +22,7 @@ def chm_grid_for_inventory(firestore_client, domain_for_testing):
         name="CHM Grid for Inventory Tests",
         status="completed",
         source={
-            "name": "chm",
+            "name": "canopy",
             "product": "naip",
             "description": "NAIP high-resolution canopy height model",
         },
@@ -44,7 +44,7 @@ def chm_grid_in_different_domain(firestore_client, second_domain_for_inventory):
         name="CHM grid in second domain",
         status="completed",
         source={
-            "name": "chm",
+            "name": "canopy",
             "product": "meta",
             "description": "Meta CHM",
         },
@@ -235,7 +235,7 @@ class TestCreateChmInventory:
             domain_id=domain_for_testing["id"],
             name="Pending CHM Grid",
             status="pending",
-            source={"name": "chm", "product": "naip"},
+            source={"name": "canopy", "product": "naip"},
             bands=[{"key": "chm", "type": "continuous", "unit": "m", "index": 0}],
             georeference=None,
         )
@@ -253,13 +253,13 @@ class TestCreateChmInventory:
         finally:
             doc_ref.delete()
 
-    def test_non_chm_grid_returns_422(
+    def test_non_canopy_grid_returns_422(
         self, client, firestore_client, domain_for_testing
     ):
-        """Source grid that is not a CHM grid (missing source name and band) returns 422."""
+        """Source grid that is not a canopy grid returns 422."""
         grid_data = make_grid_data(
             domain_id=domain_for_testing["id"],
-            name="PIM Grid (not CHM)",
+            name="PIM Grid (not canopy)",
             status="completed",
             source={"name": "pim", "product": "treemap"},
             bands=[{"key": "tm_id", "type": "categorical"}],
@@ -275,7 +275,7 @@ class TestCreateChmInventory:
                 json={"source_chm_grid_id": grid_data["id"]},
             )
             assert response.status_code == 422
-            assert "not a chm grid" in response.json()["detail"].lower()
+            assert "not a canopy grid" in response.json()["detail"].lower()
         finally:
             doc_ref.delete()
 

@@ -1,13 +1,13 @@
 """
-Unit tests for api/v2/resources/grids/chm/schema.py
-and api/v2/resources/grids/providers/chm.py
+Unit tests for api/v2/resources/grids/canopy/schema.py
+and api/v2/resources/grids/providers/canopy.py
 
-Tests the Meta CHM schema models, ChmSource base, and band definitions.
+Tests the Meta/NAIP canopy schema models, CanopySource base, and band definitions.
 These are pure unit tests with no external dependencies.
 """
 
 import pytest
-from api.resources.grids.chm.schema import (
+from api.resources.grids.canopy.schema import (
     Attribution,
     CreateMetaChmRequest,
     CreateNaipChmRequest,
@@ -15,53 +15,53 @@ from api.resources.grids.chm.schema import (
     NaipChmSource,
     build_chm_bands,
 )
-from api.resources.grids.providers.chm import ChmSource
+from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
 
-class TestChmSource:
-    """Tests for ChmSource base model."""
+class TestCanopySource:
+    """Tests for CanopySource base model."""
 
-    def test_name_is_always_chm(self):
-        """The name field is always 'chm'."""
-        source = ChmSource(product="meta")
-        assert source.name == "chm"
+    def test_name_is_always_canopy(self):
+        """The name field is always 'canopy'."""
+        source = CanopySource(product="meta")
+        assert source.name == "canopy"
 
     def test_name_cannot_be_overridden(self):
-        """The name field cannot be set to anything other than 'chm'."""
+        """The name field cannot be set to anything other than 'canopy'."""
         with pytest.raises(ValidationError):
-            ChmSource(name="other", product="meta")
+            CanopySource(name="other", product="meta")
 
     def test_product_is_required(self):
         """The product field is required."""
         with pytest.raises(ValidationError):
-            ChmSource()
+            CanopySource()
 
     def test_description_defaults_to_empty_string(self):
         """The description field defaults to empty string."""
-        source = ChmSource(product="meta")
+        source = CanopySource(product="meta")
         assert source.description == ""
 
     def test_description_can_be_set(self):
         """The description field can be set."""
-        source = ChmSource(
+        source = CanopySource(
             product="meta",
             description="Test description",
         )
         assert source.description == "Test description"
 
     def test_extent_buffer_cells_defaults_to_zero(self):
-        source = ChmSource(product="meta")
+        source = CanopySource(product="meta")
         assert source.extent_buffer_cells == 0
 
     def test_extent_buffer_cells_can_be_set(self):
-        source = ChmSource(product="meta", extent_buffer_cells=10)
+        source = CanopySource(product="meta", extent_buffer_cells=10)
         assert source.extent_buffer_cells == 10
 
     def test_extent_buffer_cells_rejects_negative(self):
         with pytest.raises(ValidationError):
-            ChmSource(product="meta", extent_buffer_cells=-1)
+            CanopySource(product="meta", extent_buffer_cells=-1)
 
 
 class TestMetaChmSource:
@@ -77,10 +77,10 @@ class TestMetaChmSource:
         with pytest.raises(ValidationError):
             MetaChmSource(product="other", version="2")
 
-    def test_name_is_always_chm(self):
-        """The name field is always 'chm'."""
+    def test_name_is_always_canopy(self):
+        """The name field is always 'canopy'."""
         source = MetaChmSource(version="2")
-        assert source.name == "chm"
+        assert source.name == "canopy"
 
     def test_description_is_fixed(self):
         """The description has a fixed value."""
@@ -92,7 +92,7 @@ class TestMetaChmSource:
         """Model serializes correctly."""
         source = MetaChmSource(version="2")
         data = source.model_dump()
-        assert data["name"] == "chm"
+        assert data["name"] == "canopy"
         assert data["product"] == "meta"
         assert "description" in data
 
@@ -249,10 +249,10 @@ class TestNaipChmSource:
         source = NaipChmSource()
         assert source.product == "naip"
 
-    def test_name_is_always_chm(self):
-        """The name field is always 'chm'."""
+    def test_name_is_always_canopy(self):
+        """The name field is always 'canopy'."""
         source = NaipChmSource()
-        assert source.name == "chm"
+        assert source.name == "canopy"
 
     def test_description_is_fixed(self):
         """The description has a fixed value."""

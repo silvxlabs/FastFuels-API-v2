@@ -93,7 +93,7 @@ def test_create_blue_mtn_naip_chm(create_static_fixture, client, blue_mountain_d
     create_static_fixture(
         client=client,
         domain_id=blue_mountain_domain["id"],
-        endpoint="/grids/chm/naip",
+        endpoint="/grids/canopy/naip",
         body={},
         static_name="static-test-blue-mtn-naip-chm",
     )

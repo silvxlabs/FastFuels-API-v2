@@ -88,7 +88,7 @@ async def create_chm_inventory(
     grid_source = source_grid_data.get("source", {})
     if grid_source.get("name") != "canopy":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Grid '{body.source_chm_grid_id}' is not a canopy grid. "
                 f"This endpoint requires a canopy grid (with a 'chm' band) as the source."
@@ -101,7 +101,7 @@ async def create_chm_inventory(
 
     if "chm" not in band_keys:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Source grid is missing the required 'chm' band. "
                 f"Available bands: {band_keys}. "

@@ -78,7 +78,7 @@ async def create_resample(
     # alignment.resolution is required for non-grid targets.
     if alignment.target in ("domain", "native") and alignment.resolution is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"alignment.resolution is required when alignment.target is "
                 f"'{alignment.target}'."
@@ -101,7 +101,7 @@ async def create_resample(
     source_shape = source_grid_data["georeference"].get("shape")
     if source_shape is not None and len(source_shape) == 3:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Grid '{body.source_grid_id}' is a 3D grid. Resampling is "
                 f"not supported for 3D grids."
@@ -115,7 +115,7 @@ async def create_resample(
     invalid_keys = set(body.method_overrides.keys()) - source_band_keys
     if invalid_keys:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Method override keys not found in source grid bands: "
                 f"{sorted(invalid_keys)}. "

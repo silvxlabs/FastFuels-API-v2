@@ -71,7 +71,7 @@ MAX_SPARSE_INDEX = int(np.iinfo(np.int32).max)
 def _check_size(actual: int, limit: int, what: str, hint: str) -> None:
     if actual > limit:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"{what} ({actual}) exceeds API response limit ({limit}). {hint}",
         )
 
@@ -84,7 +84,7 @@ def _sparse_components(
     flat = data.ravel(order=order.value)
     if flat.size > MAX_SPARSE_INDEX:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=(
                 f"Chunk size ({flat.size}) exceeds int32 sparse-index limit "
                 f"({MAX_SPARSE_INDEX}). Request a smaller chunk."
@@ -502,7 +502,7 @@ async def get_chunk_metadata(
     chunks = grid_data.get("chunks")
     if not chunks:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Grid {grid_id} has no chunk layout.",
         )
 
@@ -512,7 +512,7 @@ async def get_chunk_metadata(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         )
 
@@ -537,7 +537,7 @@ async def _read_grid_chunk(
     chunks = grid_data.get("chunks")
     if not chunks:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Grid {grid_id} has no chunk layout.",
         )
 
@@ -547,7 +547,7 @@ async def _read_grid_chunk(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         )
 

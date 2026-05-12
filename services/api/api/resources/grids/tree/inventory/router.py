@@ -114,7 +114,7 @@ async def create_tree_inventory_grid(
     # Must be a tree inventory — other entity types can't be voxelized this way.
     if inventory_data.get("type") != "tree":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Inventory '{body.source_inventory_id}' has type "
                 f"'{inventory_data.get('type')}'. This endpoint requires "

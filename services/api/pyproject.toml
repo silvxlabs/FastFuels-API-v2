@@ -10,7 +10,7 @@ dependencies = [
     "fastapi>=0.128.0",
     "fastparquet>=2025.12.0",
     "firebase-admin>=7.1.0",
-    "gcsfs>=2026.1.0",
+    "gcsfs>=2026.5.0",
     "geojson-pydantic>=2.1.0",
     "geopandas>=1.1.2",
     "google-cloud-firestore>=2.23.0",
@@ -34,6 +34,12 @@ dependencies = [
     "uvicorn>=0.40.0",
     "xarray>=2025.1.0",
     "zarr>=3.1.5",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # ring 0.10.1 has \* in a docstring (SyntaxWarning on Py3.12+); fixed in HEAD but not yet released (youknowone/ring#206)
+    "ignore:invalid escape sequence:SyntaxWarning:ring",
 ]
 
 [tool.uv.sources]

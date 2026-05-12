@@ -22,6 +22,7 @@ import pytest
 
 from lib.config import (
     DEPLOYMENT_ENV,
+    DOMAINS_COLLECTION,
     EXPORTS_BUCKET,
     EXPORTS_COLLECTION,
     GRIDS_BUCKET,
@@ -356,6 +357,146 @@ def inventory_exporter_runner():
     yield _run
 
     # Teardown: delete GCS export files and Firestore documents
+    for export_id in export_ids:
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        delete_document(EXPORTS_COLLECTION, export_id)
+
+
+# QUIC-Fire combined export: five role grids + a test domain so the handler
+# can write domain.geojson. All five fixtures share lattice
+# origin=(720226, 5190646) at 2 m, matching `resolved.fire_grid` in
+# `quicfire.json`. The handler reads `domain.features` and `domain.crs` only
+# (for the geojson sidecar) — bbox is not consulted.
+
+_QUICFIRE_ROLE_FIXTURES = {
+    "canopy": "static-test-blue-mtn-tree-inventory-voxels",
+    "lookup": "static-test-blue-mtn-lookup-fbfm40",
+    "topography": "static-test-blue-mtn-landfire-topography",
+    "uniform_moisture": "static-test-blue-mtn-uniform-moisture",
+}
+
+
+def _make_test_domain_doc(domain_id: str) -> dict:
+    """Domain doc shaped like the live API persists — features with stringified
+    coordinates (Firestore can't nest arrays) and a GeoJSON CRS dict."""
+    polygon_coords = json.dumps(
+        [
+            [
+                [720226.0, 5189762.0],
+                [721534.0, 5189762.0],
+                [721534.0, 5190646.0],
+                [720226.0, 5190646.0],
+                [720226.0, 5189762.0],
+            ]
+        ]
+    )
+    return {
+        "id": domain_id,
+        "type": "FeatureCollection",
+        "owner_id": "integration-test",
+        "crs": {"type": "name", "properties": {"name": "EPSG:32611"}},
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "domain"},
+                "geometry": {"type": "Polygon", "coordinates": polygon_coords},
+            }
+        ],
+        "bbox": [720226.0, 5189762.0, 721534.0, 5190646.0],
+    }
+
+
+@pytest.fixture(scope="module")
+def quicfire_sources():
+    """Stage every grid the QUIC-Fire export consumes + a test domain.
+
+    Copies each static fixture zarr to a unique test path, registers a
+    Firestore doc for it, creates a stub domain doc. Yields a dict
+    mapping role names to test grid IDs plus the domain id; cleans
+    everything up on teardown.
+    """
+    fs = gcsfs.GCSFileSystem()
+    domain_id = f"test-{uuid4().hex}"
+    set_document(DOMAINS_COLLECTION, domain_id, _make_test_domain_doc(domain_id))
+
+    grid_ids: dict[str, str] = {}
+    for role, static_name in _QUICFIRE_ROLE_FIXTURES.items():
+        grid_id = f"test-{uuid4().hex}"
+        fs.cp(
+            f"{GRIDS_BUCKET}/{static_name}", f"{GRIDS_BUCKET}/{grid_id}", recursive=True
+        )
+        grid_data = load_json(GRIDS_DIR / f"{static_name}.json")
+        grid_data["id"] = grid_id
+        grid_data["domain_id"] = domain_id
+        set_document(GRIDS_COLLECTION, grid_id, grid_data)
+        grid_ids[role] = grid_id
+
+    yield {"domain_id": domain_id, **grid_ids}
+
+    for grid_id in grid_ids.values():
+        gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        delete_document(GRIDS_COLLECTION, grid_id)
+    delete_document(DOMAINS_COLLECTION, domain_id)
+
+
+@pytest.fixture(scope="module")
+def quicfire_exporter_runner():
+    """Run the QUIC-Fire exporter against a `quicfire_sources` fixture.
+
+    Usage::
+
+        def test_quicfire_minimal(quicfire_sources, quicfire_exporter_runner):
+            export = quicfire_exporter_runner(quicfire_sources)
+
+    Accepts ``source_overrides`` to bolt on optional roles (topography,
+    SAVR pair) or override merge modes. Returns the completed export doc.
+    """
+    export_ids: list[str] = []
+
+    def _run(
+        sources: dict,
+        timeout: int = 180,
+        source_overrides: dict | None = None,
+    ) -> dict:
+        export_data = load_json(EXPORTS_DIR / "quicfire.json")
+        export_id = f"test-{uuid4().hex}"
+        export_data["id"] = export_id
+        export_data["domain_id"] = sources["domain_id"]
+        export_data["source"]["domain_id"] = sources["domain_id"]
+        export_data["source"]["canopy_bulk_density"]["grid_id"] = sources["canopy"]
+        export_data["source"]["canopy_moisture"]["grid_id"] = sources["canopy"]
+        export_data["source"]["surface_fuel_load"]["grid_id"] = sources["lookup"]
+        export_data["source"]["surface_fuel_depth"]["grid_id"] = sources["lookup"]
+        export_data["source"]["surface_moisture"]["grid_id"] = sources[
+            "uniform_moisture"
+        ]
+
+        if source_overrides:
+            export_data["source"].update(source_overrides)
+
+        set_document(EXPORTS_COLLECTION, export_id, export_data)
+        export_ids.append(export_id)
+        _run_exporter(export_id)
+
+        if DEPLOYMENT_ENV != "local":
+            export = _poll_for_completion(export_id, timeout=timeout)
+        else:
+            _, snapshot = get_document(EXPORTS_COLLECTION, export_id)
+            export = snapshot.to_dict()
+
+        assert export["status"] == "completed", (
+            f"QF export did not complete: status={export['status']}, "
+            f"error={export.get('error')}"
+        )
+        assert export["signed_url"] is not None, "signed_url should be set"
+        return export
+
+    yield _run
+
     for export_id in export_ids:
         gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}"
         if exists(gcs_path):

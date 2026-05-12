@@ -358,10 +358,13 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
 def blue_mountain_domain(client):
     """Create the Blue Mountain domain via the API, clean up after.
 
-    Uses EXAMPLE_WGS84_DEFAULT — the canonical Blue Mountain Recreation Area
-    (~1 sq km near Missoula, Montana). The API auto-projects to UTM zone 11N.
+    Uses EXAMPLE_WGS84_DEFAULT with `pad_to_resolution=2` — the canonical
+    ~1 sq km Blue Mountain Recreation Area near Missoula, MT, with the
+    UTM bbox snapped to a clean 2 m lattice so every 2 m Domain-anchored
+    grid created from this Domain lands on a uniform integer-2 m corner.
     """
-    response = client.post("/domains", json=EXAMPLE_WGS84_DEFAULT, timeout=30.0)
+    payload = {**EXAMPLE_WGS84_DEFAULT, "pad_to_resolution": 2}
+    response = client.post("/domains", json=payload, timeout=30.0)
     assert response.status_code == 201, (
         f"POST /domains returned {response.status_code}: {response.text}"
     )
@@ -370,7 +373,6 @@ def blue_mountain_domain(client):
 
     yield domain
 
-    # Clean up
     del_response = client.delete(
         f"/domains/{domain['id']}", params={"force": True}, timeout=30.0
     )

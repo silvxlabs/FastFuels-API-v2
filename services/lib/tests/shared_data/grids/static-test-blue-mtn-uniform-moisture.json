@@ -2,21 +2,9 @@
   "bands": [
     {
       "index": 0,
-      "key": "elevation",
+      "key": "fuel_moisture.1hr",
       "type": "continuous",
-      "unit": "m"
-    },
-    {
-      "index": 1,
-      "key": "slope",
-      "type": "continuous",
-      "unit": "degrees"
-    },
-    {
-      "index": 2,
-      "key": "aspect",
-      "type": "continuous",
-      "unit": "degrees"
+      "unit": "%"
     }
   ],
   "chunks": {
@@ -54,21 +42,14 @@
     "percent": 100
   },
   "source": {
-    "alignment": {
-      "method": null,
-      "resolution": 2.0,
-      "target": "domain"
-    },
     "bands": [
-      "elevation",
-      "slope",
-      "aspect"
+      {
+        "quantity": "fuel_moisture.1hr",
+        "value": 6.0
+      }
     ],
-    "description": "LANDFIRE topographic data (elevation, slope, aspect)",
-    "extent_buffer_cells": 0,
-    "name": "landfire",
-    "product": "topography",
-    "version": "2020"
+    "name": "uniform",
+    "resolution": 2.0
   },
   "status": "completed",
   "tags": []

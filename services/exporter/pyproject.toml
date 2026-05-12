@@ -12,6 +12,7 @@ dependencies = [
     "pandas>=2.0.0",
     "pyarrow>=15.0.0",
     "rioxarray>=0.21.0",
+    "scipy>=1.13",
 ]
 
 [project.optional-dependencies]

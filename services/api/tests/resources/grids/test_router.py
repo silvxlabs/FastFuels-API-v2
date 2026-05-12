@@ -233,7 +233,13 @@ class TestListGrids:
         self, client, grids_for_listing, domain_for_testing
     ):
         """List returns grids belonging to the authenticated user."""
-        response = client.get(self.route(domain_for_testing["id"]))
+        # Sort newest-first and ask for the max page so the fixture grids are
+        # found regardless of the endpoint's default sort or how many other
+        # grids share this test domain.
+        response = client.get(
+            f"{self.route(domain_for_testing['id'])}"
+            "?sort_by=created_on&sort_order=descending&size=1000"
+        )
 
         assert response.status_code == 200
         data = response.json()

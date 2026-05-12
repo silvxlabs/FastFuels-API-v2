@@ -1,0 +1,61 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "elevation",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "alignment": {
+      "method": null,
+      "resolution": 2.0,
+      "target": "domain"
+    },
+    "bands": [
+      "elevation"
+    ],
+    "description": "LANDFIRE topographic data (elevation, slope, aspect)",
+    "extent_buffer_cells": 0,
+    "name": "landfire",
+    "product": "topography",
+    "version": "2020"
+  },
+  "status": "completed",
+  "tags": []
+}

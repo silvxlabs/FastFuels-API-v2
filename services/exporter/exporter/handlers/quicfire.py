@@ -9,15 +9,18 @@ at request time by the API validator and snapshotted into
 ``source["resolved"]["fire_grid"]``. Per-role band selection is preserved
 in ``source["<role>"]`` (each a ``{grid_id, band}`` dict).
 
-Surface and canopy values are merged at the bottom slab (k=0) per the
-additive policy locked in by the API merge fields:
+Surface and canopy values are merged at the bottom slab (k=0):
 
 - ``rhof`` (kg/m³): ``merged[0] = canopy[0] + surface_load / dz``
-- ``moist`` (fraction, after dividing input % by 100):
-  mass-weighted by canopy_rhof[0] and surface_rhof_layer
+- ``moist`` (fraction, after dividing input % by 100): ``max`` of canopy[0]
+  and surface (v1-parity default); ``weighted_avg`` is opt-in via
+  ``source["moist_merge"]``
 - ``fueldepth`` (m): ``merged[0] = surface_depth`` (canopy contributes 0)
 - ``savr`` (m⁻¹, mass-weighted): converted to particle size scale (m)
   via ``2/SAVR`` before write
+
+Oversized role grids are cropped to the fire-grid extent by integer
+slicing — never resampled.
 
 Output zip layout (flat):
     treesrhof.dat
@@ -65,14 +68,23 @@ def export_quicfire(
 ) -> str:
     """Build a QUIC-Fire input zip and upload it to GCS."""
     fire_grid = source["resolved"]["fire_grid"]
-    nx = fire_grid["nx"]
-    ny = fire_grid["ny"]
-    nz = fire_grid["nz"]
-    dz = float(fire_grid["z_resolution"])
+    nx = int(fire_grid["nx"])
+    ny = int(fire_grid["ny"])
+    # nz = int(fire_grid["nz"])
+    dx = float(fire_grid["dx"])
+    dz = float(fire_grid["dz"])
+    fire_minx = float(fire_grid["transform"][2])
+    fire_maxy = float(fire_grid["transform"][5])
 
     grid_cache: dict[str, xr.Dataset] = {}
 
     def load_band(role: dict, *, rank: int) -> np.ndarray:
+        """Load a band, crop to the fire-grid extent, return a float32 array.
+
+        The validator already enforced lattice alignment and coverage, so the
+        offsets here are integers within tolerance — `round` cleans the
+        floating-point residual.
+        """
         grid_id = role["grid_id"]
         band = role["band"]
         if grid_id not in grid_cache:
@@ -93,7 +105,15 @@ def export_quicfire(
                 suggestion=f"Available bands: {list(ds.data_vars)}",
             )
         dims = ("z", "y", "x") if rank == 3 else ("y", "x")
-        return ds[band].transpose(*dims).values.astype(np.float32, copy=False)
+        arr = ds[band].transpose(*dims).values.astype(np.float32, copy=False)
+
+        # x coords ascend (west→east), y coords descend (north→south).
+        # Coordinates are cell centers; offset back to cell origin by dx/2.
+        role_minx = float(ds.x.values[0]) - dx / 2
+        role_maxy = float(ds.y.values[0]) + dx / 2
+        i0 = round((fire_minx - role_minx) / dx)
+        j0 = round((role_maxy - fire_maxy) / dx)
+        return arr[..., j0 : j0 + ny, i0 : i0 + nx]
 
     progress("Loading canopy bands...", 10)
     canopy_rhof = load_band(source["canopy_bulk_density"], rank=3)
@@ -105,34 +125,20 @@ def export_quicfire(
     surf_moist = load_band(source["surface_moisture"], rank=2) / 100.0
     surf_rhof_layer = surf_load / dz
 
-    if canopy_rhof.shape != (nz, ny, nx):
-        raise ProcessingError(
-            code="SHAPE_MISMATCH",
-            message=(
-                f"Canopy grid shape {canopy_rhof.shape} does not match "
-                f"resolved fire grid (nz, ny, nx)=({nz}, {ny}, {nx})."
-            ),
-            suggestion="The API validator should have rejected this request.",
-        )
-    if surf_load.shape != (ny, nx):
-        raise ProcessingError(
-            code="SHAPE_MISMATCH",
-            message=(
-                f"Surface grid shape {surf_load.shape} does not match "
-                f"resolved fire grid (ny, nx)=({ny}, {nx})."
-            ),
-            suggestion="The API validator should have rejected this request.",
-        )
-
     progress("Stitching surface + canopy...", 40)
     rhof = canopy_rhof.copy()
     rhof[0] = canopy_rhof[0] + surf_rhof_layer
 
-    total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer + _EPS
+    # k=0 moisture: v1-parity `max` is the default; `weighted_avg` is the
+    # mass-weighted alternative.
     moist = canopy_moist.copy()
-    moist[0] = (
-        canopy_rhof[0] * canopy_moist[0] + surf_rhof_layer * surf_moist
-    ) / total_rhof_k0
+    if source.get("moist_merge", "max") == "max":
+        moist[0] = np.maximum(canopy_moist[0], surf_moist)
+    else:
+        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer + _EPS
+        moist[0] = (
+            canopy_rhof[0] * canopy_moist[0] + surf_rhof_layer * surf_moist
+        ) / total_rhof_k0
 
     fueldepth = np.zeros_like(canopy_rhof)
     fueldepth[0] = surf_depth
@@ -143,6 +149,7 @@ def export_quicfire(
         canopy_savr = load_band(source["canopy_savr"], rank=3)
         surf_savr = load_band(source["surface_savr"], rank=2)
         savr_arr = canopy_savr.copy()
+        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer + _EPS
         savr_arr[0] = (
             canopy_rhof[0] * canopy_savr[0] + surf_rhof_layer * surf_savr
         ) / total_rhof_k0
@@ -182,11 +189,11 @@ def export_quicfire(
                 traceback=traceback.format_exc(),
             )
 
-        progress("Zipping...", 85)
+        progress("Compressing...", 85)
         zip_base = str(Path(tmp) / "quicfire")
         zip_path = shutil.make_archive(zip_base, "zip", str(out_dir))
 
-        progress("Uploading...", 95)
+        progress("Uploading...", 90)
         gcs_path = _upload_zip(zip_path, export)
 
     return gcs_path
@@ -221,24 +228,11 @@ def _write_metadata(
     source: dict,
     fire_grid: dict,
 ) -> None:
-    transform = fire_grid.get("transform") or []
-    dx = abs(float(transform[0])) if len(transform) >= 1 else None
-    dy = abs(float(transform[4])) if len(transform) >= 5 else None
     metadata = {
         "format": "quicfire",
         "exporter_version": "1",
         "completed_on": datetime.now(UTC).isoformat(),
-        "fire_grid": {
-            "nx": fire_grid["nx"],
-            "ny": fire_grid["ny"],
-            "nz": fire_grid["nz"],
-            "dx": dx,
-            "dy": dy,
-            "dz": float(fire_grid["z_resolution"]),
-            "z_origin": fire_grid.get("z_origin"),
-            "transform": fire_grid.get("transform"),
-            "crs": fire_grid.get("crs"),
-        },
+        "fire_grid": fire_grid,
         "export_id": export.get("id"),
         "export_name": export.get("name"),
         "source": source,

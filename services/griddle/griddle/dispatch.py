@@ -96,8 +96,8 @@ def dispatch_handler(
             return handle_pim(domain_gdf, source, progress_callback)
         case "uniform":
             return handle_uniform(domain_gdf, source, progress_callback)
-        case "chm":
-            return handle_chm(domain_gdf, source, progress_callback)
+        case "canopy":
+            return handle_canopy(domain_gdf, source, progress_callback)
         case "3dep":
             return handle_3dep(domain_gdf, source, progress_callback)
         case _:
@@ -272,19 +272,19 @@ def handle_uniform(
     )
 
 
-def handle_chm(
+def handle_canopy(
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> xr.Dataset:
-    """Handle CHM source grids."""
+    """Handle canopy source grids."""
     product = source["product"]
     version = source.get("version", "2")
     extent_buffer_cells = source.get("extent_buffer_cells", 0)
     alignment = source.get("alignment") or {"target": "domain"}
     target_grid_doc = _load_target_grid_doc(alignment)
 
-    progress(f"Fetching CHM {product} v{version}...", 10)
+    progress(f"Fetching canopy {product} v{version}...", 10)
 
     match product:
         case "meta":
@@ -318,8 +318,8 @@ def handle_chm(
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
-                message=f"Unknown CHM product: {product}",
-                suggestion="Supported products: meta",
+                message=f"Unknown canopy product: {product}",
+                suggestion="Supported products: meta, naip",
             )
 
 

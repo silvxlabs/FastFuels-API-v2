@@ -49,7 +49,7 @@
     },
     "description": "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)",
     "extent_buffer_cells": 0,
-    "name": "chm",
+    "name": "canopy",
     "product": "naip",
     "tile_metadata": {
       "acquisition_dates": null,

@@ -36,7 +36,7 @@ def validate_grid_has_band(
     missing = [k for k in required if k not in band_keys]
     if missing:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Source grid {grid_id} is missing required bands: {missing}. "
                 f"Available bands: {sorted(band_keys)}"
@@ -65,7 +65,7 @@ def validate_band_unit(
     actual = band.get("unit")
     if actual != expected_unit:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Grid {grid_id} band {band_key!r} has unit {actual!r}, "
                 f"expected {expected_unit!r}."
@@ -92,7 +92,7 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
     georeference = grid_data.get("georeference")
     if not georeference:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Grid {grid_id} has no georeference. The grid must be fully "
                 f"processed before it can be used in a combined export."
@@ -101,7 +101,7 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
     rank = len(georeference.get("shape", []))
     if rank != expected:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(f"Grid {grid_id} is {rank}D, expected {expected}D for this role."),
         )
 
@@ -148,7 +148,7 @@ def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:
     """
     if not grid_data.get("georeference"):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Source grid {grid_id} has no georeference. "
                 f"The grid must be fully processed before it can be resampled."

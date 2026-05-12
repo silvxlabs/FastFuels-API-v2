@@ -191,7 +191,7 @@ def _check_role_alignment(
 
     if gcrs != fire_crs:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Role '{role_name}' grid {src.grid_id}: CRS ({gcrs}) does not "
             f"match fire-grid CRS ({fire_crs}). {_HINT}",
         )
@@ -200,7 +200,7 @@ def _check_role_alignment(
     gdy = abs(float(gtransform[4]))
     if not isclose(gdx, dx, abs_tol=_TOL) or not isclose(gdy, dx, abs_tol=_TOL):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Role '{role_name}' grid {src.grid_id}: cell size "
             f"({gdx}, {gdy}) does not match fire-grid ({dx}, {dx}). {_HINT}",
         )
@@ -211,7 +211,7 @@ def _check_role_alignment(
         offset_y, round(offset_y), abs_tol=_TOL
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Role '{role_name}' grid {src.grid_id}: origin is not on the "
             f"fire-grid lattice (x offset {offset_x:.6f} cells, y offset "
             f"{offset_y:.6f} cells; must be integers). {_HINT}",
@@ -229,7 +229,7 @@ def _check_role_alignment(
         and gmaxy >= fire_maxy - _TOL
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Role '{role_name}' grid {src.grid_id}: bbox does not cover "
             f"the fire-grid bbox. {_HINT}",
         )
@@ -249,7 +249,7 @@ def _check_3d_role_vertical(
         or not isclose(float(geo["z_origin"]), fire_grid["z_origin"], abs_tol=_TOL)
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Role '{role_name}' grid {src.grid_id}: z grid (nz, dz, "
             f"z_origin) does not match fire-grid vertical.",
         )
@@ -261,7 +261,7 @@ def _check_cell_count_cap(fire_grid: dict) -> None:
     cells = nx * ny * nz
     if cells > _MAX_CELLS:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Resolved fire grid has {cells:_} cells "
             f"(nx={nx}, ny={ny}, nz={nz}); exceeds cap of {_MAX_CELLS:_}.",
         )

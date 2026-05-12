@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 STATIC_GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 STATIC_INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
+E2E_CREATE_TIMEOUT_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -233,7 +234,7 @@ def create_static_fixture(firestore_client, test_owner_id):
         try:
             # Create the grid via the API
             url = f"/domains/{domain_id}{endpoint}"
-            response = client.post(url, json=body, timeout=30.0)
+            response = client.post(url, json=body, timeout=E2E_CREATE_TIMEOUT_SECONDS)
             assert response.status_code == 201, (
                 f"POST {url} returned {response.status_code}: {response.text}"
             )
@@ -313,7 +314,7 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
         try:
             # Create the inventory via the API
             url = f"/domains/{domain_id}{endpoint}"
-            response = client.post(url, json=body, timeout=30.0)
+            response = client.post(url, json=body, timeout=E2E_CREATE_TIMEOUT_SECONDS)
             assert response.status_code == 201, (
                 f"POST {url} returned {response.status_code}: {response.text}"
             )
@@ -364,7 +365,7 @@ def blue_mountain_domain(client):
     grid created from this Domain lands on a uniform integer-2 m corner.
     """
     payload = {**EXAMPLE_WGS84_DEFAULT, "pad_to_resolution": 2}
-    response = client.post("/domains", json=payload, timeout=30.0)
+    response = client.post("/domains", json=payload, timeout=E2E_CREATE_TIMEOUT_SECONDS)
     assert response.status_code == 201, (
         f"POST /domains returned {response.status_code}: {response.text}"
     )

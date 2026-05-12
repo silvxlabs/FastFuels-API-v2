@@ -372,9 +372,9 @@ def inventory_exporter_runner():
 
 _QUICFIRE_ROLE_FIXTURES = {
     "canopy": "static-test-blue-mtn-tree-inventory-voxels",
-    "lookup": "static-test-blue-mtn-lookup-fbfm40-2m",
-    "topography": "static-test-blue-mtn-landfire-topography-2m",
-    "uniform_moisture": "static-test-blue-mtn-uniform-moisture-2m",
+    "lookup": "static-test-blue-mtn-lookup-fbfm40",
+    "topography": "static-test-blue-mtn-landfire-topography",
+    "uniform_moisture": "static-test-blue-mtn-uniform-moisture",
 }
 
 

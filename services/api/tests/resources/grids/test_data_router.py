@@ -22,6 +22,7 @@ from api.resources.grids.schema import (
     GridDataArrayFormat,
     GridDataOrder,
 )
+from api.resources.grids.utils import compute_chunk_metadata
 from fastapi import HTTPException
 
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
@@ -73,6 +74,12 @@ def _read_static_zarr_chunk(static_name: str, band: str, metadata: dict) -> np.n
         return data_array.isel(y=slices[0], x=slices[1]).values
     finally:
         ds.close()
+
+
+def _expected_chunk_metadata(grid_data: dict, chunk_index: int = 0):
+    return compute_chunk_metadata(
+        grid_data["georeference"], grid_data["chunks"]["shape"], chunk_index
+    )
 
 
 # Firestore fixtures
@@ -368,7 +375,10 @@ class TestGetChunkMetadata:
     def test_chunk_out_of_range_returns_422(
         self, client, domain_for_testing, static_grid_in_firestore
     ):
-        response = client.get(chunk_route(domain_for_testing["id"], STATIC_NAME, 1))
+        out_of_range_index = static_grid_in_firestore["chunks"]["count"]
+        response = client.get(
+            chunk_route(domain_for_testing["id"], STATIC_NAME, out_of_range_index)
+        )
         assert response.status_code == 422
 
     def test_3d_chunk_out_of_range_returns_422(
@@ -410,8 +420,10 @@ class TestGetChunkMetadata:
 
         data = response.json()
         georef = static_grid_in_firestore["georeference"]
+        expected = _expected_chunk_metadata(static_grid_in_firestore, 0)
+
         assert data["index"] == 0
-        assert data["shape"] == list(georef["shape"])
+        assert data["shape"] == list(expected.shape)
         assert data["offset"] == [0, 0]
         assert "z_origin" not in data
         assert "z_resolution" not in data
@@ -523,11 +535,10 @@ class TestGetGridDataJson:
         assert response.status_code == 200
 
         payload = response.json()
+        expected = _expected_chunk_metadata(static_grid_in_firestore, 0)
         assert payload["order"] == "C"
         assert payload["data"]["format"] == "dense"
-        assert payload["shape"] == list(
-            static_grid_in_firestore["georeference"]["shape"]
-        )
+        assert payload["shape"] == list(expected.shape)
 
     # Dense unit tests
 
@@ -872,7 +883,7 @@ class TestGetGridDataBinary:
         assert response.headers["X-Data-Order"] == "C"
         assert response.headers["X-Data-Format"] == "dense"
         assert "X-Data-Dtype" in response.headers
-        expected_shape = static_grid_in_firestore["georeference"]["shape"]
+        expected_shape = _expected_chunk_metadata(static_grid_in_firestore, 0).shape
         assert response.headers["X-Data-Shape"] == ",".join(
             str(s) for s in expected_shape
         )

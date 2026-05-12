@@ -408,7 +408,7 @@ def _make_test_domain_doc(domain_id: str) -> dict:
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def quicfire_sources():
     """Stage every grid the QUIC-Fire export consumes + a test domain.
 
@@ -443,7 +443,7 @@ def quicfire_sources():
     delete_document(DOMAINS_COLLECTION, domain_id)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def quicfire_exporter_runner():
     """Run the QUIC-Fire exporter against a `quicfire_sources` fixture.
 

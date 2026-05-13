@@ -12,15 +12,15 @@ Replace placeholder IDs with actual values when testing.
 
 EXAMPLE_FBFM40_LOOKUP_MINIMAL = {
     "source_grid_id": "grid_abc123",
-    "quantities": ["fuel_load.1hr", "fuel_depth"],
+    "bands": ["fuel_load.1hr", "fuel_depth"],
 }
 
-EXAMPLE_FBFM40_LOOKUP_ALL_QUANTITIES = {
+EXAMPLE_FBFM40_LOOKUP_ALL_BANDS = {
     "source_grid_id": "grid_abc123",
     "name": "Surface fuels from FBFM40",
     "description": "All SB40 fuel parameters for baseline scenario",
     "tags": ["baseline", "surface-fuel"],
-    "quantities": [
+    "bands": [
         "fuel_load.1hr",
         "fuel_load.10hr",
         "fuel_load.100hr",
@@ -47,9 +47,9 @@ CREATE_FBFM40_LOOKUP_OPENAPI_EXAMPLES = {
             "contain an 'fbfm' band."
         ),
     },
-    "all_quantities": {
-        "value": EXAMPLE_FBFM40_LOOKUP_ALL_QUANTITIES,
-        "summary": "All fuel quantities",
+    "all_bands": {
+        "value": EXAMPLE_FBFM40_LOOKUP_ALL_BANDS,
+        "summary": "All fuel bands",
         "description": (
             "Looks up all available SB40 fuel parameters: fuel loads (5 size "
             "classes), SAV ratios (5 size classes), fuel depth, moisture of "
@@ -60,5 +60,5 @@ CREATE_FBFM40_LOOKUP_OPENAPI_EXAMPLES = {
 
 ALL_FBFM40_LOOKUP_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_FBFM40_LOOKUP_MINIMAL),
-    ("all_quantities", EXAMPLE_FBFM40_LOOKUP_ALL_QUANTITIES),
+    ("all_bands", EXAMPLE_FBFM40_LOOKUP_ALL_BANDS),
 ]

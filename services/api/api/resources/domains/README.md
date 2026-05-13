@@ -218,7 +218,7 @@ POST /v2/domains/{id}/grids/landfire/topography
 { "bands": ["elevation"], "alignment": { "target": "domain", "resolution": 2.0 } }
 
 POST /v2/domains/{id}/grids/uniform
-{ "resolution": 2.0, "bands": [ {"quantity": "fuel_moisture.1hr", "value": 6.0} ] }
+{ "resolution": 2.0, "bands": [ {"key": "fuel_moisture.1hr", "value": 6.0} ] }
 ```
 
 All four grids share CRS and transform exactly. The QUIC-Fire export

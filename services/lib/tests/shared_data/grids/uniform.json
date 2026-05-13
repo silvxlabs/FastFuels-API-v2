@@ -30,11 +30,11 @@
   "source": {
     "bands": [
       {
-        "quantity": "fuel_moisture.1hr",
+        "key": "fuel_moisture.1hr",
         "value": 6.0
       },
       {
-        "quantity": "fuel_moisture.10hr",
+        "key": "fuel_moisture.10hr",
         "value": 8.0
       }
     ],

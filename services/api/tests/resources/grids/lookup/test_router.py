@@ -133,7 +133,7 @@ class TestCreateFbfm40Lookup:
         """Minimal request with required fields creates a lookup grid."""
         request_body = {
             "source_grid_id": complete_fbfm40_grid["id"],
-            "quantities": ["fuel_load.1hr"],
+            "bands": ["fuel_load.1hr"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -168,7 +168,7 @@ class TestCreateFbfm40Lookup:
         """Request with name, description, and tags."""
         request_body = {
             "source_grid_id": complete_fbfm40_grid["id"],
-            "quantities": ["fuel_load.1hr", "fuel_depth"],
+            "bands": ["fuel_load.1hr", "fuel_depth"],
             "name": "Surface fuels from FBFM40",
             "description": "Fuel parameters for baseline scenario",
             "tags": ["baseline", "surface-fuel"],
@@ -183,11 +183,11 @@ class TestCreateFbfm40Lookup:
         assert data["description"] == "Fuel parameters for baseline scenario"
         assert data["tags"] == ["baseline", "surface-fuel"]
 
-    def test_multiple_quantities_creates_correct_bands(
+    def test_multiple_bands_creates_correct_indices(
         self, client, domain_for_testing, complete_fbfm40_grid
     ):
-        """Requesting multiple quantities creates bands with correct indices."""
-        quantities = [
+        """Requesting multiple bands creates bands with correct indices."""
+        bands = [
             "fuel_load.1hr",
             "savr.1hr",
             "fuel_depth",
@@ -196,7 +196,7 @@ class TestCreateFbfm40Lookup:
         ]
         request_body = {
             "source_grid_id": complete_fbfm40_grid["id"],
-            "quantities": quantities,
+            "bands": bands,
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -205,8 +205,8 @@ class TestCreateFbfm40Lookup:
 
         data = response.json()
         assert len(data["bands"]) == 5
-        for i, quantity in enumerate(quantities):
-            assert data["bands"][i]["key"] == quantity
+        for i, band_key in enumerate(bands):
+            assert data["bands"][i]["key"] == band_key
             assert data["bands"][i]["index"] == i
 
     def test_inherits_georeference_from_source(
@@ -215,7 +215,7 @@ class TestCreateFbfm40Lookup:
         """Output grid inherits georeference from the source grid."""
         request_body = {
             "source_grid_id": complete_fbfm40_grid["id"],
-            "quantities": ["fuel_load.1hr"],
+            "bands": ["fuel_load.1hr"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -234,7 +234,7 @@ class TestCreateFbfm40Lookup:
         """Response should not expose the owner_id field."""
         request_body = {
             "source_grid_id": complete_fbfm40_grid["id"],
-            "quantities": ["fuel_load.1hr"],
+            "bands": ["fuel_load.1hr"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -249,7 +249,7 @@ class TestCreateFbfm40Lookup:
         """Non-existent source_grid_id returns 404."""
         request_body = {
             "source_grid_id": "00000000000000000000000000000000",
-            "quantities": ["fuel_load.1hr"],
+            "bands": ["fuel_load.1hr"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -263,7 +263,7 @@ class TestCreateFbfm40Lookup:
         """Source grid with status != 'complete' returns 422."""
         request_body = {
             "source_grid_id": pending_fbfm40_grid["id"],
-            "quantities": ["fuel_load.1hr"],
+            "bands": ["fuel_load.1hr"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -277,7 +277,7 @@ class TestCreateFbfm40Lookup:
         """Source grid without an 'fbfm' band returns 422."""
         request_body = {
             "source_grid_id": grid_without_fbfm_band["id"],
-            "quantities": ["fuel_load.1hr"],
+            "bands": ["fuel_load.1hr"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -285,13 +285,13 @@ class TestCreateFbfm40Lookup:
         assert response.status_code == 422
         assert "fbfm" in response.json()["detail"].lower()
 
-    def test_invalid_quantity_returns_422(
+    def test_invalid_band_returns_422(
         self, client, domain_for_testing, complete_fbfm40_grid
     ):
-        """Invalid quantity value returns 422 (Pydantic validation)."""
+        """Invalid band value returns 422 (Pydantic validation)."""
         request_body = {
             "source_grid_id": complete_fbfm40_grid["id"],
-            "quantities": ["not_a_real_quantity"],
+            "bands": ["not_a_real_band"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -304,7 +304,7 @@ class TestCreateFbfm40Lookup:
         """Source grid belonging to a different domain returns 404."""
         request_body = {
             "source_grid_id": grid_in_different_domain["id"],
-            "quantities": ["fuel_load.1hr"],
+            "bands": ["fuel_load.1hr"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)

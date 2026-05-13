@@ -326,31 +326,31 @@ Future handlers that will operate on existing grid data. The following are desig
 
 def lookup_fbfm40(
     source: xr.DataArray,
-    quantities: list[str],
+    bands: list[str],
 ) -> xr.DataArray:
     """Convert FBFM codes to fuel parameters using SB40 tables.
 
     Args:
         source: DataArray with fbfm band (int16 codes)
-        quantities: e.g., ["fuel_load.1hr", "fuel_load.10hr", "savr.1hr"]
+        bands: e.g., ["fuel_load.1hr", "fuel_load.10hr", "savr.1hr"]
 
     Returns:
-        DataArray with dims (band, y, x), one band per quantity
+        DataArray with dims (band, y, x), one band per requested band key
     """
     table = load_sb40_lookup_table()
-    bands = []
-    for qty in quantities:
-        if qty not in table.columns:
+    result = []
+    for band_key in bands:
+        if band_key not in table.columns:
             raise ProcessingError(
-                code="UNKNOWN_QUANTITY",
-                message=f"Unknown quantity: {qty}",
-                suggestion=f"Available quantities: {list(table.columns)}",
+                code="UNKNOWN_BAND",
+                message=f"Unknown lookup band: {band_key}",
+                suggestion=f"Available bands: {list(table.columns)}",
             )
         # Vectorized lookup
-        values = table[qty].values[source.values]
-        band = source.copy(data=values).assign_coords(band=qty)
-        bands.append(band)
-    return xr.concat(bands, dim="band")
+        values = table[band_key].values[source.values]
+        band = source.copy(data=values).assign_coords(band=band_key)
+        result.append(band)
+    return xr.concat(result, dim="band")
 ```
 
 **Resample:**

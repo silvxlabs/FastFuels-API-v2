@@ -146,7 +146,7 @@ def test_create_blue_mtn_lookup_fbfm40(
         endpoint="/grids/lookup/fbfm40",
         body={
             "source_grid_id": "static-test-blue-mtn-landfire-fbfm40",
-            "quantities": ["fuel_load.1hr", "fuel_depth", "savr.1hr"],
+            "bands": ["fuel_load.1hr", "fuel_depth", "savr.1hr"],
         },
         static_name="static-test-blue-mtn-lookup-fbfm40",
         dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm40"]},
@@ -184,7 +184,7 @@ def test_create_blue_mtn_uniform_moisture(
         endpoint="/grids/uniform",
         body={
             "resolution": 2,
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
         },
         static_name="static-test-blue-mtn-uniform-moisture",
     )

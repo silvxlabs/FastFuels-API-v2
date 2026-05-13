@@ -568,7 +568,7 @@ class TestDispatchHandlerUniform:
         grid = {
             "source": {
                 "name": "uniform",
-                "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+                "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
                 "resolution": 2.0,
             },
             "domain_id": "test-domain-id",
@@ -592,7 +592,7 @@ class TestHandleUniform:
         progress = MagicMock()
 
         source = {
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
             "resolution": 2.0,
         }
 
@@ -613,7 +613,7 @@ class TestHandleUniform:
         progress = MagicMock()
 
         source = {
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
             "resolution": 2.0,
         }
 

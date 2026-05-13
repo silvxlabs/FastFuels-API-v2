@@ -16,7 +16,8 @@ from griddle.dispatch import (
     handle_resample,
     handle_uniform,
 )
-from griddle.errors import ProcessingError
+
+from lib.errors import ProcessingError
 
 
 class TestHandleLandfire:

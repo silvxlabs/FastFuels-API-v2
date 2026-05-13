@@ -16,10 +16,10 @@ import pandas as pd
 import xarray as xr
 from rioxarray.merge import merge_arrays
 
-from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import TABLES_BUCKET
+from lib.errors import ProcessingError
 from lib.raster import RasterConnection, cog_env
 
 META_VERSION_CONFIG = {

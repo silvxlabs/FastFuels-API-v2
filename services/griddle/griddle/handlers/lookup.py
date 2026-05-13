@@ -192,7 +192,7 @@ def fbfm40_lookup(
 
     Args:
         source_grid_id: ID of the grid containing FBFM40 codes
-        bands: List of band dicts with "key" fields (dot-notation quantity names)
+        bands: List of band dicts with "key" fields (dot-notation band keys)
         progress: Callback for progress reporting
 
     Returns:
@@ -254,9 +254,9 @@ def fbfm40_lookup(
         column = BAND_KEY_TO_COLUMN.get(band_key)
         if column is None:
             raise ProcessingError(
-                code="UNKNOWN_QUANTITY",
-                message=f"Unknown lookup quantity: {band_key}",
-                suggestion=f"Available quantities: {list(BAND_KEY_TO_COLUMN.keys())}",
+                code="UNKNOWN_BAND",
+                message=f"Unknown lookup band: {band_key}",
+                suggestion=f"Available bands: {list(BAND_KEY_TO_COLUMN.keys())}",
             )
 
         # Vectorized lookup: imperial values

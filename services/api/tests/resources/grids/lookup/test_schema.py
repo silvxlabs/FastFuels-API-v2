@@ -9,7 +9,7 @@ import pytest
 from api.resources.grids.lookup.schema import (
     FBFM40_LOOKUP_BAND_METADATA,
     CreateFbfm40LookupRequest,
-    Fbfm40LookupQuantity,
+    Fbfm40LookupBand,
     Fbfm40LookupSource,
     LookupSource,
     get_fbfm40_lookup_band,
@@ -110,59 +110,59 @@ class TestFbfm40LookupSource:
         assert data["source_band"] == "fbfm"
 
 
-class TestFbfm40LookupQuantity:
-    """Tests for Fbfm40LookupQuantity enum."""
+class TestFbfm40LookupBand:
+    """Tests for Fbfm40LookupBand enum."""
 
     def test_has_14_members(self):
-        """There are exactly 14 predefined quantities."""
-        assert len(Fbfm40LookupQuantity) == 14
+        """There are exactly 14 predefined bands."""
+        assert len(Fbfm40LookupBand) == 14
 
     def test_fuel_load_1hr(self):
-        assert Fbfm40LookupQuantity.fuel_load_1hr == "fuel_load.1hr"
+        assert Fbfm40LookupBand.fuel_load_1hr == "fuel_load.1hr"
 
     def test_fuel_load_10hr(self):
-        assert Fbfm40LookupQuantity.fuel_load_10hr == "fuel_load.10hr"
+        assert Fbfm40LookupBand.fuel_load_10hr == "fuel_load.10hr"
 
     def test_fuel_load_100hr(self):
-        assert Fbfm40LookupQuantity.fuel_load_100hr == "fuel_load.100hr"
+        assert Fbfm40LookupBand.fuel_load_100hr == "fuel_load.100hr"
 
     def test_fuel_load_live_herb(self):
-        assert Fbfm40LookupQuantity.fuel_load_live_herb == "fuel_load.live_herb"
+        assert Fbfm40LookupBand.fuel_load_live_herb == "fuel_load.live_herb"
 
     def test_fuel_load_live_woody(self):
-        assert Fbfm40LookupQuantity.fuel_load_live_woody == "fuel_load.live_woody"
+        assert Fbfm40LookupBand.fuel_load_live_woody == "fuel_load.live_woody"
 
     def test_savr_1hr(self):
-        assert Fbfm40LookupQuantity.savr_1hr == "savr.1hr"
+        assert Fbfm40LookupBand.savr_1hr == "savr.1hr"
 
     def test_savr_10hr(self):
-        assert Fbfm40LookupQuantity.savr_10hr == "savr.10hr"
+        assert Fbfm40LookupBand.savr_10hr == "savr.10hr"
 
     def test_savr_100hr(self):
-        assert Fbfm40LookupQuantity.savr_100hr == "savr.100hr"
+        assert Fbfm40LookupBand.savr_100hr == "savr.100hr"
 
     def test_savr_live_herb(self):
-        assert Fbfm40LookupQuantity.savr_live_herb == "savr.live_herb"
+        assert Fbfm40LookupBand.savr_live_herb == "savr.live_herb"
 
     def test_savr_live_woody(self):
-        assert Fbfm40LookupQuantity.savr_live_woody == "savr.live_woody"
+        assert Fbfm40LookupBand.savr_live_woody == "savr.live_woody"
 
     def test_fuel_depth(self):
-        assert Fbfm40LookupQuantity.fuel_depth == "fuel_depth"
+        assert Fbfm40LookupBand.fuel_depth == "fuel_depth"
 
     def test_moisture_of_extinction(self):
-        assert Fbfm40LookupQuantity.moisture_of_extinction == "moisture_of_extinction"
+        assert Fbfm40LookupBand.moisture_of_extinction == "moisture_of_extinction"
 
     def test_heat_content(self):
-        assert Fbfm40LookupQuantity.heat_content == "heat_content"
+        assert Fbfm40LookupBand.heat_content == "heat_content"
 
     def test_is_dynamic(self):
-        assert Fbfm40LookupQuantity.is_dynamic == "is_dynamic"
+        assert Fbfm40LookupBand.is_dynamic == "is_dynamic"
 
     def test_created_from_string(self):
-        """Quantities can be created from their string value."""
-        q = Fbfm40LookupQuantity("fuel_load.1hr")
-        assert q == Fbfm40LookupQuantity.fuel_load_1hr
+        """Bands can be created from their string value."""
+        b = Fbfm40LookupBand("fuel_load.1hr")
+        assert b == Fbfm40LookupBand.fuel_load_1hr
 
 
 class TestCreateFbfm40LookupRequest:
@@ -172,10 +172,10 @@ class TestCreateFbfm40LookupRequest:
         """Minimal request with required fields only."""
         request = CreateFbfm40LookupRequest(
             source_grid_id="grid-123",
-            quantities=["fuel_load.1hr"],
+            bands=["fuel_load.1hr"],
         )
         assert request.source_grid_id == "grid-123"
-        assert len(request.quantities) == 1
+        assert len(request.bands) == 1
         assert request.source_band == "fbfm"
         assert request.name == ""
         assert request.description == ""
@@ -185,46 +185,51 @@ class TestCreateFbfm40LookupRequest:
     def test_source_grid_id_is_required(self):
         """source_grid_id field is required."""
         with pytest.raises(ValidationError):
-            CreateFbfm40LookupRequest(quantities=["fuel_load.1hr"])
+            CreateFbfm40LookupRequest(bands=["fuel_load.1hr"])
 
-    def test_quantities_is_required(self):
-        """quantities field is required."""
+    def test_bands_is_required(self):
+        """bands field is required."""
         with pytest.raises(ValidationError):
             CreateFbfm40LookupRequest(source_grid_id="grid-123")
+
+    def test_empty_bands_rejected(self):
+        """An empty bands list is rejected (min_length=1)."""
+        with pytest.raises(ValidationError):
+            CreateFbfm40LookupRequest(source_grid_id="grid-123", bands=[])
 
     def test_source_band_can_be_overridden(self):
         """source_band can be set to a different value."""
         request = CreateFbfm40LookupRequest(
             source_grid_id="grid-123",
             source_band="custom_band",
-            quantities=["fuel_load.1hr"],
+            bands=["fuel_load.1hr"],
         )
         assert request.source_band == "custom_band"
 
-    def test_duplicate_quantities_rejected(self):
-        """Duplicate quantities are rejected with a validation error."""
+    def test_duplicate_bands_rejected(self):
+        """Duplicate bands are rejected with a validation error."""
         with pytest.raises(ValidationError):
             CreateFbfm40LookupRequest(
                 source_grid_id="grid-123",
-                quantities=["fuel_load.1hr", "fuel_load.1hr"],
+                bands=["fuel_load.1hr", "fuel_load.1hr"],
             )
 
-    def test_unique_quantities_accepted(self):
-        """Multiple unique quantities are accepted."""
+    def test_unique_bands_accepted(self):
+        """Multiple unique bands are accepted."""
         request = CreateFbfm40LookupRequest(
             source_grid_id="grid-123",
-            quantities=["fuel_load.1hr", "fuel_load.10hr"],
+            bands=["fuel_load.1hr", "fuel_load.10hr"],
         )
-        assert len(request.quantities) == 2
-        assert request.quantities[0] == Fbfm40LookupQuantity.fuel_load_1hr
-        assert request.quantities[1] == Fbfm40LookupQuantity.fuel_load_10hr
+        assert len(request.bands) == 2
+        assert request.bands[0] == Fbfm40LookupBand.fuel_load_1hr
+        assert request.bands[1] == Fbfm40LookupBand.fuel_load_10hr
 
-    def test_invalid_quantity_rejected(self):
-        """Invalid quantity string is rejected."""
+    def test_invalid_band_rejected(self):
+        """Invalid band string is rejected."""
         with pytest.raises(ValidationError):
             CreateFbfm40LookupRequest(
                 source_grid_id="grid-123",
-                quantities=["not_a_quantity"],
+                bands=["not_a_band"],
             )
 
     def test_full_request_with_all_fields(self):
@@ -232,7 +237,7 @@ class TestCreateFbfm40LookupRequest:
         request = CreateFbfm40LookupRequest(
             source_grid_id="grid-123",
             source_band="custom",
-            quantities=["fuel_load.1hr", "fuel_depth"],
+            bands=["fuel_load.1hr", "fuel_depth"],
             name="Test Lookup",
             description="A test lookup grid",
             tags=["test", "lookup"],
@@ -240,66 +245,66 @@ class TestCreateFbfm40LookupRequest:
         assert request.name == "Test Lookup"
         assert request.description == "A test lookup grid"
         assert request.tags == ["test", "lookup"]
-        assert len(request.quantities) == 2
+        assert len(request.bands) == 2
 
 
 class TestFbfm40LookupBandMetadata:
     """Tests for FBFM40_LOOKUP_BAND_METADATA constant."""
 
-    def test_all_quantities_have_entries(self):
+    def test_all_bands_have_entries(self):
         """Every enum member has a metadata entry."""
-        for q in Fbfm40LookupQuantity:
-            assert q in FBFM40_LOOKUP_BAND_METADATA
+        for b in Fbfm40LookupBand:
+            assert b in FBFM40_LOOKUP_BAND_METADATA
 
     def test_fuel_load_units_are_kg_per_m2(self):
-        """Fuel load quantities use kg/m² unit."""
-        for q in [
-            Fbfm40LookupQuantity.fuel_load_1hr,
-            Fbfm40LookupQuantity.fuel_load_10hr,
-            Fbfm40LookupQuantity.fuel_load_100hr,
-            Fbfm40LookupQuantity.fuel_load_live_herb,
-            Fbfm40LookupQuantity.fuel_load_live_woody,
+        """Fuel load bands use kg/m² unit."""
+        for b in [
+            Fbfm40LookupBand.fuel_load_1hr,
+            Fbfm40LookupBand.fuel_load_10hr,
+            Fbfm40LookupBand.fuel_load_100hr,
+            Fbfm40LookupBand.fuel_load_live_herb,
+            Fbfm40LookupBand.fuel_load_live_woody,
         ]:
-            band_type, unit = FBFM40_LOOKUP_BAND_METADATA[q]
+            band_type, unit = FBFM40_LOOKUP_BAND_METADATA[b]
             assert band_type == BandType.continuous
             assert unit == "kg/m²"
 
     def test_savr_units_are_inverse_meters(self):
-        """SAVR quantities use m⁻¹ unit."""
-        for q in [
-            Fbfm40LookupQuantity.savr_1hr,
-            Fbfm40LookupQuantity.savr_10hr,
-            Fbfm40LookupQuantity.savr_100hr,
-            Fbfm40LookupQuantity.savr_live_herb,
-            Fbfm40LookupQuantity.savr_live_woody,
+        """SAVR bands use m⁻¹ unit."""
+        for b in [
+            Fbfm40LookupBand.savr_1hr,
+            Fbfm40LookupBand.savr_10hr,
+            Fbfm40LookupBand.savr_100hr,
+            Fbfm40LookupBand.savr_live_herb,
+            Fbfm40LookupBand.savr_live_woody,
         ]:
-            band_type, unit = FBFM40_LOOKUP_BAND_METADATA[q]
+            band_type, unit = FBFM40_LOOKUP_BAND_METADATA[b]
             assert band_type == BandType.continuous
             assert unit == "m⁻¹"
 
     def test_fuel_depth_unit_is_meters(self):
         """Fuel depth uses m unit."""
-        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupQuantity.fuel_depth]
+        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.fuel_depth]
         assert band_type == BandType.continuous
         assert unit == "m"
 
     def test_moisture_of_extinction_unit_is_percent(self):
         """Moisture of extinction uses % unit."""
         band_type, unit = FBFM40_LOOKUP_BAND_METADATA[
-            Fbfm40LookupQuantity.moisture_of_extinction
+            Fbfm40LookupBand.moisture_of_extinction
         ]
         assert band_type == BandType.continuous
         assert unit == "%"
 
     def test_heat_content_unit_is_kj_per_kg(self):
         """Heat content uses kJ/kg unit."""
-        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupQuantity.heat_content]
+        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.heat_content]
         assert band_type == BandType.continuous
         assert unit == "kJ/kg"
 
     def test_is_dynamic_is_categorical(self):
         """is_dynamic is categorical with no unit."""
-        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupQuantity.is_dynamic]
+        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.is_dynamic]
         assert band_type == BandType.categorical
         assert unit is None
 
@@ -309,15 +314,15 @@ class TestGetFbfm40LookupBand:
 
     def test_index_matches_provided_value(self):
         """Band index matches the provided index, not a default."""
-        band = get_fbfm40_lookup_band(Fbfm40LookupQuantity.fuel_load_1hr, 5)
+        band = get_fbfm40_lookup_band(Fbfm40LookupBand.fuel_load_1hr, 5)
         assert band.index == 5
 
-    def test_all_quantities_produce_valid_bands(self):
-        """Every quantity produces a valid Band object."""
-        for i, q in enumerate(Fbfm40LookupQuantity):
-            band = get_fbfm40_lookup_band(q, i)
-            assert band.key == q.value
-            assert band.index == i
-            expected_type, expected_unit = FBFM40_LOOKUP_BAND_METADATA[q]
-            assert band.type == expected_type
-            assert band.unit == expected_unit
+    def test_all_bands_produce_valid_bands(self):
+        """Every enum member produces a valid Band object."""
+        for i, b in enumerate(Fbfm40LookupBand):
+            result = get_fbfm40_lookup_band(b, i)
+            assert result.key == b.value
+            assert result.index == i
+            expected_type, expected_unit = FBFM40_LOOKUP_BAND_METADATA[b]
+            assert result.type == expected_type
+            assert result.unit == expected_unit

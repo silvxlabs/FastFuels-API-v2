@@ -44,8 +44,8 @@ class Fbfm40LookupSource(LookupSource):
     )
 
 
-class Fbfm40LookupQuantity(StrEnum):
-    """Quantities available from FBFM40/SB40 lookup tables."""
+class Fbfm40LookupBand(StrEnum):
+    """Bands available from FBFM40/SB40 lookup tables."""
 
     fuel_load_1hr = "fuel_load.1hr"
     fuel_load_10hr = "fuel_load.10hr"
@@ -75,40 +75,40 @@ class CreateFbfm40LookupRequest(BaseModel):
         default="fbfm",
         description="Band in source grid containing FBFM codes",
     )
-    quantities: list[Fbfm40LookupQuantity]
+    bands: list[Fbfm40LookupBand] = Field(..., min_length=1)
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
     modifications: list[GridModification] = Field(default_factory=list)
 
-    @field_validator("quantities")
+    @field_validator("bands")
     @classmethod
-    def no_duplicate_quantities(
+    def no_duplicate_bands(
         cls,
-        v: list[Fbfm40LookupQuantity],
-    ) -> list[Fbfm40LookupQuantity]:
+        v: list[Fbfm40LookupBand],
+    ) -> list[Fbfm40LookupBand]:
         return validate_no_duplicates(v)
 
 
-FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupQuantity, tuple[BandType, str | None]] = {
-    Fbfm40LookupQuantity.fuel_load_1hr: (BandType.continuous, "kg/m²"),
-    Fbfm40LookupQuantity.fuel_load_10hr: (BandType.continuous, "kg/m²"),
-    Fbfm40LookupQuantity.fuel_load_100hr: (BandType.continuous, "kg/m²"),
-    Fbfm40LookupQuantity.fuel_load_live_herb: (BandType.continuous, "kg/m²"),
-    Fbfm40LookupQuantity.fuel_load_live_woody: (BandType.continuous, "kg/m²"),
-    Fbfm40LookupQuantity.savr_1hr: (BandType.continuous, "m⁻¹"),
-    Fbfm40LookupQuantity.savr_10hr: (BandType.continuous, "m⁻¹"),
-    Fbfm40LookupQuantity.savr_100hr: (BandType.continuous, "m⁻¹"),
-    Fbfm40LookupQuantity.savr_live_herb: (BandType.continuous, "m⁻¹"),
-    Fbfm40LookupQuantity.savr_live_woody: (BandType.continuous, "m⁻¹"),
-    Fbfm40LookupQuantity.fuel_depth: (BandType.continuous, "m"),
-    Fbfm40LookupQuantity.moisture_of_extinction: (BandType.continuous, "%"),
-    Fbfm40LookupQuantity.heat_content: (BandType.continuous, "kJ/kg"),
-    Fbfm40LookupQuantity.is_dynamic: (BandType.categorical, None),
+FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupBand, tuple[BandType, str | None]] = {
+    Fbfm40LookupBand.fuel_load_1hr: (BandType.continuous, "kg/m²"),
+    Fbfm40LookupBand.fuel_load_10hr: (BandType.continuous, "kg/m²"),
+    Fbfm40LookupBand.fuel_load_100hr: (BandType.continuous, "kg/m²"),
+    Fbfm40LookupBand.fuel_load_live_herb: (BandType.continuous, "kg/m²"),
+    Fbfm40LookupBand.fuel_load_live_woody: (BandType.continuous, "kg/m²"),
+    Fbfm40LookupBand.savr_1hr: (BandType.continuous, "m⁻¹"),
+    Fbfm40LookupBand.savr_10hr: (BandType.continuous, "m⁻¹"),
+    Fbfm40LookupBand.savr_100hr: (BandType.continuous, "m⁻¹"),
+    Fbfm40LookupBand.savr_live_herb: (BandType.continuous, "m⁻¹"),
+    Fbfm40LookupBand.savr_live_woody: (BandType.continuous, "m⁻¹"),
+    Fbfm40LookupBand.fuel_depth: (BandType.continuous, "m"),
+    Fbfm40LookupBand.moisture_of_extinction: (BandType.continuous, "%"),
+    Fbfm40LookupBand.heat_content: (BandType.continuous, "kJ/kg"),
+    Fbfm40LookupBand.is_dynamic: (BandType.categorical, None),
 }
 
 
-def get_fbfm40_lookup_band(quantity: Fbfm40LookupQuantity, index: int) -> Band:
-    """Return Band metadata for an FBFM40 lookup quantity."""
-    band_type, unit = FBFM40_LOOKUP_BAND_METADATA[quantity]
-    return Band(key=quantity.value, type=band_type, unit=unit, index=index)
+def get_fbfm40_lookup_band(band: Fbfm40LookupBand, index: int) -> Band:
+    """Return Band metadata for an FBFM40 lookup band."""
+    band_type, unit = FBFM40_LOOKUP_BAND_METADATA[band]
+    return Band(key=band.value, type=band_type, unit=unit, index=index)

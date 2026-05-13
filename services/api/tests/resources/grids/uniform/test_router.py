@@ -20,7 +20,7 @@ class TestCreateUniformGrid:
         route = self._route(domain_for_testing["id"])
         request_body = {
             "resolution": 2.0,
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
         }
 
         response = client.post(route, json=request_body)
@@ -40,7 +40,7 @@ class TestCreateUniformGrid:
         assert data["source"]["name"] == "uniform"
         assert data["source"]["resolution"] == 2.0
         assert len(data["source"]["bands"]) == 1
-        assert data["source"]["bands"][0]["quantity"] == "fuel_moisture.1hr"
+        assert data["source"]["bands"][0]["key"] == "fuel_moisture.1hr"
         assert data["source"]["bands"][0]["value"] == 6.0
 
         # Check band metadata
@@ -56,9 +56,9 @@ class TestCreateUniformGrid:
         request_body = {
             "resolution": 2.0,
             "bands": [
-                {"quantity": "fuel_moisture.1hr", "value": 6.0},
-                {"quantity": "fuel_moisture.10hr", "value": 8.0},
-                {"quantity": "fuel_moisture.100hr", "value": 12.0},
+                {"key": "fuel_moisture.1hr", "value": 6.0},
+                {"key": "fuel_moisture.10hr", "value": 8.0},
+                {"key": "fuel_moisture.100hr", "value": 12.0},
             ],
         }
 
@@ -86,7 +86,7 @@ class TestCreateUniformGrid:
         route = self._route(domain_for_testing["id"])
         request_body = {
             "resolution": 5.0,
-            "bands": [{"quantity": "fuel_load.1hr", "value": 0.15}],
+            "bands": [{"key": "fuel_load.1hr", "value": 0.15}],
             "name": "Fuel load scenario",
             "description": "Test fuel load grid",
             "tags": ["fuel-load", "test"],
@@ -106,7 +106,7 @@ class TestCreateUniformGrid:
         route = self._route(domain_for_testing["id"])
         request_body = {
             "resolution": 10.0,
-            "bands": [{"quantity": "fuel_depth", "value": 0.3}],
+            "bands": [{"key": "fuel_depth", "value": 0.3}],
         }
 
         response = client.post(route, json=request_body)
@@ -119,7 +119,7 @@ class TestCreateUniformGrid:
         route = self._route(domain_for_testing["id"])
         request_body = {
             "resolution": 2.0,
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
         }
 
         response = client.post(route, json=request_body)
@@ -133,7 +133,7 @@ class TestCreateUniformGrid:
         route = self._route("00000000000000000000000000000000")
         request_body = {
             "resolution": 2.0,
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
         }
 
         response = client.post(route, json=request_body)
@@ -146,7 +146,7 @@ class TestCreateUniformGrid:
         route = self._route(domain_with_different_owner["id"])
         request_body = {
             "resolution": 2.0,
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
         }
 
         response = client.post(route, json=request_body)
@@ -158,7 +158,7 @@ class TestCreateUniformGrid:
         route = self._route(domain_for_testing["id"])
         request_body = {
             "resolution": 2.0,
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
         }
 
         response = client.post(route, json=request_body)
@@ -191,7 +191,7 @@ class TestCreateUniformGrid:
         route = self._route(domain_for_testing["id"])
         request_body = {
             "resolution": 2.0,
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
         }
 
         response = client.post(route, json=request_body)

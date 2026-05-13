@@ -4,11 +4,11 @@ api/v2/resources/grids/uniform/schema.py
 Schema models for uniform (constant-value) grid sources.
 
 Uniform grids fill every cell with a user-specified constant value for one
-or more fuel quantities. Useful for fuel moisture scenarios, constant fuel
-loads, and other spatially-uniform inputs.
+or more bands. Useful for fuel moisture scenarios, constant fuel loads,
+and other spatially-uniform inputs.
 
-NOTE: The UniformQuantity enum currently covers 12 core quantities. As new
-data sources (FCCS, etc.) are added, this predefined list may need to evolve
+NOTE: The UniformBand enum currently covers 12 core bands. As new data
+sources (FCCS, etc.) are added, this predefined list may need to evolve
 into a more scalable system (e.g., free-form keys with a reference endpoint).
 """
 
@@ -25,8 +25,8 @@ from api.resources.grids.schema import (
 )
 
 
-class UniformQuantity(StrEnum):
-    """Predefined quantities available for uniform grids."""
+class UniformBand(StrEnum):
+    """Predefined bands available for uniform grids."""
 
     fuel_moisture_1hr = "fuel_moisture.1hr"
     fuel_moisture_10hr = "fuel_moisture.10hr"
@@ -42,63 +42,63 @@ class UniformQuantity(StrEnum):
     fuel_depth = "fuel_depth"
 
 
-UNIFORM_QUANTITY_DEFS: dict[UniformQuantity, dict] = {
-    UniformQuantity.fuel_moisture_1hr: {
+UNIFORM_BAND_DEFS: dict[UniformBand, dict] = {
+    UniformBand.fuel_moisture_1hr: {
         "key": "fuel_moisture.1hr",
         "type": BandType.continuous,
         "unit": "%",
     },
-    UniformQuantity.fuel_moisture_10hr: {
+    UniformBand.fuel_moisture_10hr: {
         "key": "fuel_moisture.10hr",
         "type": BandType.continuous,
         "unit": "%",
     },
-    UniformQuantity.fuel_moisture_100hr: {
+    UniformBand.fuel_moisture_100hr: {
         "key": "fuel_moisture.100hr",
         "type": BandType.continuous,
         "unit": "%",
     },
-    UniformQuantity.fuel_moisture_live_herb: {
+    UniformBand.fuel_moisture_live_herb: {
         "key": "fuel_moisture.live_herb",
         "type": BandType.continuous,
         "unit": "%",
     },
-    UniformQuantity.fuel_moisture_live_woody: {
+    UniformBand.fuel_moisture_live_woody: {
         "key": "fuel_moisture.live_woody",
         "type": BandType.continuous,
         "unit": "%",
     },
-    UniformQuantity.curing: {
+    UniformBand.curing: {
         "key": "curing",
         "type": BandType.continuous,
         "unit": "%",
     },
-    UniformQuantity.fuel_load_1hr: {
+    UniformBand.fuel_load_1hr: {
         "key": "fuel_load.1hr",
         "type": BandType.continuous,
         "unit": "kg/m²",
     },
-    UniformQuantity.fuel_load_10hr: {
+    UniformBand.fuel_load_10hr: {
         "key": "fuel_load.10hr",
         "type": BandType.continuous,
         "unit": "kg/m²",
     },
-    UniformQuantity.fuel_load_100hr: {
+    UniformBand.fuel_load_100hr: {
         "key": "fuel_load.100hr",
         "type": BandType.continuous,
         "unit": "kg/m²",
     },
-    UniformQuantity.fuel_load_live_herb: {
+    UniformBand.fuel_load_live_herb: {
         "key": "fuel_load.live_herb",
         "type": BandType.continuous,
         "unit": "kg/m²",
     },
-    UniformQuantity.fuel_load_live_woody: {
+    UniformBand.fuel_load_live_woody: {
         "key": "fuel_load.live_woody",
         "type": BandType.continuous,
         "unit": "kg/m²",
     },
-    UniformQuantity.fuel_depth: {
+    UniformBand.fuel_depth: {
         "key": "fuel_depth",
         "type": BandType.continuous,
         "unit": "m",
@@ -109,11 +109,11 @@ UNIFORM_QUANTITY_DEFS: dict[UniformQuantity, dict] = {
 class UniformBandInput(BaseModel):
     """A single band specification for a uniform grid.
 
-    Users provide a quantity (from the predefined list) and a constant value.
-    The API resolves the quantity to a band key, unit, and type.
+    Users provide a band key (from the predefined list) and a constant value.
+    The API resolves the key to unit and type.
     """
 
-    quantity: UniformQuantity
+    key: UniformBand
     value: float | int
 
 
@@ -141,19 +141,16 @@ class CreateUniformRequest(CreateGridRequestBase):
     bands: list[UniformBandInput] = Field(..., min_length=1)
 
     @model_validator(mode="after")
-    def validate_unique_quantities(self):
-        """Ensure no duplicate quantities in bands."""
-        validate_no_duplicates([b.quantity for b in self.bands])
+    def validate_unique_bands(self):
+        """Ensure no duplicate band keys in bands."""
+        validate_no_duplicates([b.key for b in self.bands])
         return self
 
 
 def build_uniform_bands(inputs: list[UniformBandInput]) -> list[Band]:
     """Build Band objects from uniform band inputs.
 
-    Looks up key, unit, and type from UNIFORM_QUANTITY_DEFS and assigns
+    Looks up key, unit, and type from UNIFORM_BAND_DEFS and assigns
     sequential indices.
     """
-    return [
-        Band(index=i, **UNIFORM_QUANTITY_DEFS[inp.quantity])
-        for i, inp in enumerate(inputs)
-    ]
+    return [Band(index=i, **UNIFORM_BAND_DEFS[inp.key]) for i, inp in enumerate(inputs)]

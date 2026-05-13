@@ -46,20 +46,20 @@ async def create_uniform_grid(
     # Create Uniform Grid
 
     Creates a grid where every cell is filled with a constant value for each
-    specified quantity. Useful for fuel moisture scenarios, constant fuel loads,
+    specified band. Useful for fuel moisture scenarios, constant fuel loads,
     and other spatially-uniform inputs.
 
     ## Request Body
 
     - **resolution**: (required) Grid resolution in meters (>= 1). No default
       since uniform grids have no "native resolution."
-    - **bands**: (required) One or more bands, each with a quantity and value.
-      Quantities must be unique.
+    - **bands**: (required) One or more bands, each with a key and value.
+      Band keys must be unique.
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
 
-    ## Available Quantities
+    ## Available Bands
 
     **Fuel moisture** (unit: %): `fuel_moisture.1hr`, `fuel_moisture.10hr`,
     `fuel_moisture.100hr`, `fuel_moisture.live_herb`, `fuel_moisture.live_woody`

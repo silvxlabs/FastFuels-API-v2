@@ -44,7 +44,7 @@
   "source": {
     "bands": [
       {
-        "quantity": "fuel_moisture.1hr",
+        "key": "fuel_moisture.1hr",
         "value": 6.0
       }
     ],

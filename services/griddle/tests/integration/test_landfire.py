@@ -34,3 +34,32 @@ def test_topography(griddle_runner):
     # All bands should have the same shape
     shapes = {(ds[v].sizes["y"], ds[v].sizes["x"]) for v in ds.data_vars}
     assert len(shapes) == 1, f"Inconsistent shapes: {shapes}"
+
+
+def test_canopy_landfire_all_bands(griddle_runner):
+    """LANDFIRE canopy with all four bands produces chm, cbd, cbh, cc as floats."""
+    result = griddle_runner("blue_mtn.json", "canopy_landfire_all.json")
+    ds = result.ds
+
+    for var_name in ["chm", "cbd", "cbh", "cc"]:
+        assert var_name in ds.data_vars, f"Missing variable: {var_name}"
+        assert ds[var_name].dims == ("y", "x")
+        assert ds[var_name].dtype.kind == "f"  # post-scaling float
+
+    assert "32611" in str(ds.rio.crs)
+    shapes = {(ds[v].sizes["y"], ds[v].sizes["x"]) for v in ds.data_vars}
+    assert len(shapes) == 1, f"Inconsistent shapes: {shapes}"
+
+
+def test_canopy_landfire_crown_inputs(griddle_runner):
+    """LANDFIRE canopy crown subset returns just cbd and cbh."""
+    result = griddle_runner("blue_mtn.json", "canopy_landfire_crown.json")
+    ds = result.ds
+    assert set(ds.data_vars) == {"cbd", "cbh"}
+
+
+def test_canopy_landfire_chm_only(griddle_runner):
+    """LANDFIRE canopy single-band path returns only chm."""
+    result = griddle_runner("blue_mtn.json", "canopy_landfire_chm_only.json")
+    ds = result.ds
+    assert set(ds.data_vars) == {"chm"}

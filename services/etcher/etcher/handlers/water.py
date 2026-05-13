@@ -13,7 +13,7 @@ import osmnx as ox
 import pandas as pd
 from shapely.geometry import box
 
-from featureFinder.storage import save_geojson
+from etcher.storage import save_geojson
 
 logger = logging.getLogger(__name__)
 

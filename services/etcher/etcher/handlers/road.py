@@ -11,7 +11,7 @@ import geopandas as gpd
 import osmnx as ox
 from shapely.geometry import box
 
-from featureFinder.storage import save_geojson
+from etcher.storage import save_geojson
 
 logger = logging.getLogger(__name__)
 

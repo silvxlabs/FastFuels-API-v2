@@ -1,5 +1,5 @@
 [project]
-name = "featureFinder"
+name = "etcher"
 version = "0.1.0"
 description = "Feature polygon generation service for FastFuels API v2"
 readme = "README.md"

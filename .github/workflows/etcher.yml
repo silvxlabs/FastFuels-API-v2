@@ -1,7 +1,7 @@
-name: CI/CD Pipeline for featureFinder Service
+name: CI/CD Pipeline for etcher Service
 
 env:
-  SERVICE_NAME: featureFinder-v2
+  SERVICE_NAME: etcher-v2
   REPO_NAME: v2
   REGION: us-west1
   PROJECT_ID: ${{ secrets.GCP_PROJECT }}
@@ -12,9 +12,9 @@ on:
       - main
       - dev
     paths:
-      - 'services/FeatureFinder/**'
+      - 'services/etcher/**'
       - 'services/lib/**'
-      - '.github/workflows/featureFinder.yml'
+      - '.github/workflows/etcher.yml'
 
 jobs:
   determine-environment:
@@ -59,7 +59,7 @@ jobs:
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:latest
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ needs.determine-environment.outputs.deploy_env }}
-          file: services/featureFinder/Dockerfile
+          file: services/etcher/Dockerfile
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -105,7 +105,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        working-directory: services/featureFinder
+        working-directory: services/etcher
         run: uv sync --frozen --extra test
 
       - name: Authenticate to Google Cloud
@@ -114,7 +114,7 @@ jobs:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
       - name: Run unit tests
-        working-directory: services/featureFinder
+        working-directory: services/etcher
         env:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.REGION }}
@@ -122,7 +122,7 @@ jobs:
         run: uv run pytest tests/ --ignore=tests/integration -v
 
       - name: Run integration tests
-        working-directory: services/featureFinder
+        working-directory: services/etcher
         env:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.REGION }}

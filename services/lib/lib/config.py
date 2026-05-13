@@ -29,6 +29,7 @@ INVENTORIES_BUCKET = os.getenv("INVENTORIES_BUCKET", "placeholder-bucket-name")
 FEATURES_BUCKET = os.getenv("FEATURES_BUCKET", "placeholder-bucket-name")
 TABLES_BUCKET = os.getenv("TABLES_BUCKET", "placeholder-bucket-name")
 TEST_BUCKET = os.getenv("TEST_BUCKET", "placeholder-bucket-name")
+UPLOADS_BUCKET = os.getenv("UPLOADS_BUCKET", "placeholder-bucket-name")
 
 # Collection names
 DOMAINS_COLLECTION = os.getenv("DOMAINS_COLLECTION", "domains-v2")
@@ -53,3 +54,4 @@ EXPORTER_SERVICE = os.getenv("EXPORTER_SERVICE", f"exporter-v2-{INFRA_ENV}")
 STANDGEN_SERVICE = os.getenv("STANDGEN_SERVICE", f"standgen-v2-{INFRA_ENV}")
 FEATURES_SERVICE = os.getenv("FEATURES_SERVICE", f"features-v2-{INFRA_ENV}")
 TREEVOX_SERVICE = os.getenv("TREEVOX_SERVICE", f"treevox-v2-{INFRA_ENV}")
+UPLOADER_SERVICE = os.getenv("UPLOADER_SERVICE", f"uploader-v2-{INFRA_ENV}")

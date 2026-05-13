@@ -315,11 +315,24 @@ def handle_canopy(
             )
             source["tile_metadata"] = tile_metadata
             return dataset
+        case "landfire":
+            landfire_version = source.get("version", "2024")
+            bands = source["bands"]
+            progress(f"Fetching LANDFIRE canopy v{landfire_version}...", 10)
+            return landfire.fetch_canopy_landfire(
+                domain_gdf,
+                landfire_version,
+                bands,
+                progress,
+                extent_buffer_cells=extent_buffer_cells,
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
+            )
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown canopy product: {product}",
-                suggestion="Supported products: meta, naip",
+                suggestion="Supported products: meta, naip, landfire",
             )
 
 

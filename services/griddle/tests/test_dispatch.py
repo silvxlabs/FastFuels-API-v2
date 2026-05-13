@@ -810,6 +810,81 @@ class TestHandleCanopy:
 
         assert "attribution" not in source
 
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_routes_landfire_to_handler(self, mock_fetch):
+        """handle_canopy routes landfire product to fetch_canopy_landfire."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_dataset = MagicMock()
+        mock_fetch.return_value = mock_dataset
+        progress = MagicMock()
+
+        source = {
+            "product": "landfire",
+            "version": "2024",
+            "bands": ["cbd", "cbh"],
+        }
+
+        result = handle_canopy(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2024",
+            ["cbd", "cbh"],
+            progress,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+        assert result is mock_dataset
+
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_landfire_default_version_2024(self, mock_fetch):
+        """When source omits version, dispatch defaults to "2024"."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "landfire", "bands": ["chm"]}
+
+        handle_canopy(mock_gdf, source, progress)
+
+        assert mock_fetch.call_args[0][1] == "2024"
+
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_landfire_does_not_populate_attribution_or_tile_metadata(self, mock_fetch):
+        """LANDFIRE canopy has no per-grid attribution or tile_metadata."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "landfire", "version": "2024", "bands": ["chm"]}
+
+        handle_canopy(mock_gdf, source, progress)
+
+        assert "attribution" not in source
+        assert "tile_metadata" not in source
+
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_landfire_threads_extent_buffer_and_alignment(self, mock_fetch):
+        """extent_buffer_cells and alignment from source reach the handler."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {
+            "product": "landfire",
+            "version": "2024",
+            "bands": ["chm", "cc"],
+            "extent_buffer_cells": 5,
+            "alignment": {"target": "native"},
+        }
+
+        handle_canopy(mock_gdf, source, progress)
+
+        kwargs = mock_fetch.call_args.kwargs
+        assert kwargs["extent_buffer_cells"] == 5
+        assert kwargs["alignment"] == {"target": "native"}
+
 
 class TestDispatchHandler3dep:
     """Tests for dispatch_handler routing to 3dep."""

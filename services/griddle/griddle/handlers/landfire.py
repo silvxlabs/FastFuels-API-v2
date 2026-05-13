@@ -29,6 +29,25 @@ NB_CODE_MAP: dict[str, int] = {
 CATEGORICAL_DEFAULT = "nearest"
 CONTINUOUS_DEFAULT = "bilinear"
 
+LANDFIRE_CANOPY_PRODUCT_MAP: dict[str, str] = {
+    "chm": "CH",
+    "cbd": "CBD",
+    "cbh": "CBH",
+    "cc": "CC",
+}
+
+LANDFIRE_CANOPY_SCALE_FACTORS: dict[str, float] = {
+    "chm": 10.0,
+    "cbd": 100.0,
+    "cbh": 10.0,
+    "cc": 1.0,
+}
+
+# LANDFIRE canopy rasters carry two coexisting nodata sentinels: 32767 is
+# declared in the TIFF nodata tag; -9999 also appears in pixel data without
+# being declared anywhere.
+LANDFIRE_CANOPY_EXTRA_NODATA: int = -9999
+
 
 def _fetch_landfire_raster(
     roi: gpd.GeoDataFrame,
@@ -288,3 +307,69 @@ def fetch_topography(
         )
 
     return _to_dataset(variables)
+
+
+def fetch_canopy_landfire(
+    roi: gpd.GeoDataFrame,
+    version: str,
+    bands: list[str],
+    progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
+) -> xr.Dataset:
+    """Fetch LANDFIRE canopy fuel data for one or more bands.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest
+        version: LANDFIRE version year (e.g. "2024")
+        bands: Requested API band names; subset of {"chm", "cbd", "cbh", "cc"}
+        progress: Progress callback
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+
+    Returns:
+        Dataset with one named variable per requested band, decoded from
+        the int16 storage representation into physical units (m for chm/cbh,
+        kg/m^3 for cbd, % for cc) with NaN at both LANDFIRE nodata sentinels.
+    """
+    alignment = alignment or {"target": "domain"}
+    variables: dict[str, DataArray] = {}
+    for i, band in enumerate(bands):
+        pct = 10 + int(70 * i / len(bands))
+        progress(f"Fetching LANDFIRE canopy {band}...", pct)
+        product_code = LANDFIRE_CANOPY_PRODUCT_MAP[band]
+        raw = _fetch_landfire_raster(
+            roi,
+            product_code,
+            version,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+            is_categorical=False,
+        )
+        variables[band] = _scale_canopy_band(raw, LANDFIRE_CANOPY_SCALE_FACTORS[band])
+
+    return _to_dataset(variables)
+
+
+def _scale_canopy_band(data: DataArray, scale: float) -> DataArray:
+    """Mask LANDFIRE canopy nodata sentinels and decode to physical units.
+
+    LANDFIRE distributes canopy products as int16 with two coexisting nodata
+    sentinels: 32767 (declared in the TIFF nodata tag) and -9999 (present in
+    pixel data without being declared anywhere). Naively dividing would
+    inject ``sentinel / scale`` into the valid value range, so we mask both
+    before any arithmetic.
+    """
+    declared_nodata = data.rio.nodata
+    sentinel_mask = data == LANDFIRE_CANOPY_EXTRA_NODATA
+    if declared_nodata is not None:
+        sentinel_mask = sentinel_mask | (data == declared_nodata)
+    out = data.astype("float32").where(~sentinel_mask)
+    if scale != 1.0:
+        out = out / scale
+    return out.rio.write_nodata(np.nan, encoded=True)

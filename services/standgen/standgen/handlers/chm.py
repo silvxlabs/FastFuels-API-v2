@@ -17,8 +17,8 @@ from fastfuels_core.itd.local_maxima_filter import (
 )
 
 from lib.config import GRIDS_COLLECTION
+from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
-from standgen.errors import ProcessingError
 from standgen.modifications import apply_modifications
 from standgen.storage import load_grid, save_parquet
 

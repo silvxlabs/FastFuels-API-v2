@@ -41,6 +41,7 @@ def mock_service_url(tasks_module):
     """Set up Cloud Run mock to return a URL for griddle."""
     mock_svc = MagicMock(uri="https://griddle.example.com")
     mock_client = MagicMock()
+    mock_client.__aenter__.return_value = mock_client
     mock_client.get_service = AsyncMock(return_value=mock_svc)
 
     with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
@@ -54,6 +55,7 @@ class TestGetServiceUrl:
         """Reads URI from Cloud Run service."""
         mock_svc = MagicMock(uri="https://griddle.example.com")
         mock_client = MagicMock()
+        mock_client.__aenter__.return_value = mock_client
         mock_client.get_service = AsyncMock(return_value=mock_svc)
 
         with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
@@ -66,6 +68,7 @@ class TestGetServiceUrl:
         """Second call returns cached result without hitting Cloud Run."""
         mock_svc = MagicMock(uri="https://cache-test.example.com")
         mock_client = MagicMock()
+        mock_client.__aenter__.return_value = mock_client
         mock_client.get_service = AsyncMock(return_value=mock_svc)
 
         with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
@@ -80,6 +83,7 @@ class TestGetServiceUrl:
         from google.api_core.exceptions import NotFound
 
         mock_client = MagicMock()
+        mock_client.__aenter__.return_value = mock_client
         mock_client.get_service = AsyncMock(side_effect=NotFound("not found"))
 
         with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
@@ -97,6 +101,7 @@ class TestCreateHttpTaskAsync:
         """create_http_task_async sends task to queue."""
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
+        mock_client.__aenter__.return_value = mock_client
         mock_client.queue_path.return_value = "projects/p/locations/l/queues/q"
         mock_client.task_path.return_value = "projects/p/locations/l/queues/q/tasks/t"
         mock_result = MagicMock()
@@ -118,6 +123,7 @@ class TestCreateHttpTaskAsync:
 
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
+        mock_client.__aenter__.return_value = mock_client
         mock_client.queue_path.return_value = "projects/p/locations/l/queues/q"
         mock_client.task_path.return_value = "projects/p/locations/l/queues/q/tasks/t"
         mock_client.create_task = AsyncMock(side_effect=AlreadyExists("task exists"))
@@ -135,6 +141,7 @@ class TestCreateHttpTaskAsync:
         """Task name is derived from the task_id parameter."""
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
+        mock_client.__aenter__.return_value = mock_client
         mock_client.queue_path.return_value = "projects/p/locations/l/queues/q"
         mock_client.task_path.return_value = (
             "projects/p/locations/l/queues/q/tasks/my-grid-id"
@@ -156,6 +163,7 @@ class TestCreateHttpTaskAsync:
         """Task HTTP body contains {"id": task_id}."""
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
+        mock_client.__aenter__.return_value = mock_client
         mock_client.queue_path.return_value = "projects/p/locations/l/queues/q"
         mock_client.task_path.return_value = "projects/p/locations/l/queues/q/tasks/abc"
         mock_client.create_task = AsyncMock(return_value=MagicMock())

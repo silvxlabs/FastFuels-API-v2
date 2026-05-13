@@ -796,9 +796,12 @@ class TestDeleteGrid:
         """Deleted grid does not appear in list endpoint."""
         grid_id = grid_for_delete["id"]
         list_route = self.route(domain_for_testing["id"])
+        # Filter by the fixture's tag so the assertion isn't affected by
+        # other grids accumulated on the session-scoped domain.
+        list_params = {"tag": "delete-test"}
 
         # Verify it appears in list before delete
-        list_response_before = client.get(list_route)
+        list_response_before = client.get(list_route, params=list_params)
         grid_ids_before = [g["id"] for g in list_response_before.json()["grids"]]
         assert grid_id in grid_ids_before
 
@@ -806,7 +809,7 @@ class TestDeleteGrid:
         client.delete(f"{list_route}/{grid_id}")
 
         # Verify it no longer appears in list
-        list_response_after = client.get(list_route)
+        list_response_after = client.get(list_route, params=list_params)
         grid_ids_after = [g["id"] for g in list_response_after.json()["grids"]]
         assert grid_id not in grid_ids_after
 

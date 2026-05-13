@@ -6,7 +6,7 @@ Routes inventory requests to the appropriate handler based on source type.
 
 import geopandas as gpd
 
-from standgen.errors import ProcessingError
+from lib.errors import ProcessingError
 from standgen.handlers import chm, modifications, pim
 
 

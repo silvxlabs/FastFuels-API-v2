@@ -12,11 +12,12 @@ import pandas as pd
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
-from griddle.errors import ProcessingError
 from griddle.handlers.chm import _query_tile_index, fetch_meta_chm, fetch_naip_chm
 from rasterio.crs import CRS
 from rasterio.transform import from_bounds
 from shapely.geometry import box
+
+from lib.errors import ProcessingError
 
 
 def _make_mock_raster(chm_values, crs="EPSG:32611"):

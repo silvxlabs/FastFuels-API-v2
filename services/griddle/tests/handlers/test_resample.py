@@ -22,10 +22,10 @@ import numpy as np
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
-from griddle.errors import ProcessingError
 from griddle.handlers.resample import resample_grid
 from shapely.geometry import box
 
+from lib.errors import ProcessingError
 from lib.zarr_utils import load_zarr, save_zarr
 
 

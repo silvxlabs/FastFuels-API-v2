@@ -16,10 +16,10 @@ import functions_framework
 from flask import Request
 
 from griddle.dispatch import dispatch_handler
-from griddle.errors import CancelledException, ProcessingError
 from griddle.storage import delete_zarr, save_zarr
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from lib.grids import compute_chunks_doc
 

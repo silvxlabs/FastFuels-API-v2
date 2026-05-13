@@ -16,7 +16,6 @@ import pint
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
-from griddle.errors import ProcessingError
 from griddle.handlers.lookup import (
     BAND_KEY_TO_COLUMN,
     UNIT_CONVERSIONS,
@@ -26,6 +25,7 @@ from griddle.handlers.lookup import (
     fbfm40_lookup,
 )
 
+from lib.errors import ProcessingError
 from lib.zarr_utils import load_zarr, save_zarr
 
 ureg = pint.UnitRegistry()

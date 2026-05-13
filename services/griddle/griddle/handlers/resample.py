@@ -12,9 +12,9 @@ import geopandas as gpd
 import rioxarray  # noqa: F401
 import xarray as xr
 
-from griddle.errors import ProcessingError
 from griddle.storage import load_zarr
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
+from lib.errors import ProcessingError
 
 
 def resample_grid(

@@ -17,6 +17,7 @@ class FeatureType(StrEnum):
 
     road = "road"
     water = "water"
+    layerset = "layerset"
 
 
 class FeatureSortField(StrEnum):
@@ -61,6 +62,7 @@ class Feature(BaseModel):
 
     id: str
     domain_id: str
+    owner_id: str
     type: FeatureType
     name: str = ""
     description: str = ""

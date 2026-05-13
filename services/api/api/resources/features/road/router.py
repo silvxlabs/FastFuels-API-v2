@@ -6,8 +6,10 @@ Router for Road feature creation via OpenStreetMap.
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Body, Request, status
+from features.road.examples import CREATE_ROAD_OPENAPI_EXAMPLES
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
@@ -38,7 +40,10 @@ COLLECTION = FEATURES_COLLECTION
 async def create_osm_road_feature(
     request: Request,
     domain: VerifiedDomain,
-    body: CreateOsmRoadFeatureRequest,
+    body: Annotated[
+        CreateOsmRoadFeatureRequest,
+        Body(openapi_examples=CREATE_ROAD_OPENAPI_EXAMPLES),
+    ],
 ):
     """
     # Create OSM Road Feature

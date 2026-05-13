@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 import geopandas as gpd
 import pytest
 from standgen.dispatch import dispatch_handler
-from standgen.errors import ProcessingError
+
+from lib.errors import ProcessingError
 
 
 def test_unknown_source_raises():

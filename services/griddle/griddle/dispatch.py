@@ -10,9 +10,9 @@ from datetime import date
 import geopandas as gpd
 import xarray as xr
 
-from griddle.errors import ProcessingError
 from griddle.handlers import chm, landfire, lookup, pim, resample, threedep, uniform
 from lib.config import GRIDS_COLLECTION
+from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
 
 META_CHM_ATTRIBUTION = {

@@ -18,9 +18,9 @@ import xarray as xr
 from rioxarray.merge import merge_arrays
 from xarray import DataArray
 
-from griddle.errors import ProcessingError
 from griddle.handlers.tiles import TileMetadata
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
+from lib.errors import ProcessingError
 from lib.raster import RasterConnection, cog_env
 from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
 

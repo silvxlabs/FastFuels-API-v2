@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
-from griddle.errors import ProcessingError
 from griddle.handlers.threedep import (
     _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,
     _compute_slope_aspect,
@@ -23,6 +22,8 @@ from griddle.handlers.threedep import (
 from rasterio.transform import from_bounds
 from shapely.geometry import box
 from xarray import DataArray
+
+from lib.errors import ProcessingError
 
 # Helpers
 

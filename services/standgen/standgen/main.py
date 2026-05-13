@@ -17,9 +17,9 @@ from flask import Request
 
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from standgen.dispatch import dispatch_handler
-from standgen.errors import CancelledException, ProcessingError
 from standgen.storage import delete_parquet
 
 

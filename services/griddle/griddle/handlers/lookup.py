@@ -12,8 +12,8 @@ import numpy as np
 import pint
 import xarray as xr
 
-from griddle.errors import ProcessingError
 from griddle.storage import load_zarr
+from lib.errors import ProcessingError
 
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity

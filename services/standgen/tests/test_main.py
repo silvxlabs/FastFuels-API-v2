@@ -3,7 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from standgen.errors import CancelledException, ProcessingError
+
+from lib.errors import CancelledException, ProcessingError
 
 
 class MockRequest:

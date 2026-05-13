@@ -235,7 +235,7 @@ class TestProcessGridRequest:
         self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
     ):
         """ProcessingError returns 200 (error recorded, no retry needed)."""
-        from griddle.errors import ProcessingError
+        from lib.errors import ProcessingError
 
         mock_load_grid.return_value = {
             "id": "test-grid-id",

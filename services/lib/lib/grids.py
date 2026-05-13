@@ -1,4 +1,4 @@
-"""Shared grid utilities used by api, griddle, and treevox services."""
+"""Shared grid utilities used by api, griddle, treevox, and uploader services."""
 
 from collections.abc import Sequence
 from math import ceil

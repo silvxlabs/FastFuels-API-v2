@@ -6,6 +6,8 @@ Integration tests run against live GCP infrastructure and require
 gcloud auth application-default login.
 """
 
+import asyncio
+import errno
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +16,29 @@ import pytest
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _suppress_grpc_poller_eagain():
+    # grpcio's PollerCompletionQueue registers a reader on the asyncio loop's
+    # eventfd that occasionally fires once during loop teardown on Python 3.13,
+    # raises BlockingIOError(EAGAIN) from a non-blocking read, and anyio
+    # captures it via the loop exception handler and re-raises it as a test
+    # failure. The underlying RPC has already succeeded — this is benign noise.
+    loop = asyncio.get_running_loop()
+    inner = loop.get_exception_handler()
+
+    def handler(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, BlockingIOError) and exc.errno == errno.EAGAIN:
+            return
+        if inner is not None:
+            inner(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
+    yield
 
 
 async def _clear_cache(tasks_module):

@@ -1,11 +1,12 @@
-"""Tests for road feature handler."""
+"""Tests for water feature handler."""
 
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
+import pandas as pd
 import pytest
-from featureFinder.handlers.road import (
-    buffer_roads,
+from etcher.handlers.water import (
+    buffer_water_features,
     compute_georeference,
     handle_osm,
 )
@@ -23,54 +24,66 @@ def sample_domain_gdf():
 
 
 @pytest.fixture
-def sample_osm_roads():
-    """Create a sample OSM response with lines in WGS84."""
+def sample_osm_water():
+    """Create a sample OSM response with mixed geometries in WGS84."""
+    # A river (LineString), a lake (Polygon), and an unmapped waterway (LineString)
     return gpd.GeoDataFrame(
         {
-            "highway": ["motorway", "path", "invalid_type"],
-            "name": ["Highway 1", "Local Trail", "Fake Road"],
+            "waterway": ["river", pd.NA, "unknown_stream"],
+            "natural": [pd.NA, "water", pd.NA],
+            "name": ["Colorado River", "Lake Mead", "Mystery Creek"],
             "geometry": [
                 LineString([(-120.0, 40.0), (-120.0, 40.01)]),
-                LineString([(-120.01, 40.0), (-120.01, 40.01)]),
-                LineString([(-120.02, 40.0), (-120.02, 40.01)]),
+                Polygon(
+                    [(-120.1, 40.1), (-120.1, 40.2), (-120.2, 40.2), (-120.2, 40.1)]
+                ),
+                LineString([(-120.3, 40.3), (-120.3, 40.31)]),
             ],
         },
         crs="EPSG:4326",
     )
 
 
-class TestBufferRoads:
-    def test_missing_highway_column(self):
-        """Should return an empty GDF if the 'highway' column is missing."""
-        gdf = gpd.GeoDataFrame(
-            {"geometry": [LineString([(0, 0), (1, 1)])]}, crs="EPSG:4326"
-        )
-        result = buffer_roads(gdf)
+class TestBufferWaterFeatures:
+    def test_empty_input(self):
+        """Should return an empty GDF if the input is empty."""
+        gdf = gpd.GeoDataFrame({"geometry": []}, crs="EPSG:4326")
+        result = buffer_water_features(gdf)
         assert result.empty
+
+    def test_missing_waterway_column(self):
+        """Should return the GDF as-is if 'waterway' column is missing."""
+        poly = Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
+        gdf = gpd.GeoDataFrame({"geometry": [poly]}, crs="EPSG:4326")
+
+        result = buffer_water_features(gdf)
+
+        assert len(result) == 1
+        assert result.geom_type.iloc[0] == "Polygon"
         assert result.crs == "EPSG:4326"
 
-    def test_drops_invalid_highways(self, sample_osm_roads):
-        """Should drop roads with tags not in ROAD_DATA."""
-        result = buffer_roads(sample_osm_roads)
-        # Only 'motorway' and 'path' should remain, 'invalid_type' dropped
-        assert len(result) == 2
-        assert set(result["highway"].values) == {"motorway", "path"}
+    def test_selective_buffering(self, sample_osm_water):
+        """Should buffer known waterways and leave polygons and unknown lines intact."""
+        result = buffer_water_features(sample_osm_water)
 
-    def test_buffers_lines_to_polygons(self, sample_osm_roads):
-        """Should convert LineStrings to Polygons representing road width."""
-        result = buffer_roads(sample_osm_roads)
+        # We had 3 features initially, we should still have 3
+        assert len(result) == 3
 
-        # Ensure they are now polygons
-        assert all(geom.geom_type == "Polygon" for geom in result.geometry)
+        # 1. 'river' (index 0) was a LineString, should now be a buffered Polygon
+        assert result.geom_type.iloc[0] == "Polygon"
+
+        # 2. 'Lake Mead' (index 1) was already a Polygon and had waterway=NA, should remain unchanged
+        assert result.geom_type.iloc[1] == "Polygon"
+        # Check that the lake wasn't accidentally buffered (area should roughly match original)
+        original_area = sample_osm_water.geometry.iloc[1].area
+        new_area = result.geometry.iloc[1].area
+        assert pytest.approx(original_area) == new_area
+
+        # 3. 'unknown_stream' (index 2) was a LineString not in WATERWAY_DATA, should remain a LineString
+        assert result.geom_type.iloc[2] == "LineString"
 
         # Ensure it returns in EPSG:4326
         assert result.crs == "EPSG:4326"
-
-    def test_empty_input(self):
-        """Should handle an empty input gracefully."""
-        gdf = gpd.GeoDataFrame({"highway": [], "geometry": []}, crs="EPSG:4326")
-        result = buffer_roads(gdf)
-        assert result.empty
 
 
 class TestComputeGeoreference:
@@ -86,15 +99,15 @@ class TestComputeGeoreference:
 class TestHandleOsm:
     @pytest.fixture
     def mock_feature(self):
-        return {"id": "feat-123", "domain_id": "dom-456", "type": "road"}
+        return {"id": "feat-999", "domain_id": "dom-456", "type": "water"}
 
-    @patch("featureFinder.handlers.road.save_geojson")
-    @patch("featureFinder.handlers.road.ox.features_from_polygon")
+    @patch("etcher.handlers.water.save_geojson")
+    @patch("etcher.handlers.water.ox.features_from_polygon")
     def test_happy_path(
-        self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf, sample_osm_roads
+        self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf, sample_osm_water
     ):
-        """Should fetch, buffer, format, and save the roads."""
-        mock_osmnx.return_value = sample_osm_roads
+        """Should fetch, buffer, format, and save the water features."""
+        mock_osmnx.return_value = sample_osm_water
         progress = MagicMock()
 
         result = handle_osm(mock_feature, {}, sample_domain_gdf, progress)
@@ -107,11 +120,11 @@ class TestHandleOsm:
         args, _ = mock_save.call_args
 
         assert args[0] == "dom-456"
-        assert args[1] == "feat-123"
+        assert args[1] == "feat-999"
         saved_gdf = args[2]
 
-        # Saved GDF should have specific columns
-        assert list(saved_gdf.columns) == ["geometry", "type", "name"]
+        # Saved GDF should have specific columns subset (geometry and name only)
+        assert list(saved_gdf.columns) == ["geometry", "name"]
 
         # Saved GDF should project back to the domain's native CRS
         assert saved_gdf.crs == sample_domain_gdf.crs
@@ -120,8 +133,8 @@ class TestHandleOsm:
         assert "georeference" in result
         assert result["georeference"]["crs"] == "EPSG:32610"
 
-    @patch("featureFinder.handlers.road.save_geojson")
-    @patch("featureFinder.handlers.road.ox.features_from_polygon")
+    @patch("etcher.handlers.water.save_geojson")
+    @patch("etcher.handlers.water.ox.features_from_polygon")
     def test_empty_osmnx_response(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
     ):
@@ -138,8 +151,8 @@ class TestHandleOsm:
         assert saved_gdf.empty
         assert saved_gdf.crs == sample_domain_gdf.crs
 
-    @patch("featureFinder.handlers.road.save_geojson")
-    @patch("featureFinder.handlers.road.ox.features_from_polygon")
+    @patch("etcher.handlers.water.save_geojson")
+    @patch("etcher.handlers.water.ox.features_from_polygon")
     def test_osmnx_raises_exception(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
     ):

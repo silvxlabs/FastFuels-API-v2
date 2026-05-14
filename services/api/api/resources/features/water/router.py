@@ -9,11 +9,11 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Request, status
-from features.water.examples import CREATE_WATER_OPENAPI_EXAMPLES
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.resources.features.schema import Feature, FeatureType
+from api.resources.features.water.examples import CREATE_WATER_OPENAPI_EXAMPLES
 from api.resources.features.water.schema import (
     CreateOsmWaterFeatureRequest,
     OsmWaterSource,

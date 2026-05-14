@@ -9,10 +9,10 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Request, status
-from features.road.examples import CREATE_ROAD_OPENAPI_EXAMPLES
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.resources.features.road.examples import CREATE_ROAD_OPENAPI_EXAMPLES
 from api.resources.features.road.schema import (
     CreateOsmRoadFeatureRequest,
     OsmRoadSource,

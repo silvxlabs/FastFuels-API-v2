@@ -61,7 +61,7 @@ gcloud run jobs update etcher-v2 \
   --vpc-egress=all-traffic
 ```
 
-# To set up queue 
+# To set up queue
 ```bash
 gcloud tasks queues create etcher-v2-queue --location=us-west1
 ```

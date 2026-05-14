@@ -65,3 +65,11 @@ gcloud run services update etcher-v2-prod \
 ```bash
 gcloud tasks queues create etcher-v2-queue --location=us-west1
 ```
+
+# To allow authentication
+```bash
+ gcloud run services add-iam-policy-binding etcher-v2-prod \
+    --region=us-west1 \
+    --member="allUsers" \
+    --role="roles/run.invoker"
+```

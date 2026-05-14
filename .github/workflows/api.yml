@@ -137,7 +137,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: services/api
-        run: uv sync --frozen
+        run: uv sync --frozen --group dev
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3

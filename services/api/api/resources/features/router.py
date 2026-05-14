@@ -23,6 +23,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.resources.features.layerset.router import router as layerset_router
 from api.resources.features.road.router import router as road_router
 from api.resources.features.schema import (
     Feature,
@@ -37,8 +38,6 @@ from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 
 router = APIRouter()
 wildcard_router = APIRouter()
-
-COLLECTION = FEATURES_COLLECTION
 
 
 @wildcard_router.get(
@@ -117,7 +116,7 @@ async def list_features_cross_domain(
 
     # Query Firestore
     documents, total_count = await list_documents_async(
-        collection=COLLECTION,
+        collection=FEATURES_COLLECTION,
         owner_id=owner_id,
         page=page,
         size=size,
@@ -221,7 +220,7 @@ async def list_features(
 
     # Query Firestore
     documents, total_count = await list_documents_async(
-        collection=COLLECTION,
+        collection=FEATURES_COLLECTION,
         owner_id=owner_id,
         page=page,
         size=size,
@@ -273,7 +272,10 @@ async def get_feature(
     - **404 Not Found**: The feature does not exist or the user does not have access.
     """
     _, snapshot = await get_document_async(
-        COLLECTION, feature_id, owner_id=request.state.id, domain_id=domain["id"]
+        FEATURES_COLLECTION,
+        feature_id,
+        owner_id=request.state.id,
+        domain_id=domain["id"],
     )
     return Feature(**snapshot.to_dict())
 
@@ -323,7 +325,10 @@ async def update_feature(
     Returns the updated feature resource.
     """
     _, snapshot = await get_document_async(
-        COLLECTION, feature_id, owner_id=request.state.id, domain_id=domain["id"]
+        FEATURES_COLLECTION,
+        feature_id,
+        owner_id=request.state.id,
+        domain_id=domain["id"],
     )
     feature_data = snapshot.to_dict()
 
@@ -331,7 +336,7 @@ async def update_feature(
     update_data["modified_on"] = datetime.now()
 
     await update_document_async(
-        collection=COLLECTION,
+        collection=FEATURES_COLLECTION,
         document_id=feature_id,
         data=update_data,
     )
@@ -361,11 +366,11 @@ async def delete_feature(
     domain_id = domain["id"]
 
     await get_document_async(
-        COLLECTION, feature_id, owner_id=request.state.id, domain_id=domain_id
+        FEATURES_COLLECTION, feature_id, owner_id=request.state.id, domain_id=domain_id
     )
 
     await delete_document_async(
-        collection=COLLECTION,
+        collection=FEATURES_COLLECTION,
         document_id=feature_id,
     )
 
@@ -376,3 +381,4 @@ async def delete_feature(
 
 router.include_router(road_router, prefix="/road", tags=["Features - Road"])
 router.include_router(water_router, prefix="/water", tags=["Features - Water"])
+router.include_router(layerset_router, prefix="/layerset", tags=["Features - Layerset"])

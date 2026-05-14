@@ -6,6 +6,8 @@ from api.auth import authenticate_user
 from api.resources.applications.router import router as applications_router
 from api.resources.domains.router import router as domain_router
 from api.resources.exports.router import router as exports_router
+from api.resources.features.router import router as features_router
+from api.resources.features.router import wildcard_router as features_wildcard_router
 from api.resources.grids.router import router as grids_router
 from api.resources.grids.router import wildcard_router as grids_wildcard_router
 from api.resources.inventories.router import router as inventories_router
@@ -97,6 +99,14 @@ api_router.include_router(
 api_router.include_router(keys_router, prefix="/keys", tags=["Keys"])
 api_router.include_router(
     applications_router, prefix="/applications", tags=["Applications"]
+)
+
+# Features
+api_router.include_router(
+    features_wildcard_router, prefix="/domains/-/features", tags=["Features"]
+)
+api_router.include_router(
+    features_router, prefix="/domains/{domain_id}/features", tags=["Features"]
 )
 
 # Include router with authentication middleware

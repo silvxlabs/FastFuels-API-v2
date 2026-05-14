@@ -6,8 +6,10 @@ Router for Water feature creation via OpenStreetMap.
 
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Body, Request, status
+from features.water.examples import CREATE_WATER_OPENAPI_EXAMPLES
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
@@ -38,7 +40,10 @@ COLLECTION = FEATURES_COLLECTION
 async def create_osm_water_feature(
     request: Request,
     domain: VerifiedDomain,
-    body: CreateOsmWaterFeatureRequest,
+    body: Annotated[
+        CreateOsmWaterFeatureRequest,
+        Body(openapi_examples=CREATE_WATER_OPENAPI_EXAMPLES),
+    ],
 ):
     """
     # Create OSM Water Feature

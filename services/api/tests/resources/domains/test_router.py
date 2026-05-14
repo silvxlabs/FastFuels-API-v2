@@ -654,6 +654,105 @@ class TestGetDomain:
         assert "owner_id" not in data
 
 
+class TestGetDomainLattice:
+    """Test the GET /domains/{domain_id}/lattice endpoint.
+
+    Uses the same ``domain_in_firestore`` fixture as ``TestGetDomain``.
+    The fixture domain is a 1000m x 1000m square in EPSG:32611 with
+    ``bbox = [500000, 5200000, 501000, 5201000]``.
+    """
+
+    @staticmethod
+    def route(domain_id: str) -> str:
+        return f"/domains/{domain_id}/lattice"
+
+    def test_returns_lattice_at_30m(self, client, domain_in_firestore):
+        """30m lattice over 1000m square: ceil(1000/30) = 34 cells per side."""
+        response = client.get(
+            self.route(domain_in_firestore["id"]), params={"resolution": 30}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["crs"] == "EPSG:32611"
+        assert data["resolution"] == 30.0
+        assert data["num_buffer_cells"] == 0
+        assert data["shape"] == [34, 34]
+        # transform: a=30, b=0, c=minx=500000, d=0, e=-30, f=miny+height*res
+        assert data["transform"] == [30.0, 0.0, 500000.0, 0.0, -30.0, 5201020.0]
+
+    def test_returns_lattice_at_50m(self, client, domain_in_firestore):
+        """50m divides evenly into 1000m: 20 cells per side, snug bounds."""
+        response = client.get(
+            self.route(domain_in_firestore["id"]), params={"resolution": 50}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["shape"] == [20, 20]
+        assert data["transform"] == [50.0, 0.0, 500000.0, 0.0, -50.0, 5201000.0]
+
+    def test_buffer_cells_expands_lattice(self, client, domain_in_firestore):
+        """num_buffer_cells=2 at 30m adds 60m on each side; shape grows by 4."""
+        response = client.get(
+            self.route(domain_in_firestore["id"]),
+            params={"resolution": 30, "num_buffer_cells": 2},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["num_buffer_cells"] == 2
+        # Expanded bounds: 1120m wide → ceil(1120/30) = 38 cells per side.
+        assert data["shape"] == [38, 38]
+        # Origin shifts left/up by 2*30=60m. c = 500000-60, f = miny-60 + 38*30.
+        assert data["transform"] == [30.0, 0.0, 499940.0, 0.0, -30.0, 5201080.0]
+
+    def test_missing_resolution_returns_422(self, client, domain_in_firestore):
+        """resolution is required."""
+        response = client.get(self.route(domain_in_firestore["id"]))
+        assert response.status_code == 422
+
+    def test_zero_resolution_returns_422(self, client, domain_in_firestore):
+        """resolution must be > 0."""
+        response = client.get(
+            self.route(domain_in_firestore["id"]), params={"resolution": 0}
+        )
+        assert response.status_code == 422
+
+    def test_negative_resolution_returns_422(self, client, domain_in_firestore):
+        """Negative resolution is rejected."""
+        response = client.get(
+            self.route(domain_in_firestore["id"]), params={"resolution": -10}
+        )
+        assert response.status_code == 422
+
+    def test_negative_buffer_returns_422(self, client, domain_in_firestore):
+        """num_buffer_cells must be >= 0."""
+        response = client.get(
+            self.route(domain_in_firestore["id"]),
+            params={"resolution": 30, "num_buffer_cells": -1},
+        )
+        assert response.status_code == 422
+
+    def test_nonexistent_domain_returns_404(self, client):
+        """Unknown domain id returns 404."""
+        response = client.get(
+            self.route("00000000000000000000000000000000"),
+            params={"resolution": 30},
+        )
+        assert response.status_code == 404
+
+    def test_wrong_owner_returns_404(self, client, domain_with_different_owner):
+        """Domain owned by a different user returns 404, not 403."""
+        response = client.get(
+            self.route(domain_with_different_owner["id"]),
+            params={"resolution": 30},
+        )
+        assert response.status_code == 404
+
+
 class TestListDomains:
     """Test the GET /domains endpoint (list all domains).
 

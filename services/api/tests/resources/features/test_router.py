@@ -355,6 +355,5 @@ class TestDeleteFeature:
         response = client.delete(f"{self.route(domain_for_testing['id'])}/{feat_id}")
         assert response.status_code == 204
 
-        client.delete(f"{self.route(domain_for_testing['id'])}/{feat_id}")
         response_2 = client.delete(f"{self.route(domain_for_testing['id'])}/{feat_id}")
         assert response_2.status_code == 404

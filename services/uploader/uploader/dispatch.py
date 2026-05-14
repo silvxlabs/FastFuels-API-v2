@@ -28,6 +28,10 @@ def dispatch_handler(
         ProcessingError: If resource type has no registered handler
     """
     match resource_type:
+        case "inventories":
+            from uploader.handlers.inventory import handle_inventory
+
+            handle_inventory(resource_id, bucket, object_name, doc)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_RESOURCE_TYPE",

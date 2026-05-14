@@ -15,7 +15,7 @@ from fastapi import (
     status,
 )
 
-from api.db.blobs import delete_file
+from api.db.blobs import delete_file_safe
 from api.db.documents import (
     delete_document_async,
     get_document_async,
@@ -374,9 +374,9 @@ async def delete_feature(
         document_id=feature_id,
     )
 
-    # Delete the target GeoJSON blob asynchronously using the correct blobs.py method
-    gcs_blob_path = f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
-    background_tasks.add_task(delete_file, gcs_blob_path)
+    # Delete the target GeoJSON blob asynchronously
+    file_path = f"{domain_id}/{feature_id}.geojson"
+    background_tasks.add_task(delete_file_safe, FEATURES_BUCKET, file_path)
 
 
 router.include_router(road_router, prefix="/road", tags=["Features - Road"])

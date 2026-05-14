@@ -383,6 +383,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4a/f3/00bb1e867fba351e2d784170955713bee200c43ea306c59f30bd7e748192/dask-2026.3.0-py3-none-any.whl", hash = "sha256:be614b9242b0b38288060fb2d7696125946469c98a1c30e174883fd199e0428d", size = 1485630, upload-time = "2026-03-18T07:10:12.832Z" },
 ]
 
+[package.optional-dependencies]
+dataframe = [
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+]
+
 [[package]]
 name = "decorator"
 version = "5.2.1"
@@ -1861,6 +1868,7 @@ name = "uploader"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "dask", extra = ["dataframe"] },
     { name = "functions-framework" },
     { name = "geopandas" },
     { name = "lib", extra = ["firestore", "gcs", "raster", "zarr"] },
@@ -1876,6 +1884,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dask", extras = ["dataframe"], specifier = ">=2024.1.0" },
     { name = "functions-framework", specifier = ">=3.10.0" },
     { name = "geopandas", specifier = ">=1.1.2" },
     { name = "lib", extras = ["firestore", "gcs", "raster", "zarr"], editable = "../lib" },

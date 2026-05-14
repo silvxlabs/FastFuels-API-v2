@@ -5,9 +5,20 @@ Tests the upload inventory creation endpoint.
 These tests make real HTTP requests to the API and interact with Firestore.
 """
 
+import tempfile
+import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
-from lib.config import INVENTORIES_COLLECTION
+import dask.dataframe as dd
+import geopandas as gpd
+import pandas as pd
+import pytest
+import requests
+from shapely.geometry import Point
+
+from lib.config import INVENTORIES_BUCKET, INVENTORIES_COLLECTION, UPLOADS_BUCKET
+from lib.gcs import delete_directory, exists
 
 
 class TestCreateInventoryUpload:
@@ -185,3 +196,106 @@ class TestCreateInventoryUpload:
             json={"format": "csv", "columns": {"weight": "weight_col"}},
         )
         assert response.status_code == 422
+
+
+def _poll_inventory(client, domain_id, inventory_id, timeout=120) -> dict:
+    """Poll GET inventory until terminal status, return the final doc."""
+    url = f"/domains/{domain_id}/inventories/{inventory_id}"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        r = client.get(url)
+        assert r.status_code == 200, r.text
+        doc = r.json()
+        if doc["status"] == "completed":
+            return doc
+        if doc["status"] == "failed":
+            pytest.fail(f"Inventory failed: {doc.get('error')}")
+        time.sleep(1)
+    pytest.fail(f"Inventory did not complete within {timeout}s")
+
+
+def _make_upload_file(fmt: str, domain_crs: str) -> Path:
+    """Write a small upload file to a temp path and return it."""
+    # Coordinates inside domain_for_testing bounds (x=[500000,501000], y=[5200000,5201000])
+    x = [500200.0, 500400.0, 500600.0]
+    y = [5200200.0, 5200400.0, 5200600.0]
+    height = [10.0, 15.0, 20.0]
+
+    if fmt == "csv":
+        f = tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w")
+        pd.DataFrame({"x": x, "y": y, "height": height}).to_csv(f, index=False)
+        f.close()
+        return Path(f.name)
+
+    # GeoJSON: create in domain CRS then reproject to WGS84 (required by spec)
+    gdf = gpd.GeoDataFrame(
+        {"height": height},
+        geometry=[Point(xi, yi) for xi, yi in zip(x, y)],
+        crs=domain_crs,
+    ).to_crs("EPSG:4326")
+    f = tempfile.NamedTemporaryFile(suffix=".geojson", delete=False, mode="w")
+    f.write(gdf.to_json())
+    f.close()
+    return Path(f.name)
+
+
+class TestUploadFullFlow:
+    """Full upload flow: POST → PUT file → Eventarc → uploader → completed.
+
+    Requires the uploader Cloud Run service to be deployed and wired to Eventarc.
+    """
+
+    @pytest.mark.parametrize("fmt", ["csv", "geojson"])
+    def test_upload_completes(self, fmt, client, domain_for_testing, firestore_client):
+        """POST → PUT file to signed URL → poll → status=completed, Parquet matches upload."""
+        domain_id = domain_for_testing["id"]
+        domain_crs = domain_for_testing["crs"]["properties"]["name"]
+        inventory_id = None
+
+        try:
+            response = client.post(
+                f"/domains/{domain_id}/inventories/tree/upload",
+                json={"format": fmt},
+            )
+            assert response.status_code == 201, response.text
+            data = response.json()
+            inventory_id = data["inventory"]["id"]
+            object_name = data["inventory"]["source"]["object_name"]
+            signed_url = data["upload"]["url"]
+            content_type = data["upload"]["content_type"]
+            max_size_bytes = data["upload"]["max_size_bytes"]
+
+            file_path = _make_upload_file(fmt, domain_crs)
+            with open(file_path, "rb") as f:
+                put_response = requests.put(
+                    signed_url,
+                    data=f,
+                    headers={
+                        "Content-Type": content_type,
+                        "x-goog-content-length-range": f"0,{max_size_bytes}",
+                    },
+                    timeout=30,
+                )
+            assert put_response.status_code == 200, put_response.text
+
+            assert exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
+
+            completed = _poll_inventory(client, domain_id, inventory_id)
+
+            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
+            assert completed["georeference"]["crs"] == domain_crs
+
+            parquet_df = dd.read_parquet(
+                f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+            ).compute()
+            assert len(parquet_df) == 3
+            assert list(parquet_df["height"]) == [10.0, 15.0, 20.0]
+
+        finally:
+            if inventory_id:
+                gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+                if exists(gcs_path):
+                    delete_directory(gcs_path)
+                firestore_client.collection(INVENTORIES_COLLECTION).document(
+                    inventory_id
+                ).delete()

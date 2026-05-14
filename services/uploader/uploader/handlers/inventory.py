@@ -77,8 +77,10 @@ def handle_inventory(
                 code="EMPTY_AFTER_FILTER",
                 message="No trees remain after filtering to domain bounds.",
                 suggestion=(
-                    "Check that your coordinates are in the domain's CRS "
-                    "and fall within the domain extent."
+                    f"Domain extent in {domain_crs_str}: "
+                    f"x=[{xmin:.1f}, {xmax:.1f}], y=[{ymin:.1f}, {ymax:.1f}]. "
+                    "For CSV files, verify coordinates are in the domain CRS. "
+                    "For GeoJSON/GeoPackage, verify features overlap the domain's geographic extent."
                 ),
             )
 

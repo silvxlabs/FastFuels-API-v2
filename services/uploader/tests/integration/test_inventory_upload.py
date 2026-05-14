@@ -89,6 +89,28 @@ def _upload_csv(inventory_id: str, x, y, height, extra: dict = None) -> str:
     return object_name
 
 
+def _upload_geopackage(inventory_id: str, points: list, attrs: dict, crs: str) -> str:
+    """Upload a GeoPackage file to UPLOADS_BUCKET. Returns the object_name."""
+    gdf = gpd.GeoDataFrame(
+        attrs,
+        geometry=[Point(x, y) for x, y in points],
+        crs=crs,
+    )
+    object_name = f"inventories/{inventory_id}/upload.gpkg"
+    import os
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as f:
+        tmp_path = f.name
+    try:
+        gdf.to_file(tmp_path, driver="GPKG")
+        fs = gcsfs.GCSFileSystem()
+        fs.put(tmp_path, f"{UPLOADS_BUCKET}/{object_name}")
+    finally:
+        os.unlink(tmp_path)
+    return object_name
+
+
 def _upload_geojson(inventory_id: str, lon_lat_points: list, attrs: dict) -> str:
     """Upload a GeoJSON file to UPLOADS_BUCKET. Returns the object_name."""
     gdf = gpd.GeoDataFrame(
@@ -149,6 +171,16 @@ class TestCsvUpload:
 
             assert exists(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
+
+            import dask.dataframe as dd
+
+            parquet_df = dd.read_parquet(
+                f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+            ).compute()
+            assert len(parquet_df) == len(SAMPLE_X)
+            assert list(parquet_df["x"]) == SAMPLE_X
+            assert list(parquet_df["y"]) == SAMPLE_Y
+            assert list(parquet_df["height"]) == SAMPLE_HEIGHT
 
         finally:
             gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
@@ -217,6 +249,32 @@ class TestCsvUpload:
             delete_document(INVENTORIES_COLLECTION, inventory_id)
             delete_document(DOMAINS_COLLECTION, domain_id)
 
+    def test_all_trees_outside_domain_raises(self):
+        """CSV with coordinates outside the domain bounds raises EMPTY_AFTER_FILTER."""
+        inventory_id = f"test-{uuid4().hex}"
+        domain_id = f"test-{uuid4().hex}"
+
+        domain_doc = _load_domain_doc(domain_id)
+        set_document(DOMAINS_COLLECTION, domain_id, domain_doc)
+
+        # Coordinates far outside blue_mtn bounds (wrong UTM zone entirely)
+        outside_x = [500000.0, 500100.0, 500200.0]
+        outside_y = [4200000.0, 4200100.0, 4200200.0]
+        object_name = _upload_csv(inventory_id, outside_x, outside_y, SAMPLE_HEIGHT)
+        inv_doc = _make_inventory_doc(inventory_id, domain_id, "csv")
+        inv_doc["source"]["object_name"] = object_name
+        set_document(INVENTORIES_COLLECTION, inventory_id, inv_doc)
+
+        try:
+            from lib.errors import ProcessingError
+
+            with pytest.raises(ProcessingError) as exc_info:
+                handle_inventory(inventory_id, UPLOADS_BUCKET, object_name, inv_doc)
+            assert exc_info.value.code == "EMPTY_AFTER_FILTER"
+        finally:
+            delete_document(INVENTORIES_COLLECTION, inventory_id)
+            delete_document(DOMAINS_COLLECTION, domain_id)
+
 
 class TestGeoJsonUpload:
     def test_valid_geojson_completes(self):
@@ -241,6 +299,39 @@ class TestGeoJsonUpload:
             _, snap = get_document(INVENTORIES_COLLECTION, inventory_id)
             result = snap.to_dict()
             assert result["status"] == "completed"
+            assert exists(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
+        finally:
+            gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+            if exists(gcs_path):
+                delete_directory(gcs_path)
+            delete_document(INVENTORIES_COLLECTION, inventory_id)
+            delete_document(DOMAINS_COLLECTION, domain_id)
+
+
+class TestGeoPackageUpload:
+    def test_valid_geopackage_completes(self):
+        """GeoPackage with domain CRS produces status=completed with Parquet."""
+        inventory_id = f"test-{uuid4().hex}"
+        domain_id = f"test-{uuid4().hex}"
+
+        domain_doc = _load_domain_doc(domain_id)
+        set_document(DOMAINS_COLLECTION, domain_id, domain_doc)
+
+        # Points already in domain CRS — no reprojection needed
+        points = [(x, y) for x, y in zip(SAMPLE_X, SAMPLE_Y)]
+        object_name = _upload_geopackage(
+            inventory_id, points, {"height": SAMPLE_HEIGHT}, crs=DOMAIN_CRS
+        )
+        inv_doc = _make_inventory_doc(inventory_id, domain_id, "geopackage")
+        inv_doc["source"]["object_name"] = object_name
+        set_document(INVENTORIES_COLLECTION, inventory_id, inv_doc)
+
+        try:
+            handle_inventory(inventory_id, UPLOADS_BUCKET, object_name, inv_doc)
+            _, snap = get_document(INVENTORIES_COLLECTION, inventory_id)
+            result = snap.to_dict()
+            assert result["status"] == "completed"
+            assert result["georeference"]["crs"] == DOMAIN_CRS
             assert exists(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
         finally:
             gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"

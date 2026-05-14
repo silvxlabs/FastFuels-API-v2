@@ -140,16 +140,16 @@ class TestBuildDataset:
 
         assert exc_info.value.code == "MISSING_CRS"
 
-    def test_reprojection_when_crs_differs(self, tmp_path):
-        """GeoTIFF in WGS84 is reprojected to domain CRS before output."""
-        path = str(tmp_path / "reproject.tif")
+    def test_crs_mismatch_raises(self, tmp_path):
+        """GeoTIFF in a different CRS than the domain raises CRS_MISMATCH."""
+        path = str(tmp_path / "wrong_crs.tif")
         _write_geotiff(path, n_bands=1, crs="EPSG:4326", bounds=_WGS84_BOUNDS)
 
         bands_spec = [{"key": "fbfm", "type": "categorical", "unit": None}]
-        ds = _build_dataset(path, bands_spec, DOMAIN_CRS, DOMAIN_GDF)
+        with pytest.raises(ProcessingError) as exc_info:
+            _build_dataset(path, bands_spec, DOMAIN_CRS, DOMAIN_GDF)
 
-        assert str(ds.rio.crs) == DOMAIN_CRS
-        assert "fbfm" in ds.data_vars
+        assert exc_info.value.code == "CRS_MISMATCH"
 
     def test_no_overlap_with_domain_raises(self, tmp_path):
         """GeoTIFF entirely outside domain bounds raises NO_OVERLAP."""

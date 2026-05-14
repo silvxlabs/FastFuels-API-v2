@@ -21,6 +21,7 @@ CORS_ORIGINS = {
     "prod": [
         "http://localhost:3000",
         "http://localhost:8080",
+        "https://beta-app-fastfuels-silvxlabs.web.app"
     ],
     "dev": [
         "http://localhost:3000",

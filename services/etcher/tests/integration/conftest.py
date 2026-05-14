@@ -67,7 +67,7 @@ def _run_feature_job(feature_id: str) -> None:
 
 def _run_local(feature_id: str) -> None:
     """Call process_feature_request directly with a MockRequest."""
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     request = MockRequest(data={"id": feature_id})
     response, status_code = process_feature_request(request)

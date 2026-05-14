@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from featureFinder.errors import CancelledException, ProcessingError
+from etcher.errors import CancelledException, ProcessingError
 
 
 class MockRequest:
@@ -26,14 +26,14 @@ def mock_feature():
     }
 
 
-@patch("featureFinder.main._load_domain")
-@patch("featureFinder.main.dispatch_handler")
-@patch("featureFinder.main.update_status")
-@patch("featureFinder.main.load_feature")
+@patch("etcher.main._load_domain")
+@patch("etcher.main.dispatch_handler")
+@patch("etcher.main.update_status")
+@patch("etcher.main.load_feature")
 def test_happy_path(
     mock_load, mock_status, mock_dispatch, mock_load_domain, mock_feature
 ):
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     mock_load.return_value = mock_feature
     mock_load_domain.return_value = MagicMock()
@@ -55,7 +55,7 @@ def test_happy_path(
 
 
 def test_missing_id():
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     request = MockRequest({})
     response, status_code = process_feature_request(request)
@@ -63,17 +63,17 @@ def test_missing_id():
 
 
 def test_missing_body():
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     request = MockRequest(None)
     response, status_code = process_feature_request(request)
     assert status_code == 400
 
 
-@patch("featureFinder.main.update_status")
-@patch("featureFinder.main.load_feature")
+@patch("etcher.main.update_status")
+@patch("etcher.main.load_feature")
 def test_retry_marks_failed(mock_load, mock_status):
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     request = MockRequest(
         {"id": "test-123"},
@@ -87,9 +87,9 @@ def test_retry_marks_failed(mock_load, mock_status):
     assert call_args[0][1] == "failed"
 
 
-@patch("featureFinder.main.load_feature")
+@patch("etcher.main.load_feature")
 def test_feature_not_found(mock_load):
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     from lib.firestore import DocumentNotFoundError
 
@@ -101,14 +101,14 @@ def test_feature_not_found(mock_load):
     assert status_code == 200
 
 
-@patch("featureFinder.main._load_domain")
-@patch("featureFinder.main.dispatch_handler")
-@patch("featureFinder.main.update_status")
-@patch("featureFinder.main.load_feature")
+@patch("etcher.main._load_domain")
+@patch("etcher.main.dispatch_handler")
+@patch("etcher.main.update_status")
+@patch("etcher.main.load_feature")
 def test_processing_error(
     mock_load, mock_status, mock_dispatch, mock_load_domain, mock_feature
 ):
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     mock_load.return_value = mock_feature
     mock_load_domain.return_value = MagicMock()
@@ -125,15 +125,15 @@ def test_processing_error(
     assert len(failed_calls) == 1
 
 
-@patch("featureFinder.main.delete_geojson")
-@patch("featureFinder.main._load_domain")
-@patch("featureFinder.main.dispatch_handler")
-@patch("featureFinder.main.update_status")
-@patch("featureFinder.main.load_feature")
+@patch("etcher.main.delete_geojson")
+@patch("etcher.main._load_domain")
+@patch("etcher.main.dispatch_handler")
+@patch("etcher.main.update_status")
+@patch("etcher.main.load_feature")
 def test_cancelled_during_processing(
     mock_load, mock_status, mock_dispatch, mock_load_domain, mock_delete, mock_feature
 ):
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     mock_load.return_value = mock_feature
     mock_load_domain.return_value = MagicMock()
@@ -147,14 +147,14 @@ def test_cancelled_during_processing(
     mock_delete.assert_called_once_with("test-domain-456", "test-feature-123")
 
 
-@patch("featureFinder.main._load_domain")
-@patch("featureFinder.main.dispatch_handler")
-@patch("featureFinder.main.update_status")
-@patch("featureFinder.main.load_feature")
+@patch("etcher.main._load_domain")
+@patch("etcher.main.dispatch_handler")
+@patch("etcher.main.update_status")
+@patch("etcher.main.load_feature")
 def test_unexpected_error_returns_500(
     mock_load, mock_status, mock_dispatch, mock_load_domain, mock_feature
 ):
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     mock_load.return_value = mock_feature
     mock_load_domain.return_value = MagicMock()
@@ -166,10 +166,10 @@ def test_unexpected_error_returns_500(
     assert status_code == 500
 
 
-@patch("featureFinder.main.update_status")
-@patch("featureFinder.main.load_feature")
+@patch("etcher.main.update_status")
+@patch("etcher.main.load_feature")
 def test_cancelled_before_processing(mock_load, mock_status, mock_feature):
-    from featureFinder.main import process_feature_request
+    from etcher.main import process_feature_request
 
     mock_load.return_value = mock_feature
     mock_status.side_effect = CancelledException("cancelled")

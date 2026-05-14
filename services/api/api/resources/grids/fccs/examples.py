@@ -27,7 +27,7 @@ CREATE_LANDFIRE_FCCS_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_FCCS_MINIMAL,
         "summary": "Minimal request",
         "description": (
-            "Creates a grid with default settings. Returns FCCS fuelbed IDs"
+            "Creates a grid with default settings. Returns FCCS fuelbed IDs "
             "at 30m resolution. Use /grids/lookup/fccs to convert codes to "
             "fuel parameters."
         ),
@@ -40,7 +40,7 @@ CREATE_LANDFIRE_FCCS_OPENAPI_EXAMPLES = {
             "maintaining multiple grids for scenario comparison."
         ),
     },
-    "remove_non_burnable": {
+    "remove_bare_ground": {
         "value": EXAMPLE_FCCS_REMOVE_BARE_GROUND,
         "summary": "Remove bare ground blocks",
         "description": (

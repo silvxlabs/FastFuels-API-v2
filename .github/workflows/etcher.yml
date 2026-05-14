@@ -85,7 +85,7 @@ jobs:
               DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
               GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
               GCP_REGION=${{ env.REGION }},\
-              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
+              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }}" \
             --quiet
 
   test:

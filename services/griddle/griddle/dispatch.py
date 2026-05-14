@@ -135,9 +135,11 @@ def handle_landfire(
         case "fccs":
             version = source.get("version", "2023")
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
+            remove_bare_ground = source.get("remove_bare_ground", False)
             return landfire.fetch_fccs(
                 domain_gdf,
                 version,
+                remove_bare_ground=remove_bare_ground,
                 extent_buffer_cells=extent_buffer_cells,
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
@@ -158,7 +160,7 @@ def handle_landfire(
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown LANDFIRE product: {product}",
-                suggestion="Supported products: fbfm40, topography",
+                suggestion="Supported products: fbfm40, fccs, topography",
             )
 
 

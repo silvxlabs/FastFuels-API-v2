@@ -61,8 +61,16 @@ async def create_grid_upload(
 
     ## CRS Handling
 
-    The GeoTIFF must have a CRS set. If the GeoTIFF CRS differs from the
-    domain CRS, the uploader reprojects automatically.
+    The GeoTIFF must have a CRS set and must match the domain CRS. A mismatch
+    fails with `CRS_MISMATCH`; reproject the GeoTIFF (e.g., `gdalwarp -t_srs`)
+    before uploading.
+
+    ## Buffer Cells
+
+    `num_buffer_cells` (default 0) keeps extra cells around the domain extent
+    in the stored grid. The uploaded GeoTIFF must cover the domain bbox
+    expanded by `num_buffer_cells * native_pixel_size` on each side; pixels
+    beyond that expanded extent are clipped away.
 
     ## Supported Format
 
@@ -94,6 +102,7 @@ async def create_grid_upload(
             "format": body.format.value,
             "object_name": object_name,
             "bands": [b.model_dump() for b in body.bands],
+            "num_buffer_cells": body.num_buffer_cells,
         },
         "modifications": [],
         "bands": bands,

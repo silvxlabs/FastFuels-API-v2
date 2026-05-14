@@ -2,6 +2,7 @@
 api/v2/resources/domains/router.py
 """
 
+import math
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -42,7 +43,6 @@ from api.resources.domains.validate import (
     validate_crs,
     validate_domain,
 )
-from lib.alignment import lattice_from_bounds
 from lib.config import (
     DOMAINS_COLLECTION,
     GRIDS_BUCKET,
@@ -636,14 +636,19 @@ async def get_domain_lattice(
     domain_gdf = parse_domain_gdf(domain)
     minx, miny, maxx, maxy = domain_gdf.total_bounds
     pad = num_buffer_cells * resolution
-    bounds = (minx - pad, miny - pad, maxx + pad, maxy + pad)
-    transform, shape = lattice_from_bounds(bounds, resolution)
+    minx -= pad
+    miny -= pad
+    maxx += pad
+    maxy += pad
+    # North-up lattice anchored at (minx, miny), ceil-covering the padded bounds.
+    width = max(1, math.ceil((maxx - minx) / resolution))
+    height = max(1, math.ceil((maxy - miny) / resolution))
     return DomainLattice(
         crs=domain["crs"]["properties"]["name"],
         resolution=resolution,
         num_buffer_cells=num_buffer_cells,
-        transform=tuple(transform)[:6],
-        shape=shape,
+        transform=(resolution, 0.0, minx, 0.0, -resolution, miny + height * resolution),
+        shape=(height, width),
     )
 
 

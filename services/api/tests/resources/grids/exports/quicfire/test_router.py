@@ -47,7 +47,7 @@ def canopy_grid(firestore_client, domain_for_testing):
         domain_id=domain_for_testing["id"],
         name="QUIC-Fire test canopy grid",
         status="completed",
-        source={"name": "tree"},
+        source={"operation": "voxelize", "input": "inventory", "entity": "tree"},
         bands=[
             {
                 "key": "bulk_density.foliage.live",
@@ -144,7 +144,7 @@ def pending_canopy_grid(firestore_client, domain_for_testing):
         domain_id=domain_for_testing["id"],
         name="QUIC-Fire pending canopy grid",
         status="pending",
-        source={"name": "tree"},
+        source={"operation": "voxelize", "input": "inventory", "entity": "tree"},
         bands=[
             {
                 "key": "bulk_density.foliage.live",
@@ -202,7 +202,7 @@ def two_d_canopy_shaped_grid(firestore_client, domain_for_testing):
         domain_id=domain_for_testing["id"],
         name="QUIC-Fire 2D canopy-shaped grid",
         status="completed",
-        source={"name": "tree"},
+        source={"operation": "voxelize", "input": "inventory", "entity": "tree"},
         bands=[
             {
                 "key": "bulk_density.foliage.live",

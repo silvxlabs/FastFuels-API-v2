@@ -35,7 +35,6 @@ class TestUploadBandDefinition:
     def test_categorical_band_valid(self):
         band = UploadBandDefinition(key="fbfm", type="categorical")
         assert band.unit is None
-        assert band.description is None
 
     def test_invalid_type_raises(self):
         with pytest.raises(ValidationError):

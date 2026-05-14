@@ -747,14 +747,18 @@ def dispatch_handler(
     domain_gdf,
     progress: Callable[[str, int | None], None],
 ) -> VoxelizationResult:
-    """Route on `grid['source']['name']`. Single-source today; extensible later."""
-    source_name = grid["source"]["name"]
-    match source_name:
-        case "inventory":
+    """Route on the source's (operation, input, entity) triple."""
+    source = grid["source"]
+    key = (source.get("operation"), source.get("input"), source.get("entity"))
+    match key:
+        case ("voxelize", "inventory", "tree"):
             return voxelize_inventory(grid, domain_gdf, progress)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",
-                message=f"Unknown tree grid source: {source_name!r}",
-                suggestion="Supported sources today: 'inventory'.",
+                message=f"Unknown tree grid source: {key!r}",
+                suggestion=(
+                    "Supported sources today: "
+                    "(operation='voxelize', input='inventory', entity='tree')."
+                ),
             )

@@ -44,7 +44,9 @@ def _base_grid(bands=None, seed=42):
         "id": "g1",
         "domain_id": "d1",
         "source": {
-            "name": "inventory",
+            "operation": "voxelize",
+            "input": "inventory",
+            "entity": "tree",
             "source_inventory_id": "inv1",
             "resolution": (1.0, 1.0, 1.0),
             "crown_profile_model": "purves",
@@ -82,13 +84,25 @@ class TestDispatchHandler:
     @patch("treevox.orchestrator.voxelize_inventory")
     def test_inventory_routes_to_voxelize(self, mock_voxelize):
         mock_voxelize.return_value = "result"
-        grid = {"source": {"name": "inventory"}}
+        grid = {
+            "source": {
+                "operation": "voxelize",
+                "input": "inventory",
+                "entity": "tree",
+            }
+        }
         result = dispatch_handler(grid, MagicMock(), lambda *a, **k: None)
         assert result == "result"
         mock_voxelize.assert_called_once()
 
     def test_unknown_source_raises_processing_error(self):
-        grid = {"source": {"name": "lidar"}}
+        grid = {
+            "source": {
+                "operation": "voxelize",
+                "input": "inventory",
+                "entity": "lidar",
+            }
+        }
         with pytest.raises(ProcessingError) as exc:
             dispatch_handler(grid, MagicMock(), lambda *a, **k: None)
         assert exc.value.code == "UNKNOWN_SOURCE"

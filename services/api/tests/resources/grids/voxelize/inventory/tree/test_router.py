@@ -97,8 +97,9 @@ class TestCreateTreeInventoryGrid:
 
         # Source metadata captures every resolved default.
         source = data["source"]
-        assert source["name"] == "tree"
-        assert source["product"] == "voxelize"
+        assert source["operation"] == "voxelize"
+        assert source["input"] == "inventory"
+        assert source["entity"] == "tree"
         assert source["source_inventory_id"] == tree_inventory_for_voxelization["id"]
         assert source["resolution"] == {"horizontal": 2.0, "vertical": 1.0}
         assert source["bands"] == ["bulk_density.foliage.live"]
@@ -570,6 +571,7 @@ class TestCreateTreeInventoryGrid:
             f"{response.status_code}: {response.json()}"
         )
         data = response.json()
-        assert data["source"]["name"] == "tree"
-        assert data["source"]["product"] == "voxelize"
+        assert data["source"]["operation"] == "voxelize"
+        assert data["source"]["input"] == "inventory"
+        assert data["source"]["entity"] == "tree"
         assert data["status"] == "pending"

@@ -24,7 +24,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     MaxCrownRadiusUnit,
     MoistureModel,
     TreeBand,
-    TreeInventorySource,
+    TreeInventoryVoxelizationSource,
     UniformMoistureValue,
     build_tree_bands,
 )
@@ -625,9 +625,9 @@ class TestSeedField:
         assert a.seed != b.seed
 
     def test_source_requires_seed(self):
-        """TreeInventorySource persists the seed — no sensible default exists."""
+        """TreeInventoryVoxelizationSource persists the seed — no sensible default exists."""
         with pytest.raises(ValidationError):
-            TreeInventorySource(
+            TreeInventoryVoxelizationSource(
                 source_inventory_id="inv1",
                 resolution={"horizontal": 2.0, "vertical": 1.0},
                 bands=[TreeBand.bulk_density_foliage_live],
@@ -636,9 +636,9 @@ class TestSeedField:
             )
 
 
-class TestTreeInventorySource:
-    def test_name_product_description_fixed(self):
-        source = TreeInventorySource(
+class TestTreeInventoryVoxelizationSource:
+    def test_discriminators_fixed(self):
+        source = TreeInventoryVoxelizationSource(
             source_inventory_id="inv123",
             resolution={"horizontal": 2.0, "vertical": 1.0},
             bands=[TreeBand.bulk_density_foliage_live],
@@ -646,12 +646,12 @@ class TestTreeInventorySource:
             biomass_source=AllometryBiomassSource(),
             seed=42,
         )
-        assert source.name == "tree"
-        assert source.product == "voxelize"
-        assert "tree" in source.description.lower()
+        assert source.operation == "voxelize"
+        assert source.input == "inventory"
+        assert source.entity == "tree"
 
     def test_max_crown_radius_source_persists_inventory_column(self):
-        source = TreeInventorySource(
+        source = TreeInventoryVoxelizationSource(
             source_inventory_id="inv123",
             resolution={"horizontal": 2.0, "vertical": 1.0},
             bands=[TreeBand.bulk_density_foliage_live],
@@ -670,7 +670,7 @@ class TestTreeInventorySource:
         }
 
     def test_max_crown_radius_source_defaults_to_allometry_on_persisted_source(self):
-        source = TreeInventorySource(
+        source = TreeInventoryVoxelizationSource(
             source_inventory_id="inv123",
             resolution={"horizontal": 2.0, "vertical": 1.0},
             bands=[TreeBand.bulk_density_foliage_live],
@@ -681,7 +681,7 @@ class TestTreeInventorySource:
         assert source.max_crown_radius_source.type == "allometry"
 
     def test_model_dump_includes_resolved_defaults(self):
-        source = TreeInventorySource(
+        source = TreeInventoryVoxelizationSource(
             source_inventory_id="inv123",
             resolution={"horizontal": 2.0, "vertical": 1.0},
             bands=[TreeBand.bulk_density_foliage_live, TreeBand.fuel_moisture_live],
@@ -693,8 +693,9 @@ class TestTreeInventorySource:
             seed=42,
         )
         data = source.model_dump(mode="json", exclude_none=True)
-        assert data["name"] == "tree"
-        assert data["product"] == "voxelize"
+        assert data["operation"] == "voxelize"
+        assert data["input"] == "inventory"
+        assert data["entity"] == "tree"
         assert data["source_inventory_id"] == "inv123"
         assert data["resolution"] == {"horizontal": 2.0, "vertical": 1.0}
         assert data["bands"] == ["bulk_density.foliage.live", "fuel_moisture.live"]
@@ -715,7 +716,7 @@ class TestTreeInventorySource:
         bands/biomass_source pair, reconstruction fails loudly.
         """
         with pytest.raises(ValidationError, match="biomass_source.components"):
-            TreeInventorySource(
+            TreeInventoryVoxelizationSource(
                 source_inventory_id="inv1",
                 resolution={"horizontal": 2.0, "vertical": 1.0},
                 bands=[TreeBand.bulk_density_branchwood_live],

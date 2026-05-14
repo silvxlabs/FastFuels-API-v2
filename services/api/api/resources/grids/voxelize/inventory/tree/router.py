@@ -21,7 +21,7 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
 )
 from api.resources.grids.voxelize.inventory.tree.schema import (
     CreateTreeInventoryRequest,
-    TreeInventorySource,
+    TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
 from api.schema import JobStatus
@@ -125,7 +125,7 @@ async def create_tree_inventory_grid(
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
 
-    source = TreeInventorySource(
+    source = TreeInventoryVoxelizationSource(
         source_inventory_id=body.source_inventory_id,
         resolution=body.resolution,
         bands=body.bands,

@@ -361,6 +361,7 @@ dependencies = [
 
 [package.optional-dependencies]
 test = [
+    { name = "google-cloud-run" },
     { name = "google-cloud-tasks" },
     { name = "pytest" },
     { name = "pytest-mock" },
@@ -372,6 +373,7 @@ requires-dist = [
     { name = "flask", specifier = ">=3.1.3" },
     { name = "functions-framework", specifier = ">=3.10.1" },
     { name = "geopandas", specifier = ">=1.1.3" },
+    { name = "google-cloud-run", marker = "extra == 'test'", specifier = ">=0.10.0" },
     { name = "google-cloud-tasks", marker = "extra == 'test'", specifier = ">=2.14.0" },
     { name = "lib", extras = ["firestore", "gcs"], editable = "../lib" },
     { name = "osmnx", specifier = ">=2.1.0" },
@@ -621,6 +623,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2c/a2/ec932f4cccccc6c0e527e2244efde3c8f0c8f537b4d387655328f95fc5d9/google_cloud_firestore-2.26.0.tar.gz", hash = "sha256:103fc2bdedcb801a31590fef9a0d50754ee63b803946f9afc904817c85bd935d", size = 622368, upload-time = "2026-03-23T22:43:56.504Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/cb/3fe572f724863e2d41d71da82856d3449809e9e30017f0ae46bcf0af1446/google_cloud_firestore-2.26.0-py3-none-any.whl", hash = "sha256:307e6d3aed1a15e7083d9bac1871cb439be17620e035de960225bb00acc771de", size = 416926, upload-time = "2026-03-23T22:43:31.345Z" },
+]
+
+[[package]]
+name = "google-cloud-run"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b7/89/dcaf0dc97e39b41e446456ceb60657ab025de79cfccd39cbd739d1a9849e/google_cloud_run-0.16.0.tar.gz", hash = "sha256:d52cf4e6ad3702ae48caccf6abcab543afee6f61c2a6ec753cc62a31e5b629f1", size = 514452, upload-time = "2026-03-26T22:17:05.589Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/c7/46153dc13713b5e4276d86f28ff4563332f9e4bae5ebc83abc5bfd994801/google_cloud_run-0.16.0-py3-none-any.whl", hash = "sha256:d7d2dd7307130fde2a0ce27e96d580dd23b7b2d973b6484b94d902e6b2618860", size = 459112, upload-time = "2026-03-26T22:16:00.018Z" },
 ]
 
 [[package]]

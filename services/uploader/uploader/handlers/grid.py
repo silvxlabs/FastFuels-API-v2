@@ -122,7 +122,14 @@ def _build_dataset(
         )
 
     if str(da.rio.crs) != domain_crs_str:
-        da = da.rio.reproject(domain_crs_str)
+        raise ProcessingError(
+            code="CRS_MISMATCH",
+            message=(
+                f"GeoTIFF CRS ({da.rio.crs}) does not match the domain CRS ({domain_crs_str}). "
+                "Reproject your file before uploading."
+            ),
+            suggestion=f"Use gdalwarp -t_srs {domain_crs_str} input.tif output.tif to reproject.",
+        )
 
     xmin, ymin, xmax, ymax = domain_gdf.total_bounds
     try:

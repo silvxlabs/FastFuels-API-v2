@@ -37,9 +37,13 @@ from lib.testing import SHARED_TEST_DOMAINS_DIR
 _BLUE_MTN_PATH = SHARED_TEST_DOMAINS_DIR / "blue_mtn.json"
 DOMAIN_CRS = "EPSG:32611"
 
-# GeoTIFF bounds well inside blue_mtn domain
+# GeoTIFF bounds well inside blue_mtn domain (EPSG:32611)
 TIFF_XMIN, TIFF_YMIN = 720400.0, 5190000.0
 TIFF_XMAX, TIFF_YMAX = 721200.0, 5190400.0
+
+# Same area in WGS84 (EPSG:4326) — used for CRS mismatch tests
+TIFF_WGS84_XMIN, TIFF_WGS84_YMIN = -114.11, 46.825
+TIFF_WGS84_XMAX, TIFF_WGS84_YMAX = -114.07, 46.845
 
 
 def _load_domain_doc(domain_id: str) -> dict:
@@ -281,6 +285,44 @@ class TestErrorCases:
                 handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "MISSING_CRS"
+            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
+
+        finally:
+            gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
+            if exists(gcs_path):
+                delete_directory(gcs_path)
+            delete_document(GRIDS_COLLECTION, grid_id)
+            delete_document(DOMAINS_COLLECTION, domain_id)
+
+    def test_crs_mismatch_fails(self):
+        """GeoTIFF in wrong CRS raises CRS_MISMATCH and staged file is deleted."""
+        grid_id = f"test-{uuid4().hex}"
+        domain_id = f"test-{uuid4().hex}"
+        bands_spec = [{"key": "fbfm", "type": "categorical", "unit": None}]
+
+        domain_doc = _load_domain_doc(domain_id)
+        set_document(DOMAINS_COLLECTION, domain_id, domain_doc)
+
+        # Upload a GeoTIFF in WGS84 (EPSG:4326) but domain expects EPSG:32611
+        object_name = _upload_geotiff(
+            grid_id,
+            n_bands=1,
+            crs="EPSG:4326",
+            tiff_xmin=TIFF_WGS84_XMIN,
+            tiff_ymin=TIFF_WGS84_YMIN,
+            tiff_xmax=TIFF_WGS84_XMAX,
+            tiff_ymax=TIFF_WGS84_YMAX,
+        )
+        grid_doc = _make_grid_doc(grid_id, domain_id, bands_spec)
+        set_document(GRIDS_COLLECTION, grid_id, grid_doc)
+
+        try:
+            from lib.errors import ProcessingError
+
+            with pytest.raises(ProcessingError) as exc_info:
+                handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
+
+            assert exc_info.value.code == "CRS_MISMATCH"
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
         finally:

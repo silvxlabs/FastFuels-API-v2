@@ -4,6 +4,8 @@ Synchronous GCS blob operations.
 Provides file upload, download, delete, and existence checking.
 """
 
+import json
+
 import gcsfs
 
 gcsfs_client: gcsfs.GCSFileSystem = gcsfs.GCSFileSystem()
@@ -75,3 +77,16 @@ def exists(gcs_path: str) -> bool:
     """
     normalized = _normalize_path(gcs_path)
     return gcsfs_client.exists(normalized)
+
+
+def upload_json(gcs_path: str, data: dict) -> None:
+    """
+    Upload a JSON dictionary directly to GCS from memory.
+
+    Args:
+        gcs_path: Full GCS path (gs://bucket/path/file or bucket/path/file).
+        data: The dictionary to upload as JSON.
+    """
+    normalized = _normalize_path(gcs_path)
+    with gcsfs_client.open(normalized, "w") as f:
+        json.dump(data, f)

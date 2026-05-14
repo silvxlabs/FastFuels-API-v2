@@ -20,6 +20,7 @@ gcs_client: storage.Client = storage.Client()
 def generate_upload_signed_url(
     bucket_name: str,
     blob_path: str,
+    content_type: str,
     max_size_bytes: int = 500_000_000,
     expiration_minutes: int = 60,
 ) -> str:
@@ -29,11 +30,14 @@ def generate_upload_signed_url(
     Args:
         bucket_name: Name of the GCS bucket.
         blob_path: Path where the file will be stored in the bucket.
+        content_type: MIME type the client must use when uploading.
         max_size_bytes: Maximum allowed upload size in bytes. Default 500MB.
         expiration_minutes: URL validity period in minutes. Default 60.
 
     Returns:
-        Signed URL string for PUT request.
+        Signed URL string for PUT request. Clients must include both
+        Content-Type and x-goog-content-length-range headers matching
+        the values used during signing.
     """
     bucket = gcs_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
@@ -42,6 +46,7 @@ def generate_upload_signed_url(
         version="v4",
         expiration=timedelta(minutes=expiration_minutes),
         method="PUT",
+        content_type=content_type,
         credentials=get_signing_credentials(),
         headers={"x-goog-content-length-range": f"0,{max_size_bytes}"},
     )

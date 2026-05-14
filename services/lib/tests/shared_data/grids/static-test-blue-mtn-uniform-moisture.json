@@ -1,0 +1,56 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "fuel_moisture.1hr",
+      "type": "continuous",
+      "unit": "%"
+    }
+  ],
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "bands": [
+      {
+        "key": "fuel_moisture.1hr",
+        "value": 6.0
+      }
+    ],
+    "name": "uniform",
+    "resolution": 2.0
+  },
+  "status": "completed",
+  "tags": []
+}

@@ -1,8 +1,4 @@
-"""
-api/v2/resources/grids/schema.py
-
-Core schema models for the Grid resource.
-"""
+"""Core schema models for the Grid resource."""
 
 from datetime import datetime
 from enum import StrEnum
@@ -10,6 +6,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from api.resources.grids.alignment import (
+    GridAlignmentDomainTarget,
+    GridAlignmentSpecification,
+)
 from api.resources.grids.modifications import GridModification
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
@@ -90,6 +90,29 @@ class Georeference3D(Georeference):
     z_origin: float
 
 
+class Chunks(BaseModel):
+    """Chunk layout for a grid."""
+
+    shape: tuple[int, int] | tuple[int, int, int] = Field(
+        ...,
+        description=(
+            "Size of a single chunk. 2D grids: (y, x). 3D grids: (z, y, x). "
+            "Edge chunks may be smaller."
+        ),
+    )
+    count: int | None = Field(
+        default=None,
+        description="Total number of chunks in the grid.",
+    )
+    count_by_axis: dict[str, int] | None = Field(
+        default=None,
+        description=(
+            "Number of chunks along each axis. Keys are 'y','x' for 2D grids "
+            "and 'z','y','x' for 3D grids."
+        ),
+    )
+
+
 class CreateGridRequestBase(BaseModel):
     """Base fields for grid creation requests.
 
@@ -103,6 +126,45 @@ class CreateGridRequestBase(BaseModel):
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
     modifications: list[GridModification] = Field(default_factory=list)
+
+
+class CreateSourceGridRequestBase(CreateGridRequestBase):
+    """Base for raster-backed source grid creation requests.
+
+    Adds the optional `extent_buffer_cells` field and the `alignment`
+    discriminated union shared by every endpoint that fetches data from
+    an external raster (LANDFIRE, PIM, CHM, 3DEP).
+    """
+
+    extent_buffer_cells: int | None = Field(
+        default=None,
+        ge=0,
+        le=10,
+        description=(
+            "Number of result-grid cells included as a buffer around the "
+            "domain extent in the stored grid. The buffer is measured after "
+            "the source raster is projected into the domain CRS, so a cell "
+            "means one cell in the returned grid rather than one source "
+            "raster cell. Provides context for later operations (resample, "
+            "reproject, focal filters, derivative calculations) that are "
+            "sensitive to edges. If omitted, no buffer is added. Maximum: "
+            "10 cells."
+        ),
+    )
+
+    alignment: GridAlignmentSpecification = Field(
+        default_factory=GridAlignmentDomainTarget,
+        description=(
+            'Per-fetch alignment target. Default `target="domain"` anchors '
+            "output cells to the domain origin so cross-source composition "
+            'works by construction. `target="native"` preserves the source '
+            'pixel anchor. `target="grid"` aligns to an existing grid by id.'
+        ),
+    )
+
+    def resolved_extent_buffer_cells(self, default: int) -> int:
+        """Return the user-supplied buffer or the caller-supplied default."""
+        return default if self.extent_buffer_cells is None else self.extent_buffer_cells
 
 
 class UpdateGridRequestBody(BaseModel):
@@ -155,9 +217,12 @@ class Grid(BaseModel):
     )
 
     # Storage
-    chunk_shape: tuple[int, int] | None = Field(
+    chunks: Chunks | None = Field(
         default=None,
-        description="Zarr chunk shape (height, width).",
+        description=(
+            "Chunk layout. Null until the grid finishes processing. "
+            "Use chunks.count to know how many chunks are available to fetch."
+        ),
     )
 
     # User organization
@@ -170,9 +235,9 @@ class ListGridsResponse(PaginatedResponse):
     grids: list[Grid]
 
 
-class GridDataFormat(StrEnum):
-    json = "json"
-    binary = "binary"
+class GridDataArrayFormat(StrEnum):
+    dense = "dense"
+    sparse = "sparse"
 
 
 class GridDataOrder(StrEnum):
@@ -182,12 +247,26 @@ class GridDataOrder(StrEnum):
 
 class GridDataChunkMetadata(BaseModel):
     index: int
-    shape: tuple[int, int]
-    offset: tuple[int, int]
+    shape: tuple[int, int] | tuple[int, int, int]
+    offset: tuple[int, int] | tuple[int, int, int]
     transform: tuple[float, float, float, float, float, float]
+    z_origin: float | None = None
+    z_resolution: float | None = None
+
+
+class DenseGridData(BaseModel):
+    format: Literal["dense"]
+    values: list[float | int]
+
+
+class SparseGridData(BaseModel):
+    format: Literal["sparse"]
+    fill_value: float | int | None
+    indices: list[int]
+    values: list[float | int]
 
 
 class GridDataResponse(BaseModel):
     shape: list[int]
     order: Literal["C", "F"]
-    data: list[float | int]
+    data: DenseGridData | SparseGridData = Field(discriminator="format")

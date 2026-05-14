@@ -4,10 +4,12 @@ Unit tests for grid data schema models and compute_chunk_metadata().
 
 import pytest
 from api.resources.grids.schema import (
+    DenseGridData,
+    GridDataArrayFormat,
     GridDataChunkMetadata,
-    GridDataFormat,
     GridDataOrder,
     GridDataResponse,
+    SparseGridData,
 )
 from api.resources.grids.utils import compute_chunk_metadata, compute_chunk_slices
 
@@ -16,11 +18,15 @@ from api.resources.grids.utils import compute_chunk_metadata, compute_chunk_slic
 
 def _georef(shape, pixel_size=30.0, origin_x=500000.0, origin_y=5200000.0):
     """Build a minimal georeference dict."""
-    return {
+    georef = {
         "shape": shape,
         "transform": (pixel_size, 0.0, origin_x, 0.0, -pixel_size, origin_y),
         "crs": "EPSG:32611",
     }
+    if len(shape) == 3:
+        georef["z_origin"] = 10.0
+        georef["z_resolution"] = 0.5
+    return georef
 
 
 class TestComputeChunkMetadata:
@@ -130,6 +136,54 @@ class TestComputeChunkMetadata:
         with pytest.raises(ValueError):
             compute_chunk_metadata(georef, chunk_shape, 1)
 
+    def test_3d_single_chunk(self):
+        georef = _georef((5, 300, 400))
+        m = compute_chunk_metadata(georef, [10, 512, 512], 0)
+
+        assert m.index == 0
+        assert m.shape == (5, 300, 400)
+        assert m.offset == (0, 0, 0)
+        assert m.transform == georef["transform"]
+        assert m.z_origin == 10.0
+        assert m.z_resolution == 0.5
+
+    def test_3d_chunk_index_order_is_z_y_x(self):
+        georef = _georef((5, 1000, 800))
+        chunk_shape = [2, 512, 512]
+
+        m1 = compute_chunk_metadata(georef, chunk_shape, 1)
+        assert m1.offset == (0, 0, 512)
+        assert m1.shape == (2, 512, 288)
+
+        m2 = compute_chunk_metadata(georef, chunk_shape, 2)
+        assert m2.offset == (0, 512, 0)
+        assert m2.shape == (2, 488, 512)
+
+        m4 = compute_chunk_metadata(georef, chunk_shape, 4)
+        assert m4.offset == (2, 0, 0)
+        assert m4.shape == (2, 512, 512)
+        assert m4.z_origin == 11.0
+
+    def test_3d_edge_chunk_smaller_in_all_dimensions(self):
+        georef = _georef((5, 1000, 800))
+        m = compute_chunk_metadata(georef, [2, 512, 512], 11)
+
+        assert m.offset == (4, 512, 512)
+        assert m.shape == (1, 488, 288)
+        assert m.z_origin == 12.0
+        assert m.transform[2] == pytest.approx(500000.0 + 30.0 * 512)
+        assert m.transform[5] == pytest.approx(5200000.0 + (-30.0) * 512)
+
+    def test_3d_out_of_range_raises(self):
+        georef = _georef((5, 1000, 800))
+        with pytest.raises(ValueError, match="out of range"):
+            compute_chunk_metadata(georef, [2, 512, 512], 12)
+
+    def test_shape_and_chunk_shape_rank_mismatch_raises(self):
+        georef = _georef((5, 1000, 800))
+        with pytest.raises(ValueError, match="2D or both be 3D"):
+            compute_chunk_metadata(georef, [512, 512], 0)
+
 
 class TestComputeChunkSlices:
     """Tests for compute_chunk_slices()."""
@@ -208,6 +262,20 @@ class TestComputeChunkSlices:
             assert row_slice.stop - row_slice.start == meta.shape[0]
             assert col_slice.stop - col_slice.start == meta.shape[1]
 
+    def test_3d_chunk(self):
+        meta = GridDataChunkMetadata(
+            index=11,
+            shape=(1, 488, 288),
+            offset=(4, 512, 512),
+            transform=(30.0, 0.0, 515360.0, 0.0, -30.0, 5184640.0),
+            z_origin=12.0,
+            z_resolution=0.5,
+        )
+        z_slice, row_slice, col_slice = compute_chunk_slices(meta)
+        assert z_slice == slice(4, 5)
+        assert row_slice == slice(512, 1000)
+        assert col_slice == slice(512, 800)
+
 
 class TestResponseModels:
     def test_chunk_metadata_model(self):
@@ -220,18 +288,67 @@ class TestResponseModels:
         assert m.index == 0
         assert m.shape == (100, 200)
 
-    def test_data_response_model(self):
+    def test_3d_chunk_metadata_model(self):
+        m = GridDataChunkMetadata(
+            index=0,
+            shape=(4, 100, 200),
+            offset=(8, 0, 0),
+            transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+            z_origin=14.0,
+            z_resolution=0.5,
+        )
+        assert m.shape == (4, 100, 200)
+        assert m.offset == (8, 0, 0)
+        assert m.z_origin == 14.0
+
+    def test_dense_data_response_model(self):
         r = GridDataResponse(
             shape=[47, 61],
             order="C",
-            data=[1, 2, 3],
+            data={"format": "dense", "values": [1, 2, 3]},
         )
         assert r.shape == [47, 61]
         assert r.order == "C"
+        assert isinstance(r.data, DenseGridData)
+        assert r.data.format == "dense"
+        assert r.data.values == [1, 2, 3]
 
-    def test_format_enum(self):
-        assert GridDataFormat.json == "json"
-        assert GridDataFormat.binary == "binary"
+    def test_sparse_data_response_model(self):
+        r = GridDataResponse(
+            shape=[2, 3],
+            order="C",
+            data={
+                "format": "sparse",
+                "fill_value": 0,
+                "indices": [0, 4],
+                "values": [7, 9],
+            },
+        )
+        assert isinstance(r.data, SparseGridData)
+        assert r.data.format == "sparse"
+        assert r.data.fill_value == 0
+        assert r.data.indices == [0, 4]
+        assert r.data.values == [7, 9]
+
+    def test_sparse_data_response_model_accepts_null_fill_value(self):
+        r = GridDataResponse(
+            shape=[2, 3],
+            order="C",
+            data={
+                "format": "sparse",
+                "fill_value": None,
+                "indices": [0, 1, 2, 3, 4, 5],
+                "values": [1, 2, 3, 4, 5, 6],
+            },
+        )
+        assert isinstance(r.data, SparseGridData)
+        assert r.data.fill_value is None
+        assert r.data.indices == [0, 1, 2, 3, 4, 5]
+        assert r.data.values == [1, 2, 3, 4, 5, 6]
+
+    def test_array_format_enum(self):
+        assert GridDataArrayFormat.dense == "dense"
+        assert GridDataArrayFormat.sparse == "sparse"
 
     def test_order_enum(self):
         assert GridDataOrder.C == "C"

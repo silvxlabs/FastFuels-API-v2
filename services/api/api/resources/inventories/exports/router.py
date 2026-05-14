@@ -84,7 +84,7 @@ async def create_inventory_export(
         missing = [c for c in body.columns if c not in available_keys]
         if missing:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Columns not found in inventory: {missing}. "
                     f"Available columns: {available_keys}"

@@ -109,7 +109,7 @@ async def create_pim_inventory(
     grid_source = source_grid_data.get("source", {})
     if grid_source.get("name") != "pim":
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Grid '{body.source_pim_grid_id}' is not a PIM grid. "
                 f"This endpoint requires a PIM grid as the source."
@@ -125,7 +125,7 @@ async def create_pim_inventory(
         band_keys = [b["key"] if isinstance(b, dict) else b for b in grid_bands]
         if required_band not in band_keys:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Source PIM grid is missing the required '{required_band}' band. "
                     f"Available bands: {band_keys}. "

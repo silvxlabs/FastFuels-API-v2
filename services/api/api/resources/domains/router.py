@@ -128,6 +128,11 @@ async def create_domain(
       resolutions divide evenly into this value will produce identical, aligned
       footprints on this domain. Useful for compositional workflows where
       multiple grids at different resolutions need to share an extent.
+    - **style**: (object) Optional visual style for rendering the domain on a
+      map. Sub-fields: `stroke_color`, `stroke_opacity` (0-1), `stroke_width`
+      (>= 0), `fill_color`, `fill_opacity` (0-1). Color strings accept any
+      format the renderer understands (hex, named, `rgb()`, ...) and are
+      capped at 64 characters.
 
     ## Response
 
@@ -220,6 +225,7 @@ async def create_domain(
         "features": validation_result.features,
         "bbox": list(validation_result.bbox),
         "pad_to_resolution": body.pad_to_resolution,
+        "style": body.style,
     }
 
     domain = Domain(**domain_data)
@@ -300,6 +306,7 @@ async def preview_domain(
         "features": validation_result.features,
         "bbox": list(validation_result.bbox),
         "pad_to_resolution": body.pad_to_resolution,
+        "style": body.style,
     }
 
     return Domain(**domain_data)
@@ -640,8 +647,16 @@ async def update_domain(
         owner_id=owner_id,
     )
 
+    existing_data = document_snapshot.to_dict()
+
     # Build update data from provided fields only
     update_data = body.model_dump(exclude_none=True)
+
+    # Merge style sub-fields with the existing stored style; a top-level write
+    # would replace the whole `style` object and clobber unspecified sub-fields.
+    if "style" in update_data:
+        existing_style = existing_data.get("style") or {}
+        update_data["style"] = {**existing_style, **update_data["style"]}
 
     # Always update modified_on timestamp
     update_data["modified_on"] = datetime.now()
@@ -656,9 +671,8 @@ async def update_domain(
     await invalidate_domain_cache(domain_id, owner_id)
 
     # Merge updates with existing data to return the full domain
-    domain_data = document_snapshot.to_dict()
-    domain_data.update(update_data)
-    domain = Domain(**domain_data)
+    existing_data.update(update_data)
+    domain = Domain(**existing_data)
 
     return domain
 

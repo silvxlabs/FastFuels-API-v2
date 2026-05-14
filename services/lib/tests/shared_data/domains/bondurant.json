@@ -1,10 +1,15 @@
 {
-  "type": "FeatureCollection",
+  "created_on": "2026-02-25T00:00:00.000000",
+  "crs": {
+    "properties": {
+      "name": "EPSG:32612"
+    },
+    "type": "name"
+  },
+  "description": "Small domain in western Wyoming with known S1M 1m coverage.",
   "features": [
     {
-      "type": "Feature",
       "geometry": {
-        "type": "Polygon",
         "coordinates": [
           [
             [
@@ -28,22 +33,17 @@
               4720400
             ]
           ]
-        ]
+        ],
+        "type": "Polygon"
       },
+      "id": "0",
       "properties": {},
-      "id": "0"
+      "type": "Feature"
     }
   ],
-  "name": "Bondurant, Wyoming",
-  "description": "Small domain in western Wyoming with known S1M 1m coverage.",
-  "crs": {
-    "type": "name",
-    "properties": {
-      "name": "EPSG:32612"
-    }
-  },
-  "tags": [],
   "id": "test-s1m-coverage",
-  "created_on": "2026-02-25T00:00:00.000000",
-  "modified_on": "2026-02-25T00:00:00.000000"
+  "modified_on": "2026-02-25T00:00:00.000000",
+  "name": "Bondurant, Wyoming",
+  "tags": [],
+  "type": "FeatureCollection"
 }

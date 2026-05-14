@@ -56,6 +56,23 @@ class TestLandfireSource:
         )
         assert source.description == "Test description"
 
+    def test_extent_buffer_cells_defaults_to_zero(self):
+        """extent_buffer_cells defaults to 0 (no buffer)."""
+        source = LandfireSource(product="fbfm40", version="2022")
+        assert source.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_can_be_set(self):
+        """extent_buffer_cells can be set to any non-negative integer."""
+        source = LandfireSource(
+            product="fbfm40", version="2022", extent_buffer_cells=10
+        )
+        assert source.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        """extent_buffer_cells rejects negative values."""
+        with pytest.raises(ValidationError):
+            LandfireSource(product="fbfm40", version="2022", extent_buffer_cells=-1)
+
 
 class TestLandfireFbfm40Source:
     """Tests for LandfireFbfm40Source model."""
@@ -137,6 +154,41 @@ class TestCreateLandfireFbfm40Request:
         assert request.name == "Test Grid"
         assert request.description == "A test grid"
         assert request.tags == ["test", "fuel"]
+
+    def test_extent_buffer_cells_defaults_to_none(self):
+        """extent_buffer_cells is None when omitted."""
+        request = CreateLandfireFbfm40Request()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        """extent_buffer_cells accepts positive integers."""
+        request = CreateLandfireFbfm40Request(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        """extent_buffer_cells accepts 0 (explicit no buffer)."""
+        request = CreateLandfireFbfm40Request(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        """extent_buffer_cells rejects negative values."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        """FBFM40 is a 30m raster, so at most 10 buffer cells are allowed."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        """resolved_extent_buffer_cells returns the supplied default when omitted."""
+        request = CreateLandfireFbfm40Request()
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_zero(self):
+        """Explicit 0 is preserved (not treated as 'omitted')."""
+        request = CreateLandfireFbfm40Request(extent_buffer_cells=0)
+        assert request.resolved_extent_buffer_cells(0) == 0
 
 
 class TestFbfm40Band:

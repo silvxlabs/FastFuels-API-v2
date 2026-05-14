@@ -5,11 +5,12 @@ import pandas as pd
 import pytest
 import rioxarray  # noqa: F401 — registers .rio accessor
 import xarray as xr
-from standgen.errors import ProcessingError
 from standgen.handlers.pim import (
     filter_and_convert_tree_table,
     raster_to_plots_gdf,
 )
+
+from lib.errors import ProcessingError
 
 
 @pytest.fixture

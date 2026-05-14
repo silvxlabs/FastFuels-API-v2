@@ -28,7 +28,8 @@ Create a new domain from GeoJSON geometry.
 - Maximum area: 16 square kilometers (validated against the working extent, which may be padded)
 - Must be within CONUS (validated against the original input polygon)
 - Optional `pad_to_resolution` (meters) snaps the working extent to a grid for cross-resolution alignment
-- Returns **201 Created** with the full domain resource (two features + bbox + pad_to_resolution)
+- Optional `style` object for map rendering (auxiliary metadata; see [Style](#style) below)
+- Returns **201 Created** with the full domain resource (two features + bbox + optional fields)
 
 ### GET /v2/domains
 
@@ -72,6 +73,7 @@ Update domain metadata (partial update).
 - `name` - Domain name
 - `description` - Domain description
 - `tags` - Array of tags (replaces existing)
+- `style` - Visual style sub-fields (merged, not replaced — see [Style](#style))
 
 **Immutable Fields:**
 
@@ -80,6 +82,8 @@ Update domain metadata (partial update).
 **Key Points:**
 
 - Only provided fields are updated
+- `style` uses **nested merge semantics**: only the sub-fields you supply are updated; unspecified sub-fields keep
+  their current values
 - `modified_on` is automatically updated
 - Returns the full updated domain resource
 
@@ -131,6 +135,41 @@ by construction, so `gdf.total_bounds` of the parsed FeatureCollection equals
 the working extent — downstream handlers that already use `total_bounds` get
 the correct answer without modification.
 
+## Style
+
+Domains carry an optional `style` object describing how a client should render them on a map. The field lives at the
+top of the `Domain` resource (not on individual features), since the only consumer — the webapp — applies one style per
+domain rather than picking different colors for the working-extent and input features.
+
+### Sub-fields
+
+| Field            | Type    | Constraints   | Notes                                      |
+|------------------|---------|---------------|--------------------------------------------|
+| `stroke_color`   | string  | ≤ 64 chars    | any renderer-supported format (hex, named, `rgb()`, ...) |
+| `stroke_opacity` | number  | `0 ≤ x ≤ 1`   | `1.0` = fully opaque                       |
+| `stroke_width`   | number  | `x ≥ 0`       | pixels                                     |
+| `fill_color`     | string  | ≤ 64 chars    | any renderer-supported format              |
+| `fill_opacity`   | number  | `0 ≤ x ≤ 1`   |                                            |
+
+All sub-fields are optional. Color strings are not format-validated (the API has no opinion about which color syntax
+your renderer accepts) — only a defensive 64-character cap. Out-of-range opacities or negative widths return **422**.
+
+### Merge semantics on PATCH
+
+`PATCH /v2/domains/{id}` with `{"style": {"fill_color": "#abcdef"}}` updates **only** `fill_color`. All other style
+sub-fields keep their current values. To reset a sub-field, supply the new value explicitly. There is no way to delete
+an individual sub-field via PATCH (clients that want to "clear" a color should overwrite it with whatever default they
+prefer).
+
+### Why no per-feature endpoint?
+
+v1 exposed `PATCH /v1/domains/{id}/features/{feature_name}/style`, letting clients style the `domain` and `input`
+features separately. We deliberately did not port this shape: the webapp tracks one color per domain, and the
+`domain`/`input` split is a server-side modeling artifact (working extent vs. original polygon) that doesn't show up in
+the user's mental model. Putting the style on the resource root keeps the API surface flat and matches how clients
+actually use it. If a future UI needs per-feature styling, it can be added as an additive change without breaking this
+design.
+
 ## pad_to_resolution
 
 `pad_to_resolution` is an optional float (meters) on domain creation. When
@@ -147,6 +186,52 @@ to 2m. Without alignment, these resources have different footprints. With
 `pad_to_resolution: 2` (or any divisor of 2 — 2, 6, 10, 30), every resource
 on the domain inherits the same padded extent and the export grid is
 unambiguous.
+
+## Grid alignment
+
+Every external-source grid endpoint (`landfire/*`, `3dep/*`, `pim/*`,
+`chm/*`) and the `resample` endpoint accept an `alignment` field — a
+discriminated union on `target` with three variants:
+
+| Target    | Behavior |
+|-----------|----------|
+| `domain`  | Default. Output cells are anchored at the domain's lower-left corner; the grid's `transform` and `shape` are derived from the (optionally `pad_to_resolution`-snapped) domain bbox plus the requested cell size. Domain-anchored grids on the same domain at the same `resolution` compose by integer slicing — no further reprojection. |
+| `native`  | Preserve the source raster's pixel anchor. With no `resolution`, this is exactly the pre-#205 behavior. With an explicit `resolution`, the output is resampled to a new cell size while keeping the source pixel anchor — so two `native`-aligned grids generally won't compose. |
+| `grid`    | Align to an existing grid by `grid_id`. With no `resolution`, the output is byte-equal in CRS, transform, and shape to the target grid. With an explicit `resolution`, the output keeps the target grid's CRS and origin but is resampled to the new cell size — useful for nesting (e.g. fetch a 0.6m CHM aligned to a 30m FBFM40's origin). |
+
+Each variant also accepts an optional `method` (any
+`rasterio.enums.Resampling` member); when omitted, categorical bands
+default to `nearest` and continuous bands default to `bilinear`.
+
+### Example: a QUIC-Fire-ready stack
+
+```http
+POST /v2/domains
+{ "pad_to_resolution": 2, ...feature collection... }
+```
+
+```http
+POST /v2/domains/{id}/grids/landfire/fbfm40
+{ "alignment": { "target": "domain", "resolution": 2.0 } }
+
+POST /v2/domains/{id}/grids/landfire/topography
+{ "bands": ["elevation"], "alignment": { "target": "domain", "resolution": 2.0 } }
+
+POST /v2/domains/{id}/grids/uniform
+{ "resolution": 2.0, "bands": [ {"key": "fuel_moisture.1hr", "value": 6.0} ] }
+```
+
+All four grids share CRS and transform exactly. The QUIC-Fire export
+validates that and stitches by integer arithmetic — no second
+reprojection. See `services/api/api/resources/grids/exports/README.md`.
+
+### Interaction with `pad_to_resolution`
+
+`pad_to_resolution` is applied at *domain* creation, snapping
+`gdf.total_bounds`. `alignment.target="domain"` uses those bounds as the
+anchor. So padding the domain to 2m and fetching at 2m yields exact
+nesting; padding to 30m and fetching at 2m yields 15-cell nesting (each
+30m cell is exactly 15×15 2m cells).
 
 ## File Structure
 

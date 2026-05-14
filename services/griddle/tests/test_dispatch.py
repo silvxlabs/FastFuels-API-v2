@@ -9,14 +9,15 @@ import pytest
 from griddle.dispatch import (
     dispatch_handler,
     handle_3dep,
-    handle_chm,
+    handle_canopy,
     handle_landfire,
     handle_lookup,
     handle_pim,
     handle_resample,
     handle_uniform,
 )
-from griddle.errors import ProcessingError
+
+from lib.errors import ProcessingError
 
 
 class TestHandleLandfire:
@@ -47,7 +48,14 @@ class TestHandleLandfire:
 
         result = handle_landfire(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2022", remove_non_burnable=None)
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2022",
+            remove_non_burnable=None,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
         assert result == mock_result
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
@@ -91,7 +99,14 @@ class TestHandleLandfire:
 
         result = handle_landfire(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2023", remove_bare_ground=False)
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2023",
+            remove_bare_ground=False,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
         assert result == mock_result
 
     @patch("griddle.dispatch.landfire.fetch_fccs")
@@ -106,7 +121,14 @@ class TestHandleLandfire:
 
         result = handle_landfire(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2023", remove_bare_ground=True)
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2023",
+            remove_bare_ground=True,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
         assert result == mock_result
 
     @patch("griddle.dispatch.landfire.fetch_fccs")
@@ -156,7 +178,13 @@ class TestHandleLandfire:
         result = handle_landfire(mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
-            mock_gdf, "2020", ["elevation", "slope", "aspect"], progress
+            mock_gdf,
+            "2020",
+            ["elevation", "slope", "aspect"],
+            progress,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
         )
         assert result == mock_result
 
@@ -300,7 +328,13 @@ class TestHandlePim:
         result = handle_pim(mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
-            mock_gdf, "2022", ["tm_id", "plt_cn"], progress
+            mock_gdf,
+            "2022",
+            ["tm_id", "plt_cn"],
+            progress,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
         )
         assert result == mock_result
 
@@ -431,88 +465,114 @@ class TestHandleLookup:
         assert "fbfm40" in call_args[0]
 
 
+def _stub_source_grid_doc():
+    """Snapshot returned by the patched ``get_document`` lookup that
+    ``handle_resample`` performs on the source grid."""
+    snapshot = MagicMock()
+    snapshot.to_dict.return_value = {
+        "bands": [{"key": "elevation", "type": "continuous"}],
+    }
+    return snapshot
+
+
 class TestDispatchHandlerResample:
     """Tests for dispatch_handler routing to resample."""
 
+    @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.handle_resample")
-    def test_routes_resample_source(self, mock_handle_resample):
+    def test_routes_resample_source(self, mock_handle_resample, mock_get_doc):
         """dispatch_handler routes resample source to handle_resample."""
         mock_result = MagicMock()
         mock_handle_resample.return_value = mock_result
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
+        mock_get_doc.return_value = (MagicMock(), _stub_source_grid_doc())
 
         grid = {
             "source": {
                 "name": "resample",
                 "source_grid_id": "src-id",
-                "target_resolution": 10.0,
-                "method": "bilinear",
+                "alignment": {"target": "domain", "resolution": 10.0},
+                "method_overrides": {},
             },
         }
 
         result = dispatch_handler(grid, mock_gdf, progress)
 
-        mock_handle_resample.assert_called_once_with(grid["source"], progress)
+        mock_handle_resample.assert_called_once_with(mock_gdf, grid["source"], progress)
         assert result == mock_result
 
 
 class TestHandleResample:
     """Tests for handle_resample function."""
 
+    @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
-    def test_routes_to_resample_handler(self, mock_resample_grid):
+    def test_routes_to_resample_handler(self, mock_resample_grid, mock_get_doc):
         """handle_resample calls resample.resample_grid with correct params."""
         mock_result = MagicMock()
         mock_resample_grid.return_value = mock_result
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
+        mock_get_doc.return_value = (MagicMock(), _stub_source_grid_doc())
 
         source = {
             "source_grid_id": "test-source-grid-id",
-            "target_resolution": 10.0,
-            "method": "bilinear",
+            "alignment": {"target": "domain", "resolution": 10.0, "method": "bilinear"},
             "method_overrides": {"fbfm": "nearest"},
         }
 
-        result = handle_resample(source, progress)
+        result = handle_resample(mock_gdf, source, progress)
 
         mock_resample_grid.assert_called_once_with(
             source_grid_id="test-source-grid-id",
-            target_resolution=10.0,
-            method="bilinear",
+            alignment={
+                "target": "domain",
+                "resolution": 10.0,
+                "method": "bilinear",
+            },
             method_overrides={"fbfm": "nearest"},
+            domain_gdf=mock_gdf,
+            target_grid_doc=None,
+            band_types={"elevation": "continuous"},
             progress=progress,
         )
         assert result == mock_result
 
+    @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
-    def test_calls_progress_callback(self, mock_resample_grid):
+    def test_calls_progress_callback(self, mock_resample_grid, mock_get_doc):
         """handle_resample reports progress."""
         progress = MagicMock()
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_get_doc.return_value = (MagicMock(), _stub_source_grid_doc())
 
         source = {
             "source_grid_id": "id",
-            "target_resolution": 10.0,
-            "method": "bilinear",
+            "alignment": {"target": "domain", "resolution": 10.0},
         }
 
-        handle_resample(source, progress)
+        handle_resample(mock_gdf, source, progress)
 
         progress.assert_called()
 
+    @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
-    def test_passes_empty_overrides_when_missing(self, mock_resample_grid):
+    def test_passes_empty_overrides_when_missing(
+        self, mock_resample_grid, mock_get_doc
+    ):
         """When source has no method_overrides key, passes empty dict."""
         progress = MagicMock()
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_get_doc.return_value = (MagicMock(), _stub_source_grid_doc())
 
         source = {
             "source_grid_id": "id",
-            "target_resolution": 10.0,
-            "method": "bilinear",
+            "alignment": {"target": "domain", "resolution": 10.0},
             # No method_overrides key
         }
 
-        handle_resample(source, progress)
+        handle_resample(mock_gdf, source, progress)
 
         call_kwargs = mock_resample_grid.call_args[1]
         assert call_kwargs["method_overrides"] == {}
@@ -532,7 +592,7 @@ class TestDispatchHandlerUniform:
         grid = {
             "source": {
                 "name": "uniform",
-                "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+                "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
                 "resolution": 2.0,
             },
             "domain_id": "test-domain-id",
@@ -556,7 +616,7 @@ class TestHandleUniform:
         progress = MagicMock()
 
         source = {
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
             "resolution": 2.0,
         }
 
@@ -577,7 +637,7 @@ class TestHandleUniform:
         progress = MagicMock()
 
         source = {
-            "bands": [{"quantity": "fuel_moisture.1hr", "value": 6.0}],
+            "bands": [{"key": "fuel_moisture.1hr", "value": 6.0}],
             "resolution": 2.0,
         }
 
@@ -588,20 +648,20 @@ class TestHandleUniform:
         assert "uniform" in call_args[0].lower()
 
 
-class TestDispatchHandlerChm:
-    """Tests for dispatch_handler routing to chm."""
+class TestDispatchHandlerCanopy:
+    """Tests for dispatch_handler routing to canopy."""
 
-    @patch("griddle.dispatch.handle_chm")
-    def test_routes_chm_source(self, mock_handle_chm):
-        """dispatch_handler routes chm source to handle_chm."""
+    @patch("griddle.dispatch.handle_canopy")
+    def test_routes_canopy_source(self, mock_handle_canopy):
+        """dispatch_handler routes canopy source to handle_canopy."""
         mock_result = MagicMock()
-        mock_handle_chm.return_value = mock_result
+        mock_handle_canopy.return_value = mock_result
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
 
         grid = {
             "source": {
-                "name": "chm",
+                "name": "canopy",
                 "product": "meta",
                 "version": "2",
             },
@@ -610,16 +670,16 @@ class TestDispatchHandlerChm:
 
         result = dispatch_handler(grid, mock_gdf, progress)
 
-        mock_handle_chm.assert_called_once_with(mock_gdf, grid["source"], progress)
+        mock_handle_canopy.assert_called_once_with(mock_gdf, grid["source"], progress)
         assert result == mock_result
 
 
-class TestHandleChm:
-    """Tests for handle_chm function."""
+class TestHandleCanopy:
+    """Tests for handle_canopy function."""
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_routes_meta_to_handler(self, mock_fetch):
-        """handle_chm routes meta product to fetch_meta_chm."""
+        """handle_canopy routes meta product to fetch_meta_chm."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_dataset = MagicMock()
         mock_metadata = {
@@ -637,42 +697,49 @@ class TestHandleChm:
             "version": "2",
         }
 
-        result = handle_chm(mock_gdf, source, progress)
+        result = handle_canopy(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, "2", progress)
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2",
+            progress,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_default_version(self, mock_fetch):
-        """handle_chm uses 2 as default version."""
+        """handle_canopy uses 2 as default version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta"}  # No version specified
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         call_args = mock_fetch.call_args[0]
         assert call_args[1] == "2"
 
     def test_unknown_product_raises(self):
-        """handle_chm raises ProcessingError for unknown product."""
+        """handle_canopy raises ProcessingError for unknown product."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
 
         source = {"product": "unknown_product"}
 
         with pytest.raises(ProcessingError) as exc_info:
-            handle_chm(mock_gdf, source, progress)
+            handle_canopy(mock_gdf, source, progress)
 
         assert exc_info.value.code == "UNKNOWN_PRODUCT"
         assert "unknown_product" in exc_info.value.message
 
     @patch("griddle.dispatch.chm.fetch_naip_chm")
     def test_routes_naip_to_handler(self, mock_fetch):
-        """handle_chm routes naip product to fetch_naip_chm."""
+        """handle_canopy routes naip product to fetch_naip_chm."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_dataset = MagicMock()
         mock_metadata = {
@@ -690,26 +757,32 @@ class TestHandleChm:
             "version": "2020",
         }
 
-        result = handle_chm(mock_gdf, source, progress)
+        result = handle_canopy(mock_gdf, source, progress)
 
-        mock_fetch.assert_called_once_with(mock_gdf, progress)
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            progress,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_calls_progress_callback(self, mock_fetch):
-        """handle_chm reports progress."""
+        """handle_canopy reports progress."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta", "version": "2"}
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         progress.assert_called()
         call_args = progress.call_args_list[0][0]
-        assert "CHM" in call_args[0]
+        assert "canopy" in call_args[0]
         assert "meta" in call_args[0]
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
@@ -727,14 +800,14 @@ class TestHandleChm:
     def test_meta_populates_attribution(
         self, mock_fetch, version, expected_license, expected_license_url
     ):
-        """handle_chm populates attribution for each meta version."""
+        """handle_canopy populates attribution for each meta version."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "meta", "version": version}
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         assert "attribution" in source
         attr = source["attribution"]
@@ -750,16 +823,91 @@ class TestHandleChm:
 
     @patch("griddle.dispatch.chm.fetch_naip_chm")
     def test_naip_does_not_populate_attribution(self, mock_fetch):
-        """handle_chm does not populate attribution for naip product."""
+        """handle_canopy does not populate attribution for naip product."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
 
         source = {"product": "naip", "version": "2020"}
 
-        handle_chm(mock_gdf, source, progress)
+        handle_canopy(mock_gdf, source, progress)
 
         assert "attribution" not in source
+
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_routes_landfire_to_handler(self, mock_fetch):
+        """handle_canopy routes landfire product to fetch_canopy_landfire."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_dataset = MagicMock()
+        mock_fetch.return_value = mock_dataset
+        progress = MagicMock()
+
+        source = {
+            "product": "landfire",
+            "version": "2024",
+            "bands": ["cbd", "cbh"],
+        }
+
+        result = handle_canopy(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2024",
+            ["cbd", "cbh"],
+            progress,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+        assert result is mock_dataset
+
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_landfire_default_version_2024(self, mock_fetch):
+        """When source omits version, dispatch defaults to "2024"."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "landfire", "bands": ["chm"]}
+
+        handle_canopy(mock_gdf, source, progress)
+
+        assert mock_fetch.call_args[0][1] == "2024"
+
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_landfire_does_not_populate_attribution_or_tile_metadata(self, mock_fetch):
+        """LANDFIRE canopy has no per-grid attribution or tile_metadata."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "landfire", "version": "2024", "bands": ["chm"]}
+
+        handle_canopy(mock_gdf, source, progress)
+
+        assert "attribution" not in source
+        assert "tile_metadata" not in source
+
+    @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
+    def test_landfire_threads_extent_buffer_and_alignment(self, mock_fetch):
+        """extent_buffer_cells and alignment from source reach the handler."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {
+            "product": "landfire",
+            "version": "2024",
+            "bands": ["chm", "cc"],
+            "extent_buffer_cells": 5,
+            "alignment": {"target": "native"},
+        }
+
+        handle_canopy(mock_gdf, source, progress)
+
+        kwargs = mock_fetch.call_args.kwargs
+        assert kwargs["extent_buffer_cells"] == 5
+        assert kwargs["alignment"] == {"target": "native"}
 
 
 class TestDispatchHandler3dep:
@@ -777,7 +925,7 @@ class TestDispatchHandler3dep:
             "source": {
                 "name": "3dep",
                 "product": "topography",
-                "resolution": 10,
+                "source_resolution": 10,
                 "bands": ["elevation"],
             },
             "domain_id": "test-domain-id",
@@ -805,7 +953,7 @@ class TestHandle3dep:
             "source": {
                 "name": "3dep",
                 "product": "topography",
-                "resolution": 10,
+                "source_resolution": 10,
                 "bands": ["elevation", "slope", "aspect"],
             },
         }
@@ -813,7 +961,13 @@ class TestHandle3dep:
         result = handle_3dep(mock_gdf, grid["source"], progress)
 
         mock_fetch.assert_called_once_with(
-            mock_gdf, 10, ["elevation", "slope", "aspect"], progress
+            mock_gdf,
+            10,
+            ["elevation", "slope", "aspect"],
+            progress,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
         )
         assert result == mock_dataset
 
@@ -835,7 +989,7 @@ class TestHandle3dep:
         source = {
             "name": "3dep",
             "product": "topography",
-            "resolution": 10,
+            "source_resolution": 10,
             "bands": ["elevation"],
         }
 
@@ -847,8 +1001,8 @@ class TestHandle3dep:
         assert source["tile_metadata"]["native_crs"] == "EPSG:4326"
 
     @patch("griddle.dispatch.threedep.fetch_topography")
-    def test_default_resolution(self, mock_fetch):
-        """handle_3dep uses 10 as default resolution."""
+    def test_default_source_resolution(self, mock_fetch):
+        """handle_3dep uses 10 as default source_resolution."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         mock_fetch.return_value = (MagicMock(), {})
         progress = MagicMock()
@@ -865,7 +1019,7 @@ class TestHandle3dep:
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
         progress = MagicMock()
 
-        source = {"product": "unknown_product", "resolution": 10}
+        source = {"product": "unknown_product", "source_resolution": 10}
 
         with pytest.raises(ProcessingError) as exc_info:
             handle_3dep(mock_gdf, source, progress)
@@ -882,7 +1036,7 @@ class TestHandle3dep:
 
         source = {
             "product": "topography",
-            "resolution": 10,
+            "source_resolution": 10,
             "bands": ["elevation"],
         }
 

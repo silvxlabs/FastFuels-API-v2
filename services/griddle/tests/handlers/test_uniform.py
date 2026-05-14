@@ -67,7 +67,7 @@ class TestCreateUniformGrid:
 
     def test_returns_dataset(self, roi):
         """create_uniform_grid returns an xr.Dataset."""
-        bands = [{"quantity": "fuel_moisture.1hr", "value": 6.0}]
+        bands = [{"key": "fuel_moisture.1hr", "value": 6.0}]
         progress = MagicMock()
 
         result = create_uniform_grid(roi, bands, 10.0, progress)
@@ -75,10 +75,10 @@ class TestCreateUniformGrid:
         assert isinstance(result, xr.Dataset)
 
     def test_variable_names_match_band_keys(self, roi):
-        """Dataset variable names match the quantity keys."""
+        """Dataset variable names match the band keys."""
         bands = [
-            {"quantity": "fuel_moisture.1hr", "value": 6.0},
-            {"quantity": "fuel_load.1hr", "value": 0.15},
+            {"key": "fuel_moisture.1hr", "value": 6.0},
+            {"key": "fuel_load.1hr", "value": 0.15},
         ]
         progress = MagicMock()
 
@@ -89,8 +89,8 @@ class TestCreateUniformGrid:
     def test_values_are_constant(self, roi):
         """Each variable is filled with the constant value."""
         bands = [
-            {"quantity": "fuel_moisture.1hr", "value": 6.0},
-            {"quantity": "fuel_load.1hr", "value": 0.15},
+            {"key": "fuel_moisture.1hr", "value": 6.0},
+            {"key": "fuel_load.1hr", "value": 0.15},
         ]
         progress = MagicMock()
 
@@ -107,7 +107,7 @@ class TestCreateUniformGrid:
 
     def test_int_value_dtype(self, roi):
         """Integer values produce int32 arrays."""
-        bands = [{"quantity": "fuel_moisture.1hr", "value": 6}]
+        bands = [{"key": "fuel_moisture.1hr", "value": 6}]
         progress = MagicMock()
 
         result = create_uniform_grid(roi, bands, 10.0, progress)
@@ -116,7 +116,7 @@ class TestCreateUniformGrid:
 
     def test_float_value_dtype(self, roi):
         """Float values produce float64 arrays."""
-        bands = [{"quantity": "fuel_load.1hr", "value": 0.15}]
+        bands = [{"key": "fuel_load.1hr", "value": 0.15}]
         progress = MagicMock()
 
         result = create_uniform_grid(roi, bands, 10.0, progress)
@@ -125,7 +125,7 @@ class TestCreateUniformGrid:
 
     def test_crs_set_correctly(self, roi):
         """CRS is written to the dataset via rioxarray."""
-        bands = [{"quantity": "fuel_moisture.1hr", "value": 6.0}]
+        bands = [{"key": "fuel_moisture.1hr", "value": 6.0}]
         progress = MagicMock()
 
         result = create_uniform_grid(roi, bands, 10.0, progress)
@@ -134,7 +134,7 @@ class TestCreateUniformGrid:
 
     def test_transform_set(self, roi):
         """Affine transform is written to the dataset."""
-        bands = [{"quantity": "fuel_moisture.1hr", "value": 6.0}]
+        bands = [{"key": "fuel_moisture.1hr", "value": 6.0}]
         progress = MagicMock()
 
         result = create_uniform_grid(roi, bands, 10.0, progress)
@@ -148,7 +148,7 @@ class TestCreateUniformGrid:
     def test_grid_shape_matches_resolution(self, projected_domain):
         """Grid dimensions match domain extent / resolution."""
         # Domain is 100m x 200m, resolution 10m -> 10 x 20
-        bands = [{"quantity": "fuel_moisture.1hr", "value": 6.0}]
+        bands = [{"key": "fuel_moisture.1hr", "value": 6.0}]
         progress = MagicMock()
 
         result = create_uniform_grid(projected_domain, bands, 10.0, progress)
@@ -158,7 +158,7 @@ class TestCreateUniformGrid:
 
     def test_crs_matches_domain(self, roi):
         """Output CRS matches the domain's projected CRS."""
-        bands = [{"quantity": "fuel_moisture.1hr", "value": 6.0}]
+        bands = [{"key": "fuel_moisture.1hr", "value": 6.0}]
         progress = MagicMock()
 
         result = create_uniform_grid(roi, bands, 10.0, progress)
@@ -167,7 +167,7 @@ class TestCreateUniformGrid:
 
     def test_calls_progress_callback(self, roi):
         """create_uniform_grid reports progress."""
-        bands = [{"quantity": "fuel_moisture.1hr", "value": 6.0}]
+        bands = [{"key": "fuel_moisture.1hr", "value": 6.0}]
         progress = MagicMock()
 
         create_uniform_grid(roi, bands, 10.0, progress)
@@ -177,9 +177,9 @@ class TestCreateUniformGrid:
     def test_multiple_bands_same_shape(self, roi):
         """All bands in a multi-band grid have the same shape."""
         bands = [
-            {"quantity": "fuel_moisture.1hr", "value": 6.0},
-            {"quantity": "fuel_moisture.10hr", "value": 8.0},
-            {"quantity": "fuel_depth", "value": 0.3},
+            {"key": "fuel_moisture.1hr", "value": 6.0},
+            {"key": "fuel_moisture.10hr", "value": 8.0},
+            {"key": "fuel_depth", "value": 0.3},
         ]
         progress = MagicMock()
 

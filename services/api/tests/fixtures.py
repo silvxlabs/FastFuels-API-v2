@@ -79,9 +79,10 @@ def make_grid_data(
     source: dict | None = None,
     bands: list | None = None,
     georeference: dict | None = None,
+    chunks: dict | None = None,
 ) -> dict:
     """Factory function to create grid data as stored in Firestore."""
-    return {
+    data = {
         "id": f"test-{uuid.uuid4().hex}",
         "domain_id": domain_id,
         "name": name,
@@ -114,6 +115,9 @@ def make_grid_data(
         ),
         "tags": tags or [],
     }
+    if chunks is not None:
+        data["chunks"] = chunks
+    return data
 
 
 def make_inventory_data(

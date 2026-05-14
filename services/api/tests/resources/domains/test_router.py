@@ -1107,6 +1107,265 @@ class TestUpdateDomain:
         assert data["tags"] == []
 
 
+class TestCreateDomainStyle:
+    """Style behavior on POST /domains."""
+
+    route = "/domains"
+
+    def test_omitted_style_is_absent_from_response(self, client):
+        """Without an explicit style, no style is stored or returned."""
+        response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
+
+        assert response.status_code == 201
+        data = response.json()
+
+        # response_model_exclude_none=True drops the field entirely when None.
+        assert "style" not in data
+
+        DOMAINS.append(data)
+
+    def test_explicit_full_style_round_trips(self, client):
+        body = {
+            **EXAMPLE_WGS84_DEFAULT,
+            "name": "Explicit Style Domain",
+            "style": {
+                "stroke_color": "#123456",
+                "stroke_opacity": 0.75,
+                "stroke_width": 3,
+                "fill_color": "#abcdef",
+                "fill_opacity": 0.25,
+            },
+        }
+        response = client.post(self.route, json=body)
+
+        assert response.status_code == 201
+        style = response.json()["style"]
+        assert style == {
+            "stroke_color": "#123456",
+            "stroke_opacity": 0.75,
+            "stroke_width": 3,
+            "fill_color": "#abcdef",
+            "fill_opacity": 0.25,
+        }
+
+        DOMAINS.append(response.json())
+
+    def test_partial_style_does_not_get_filled_in(self, client):
+        """A user-supplied partial style is honored as-is (no auto-fill)."""
+        body = {
+            **EXAMPLE_WGS84_DEFAULT,
+            "name": "Partial Style Domain",
+            "style": {"fill_color": "#abcdef"},
+        }
+        response = client.post(self.route, json=body)
+
+        assert response.status_code == 201
+        style = response.json()["style"]
+        # response_model_exclude_none drops null sub-fields entirely.
+        assert style == {"fill_color": "#abcdef"}
+
+        DOMAINS.append(response.json())
+
+    def test_accepts_named_color(self, client):
+        """Color strings aren't format-validated — named colors etc. round-trip."""
+        body = {
+            **EXAMPLE_WGS84_DEFAULT,
+            "name": "Named Color Domain",
+            "style": {"fill_color": "red", "stroke_color": "rgb(0, 0, 0)"},
+        }
+        response = client.post(self.route, json=body)
+        assert response.status_code == 201
+        style = response.json()["style"]
+        assert style["fill_color"] == "red"
+        assert style["stroke_color"] == "rgb(0, 0, 0)"
+        DOMAINS.append(response.json())
+
+    def test_overlong_color_returns_422(self, client):
+        body = {
+            **EXAMPLE_WGS84_DEFAULT,
+            "name": "Overlong Color Domain",
+            "style": {"fill_color": "a" * 65},
+        }
+        response = client.post(self.route, json=body)
+        assert response.status_code == 422
+
+    def test_out_of_range_opacity_returns_422(self, client):
+        body = {
+            **EXAMPLE_WGS84_DEFAULT,
+            "name": "Bad Opacity Domain",
+            "style": {"fill_opacity": 1.5},
+        }
+        response = client.post(self.route, json=body)
+        assert response.status_code == 422
+
+
+class TestUpdateDomainStyle:
+    """Style merge semantics on PATCH /domains/{id}."""
+
+    route = "/domains"
+
+    @pytest.fixture
+    def styled_domain(self, client):
+        """Create a domain via the API so it has a server-populated default style."""
+        response = client.post(
+            self.route,
+            json={
+                **EXAMPLE_WGS84_DEFAULT,
+                "name": "Style PATCH Domain",
+                "style": {
+                    "stroke_color": "#111111",
+                    "stroke_opacity": 1.0,
+                    "stroke_width": 2,
+                    "fill_color": "#222222",
+                    "fill_opacity": 0.5,
+                },
+            },
+        )
+        assert response.status_code == 201
+        domain = response.json()
+        DOMAINS.append(domain)
+        return domain
+
+    def test_patch_merges_partial_style(self, client, styled_domain):
+        """PATCH with one sub-field updates that field and preserves the others."""
+        domain_id = styled_domain["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={"style": {"fill_color": "#abcdef"}},
+        )
+        assert response.status_code == 200
+
+        style = response.json()["style"]
+        assert style["fill_color"] == "#abcdef"
+        # Untouched sub-fields are preserved.
+        assert style["stroke_color"] == "#111111"
+        assert style["stroke_opacity"] == 1.0
+        assert style["stroke_width"] == 2
+        assert style["fill_opacity"] == 0.5
+
+    def test_patch_updates_multiple_fields_at_once(self, client, styled_domain):
+        domain_id = styled_domain["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={"style": {"fill_color": "#aaaaaa", "fill_opacity": 0.1}},
+        )
+        assert response.status_code == 200
+
+        style = response.json()["style"]
+        assert style["fill_color"] == "#aaaaaa"
+        assert style["fill_opacity"] == 0.1
+        # Stroke side untouched.
+        assert style["stroke_color"] == "#111111"
+        assert style["stroke_opacity"] == 1.0
+        assert style["stroke_width"] == 2
+
+    def test_patch_geometry_unchanged_after_style_update(self, client, styled_domain):
+        """Updating style must not modify the FeatureCollection."""
+        domain_id = styled_domain["id"]
+        original_features = styled_domain["features"]
+        original_bbox = styled_domain["bbox"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={"style": {"fill_color": "#dddddd"}},
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["features"] == original_features
+        assert data["bbox"] == original_bbox
+
+    def test_patch_style_alongside_other_fields(self, client, styled_domain):
+        """Style and metadata can be updated in the same PATCH."""
+        domain_id = styled_domain["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={
+                "name": "Renamed and Restyled",
+                "style": {"fill_color": "#cccccc"},
+            },
+        )
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["name"] == "Renamed and Restyled"
+        assert data["style"]["fill_color"] == "#cccccc"
+        # Untouched style sub-fields preserved.
+        assert data["style"]["stroke_color"] == "#111111"
+
+    def test_patch_overlong_color_returns_422(self, client, styled_domain):
+        domain_id = styled_domain["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={"style": {"fill_color": "a" * 65}},
+        )
+        assert response.status_code == 422
+
+    def test_patch_out_of_range_opacity_returns_422(self, client, styled_domain):
+        domain_id = styled_domain["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={"style": {"fill_opacity": 2.0}},
+        )
+        assert response.status_code == 422
+
+    def test_patch_negative_stroke_width_returns_422(self, client, styled_domain):
+        domain_id = styled_domain["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={"style": {"stroke_width": -1}},
+        )
+        assert response.status_code == 422
+
+    def test_patch_style_on_legacy_domain_with_no_style(self, client, firestore_client):
+        """A domain stored before the style field existed accepts PATCH style."""
+        domain_data = make_domain_data(name="Legacy unstyled domain")
+        # Ensure no style is stored; make_domain_data omits it already.
+        assert "style" not in domain_data
+        doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+            domain_data["id"]
+        )
+        doc_ref.set(domain_data)
+
+        try:
+            response = client.patch(
+                f"{self.route}/{domain_data['id']}",
+                json={"style": {"fill_color": "#abcdef"}},
+            )
+            assert response.status_code == 200
+            style = response.json()["style"]
+            assert style["fill_color"] == "#abcdef"
+        finally:
+            doc_ref.delete()
+
+    def test_patch_style_wrong_owner_returns_404(
+        self, client, domain_with_different_owner
+    ):
+        """Style PATCH respects ownership — 404 (not 403) for other users' domains."""
+        domain_id = domain_with_different_owner["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}",
+            json={"style": {"fill_color": "#abcdef"}},
+        )
+        assert response.status_code == 404
+
+    def test_patch_nonexistent_domain_style_returns_404(self, client):
+        fake_id = "00000000000000000000000000000000"
+
+        response = client.patch(
+            f"{self.route}/{fake_id}",
+            json={"style": {"fill_color": "#abcdef"}},
+        )
+        assert response.status_code == 404
+
+
 class TestDeleteDomain:
     """Test the DELETE /domains/{domain_id} endpoint.
 

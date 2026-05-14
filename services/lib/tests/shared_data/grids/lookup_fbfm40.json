@@ -1,23 +1,50 @@
 {
-  "name": "test-lookup-fbfm40",
+  "bands": [
+    {
+      "index": 0,
+      "key": "fuel_load.1hr",
+      "type": "continuous",
+      "unit": "kg/m\u00b2"
+    },
+    {
+      "index": 1,
+      "key": "fuel_load.10hr",
+      "type": "continuous",
+      "unit": "kg/m\u00b2"
+    },
+    {
+      "index": 2,
+      "key": "fuel_depth",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "index": 3,
+      "key": "moisture_of_extinction",
+      "type": "continuous",
+      "unit": "%"
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
   "description": "",
-  "status": "pending",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-lookup-fbfm40",
   "progress": null,
   "source": {
     "name": "lookup",
-    "table": "fbfm40",
+    "source_band": "fbfm",
     "source_grid_id": "PLACEHOLDER",
-    "source_band": "fbfm"
+    "table": "fbfm40"
   },
-  "modifications": [],
-  "bands": [
-    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m\u00b2", "index": 0},
-    {"key": "fuel_load.10hr", "type": "continuous", "unit": "kg/m\u00b2", "index": 1},
-    {"key": "fuel_depth", "type": "continuous", "unit": "m", "index": 2},
-    {"key": "moisture_of_extinction", "type": "continuous", "unit": "%", "index": 3}
-  ],
-  "georeference": null,
-  "error": null,
-  "tags": [],
-  "chunk_shape": [512, 512]
+  "status": "pending",
+  "tags": []
 }

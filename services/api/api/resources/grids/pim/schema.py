@@ -17,7 +17,7 @@ from api.resources.grids.providers.pim import PimSource
 from api.resources.grids.schema import (
     Band,
     BandType,
-    CreateGridRequestBase,
+    CreateSourceGridRequestBase,
     validate_no_duplicates,
 )
 
@@ -67,7 +67,7 @@ class TreeMapSource(PimSource):
     )
 
 
-class CreateTreeMapRequest(CreateGridRequestBase):
+class CreateTreeMapRequest(CreateSourceGridRequestBase):
     """Request to create a grid from TreeMap.
 
     Returns a grid with one or two categorical bands:

@@ -15,6 +15,7 @@ import geopandas as gpd
 import pandas as pd
 import pytest
 import requests
+from api.resources.inventories.tree.upload.examples import ALL_UPLOAD_EXAMPLE_VALUES
 from shapely.geometry import Point
 
 from lib.config import INVENTORIES_BUCKET, INVENTORIES_COLLECTION, UPLOADS_BUCKET
@@ -196,6 +197,22 @@ class TestCreateInventoryUpload:
             json={"format": "csv", "columns": {"weight": "weight_col"}},
         )
         assert response.status_code == 422
+
+    @pytest.mark.parametrize("example_name,example_value", ALL_UPLOAD_EXAMPLE_VALUES)
+    def test_openapi_examples_return_201(
+        self, example_name, example_value, client, domain_for_testing, firestore_client
+    ):
+        """Every OpenAPI example must be accepted by the endpoint."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json=example_value,
+        )
+        assert response.status_code == 201, f"{example_name}: {response.text}"
+
+        inventory_id = response.json()["inventory"]["id"]
+        firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inventory_id
+        ).delete()
 
 
 def _poll_inventory(client, domain_id, inventory_id, timeout=120) -> dict:

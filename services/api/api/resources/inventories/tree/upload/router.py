@@ -13,6 +13,9 @@ from fastapi import APIRouter, Body, Request, status
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
+from api.resources.inventories.tree.upload.examples import (
+    CREATE_UPLOAD_OPENAPI_EXAMPLES,
+)
 from api.resources.inventories.tree.upload.schema import (
     CreateInventoryUploadRequest,
     InventoryUploadCreatedResponse,
@@ -46,7 +49,10 @@ MAX_INVENTORY_SIZE_BYTES = 524_288_000  # 500 MB
 async def create_inventory_upload(
     request: Request,
     domain: VerifiedDomain,
-    body: Annotated[CreateInventoryUploadRequest, Body()],
+    body: Annotated[
+        CreateInventoryUploadRequest,
+        Body(openapi_examples=CREATE_UPLOAD_OPENAPI_EXAMPLES),
+    ],
 ):
     """
     # Create Upload Inventory

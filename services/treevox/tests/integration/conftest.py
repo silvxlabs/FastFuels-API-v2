@@ -292,9 +292,9 @@ def treevox_runner():
             "description": "",
             "status": "pending",
             "source": {
-                "name": "inventory",
-                "product": "tree",
-                "description": "3D tree fuel grid from tree inventory voxelization",
+                "operation": "voxelize",
+                "input": "inventory",
+                "entity": "tree",
                 "source_inventory_id": inventory_id,
                 "resolution": resolution,
                 "bands": bands,

@@ -54,11 +54,11 @@ These commands re-deploy the jobs to use Direct VPC Egress, forcing all external
 
 # Update Dev
 ```bash
-gcloud run jobs update etcher-v2 \
-  --region=us-west1 \
-  --network=default \
-  --subnet=fastfuels-run-subnet \
-  --vpc-egress=all-traffic
+gcloud run services update etcher-v2-prod \
+    --region=us-west1 \
+    --network=default \
+    --subnet=fastfuels-run-subnet \
+    --vpc-egress=all-traffic
 ```
 
 # To set up queue

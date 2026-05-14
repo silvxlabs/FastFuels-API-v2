@@ -55,3 +55,18 @@ async def delete_directory_safe(bucket_name: str, directory_path: str) -> None:
             directory_path,
             e,
         )
+
+
+async def delete_file_safe(bucket_name: str, file_path: str) -> None:
+    """Best-effort async file delete. For use as a BackgroundTasks callback."""
+    try:
+        await delete_file(bucket_name, file_path)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(
+            "Failed to delete GCS file at %s/%s: %s",
+            bucket_name,
+            file_path,
+            e,
+        )

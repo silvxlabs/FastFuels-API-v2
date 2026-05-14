@@ -100,6 +100,24 @@ class TestCreateGridUploadRequest:
                 ]
             )
 
+    def test_num_buffer_cells_defaults_to_zero(self):
+        req = CreateGridUploadRequest(bands=[{"key": "fbfm", "type": "categorical"}])
+        assert req.num_buffer_cells == 0
+
+    def test_num_buffer_cells_accepts_positive_int(self):
+        req = CreateGridUploadRequest(
+            bands=[{"key": "fbfm", "type": "categorical"}],
+            num_buffer_cells=5,
+        )
+        assert req.num_buffer_cells == 5
+
+    def test_num_buffer_cells_negative_raises(self):
+        with pytest.raises(ValidationError):
+            CreateGridUploadRequest(
+                bands=[{"key": "fbfm", "type": "categorical"}],
+                num_buffer_cells=-1,
+            )
+
 
 class TestOpenApiExamples:
     @pytest.mark.parametrize(

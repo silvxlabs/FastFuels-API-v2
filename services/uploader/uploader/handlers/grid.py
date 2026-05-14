@@ -35,6 +35,7 @@ def handle_grid(resource_id: str, bucket: str, object_name: str, doc: dict) -> N
     source = doc["source"]
     domain_id = doc["domain_id"]
     bands_spec = source["bands"]
+    num_buffer_cells = source.get("num_buffer_cells", 0)
 
     gcs_path = f"gs://{bucket}/{object_name}"
 
@@ -44,7 +45,13 @@ def handle_grid(resource_id: str, bucket: str, object_name: str, doc: dict) -> N
         domain_gdf = parse_domain_gdf(domain_data)
         domain_crs_str = domain_data["crs"]["properties"]["name"]
 
-        dataset = _build_dataset(gcs_path, bands_spec, domain_crs_str, domain_gdf)
+        dataset = _build_dataset(
+            gcs_path,
+            bands_spec,
+            domain_crs_str,
+            domain_gdf,
+            num_buffer_cells=num_buffer_cells,
+        )
 
         output_path = f"gs://{GRIDS_BUCKET}/{resource_id}"
         save_zarr(output_path, dataset, chunk_shape=_CHUNK_SHAPE)
@@ -79,6 +86,7 @@ def _build_dataset(
     bands_spec: list[dict],
     domain_crs_str: str,
     domain_gdf,
+    num_buffer_cells: int = 0,
 ) -> xr.Dataset:
     """Open a GeoTIFF from GCS and return a clipped, reprojected xarray Dataset.
 
@@ -91,6 +99,9 @@ def _build_dataset(
             Each entry has at least {"key": str, "unit": str | None}.
         domain_crs_str: Target CRS string, e.g. "EPSG:32611".
         domain_gdf: Domain GeoDataFrame used for bounds clipping.
+        num_buffer_cells: Number of native-resolution cells to keep around the
+            domain extent. The clip bounds are expanded by
+            ``num_buffer_cells * native_pixel_size`` meters on each side.
 
     Returns:
         xr.Dataset with one variable per band, clipped to domain bounds.
@@ -98,6 +109,8 @@ def _build_dataset(
     Raises:
         ProcessingError: MISSING_CRS if the GeoTIFF has no CRS.
         ProcessingError: BAND_COUNT_MISMATCH if band count doesn't match spec.
+        ProcessingError: CRS_MISMATCH if the GeoTIFF CRS does not match the domain CRS.
+        ProcessingError: NO_OVERLAP if the GeoTIFF does not intersect the domain.
     """
     # chunks={"x":512,"y":512} → dask-backed lazy arrays; pixel data deferred until compute.
     # lock=False → parallel chunk reads (safe for GCS with GDAL's /vsigs/).
@@ -132,6 +145,13 @@ def _build_dataset(
         )
 
     xmin, ymin, xmax, ymax = domain_gdf.total_bounds
+    if num_buffer_cells > 0:
+        pixel_size = abs(float(da.rio.transform().a))
+        padding = num_buffer_cells * pixel_size
+        xmin -= padding
+        ymin -= padding
+        xmax += padding
+        ymax += padding
     try:
         da = da.rio.clip_box(minx=xmin, miny=ymin, maxx=xmax, maxy=ymax)
     except NoDataInBounds:

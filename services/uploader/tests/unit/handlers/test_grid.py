@@ -163,6 +163,45 @@ class TestBuildDataset:
 
         assert exc_info.value.code == "NO_OVERLAP"
 
+    def test_num_buffer_cells_expands_clip_bounds(self, tmp_path):
+        """num_buffer_cells > 0 keeps extra pixels outside the domain bounds."""
+        path = str(tmp_path / "with_buffer.tif")
+        # GeoTIFF that extends ~200m beyond the domain on every side.
+        extended_bounds = (
+            DOMAIN_BOUNDS[0] - 200,
+            DOMAIN_BOUNDS[1] - 200,
+            DOMAIN_BOUNDS[2] + 200,
+            DOMAIN_BOUNDS[3] + 200,
+        )
+        _write_geotiff(path, n_bands=1, bounds=extended_bounds, width=80, height=60)
+
+        bands_spec = [{"key": "fbfm", "type": "categorical", "unit": None}]
+
+        ds_no_buffer = _build_dataset(
+            path, bands_spec, DOMAIN_CRS, DOMAIN_GDF, num_buffer_cells=0
+        )
+        ds_with_buffer = _build_dataset(
+            path, bands_spec, DOMAIN_CRS, DOMAIN_GDF, num_buffer_cells=3
+        )
+
+        assert ds_with_buffer.rio.width > ds_no_buffer.rio.width
+        assert ds_with_buffer.rio.height > ds_no_buffer.rio.height
+
+    def test_num_buffer_cells_zero_matches_default(self, tmp_path):
+        """num_buffer_cells=0 produces the same dataset shape as omitting the param."""
+        path = str(tmp_path / "default_buffer.tif")
+        _write_geotiff(path, n_bands=1)
+
+        bands_spec = [{"key": "fbfm", "type": "categorical", "unit": None}]
+
+        ds_default = _build_dataset(path, bands_spec, DOMAIN_CRS, DOMAIN_GDF)
+        ds_zero = _build_dataset(
+            path, bands_spec, DOMAIN_CRS, DOMAIN_GDF, num_buffer_cells=0
+        )
+
+        assert ds_default.rio.width == ds_zero.rio.width
+        assert ds_default.rio.height == ds_zero.rio.height
+
     def test_result_has_spatial_metadata(self, tmp_path):
         """Output Dataset has CRS and transform accessible via .rio."""
         path = str(tmp_path / "spatial.tif")

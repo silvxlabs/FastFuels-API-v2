@@ -36,6 +36,14 @@ dependencies = [
     "zarr>=3.1.5",
 ]
 
+[dependency-groups]
+dev = [
+    "rasterio>=1.5.0",
+]
+
+[tool.uv]
+default-groups = []
+
 [tool.pytest.ini_options]
 filterwarnings = [
     # ring 0.10.1 has \* in a docstring (SyntaxWarning on Py3.12+); fixed in HEAD but not yet released (youknowone/ring#206)

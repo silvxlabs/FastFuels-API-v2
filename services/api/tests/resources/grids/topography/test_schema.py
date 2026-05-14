@@ -154,6 +154,34 @@ class TestCreateLandfireTopographyRequest:
         assert request.tags == ["topo"]
         assert request.bands == [TopographyBand.elevation, TopographyBand.slope]
 
+    def test_extent_buffer_cells_defaults_to_none(self):
+        request = CreateLandfireTopographyRequest()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        request = CreateLandfireTopographyRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        request = CreateLandfireTopographyRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireTopographyRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireTopographyRequest(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        request = CreateLandfireTopographyRequest()
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_zero(self):
+        request = CreateLandfireTopographyRequest(extent_buffer_cells=0)
+        assert request.resolved_extent_buffer_cells(0) == 0
+
 
 class TestTopographyBandDefs:
     """Tests for TOPOGRAPHY_BAND_DEFS constant."""
@@ -247,25 +275,25 @@ class TestThreeDepTopographySource:
 
     def test_product_is_always_topography(self):
         source = ThreeDepTopographySource(
-            resolution=10, bands=[TopographyBand.elevation]
+            source_resolution=10, bands=[TopographyBand.elevation]
         )
         assert source.product == "topography"
 
     def test_product_cannot_be_overridden(self):
         with pytest.raises(ValidationError):
             ThreeDepTopographySource(
-                product="other", resolution=10, bands=[TopographyBand.elevation]
+                product="other", source_resolution=10, bands=[TopographyBand.elevation]
             )
 
     def test_name_is_always_3dep(self):
         source = ThreeDepTopographySource(
-            resolution=10, bands=[TopographyBand.elevation]
+            source_resolution=10, bands=[TopographyBand.elevation]
         )
         assert source.name == "3dep"
 
     def test_bands_are_stored(self):
         source = ThreeDepTopographySource(
-            resolution=10,
+            source_resolution=10,
             bands=[TopographyBand.elevation, TopographyBand.slope],
         )
         assert source.bands == [TopographyBand.elevation, TopographyBand.slope]
@@ -276,29 +304,29 @@ class TestThreeDepTopographySource:
 
     def test_bands_are_required(self):
         with pytest.raises(ValidationError):
-            ThreeDepTopographySource(resolution=10)
+            ThreeDepTopographySource(source_resolution=10)
 
     def test_metadata_fields_default_to_none(self):
         source = ThreeDepTopographySource(
-            resolution=10, bands=[TopographyBand.elevation]
+            source_resolution=10, bands=[TopographyBand.elevation]
         )
         assert source.tile_metadata is None
 
     def test_model_dump(self):
         source = ThreeDepTopographySource(
-            resolution=10,
+            source_resolution=10,
             bands=[TopographyBand.elevation, TopographyBand.aspect],
         )
         data = source.model_dump()
         assert data["name"] == "3dep"
         assert data["product"] == "topography"
-        assert data["resolution"] == 10
+        assert data["source_resolution"] == 10
         assert data["bands"] == ["elevation", "aspect"]
         assert data["tile_metadata"] is None
 
     def test_model_dump_with_metadata(self):
         source = ThreeDepTopographySource(
-            resolution=10,
+            source_resolution=10,
             bands=[TopographyBand.elevation],
             tile_metadata=TileMetadata(
                 tiles=["https://example.com/tile.tif"],
@@ -321,7 +349,7 @@ class TestCreateThreeDepTopographyRequest:
 
     def test_minimal_valid_request(self):
         request = CreateThreeDepTopographyRequest()
-        assert request.resolution == ThreeDepResolution.ten_meter
+        assert request.source_resolution == ThreeDepResolution.ten_meter
         assert request.bands == [TopographyBand.elevation]
         assert request.name == ""
         assert request.description == ""
@@ -329,19 +357,19 @@ class TestCreateThreeDepTopographyRequest:
 
     def test_resolution_defaults_to_10m(self):
         request = CreateThreeDepTopographyRequest()
-        assert request.resolution == 10
+        assert request.source_resolution == 10
 
     def test_resolution_can_be_1m(self):
-        request = CreateThreeDepTopographyRequest(resolution=1)
-        assert request.resolution == ThreeDepResolution.one_meter
+        request = CreateThreeDepTopographyRequest(source_resolution=1)
+        assert request.source_resolution == ThreeDepResolution.one_meter
 
     def test_resolution_can_be_30m(self):
-        request = CreateThreeDepTopographyRequest(resolution=30)
-        assert request.resolution == ThreeDepResolution.thirty_meter
+        request = CreateThreeDepTopographyRequest(source_resolution=30)
+        assert request.source_resolution == ThreeDepResolution.thirty_meter
 
     def test_invalid_resolution_rejected(self):
         with pytest.raises(ValidationError):
-            CreateThreeDepTopographyRequest(resolution=5)
+            CreateThreeDepTopographyRequest(source_resolution=5)
 
     def test_bands_default_to_elevation_only(self):
         request = CreateThreeDepTopographyRequest()
@@ -367,7 +395,7 @@ class TestCreateThreeDepTopographyRequest:
 
     def test_full_request_with_all_fields(self):
         request = CreateThreeDepTopographyRequest(
-            resolution=1,
+            source_resolution=1,
             name="High-res terrain",
             description="1m DEM",
             tags=["3dep"],
@@ -376,5 +404,41 @@ class TestCreateThreeDepTopographyRequest:
         assert request.name == "High-res terrain"
         assert request.description == "1m DEM"
         assert request.tags == ["3dep"]
-        assert request.resolution == 1
+        assert request.source_resolution == 1
         assert request.bands == [TopographyBand.elevation, TopographyBand.slope]
+
+    def test_extent_buffer_cells_defaults_to_none(self):
+        request = CreateThreeDepTopographyRequest()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_accepts_maximum(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        with pytest.raises(ValidationError):
+            CreateThreeDepTopographyRequest(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        request = CreateThreeDepTopographyRequest()
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_zero(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=0)
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_explicit_value(self):
+        request = CreateThreeDepTopographyRequest(extent_buffer_cells=10)
+        assert request.resolved_extent_buffer_cells(0) == 10

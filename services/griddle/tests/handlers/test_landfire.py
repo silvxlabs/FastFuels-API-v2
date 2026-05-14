@@ -4,7 +4,7 @@ Tests for LANDFIRE handler.
 
 import json
 from dataclasses import dataclass
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import numpy as np
@@ -12,6 +12,7 @@ import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.landfire import (
+    _fetch_landfire_raster,
     _most_frequent,
     _remove_non_burnable_blocks,
     fetch_fbfm40,
@@ -39,7 +40,14 @@ DOMAIN_FIXTURES = [
         name="Blue Mountain",
         description="~1 sq km in Blue Mountain Recreation Area, Montana",
         file_name="blue_mtn.json",
-        expected_shape=(47, 61),
+        # Shape produced by `target="domain"` at LANDFIRE's native pixel
+        # size projected into the domain CRS. LANDFIRE is in EPSG:5070
+        # (Contiguous Albers) at 30m; over Montana, the equivalent cell
+        # size in EPSG:32611 (UTM 11N) is ~29.44m via
+        # calculate_default_transform. The unbuffered baseline is
+        # (30, 45) cells, plus the test's extent_buffer_cells=8 on each
+        # side ⇒ (30 + 16, 45 + 16) = (46, 61).
+        expected_shape=(46, 61),
     ),
 ]
 
@@ -63,34 +71,90 @@ def roi(test_domain) -> gpd.GeoDataFrame:
 class TestFetchFbfm40:
     """Integration tests for fetch_fbfm40."""
 
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_extract_window_default_buffer_is_zero(self, mock_raster_cls, roi):
+        """When extent_buffer_cells is omitted, extract_window receives 0."""
+        data = xr.DataArray(
+            np.array([[[101]]], dtype=np.int16),
+            dims=("band", "y", "x"),
+            coords={"band": [1], "y": [0.0], "x": [0.0]},
+        ).rio.write_crs(roi.crs)
+        mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
+        mock_raster.extract_window.return_value = data
+        mock_raster_cls.return_value = mock_raster
+
+        _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
+
+        call_kwargs = mock_raster.extract_window.call_args[1]
+        assert "projection_padding_meters" not in call_kwargs
+        assert call_kwargs["interpolation_padding_cells"] == 0
+
+    @pytest.mark.parametrize("buffer", [0, 1, 12])
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_extent_buffer_cells_threaded_through(self, mock_raster_cls, roi, buffer):
+        """Caller-supplied extent_buffer_cells reaches extract_window unchanged."""
+        data = xr.DataArray(
+            np.array([[[101]]], dtype=np.int16),
+            dims=("band", "y", "x"),
+            coords={"band": [1], "y": [0.0], "x": [0.0]},
+        ).rio.write_crs(roi.crs)
+        mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
+        mock_raster.extract_window.return_value = data
+        mock_raster_cls.return_value = mock_raster
+
+        _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=buffer,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
+
+        assert (
+            mock_raster.extract_window.call_args[1]["interpolation_padding_cells"]
+            == buffer
+        )
+
     def test_returns_dataset(self, roi):
         """fetch_fbfm40 returns a Dataset."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert isinstance(result, xr.Dataset)
 
     def test_has_fbfm_variable(self, roi):
         """Dataset contains a 'fbfm' variable."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert "fbfm" in result.data_vars
 
     def test_fbfm_shape(self, test_domain, roi):
         """The fbfm variable has the expected spatial shape."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result["fbfm"].shape == test_domain.expected_shape
 
     def test_fbfm_dtype(self, roi):
         """The fbfm variable is int16 (categorical codes)."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result["fbfm"].dtype == "int16"
 
     def test_crs_preserved(self, roi):
         """CRS is preserved via rioxarray."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result.rio.crs == roi.crs
 
     def test_fbfm_values_in_range(self, roi):
         """FBFM40 codes should be <= 204."""
-        result = fetch_fbfm40(roi=roi)
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result["fbfm"].values.max() <= 204
 
 
@@ -99,32 +163,32 @@ class TestFetchFccs:
 
     def test_returns_dataset(self, roi):
         """fetch_fccs returns a Dataset."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert isinstance(result, xr.Dataset)
 
     def test_has_fccs_variable(self, roi):
         """Dataset contains a 'fccs' variable."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert "fccs" in result.data_vars
 
     def test_fccs_shape(self, test_domain, roi):
         """The fccs variable has the expected spatial shape."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert result["fccs"].shape == test_domain.expected_shape
 
     def test_fccs_dtype(self, roi):
         """The fccs variable is int32 (codes up to 12990133 exceed int16 range)."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert result["fccs"].dtype == "int32"
 
     def test_crs_preserved(self, roi):
         """CRS is preserved via rioxarray."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert result.rio.crs == roi.crs
 
     def test_fccs_valid_values_in_range(self, roi):
         """Mapped FCCS codes should be between 0 and 12990133."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         values = result["fccs"].values
         valid_mask = ~np.isin(values, [-1111, -9999])
         assert values[valid_mask].min() >= 0
@@ -132,7 +196,7 @@ class TestFetchFccs:
 
     def test_fccs_fill_values_are_expected(self, roi):
         """Any negative values are only the known fill values (-1111, -9999)."""
-        result = fetch_fccs(roi=roi)
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         values = result["fccs"].values
         negative_values = np.unique(values[values < 0])
         assert set(negative_values).issubset({-1111, -9999})
@@ -164,6 +228,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
         assert isinstance(result, xr.Dataset)
@@ -175,6 +240,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation", "slope", "aspect"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -190,6 +256,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -204,6 +271,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["slope", "aspect"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -216,6 +284,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["aspect", "elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -228,6 +297,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -240,6 +310,7 @@ class TestFetchTopography:
             roi=roi,
             version="2020",
             bands=["elevation", "slope"],
+            extent_buffer_cells=8,
             progress=progress,
         )
 
@@ -341,3 +412,191 @@ class TestRemoveNonBurnableBlocks:
         grid[8:12, 8:12] = 99  # 4x4 bare ground block
         result = _remove_non_burnable_blocks(grid, [99])
         assert not np.any(np.isin(result, [99]))
+
+
+def _make_canopy_raster(
+    values: np.ndarray, nodata: float | int | None = 32767
+) -> xr.DataArray:
+    """Build a 2D DataArray that mimics what _fetch_landfire_raster returns."""
+    arr = xr.DataArray(
+        values.astype(np.int16),
+        dims=("y", "x"),
+        coords={"y": np.arange(values.shape[0]), "x": np.arange(values.shape[1])},
+    ).rio.write_crs("EPSG:5070")
+    if nodata is not None:
+        arr = arr.rio.write_nodata(nodata)
+    return arr
+
+
+class TestScaleCanopyBand:
+    """Unit tests for the LANDFIRE canopy nodata + scaling helper."""
+
+    def test_chm_divides_by_10_and_masks_declared_nodata(self):
+        from griddle.handlers.landfire import _scale_canopy_band
+
+        raw = _make_canopy_raster(np.array([[0, 10, 20, 32767]]))
+        out = _scale_canopy_band(raw, 10.0)
+        assert out.dtype == np.float32
+        np.testing.assert_array_equal(out.values, [[0.0, 1.0, 2.0, np.nan]])
+
+    def test_cbd_divides_by_100(self):
+        from griddle.handlers.landfire import _scale_canopy_band
+
+        raw = _make_canopy_raster(np.array([[0, 25, 100]]))
+        out = _scale_canopy_band(raw, 100.0)
+        np.testing.assert_allclose(out.values, [[0.0, 0.25, 1.0]])
+
+    def test_cc_does_not_divide_but_still_masks_nodata(self):
+        from griddle.handlers.landfire import _scale_canopy_band
+
+        raw = _make_canopy_raster(np.array([[0, 45, 95, 32767]]))
+        out = _scale_canopy_band(raw, 1.0)
+        np.testing.assert_array_equal(out.values, [[0.0, 45.0, 95.0, np.nan]])
+
+    def test_masks_both_declared_and_extra_sentinel(self):
+        """Both 32767 (declared) AND -9999 (undeclared, in pixel data) become NaN."""
+        from griddle.handlers.landfire import _scale_canopy_band
+
+        raw = _make_canopy_raster(np.array([[0, -9999, 10, 32767, 30]]))
+        out = _scale_canopy_band(raw, 10.0)
+        np.testing.assert_array_equal(out.values, [[0.0, np.nan, 1.0, np.nan, 3.0]])
+
+    def test_handles_array_with_no_declared_nodata(self):
+        """If the source raster has no rio.nodata, only -9999 is masked."""
+        from griddle.handlers.landfire import _scale_canopy_band
+
+        raw = _make_canopy_raster(np.array([[0, -9999, 32767]]), nodata=None)
+        out = _scale_canopy_band(raw, 10.0)
+        # 32767 has no special meaning without a declared sentinel
+        np.testing.assert_allclose(out.values, [[0.0, np.nan, 3276.7]], rtol=1e-3)
+
+
+class TestFetchCanopyLandfire:
+    """Tests for the LANDFIRE canopy multi-band fetch."""
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_uses_uppercase_product_codes(self, mock_fetch, roi):
+        """API band names (lowercase) map to uppercase LANDFIRE blob codes."""
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["chm", "cbd", "cbh", "cc"],
+            progress=MagicMock(),
+        )
+
+        product_codes = [call.args[1] for call in mock_fetch.call_args_list]
+        assert product_codes == ["CH", "CBD", "CBH", "CC"]
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_returns_dataset_with_requested_bands_in_order(self, mock_fetch, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        result = fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["cbd", "chm"],
+            progress=MagicMock(),
+        )
+        assert isinstance(result, xr.Dataset)
+        assert list(result.data_vars) == ["cbd", "chm"]
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_single_band_chm(self, mock_fetch, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        result = fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["chm"],
+            progress=MagicMock(),
+        )
+        assert list(result.data_vars) == ["chm"]
+        assert mock_fetch.call_args_list[0].args[1] == "CH"
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_applies_per_band_scale_factors(self, mock_fetch, roi):
+        """End-to-end: chm/10, cbd/100, cbh/10, cc/1 all applied correctly."""
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        def fake_fetch(roi_, product, *_a, **_kw):
+            # Return a 1x3 raster with values 0, "100" (in the source encoding), nodata
+            return _make_canopy_raster(np.array([[0, 100, 32767]]))
+
+        mock_fetch.side_effect = fake_fetch
+        result = fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["chm", "cbd", "cbh", "cc"],
+            progress=MagicMock(),
+        )
+        np.testing.assert_allclose(result["chm"].values, [[0.0, 10.0, np.nan]])
+        np.testing.assert_allclose(result["cbd"].values, [[0.0, 1.0, np.nan]])
+        np.testing.assert_allclose(result["cbh"].values, [[0.0, 10.0, np.nan]])
+        np.testing.assert_allclose(result["cc"].values, [[0.0, 100.0, np.nan]])
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_threads_alignment_and_buffer(self, mock_fetch, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        alignment = {"target": "native", "method": "bilinear"}
+        fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["chm"],
+            progress=MagicMock(),
+            extent_buffer_cells=7,
+            alignment=alignment,
+        )
+        # _fetch_landfire_raster(roi, product, version, extent_buffer_cells,
+        #                       alignment, target_grid_doc, is_categorical=...)
+        call = mock_fetch.call_args_list[0]
+        assert call.args[3] == 7
+        assert call.args[4] == alignment
+        assert call.kwargs["is_categorical"] is False
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_default_alignment_is_domain(self, mock_fetch, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["chm"],
+            progress=MagicMock(),
+        )
+        assert mock_fetch.call_args_list[0].args[4] == {"target": "domain"}
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_progress_callback_invoked_per_band(self, mock_fetch, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+        fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["chm", "cbd", "cbh"],
+            progress=progress,
+        )
+        assert progress.call_count == 3
+        for call, band in zip(progress.call_args_list, ["chm", "cbd", "cbh"]):
+            assert band in call.args[0]

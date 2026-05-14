@@ -11,18 +11,18 @@ domain_id comes from the URL path parameter, not the request body.
 EXAMPLE_UNIFORM_SINGLE_BAND = {
     "resolution": 2.0,
     "bands": [
-        {"quantity": "fuel_moisture.1hr", "value": 6.0},
+        {"key": "fuel_moisture.1hr", "value": 6.0},
     ],
 }
 
 EXAMPLE_UNIFORM_MOISTURE_SCENARIO = {
     "resolution": 2.0,
     "bands": [
-        {"quantity": "fuel_moisture.1hr", "value": 6.0},
-        {"quantity": "fuel_moisture.10hr", "value": 8.0},
-        {"quantity": "fuel_moisture.100hr", "value": 12.0},
-        {"quantity": "fuel_moisture.live_herb", "value": 60.0},
-        {"quantity": "fuel_moisture.live_woody", "value": 90.0},
+        {"key": "fuel_moisture.1hr", "value": 6.0},
+        {"key": "fuel_moisture.10hr", "value": 8.0},
+        {"key": "fuel_moisture.100hr", "value": 12.0},
+        {"key": "fuel_moisture.live_herb", "value": 60.0},
+        {"key": "fuel_moisture.live_woody", "value": 90.0},
     ],
     "name": "Dry fuel moisture scenario",
     "tags": ["fuel-moisture", "dry-scenario"],
@@ -31,9 +31,9 @@ EXAMPLE_UNIFORM_MOISTURE_SCENARIO = {
 EXAMPLE_UNIFORM_FUEL_LOADS = {
     "resolution": 5.0,
     "bands": [
-        {"quantity": "fuel_load.1hr", "value": 0.15},
-        {"quantity": "fuel_load.10hr", "value": 0.10},
-        {"quantity": "fuel_depth", "value": 0.3},
+        {"key": "fuel_load.1hr", "value": 0.15},
+        {"key": "fuel_load.10hr", "value": 0.10},
+        {"key": "fuel_depth", "value": 0.3},
     ],
     "name": "Custom fuel load",
     "description": "Uniform fuel load for sensitivity analysis",

@@ -445,7 +445,7 @@ async def get_inventory_data_metadata(
         meta = await get_inventory_metadata(inventory_id)
     except FileNotFoundError:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 "Inventory data metadata not available. "
                 "Re-create the inventory to enable data streaming."
@@ -530,7 +530,7 @@ async def get_inventory_data(
         meta = await get_inventory_metadata(inventory_id)
     except FileNotFoundError:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 "Inventory data metadata not available. "
                 "Re-create the inventory to enable data streaming."
@@ -539,7 +539,7 @@ async def get_inventory_data(
 
     if partition_index >= meta.num_partitions:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Partition index {partition_index} out of range. "
                 f"Inventory has {meta.num_partitions} partitions "
@@ -553,7 +553,7 @@ async def get_inventory_data(
         missing = [c for c in requested_columns if c not in meta.columns]
         if missing:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(f"Columns not found: {missing}. Available: {meta.columns}"),
             )
 

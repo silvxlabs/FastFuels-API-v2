@@ -1,10 +1,15 @@
 {
-  "type": "FeatureCollection",
+  "created_on": "2026-02-04T11:32:35.277033",
+  "crs": {
+    "properties": {
+      "name": "EPSG:32611"
+    },
+    "type": "name"
+  },
+  "description": "Approximately 1 square kilometer in the Blue Mountain Recreation Area near Missoula, Montana.",
   "features": [
     {
-      "type": "Feature",
       "geometry": {
-        "type": "Polygon",
         "coordinates": [
           [
             [
@@ -28,22 +33,17 @@
               5190645.048516054
             ]
           ]
-        ]
+        ],
+        "type": "Polygon"
       },
+      "id": "0",
       "properties": {},
-      "id": "0"
+      "type": "Feature"
     }
   ],
-  "name": "Blue Mountain Recreation Area",
-  "description": "Approximately 1 square kilometer in the Blue Mountain Recreation Area near Missoula, Montana.",
-  "crs": {
-    "type": "name",
-    "properties": {
-      "name": "EPSG:32611"
-    }
-  },
-  "tags": [],
   "id": "40c213058fed4c88b820a101bd105ba8",
-  "created_on": "2026-02-04T11:32:35.277033",
-  "modified_on": "2026-02-04T11:32:35.277033"
+  "modified_on": "2026-02-04T11:32:35.277033",
+  "name": "Blue Mountain Recreation Area",
+  "tags": [],
+  "type": "FeatureCollection"
 }

@@ -132,7 +132,11 @@ class TestListGridsWildcard:
         """Grids spread across two domains, both owned by test-owner."""
         grids = []
         for domain_id in [domain_for_testing["id"], second_domain["id"]]:
-            grid_data = make_grid_data(domain_id=domain_id, name=f"Grid in {domain_id}")
+            grid_data = make_grid_data(
+                domain_id=domain_id,
+                name=f"Grid in {domain_id}",
+                tags=["wildcard-list-test"],
+            )
             doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
                 grid_data["id"]
             )
@@ -153,7 +157,7 @@ class TestListGridsWildcard:
         self, client, grids_across_domains
     ):
         """Grids from multiple domains are all returned."""
-        response = client.get(self.route())
+        response = client.get(f"{self.route()}?tag=wildcard-list-test&size=1000")
         assert response.status_code == 200
 
         grid_ids = [g["id"] for g in response.json()["grids"]]
@@ -172,7 +176,7 @@ class TestListGridsWildcard:
 
     def test_wildcard_excludes_owner_id(self, client, grids_across_domains):
         """Wildcard list does not expose owner_id."""
-        response = client.get(self.route())
+        response = client.get(f"{self.route()}?tag=wildcard-list-test&size=1000")
         assert response.status_code == 200
 
         for grid in response.json()["grids"]:
@@ -233,7 +237,13 @@ class TestListGrids:
         self, client, grids_for_listing, domain_for_testing
     ):
         """List returns grids belonging to the authenticated user."""
-        response = client.get(self.route(domain_for_testing["id"]))
+        # Sort newest-first and ask for the max page so the fixture grids are
+        # found regardless of the endpoint's default sort or how many other
+        # grids share this test domain.
+        response = client.get(
+            f"{self.route(domain_for_testing['id'])}"
+            "?sort_by=created_on&sort_order=descending&size=1000"
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -786,9 +796,12 @@ class TestDeleteGrid:
         """Deleted grid does not appear in list endpoint."""
         grid_id = grid_for_delete["id"]
         list_route = self.route(domain_for_testing["id"])
+        # Filter by the fixture's tag so the assertion isn't affected by
+        # other grids accumulated on the session-scoped domain.
+        list_params = {"tag": "delete-test"}
 
         # Verify it appears in list before delete
-        list_response_before = client.get(list_route)
+        list_response_before = client.get(list_route, params=list_params)
         grid_ids_before = [g["id"] for g in list_response_before.json()["grids"]]
         assert grid_id in grid_ids_before
 
@@ -796,7 +809,7 @@ class TestDeleteGrid:
         client.delete(f"{list_route}/{grid_id}")
 
         # Verify it no longer appears in list
-        list_response_after = client.get(list_route)
+        list_response_after = client.get(list_route, params=list_params)
         grid_ids_after = [g["id"] for g in list_response_after.json()["grids"]]
         assert grid_id not in grid_ids_after
 

@@ -10,7 +10,7 @@ dependencies = [
     "fastapi>=0.128.0",
     "fastparquet>=2025.12.0",
     "firebase-admin>=7.1.0",
-    "gcsfs>=2026.1.0",
+    "gcsfs>=2026.5.0",
     "geojson-pydantic>=2.1.0",
     "geopandas>=1.1.2",
     "google-cloud-firestore>=2.23.0",
@@ -22,6 +22,7 @@ dependencies = [
     "lib[threedep]",
     "pandas>=3.0.0",
     "pandera>=0.29.0",
+    "pillow>=12.2.0",
     "pint>=0.25.2",
     "pyarrow>=23.0.0",
     "pydantic>=2.12.5",
@@ -31,7 +32,22 @@ dependencies = [
     "python-multipart>=0.0.22",
     "ring>=0.10.1",
     "uvicorn>=0.40.0",
+    "xarray>=2025.1.0",
     "zarr>=3.1.5",
+]
+
+[dependency-groups]
+dev = [
+    "rasterio>=1.5.0",
+]
+
+[tool.uv]
+default-groups = []
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # ring 0.10.1 has \* in a docstring (SyntaxWarning on Py3.12+); fixed in HEAD but not yet released (youknowone/ring#206)
+    "ignore:invalid escape sequence:SyntaxWarning:ring",
 ]
 
 [tool.uv.sources]

@@ -11,7 +11,8 @@ import geopandas as gpd
 import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
-from rasterio.transform import from_bounds
+
+from lib.alignment import lattice_from_bounds
 
 
 def create_uniform_grid(
@@ -25,9 +26,9 @@ def create_uniform_grid(
     Args:
         domain_gdf: GeoDataFrame defining the region of interest. Must be
             in a projected CRS (domains are always projected at creation).
-        bands: List of band dicts from the source, each with "quantity" and
-            "value" keys. The quantity's key (from UNIFORM_QUANTITY_DEFS)
-            is used as the Dataset variable name.
+        bands: List of band dicts from the source, each with "key" and
+            "value" keys. The band's key (e.g., "fuel_moisture.1hr") is
+            used as the Dataset variable name.
         resolution: Grid cell size in meters.
         progress: Progress callback (message, percent).
 
@@ -38,19 +39,15 @@ def create_uniform_grid(
     progress("Preparing uniform grid...", 10)
 
     crs = domain_gdf.crs
-    minx, miny, maxx, maxy = domain_gdf.total_bounds
+    minx, miny, _, _ = domain_gdf.total_bounds
 
-    # Compute grid dimensions
-    width = max(1, int(np.ceil((maxx - minx) / resolution)))
-    height = max(1, int(np.ceil((maxy - miny) / resolution)))
-
-    # Build affine transform (north-up convention)
-    transform = from_bounds(
-        minx, miny, minx + width * resolution, miny + height * resolution, width, height
+    # Compute the domain-anchored lattice (transform + shape) shared with
+    # every external-source fetcher.
+    transform, (height, width) = lattice_from_bounds(
+        tuple(domain_gdf.total_bounds), resolution
     )
 
-    # Map quantity values to their band keys
-    # The quantity enum value IS the key (e.g., "fuel_moisture.1hr")
+    # Each band's "key" IS the storage key (e.g., "fuel_moisture.1hr")
     progress("Generating uniform grid...", 40)
 
     y_coords = (
@@ -62,7 +59,7 @@ def create_uniform_grid(
 
     variables = {}
     for band in bands:
-        key = band["quantity"]
+        key = band["key"]
         value = band["value"]
 
         if isinstance(value, int):

@@ -17,7 +17,7 @@ from api.resources.grids.providers.threedep import ThreeDepSource
 from api.resources.grids.schema import (
     Band,
     BandType,
-    CreateGridRequestBase,
+    CreateSourceGridRequestBase,
     TileMetadata,
     validate_no_duplicates,
 )
@@ -70,7 +70,7 @@ class LandfireTopographySource(LandfireSource):
     )
 
 
-class CreateLandfireTopographyRequest(CreateGridRequestBase):
+class CreateLandfireTopographyRequest(CreateSourceGridRequestBase):
     """Request to create a grid from LANDFIRE topographic data.
 
     Returns a grid with one or more continuous bands: elevation (m),
@@ -119,15 +119,17 @@ class ThreeDepTopographySource(ThreeDepSource):
     tile_metadata: TileMetadata | None = None
 
 
-class CreateThreeDepTopographyRequest(CreateGridRequestBase):
+class CreateThreeDepTopographyRequest(CreateSourceGridRequestBase):
     """Request to create a grid from 3DEP topographic data.
 
     Returns a grid with one or more continuous bands: elevation (m),
-    slope (degrees), and/or aspect (degrees). Resolution is user-selectable:
-    1m, 10m (default), or 30m.
+    slope (degrees), and/or aspect (degrees).
+
+    `source_resolution` selects the 3DEP product family (1m, 10m, or 30m).
+    To change the *output* cell size, set ``alignment.resolution`` instead.
     """
 
-    resolution: ThreeDepResolution = ThreeDepResolution.ten_meter
+    source_resolution: ThreeDepResolution = ThreeDepResolution.ten_meter
     bands: list[TopographyBand] = Field(
         default=[TopographyBand.elevation],
         min_length=1,

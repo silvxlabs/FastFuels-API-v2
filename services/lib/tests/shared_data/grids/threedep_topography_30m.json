@@ -1,22 +1,36 @@
 {
-  "name": "test-3dep-topography-30m",
+  "bands": [
+    {
+      "index": 0,
+      "key": "elevation",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
   "description": "",
-  "status": "pending",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-3dep-topography-30m",
   "progress": null,
   "source": {
+    "bands": [
+      "elevation"
+    ],
+    "description": "3DEP topographic data (elevation, slope, aspect)",
     "name": "3dep",
     "product": "topography",
-    "resolution": 30,
-    "bands": ["elevation"],
-    "description": "3DEP topographic data (elevation, slope, aspect)",
+    "source_resolution": 30,
     "tile_metadata": null
   },
-  "modifications": [],
-  "bands": [
-    {"key": "elevation", "type": "continuous", "unit": "m", "index": 0}
-  ],
-  "georeference": null,
-  "error": null,
-  "tags": [],
-  "chunk_shape": [512, 512]
+  "status": "pending",
+  "tags": []
 }

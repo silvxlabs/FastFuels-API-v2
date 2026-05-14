@@ -1,0 +1,35 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "chm",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-canopy-landfire-chm-only",
+  "progress": null,
+  "source": {
+    "alignment": {"target": "domain"},
+    "bands": ["chm"],
+    "description": "LANDFIRE canopy fuel data (chm, cbd, cbh, cc) at 30m resolution (CONUS)",
+    "extent_buffer_cells": 0,
+    "name": "canopy",
+    "product": "landfire",
+    "version": "2024"
+  },
+  "status": "pending",
+  "tags": []
+}

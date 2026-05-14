@@ -12,8 +12,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET, TABLES_BUCKET
-from lib.raster import RasterConnection
+from lib.raster import RasterConnection, cog_env
 
 # Column names vary by TreeMap version
 TREEMAP_COLUMNS = {
@@ -29,6 +30,9 @@ def fetch_treemap(
     version: str,
     bands: list[str],
     progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
 ) -> xr.Dataset:
     """Fetch TreeMap plot imputation raster data.
 
@@ -37,18 +41,41 @@ def fetch_treemap(
         version: TreeMap version year
         bands: List of band names to produce ("tm_id", "plt_cn")
         progress: Progress callback
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict (see ``GridAlignmentSpecification``).
+            Defaults to ``{"target": "domain"}`` when omitted. The TM_ID raster
+            is reprojected to the alignment destination in the single
+            ``rio.reproject`` performed inside ``extract_window``.
+        target_grid_doc: Loaded grid document used as the alignment target
+            when ``alignment["target"] == "grid"``. Required in that case.
 
     Returns:
-        Dataset with one named variable per requested band
+        Dataset with one named variable per requested band. The PLT_CN band
+        is derived from the aligned TM_ID values, so both bands share the
+        same transform/shape.
     """
-    # Fetch the TreeMap COG raster (TM_ID pixel values)
+    alignment = alignment or {"target": "domain"}
+
     url = f"gs://{RASTERS_BUCKET}/TreeMap{version}.tif"
-    raster = RasterConnection(url, connection_type="rioxarray", cache=True)
-    data = raster.extract_window(
-        roi=roi,
-        projection_padding_meters=15 * raster.raster_resolution,
-        interpolation_padding_cells=8,
-    )
+    with cog_env():
+        raster = RasterConnection(url, connection_type="rioxarray", cache=True)
+        method_name = alignment.get("method") or "nearest"
+        dest = resolve_alignment_destination(
+            alignment,
+            roi,
+            target_grid_doc,
+            raster.target_native_resolution(roi)[0],
+            extent_buffer_cells=extent_buffer_cells,
+        )
+        data = raster.extract_window(
+            roi=roi,
+            interpolation_padding_cells=extent_buffer_cells,
+            resampling=RESAMPLING_METHOD_MAP[method_name],
+            destination_resolution=alignment.get("resolution")
+            if alignment["target"] == "native"
+            else None,
+            **dest,
+        )
     tm_id_da = data.squeeze("band", drop=True)
 
     variables = {}

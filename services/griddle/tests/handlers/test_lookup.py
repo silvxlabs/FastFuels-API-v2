@@ -16,7 +16,6 @@ import pint
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
-from griddle.errors import ProcessingError
 from griddle.handlers.lookup import (
     BAND_KEY_TO_COLUMN,
     UNIT_CONVERSIONS,
@@ -26,6 +25,7 @@ from griddle.handlers.lookup import (
     fbfm40_lookup,
 )
 
+from lib.errors import ProcessingError
 from lib.zarr_utils import load_zarr, save_zarr
 
 ureg = pint.UnitRegistry()
@@ -342,11 +342,11 @@ class TestFbfm40Lookup:
             assert result[var].dims == ("y", "x")
 
     @patch("griddle.handlers.lookup.load_zarr")
-    def test_all_codes_all_quantities(self, mock_load_zarr):
-        """Every FBFM40 code produces the correct metric value for every quantity.
+    def test_all_codes_all_bands(self, mock_load_zarr):
+        """Every FBFM40 code produces the correct metric value for every band.
 
         Feeds all 46 codes through the full pipeline requesting all 14
-        quantities, then independently computes the expected metric value
+        bands, then independently computes the expected metric value
         from the raw SB40 table + pint conversion and compares every cell.
         """
         table = _load_sb40_table()
@@ -375,13 +375,13 @@ class TestFbfm40Lookup:
 
                 actual = result[band_key].values[0, col_idx]
                 assert actual == pytest.approx(expected, rel=1e-6, abs=1e-12), (
-                    f"Mismatch for code {fbfm_key}, quantity {band_key}: "
+                    f"Mismatch for code {fbfm_key}, band {band_key}: "
                     f"expected {expected}, got {actual}"
                 )
 
     @patch("griddle.handlers.lookup.load_zarr")
-    def test_single_quantity(self, mock_load_zarr):
-        """Single quantity lookup produces correct shape and values."""
+    def test_single_band(self, mock_load_zarr):
+        """Single band lookup produces correct shape and values."""
         codes = np.array([[101, 102], [103, 91]])  # GR1, GR2, GR3, NB1
         mock_load_zarr.return_value = _make_mock_source_ds(codes)
         progress = MagicMock()
@@ -404,7 +404,7 @@ class TestFbfm40Lookup:
 
     @patch("griddle.handlers.lookup.load_zarr")
     def test_multi_band_output(self, mock_load_zarr):
-        """Multiple quantities produce one variable per band."""
+        """Multiple bands produce one variable per band."""
         codes = np.array([[101, 102], [103, 104]])
         mock_load_zarr.return_value = _make_mock_source_ds(codes)
         progress = MagicMock()
@@ -430,7 +430,7 @@ class TestFbfm40Lookup:
 
     @patch("griddle.handlers.lookup.load_zarr")
     def test_nonburnable_codes_produce_zeros(self, mock_load_zarr):
-        """NB codes (91-99) produce zero values for all quantities."""
+        """NB codes (91-99) produce zero values for all bands."""
         codes = np.array([[91, 92], [93, 99]])
         mock_load_zarr.return_value = _make_mock_source_ds(codes)
         progress = MagicMock()

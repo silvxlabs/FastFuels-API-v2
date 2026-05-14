@@ -58,7 +58,7 @@ async def create_fbfm40_lookup(
     ## Request Body
 
     - **source_grid_id**: (required) Grid containing FBFM40 codes.
-    - **quantities**: (required) Parameters to look up. Valid values:
+    - **bands**: (required) Bands to look up. Valid values:
       - `fuel_load.1hr`, `fuel_load.10hr`, `fuel_load.100hr` - Dead fuel loads (kg/m²)
       - `fuel_load.live_herb`, `fuel_load.live_woody` - Live fuel loads (kg/m²)
       - `savr.1hr`, `savr.10hr`, `savr.100hr` - Dead fuel SAV ratios (m⁻¹)
@@ -99,7 +99,7 @@ async def create_fbfm40_lookup(
     - Domain is propagated from the source grid (derived grids carry the
       same domain reference as their source).
     - The output grid inherits georeference from the source grid.
-    - Non-burnable codes (NB1–NB9) produce zero values for all quantities.
+    - Non-burnable codes (NB1–NB9) produce zero values for all bands.
     - All output values are in metric units (converted from SB40 imperial values).
     """
     owner_id = request.state.id
@@ -119,8 +119,7 @@ async def create_fbfm40_lookup(
     validate_grid_has_band(source_grid_data, body.source_grid_id, body.source_band)
 
     bands = [
-        get_fbfm40_lookup_band(quantity, index)
-        for index, quantity in enumerate(body.quantities)
+        get_fbfm40_lookup_band(band, index) for index, band in enumerate(body.bands)
     ]
 
     grid_id = uuid.uuid4().hex
@@ -143,7 +142,7 @@ async def create_fbfm40_lookup(
         "bands": [b.model_dump() for b in bands],
         "georeference": source_grid_data.get("georeference"),
         "tags": body.tags,
-        "chunk_shape": CHUNK_SHAPE,
+        "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
 

@@ -1,0 +1,11 @@
+{
+  "name": "Test Water Feature",
+  "description": "Integration test feature for OSM water",
+  "type": "water",
+  "status": "pending",
+  "tags": ["test", "integration"],
+  "source": {
+    "product": "osm",
+    "description": "OpenStreetMap water features"
+  }
+}

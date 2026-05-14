@@ -9,8 +9,9 @@ import pytest
 import rioxarray  # noqa: F401 - registers .rio accessor
 import xarray as xr
 from shapely.geometry import box
-from standgen.errors import ProcessingError
 from standgen.handlers.chm import handle_chm
+
+from lib.errors import ProcessingError
 
 # --- Fixtures for Handler ---
 

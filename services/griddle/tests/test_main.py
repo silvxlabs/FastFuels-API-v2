@@ -132,18 +132,20 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
     ):
-        """chunk_shape from grid doc is passed to save_zarr."""
+        """chunks.shape from grid doc is passed to save_zarr."""
         mock_load_grid.return_value = {
             "id": "test-grid-id",
             "source": {"name": "landfire", "product": "fbfm40"},
             "domain_id": "test-domain-id",
-            "chunk_shape": [256, 256],
+            "chunks": {"shape": [256, 256], "count": None, "count_by_axis": None},
         }
         mock_load_domain.return_value = MagicMock()
 
         mock_result = MagicMock()
         mock_result.rio.crs = "EPSG:32610"
         mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
+        mock_result.rio.height = 100
+        mock_result.rio.width = 100
         mock_result.shape = (100, 100)
         mock_dispatch.return_value = mock_result
 
@@ -153,6 +155,15 @@ class TestProcessGridRequest:
         mock_save_zarr.assert_called_once_with(
             "test-grid-id", mock_result, chunk_shape=(256, 256)
         )
+
+        completion_call = next(
+            c for c in mock_update_status.call_args_list if c.args[1] == "completed"
+        )
+        assert completion_call.kwargs["chunks"] == {
+            "shape": [256, 256],
+            "count": 1,
+            "count_by_axis": {"y": 1, "x": 1},
+        }
 
     @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
@@ -171,7 +182,7 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
     ):
-        """chunk_shape defaults to (512, 512) for grids without it."""
+        """chunk shape defaults to (512, 512) for grids without chunks set."""
         mock_load_grid.return_value = {
             "id": "test-grid-id",
             "source": {"name": "landfire", "product": "fbfm40"},
@@ -182,6 +193,8 @@ class TestProcessGridRequest:
         mock_result = MagicMock()
         mock_result.rio.crs = "EPSG:32610"
         mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
+        mock_result.rio.height = 100
+        mock_result.rio.width = 100
         mock_result.shape = (100, 100)
         mock_dispatch.return_value = mock_result
 
@@ -222,7 +235,7 @@ class TestProcessGridRequest:
         self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
     ):
         """ProcessingError returns 200 (error recorded, no retry needed)."""
-        from griddle.errors import ProcessingError
+        from lib.errors import ProcessingError
 
         mock_load_grid.return_value = {
             "id": "test-grid-id",

@@ -14,72 +14,47 @@ The resample endpoint requires a source grid that:
 import pytest
 from api.resources.grids.resample.examples import ALL_RESAMPLE_EXAMPLE_VALUES
 
-from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
-from tests.fixtures import make_domain_data, make_grid_data
+from lib.config import GRIDS_COLLECTION
+from tests.fixtures import make_grid_data
 
 
 @pytest.fixture(scope="session")
-def complete_grid(firestore_client, domain_for_testing):
-    """A complete grid with bands and georeference for use as a resample source."""
+def complete_3d_grid(firestore_client, domain_for_testing):
+    """A complete 3D grid (tree/inventory-style) — cannot be resampled."""
     grid_data = make_grid_data(
         domain_id=domain_for_testing["id"],
-        name="Source grid for resample tests",
+        name="Complete 3D grid for resample guard tests",
         status="completed",
-    )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def pending_grid(firestore_client, domain_for_testing):
-    """A grid with status "pending" (not yet complete)."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
-        name="Pending grid for resample tests",
-        status="pending",
-    )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def complete_grid_no_georeference(firestore_client, domain_for_testing):
-    """A complete grid without a georeference."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
-        name="Complete grid without georeference",
-        status="completed",
-    )
-    grid_data["georeference"] = None
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def second_domain(firestore_client):
-    """A second domain owned by test-owner for cross-domain tests."""
-    domain_data = make_domain_data(name="Second Test Domain")
-    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
-        domain_data["id"]
-    )
-    doc_ref.set(domain_data)
-    yield domain_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def grid_in_different_domain(firestore_client, second_domain):
-    """A complete grid with georeference in a different domain."""
-    grid_data = make_grid_data(
-        domain_id=second_domain["id"],
-        name="Grid in different domain for resample tests",
-        status="completed",
+        source={
+            "name": "inventory",
+            "product": "tree",
+            "description": "3D tree fuel grid from tree inventory voxelization",
+            "source_inventory_id": "test-source-inv",
+            "resolution": {"horizontal": 2.0, "vertical": 1.0},
+            "bands": ["bulk_density.foliage.live"],
+            "crown_profile_model": "purves",
+            "biomass_source": {
+                "type": "allometry",
+                "equations": "nsvb",
+                "components": ["foliage"],
+                "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
+            },
+        },
+        bands=[
+            {
+                "key": "bulk_density.foliage.live",
+                "type": "continuous",
+                "unit": "kg/m³",
+                "index": 0,
+            },
+        ],
+        georeference={
+            "crs": "EPSG:32611",
+            "transform": (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0),
+            "shape": (40, 500, 500),
+            "z_resolution": 1.0,
+            "z_origin": 0.0,
+        },
     )
     doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
     doc_ref.set(grid_data)
@@ -99,7 +74,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -118,8 +93,8 @@ class TestCreateResample:
         # Check source
         assert data["source"]["name"] == "resample"
         assert data["source"]["source_grid_id"] == complete_grid["id"]
-        assert data["source"]["target_resolution"] == 2.0
-        assert data["source"]["method"] == "bilinear"
+        assert data["source"]["alignment"]["target"] == "domain"
+        assert data["source"]["alignment"]["resolution"] == 2.0
 
         # Check bands are present
         assert len(data["bands"]) > 0
@@ -129,7 +104,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
             "name": "Resampled fuels at 2m",
             "description": "30m LANDFIRE resampled to 2m",
             "tags": ["resampled", "2m"],
@@ -151,7 +126,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -173,7 +148,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -190,7 +165,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
             "method_overrides": {"fbfm": "nearest"},
         }
 
@@ -208,7 +183,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -224,7 +199,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": "00000000000000000000000000000000",
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -239,7 +214,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": pending_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -254,7 +229,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid_no_georeference["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -269,7 +244,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": grid_in_different_domain["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
         }
 
         response = client.post(route, json=request_body)
@@ -283,7 +258,7 @@ class TestCreateResample:
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         request_body = {
             "source_grid_id": complete_grid["id"],
-            "resolution": 2.0,
+            "alignment": {"target": "domain", "resolution": 2.0},
             "method_overrides": {"nonexistent_band": "nearest"},
         }
 
@@ -292,15 +267,94 @@ class TestCreateResample:
         assert response.status_code == 422
         assert "nonexistent_band" in response.json()["detail"].lower()
 
+    def test_3d_source_grid_returns_422(
+        self, client, domain_for_testing, complete_3d_grid
+    ):
+        """Resampling a 3D grid is not supported — must 422 before enqueue."""
+        route = f"/domains/{domain_for_testing['id']}/grids/resample"
+        request_body = {
+            "source_grid_id": complete_3d_grid["id"],
+            "alignment": {"target": "domain", "resolution": 2.0},
+        }
+
+        response = client.post(route, json=request_body)
+
+        assert response.status_code == 422
+        assert "3d" in response.json()["detail"].lower()
+
+    def test_missing_resolution_for_domain_target_returns_422(
+        self, client, domain_for_testing, complete_grid
+    ):
+        """Resample with target='domain' requires alignment.resolution."""
+        route = f"/domains/{domain_for_testing['id']}/grids/resample"
+        request_body = {
+            "source_grid_id": complete_grid["id"],
+            "alignment": {"target": "domain"},
+        }
+
+        response = client.post(route, json=request_body)
+
+        assert response.status_code == 422
+        assert "resolution" in response.json()["detail"].lower()
+
+    def test_missing_resolution_for_native_target_returns_422(
+        self, client, domain_for_testing, complete_grid
+    ):
+        """Resample with target='native' requires alignment.resolution."""
+        route = f"/domains/{domain_for_testing['id']}/grids/resample"
+        request_body = {
+            "source_grid_id": complete_grid["id"],
+            "alignment": {"target": "native"},
+        }
+
+        response = client.post(route, json=request_body)
+
+        assert response.status_code == 422
+        assert "resolution" in response.json()["detail"].lower()
+
+    def test_target_grid_alignment_validates_target_grid(
+        self, client, domain_for_testing, complete_grid
+    ):
+        """alignment.grid_id must point to an existing grid in the domain."""
+        route = f"/domains/{domain_for_testing['id']}/grids/resample"
+        request_body = {
+            "source_grid_id": complete_grid["id"],
+            "alignment": {
+                "target": "grid",
+                "grid_id": "00000000000000000000000000000000",
+            },
+        }
+
+        response = client.post(route, json=request_body)
+
+        assert response.status_code == 404
+
+    def test_target_grid_alignment_succeeds_with_valid_grid(
+        self, client, domain_for_testing, complete_grid
+    ):
+        """alignment.target='grid' pointing to a valid grid creates a resample."""
+        route = f"/domains/{domain_for_testing['id']}/grids/resample"
+        request_body = {
+            "source_grid_id": complete_grid["id"],
+            "alignment": {"target": "grid", "grid_id": complete_grid["id"]},
+        }
+
+        response = client.post(route, json=request_body)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["source"]["alignment"]["target"] == "grid"
+        assert data["source"]["alignment"]["grid_id"] == complete_grid["id"]
+
     def test_invalid_resolution_returns_422(
         self, client, domain_for_testing, complete_grid
     ):
-        """Resolution below 1m returns 422."""
+        """Resolution below 1m returns 422 at the schema layer."""
         route = f"/domains/{domain_for_testing['id']}/grids/resample"
         for bad_resolution in [-1.0, 0, 0.5]:
             request_body = {
                 "source_grid_id": complete_grid["id"],
-                "resolution": bad_resolution,
+                "alignment": {"target": "domain", "resolution": bad_resolution},
             }
 
             response = client.post(route, json=request_body)
@@ -320,14 +374,21 @@ class TestCreateResample:
         example_name,
         example_value,
     ):
-        """Each documented resample example should successfully create a grid."""
-        route = f"/domains/{domain_for_testing['id']}/grids/resample"
-        request_body = {
-            **example_value,
-            "source_grid_id": complete_grid["id"],
-        }
+        """Each documented resample example should successfully create a grid.
 
-        response = client.post(route, json=request_body)
+        Examples that align to a target grid use a placeholder grid id; we
+        substitute ``complete_grid["id"]`` so the validator finds a real grid.
+        """
+        route = f"/domains/{domain_for_testing['id']}/grids/resample"
+        body = {**example_value, "source_grid_id": complete_grid["id"]}
+
+        if (
+            isinstance(body.get("alignment"), dict)
+            and body["alignment"].get("target") == "grid"
+        ):
+            body["alignment"] = {**body["alignment"], "grid_id": complete_grid["id"]}
+
+        response = client.post(route, json=body)
 
         assert response.status_code == 201, (
             f"Example '{example_name}' failed with status {response.status_code}: "

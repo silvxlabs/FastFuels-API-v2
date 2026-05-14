@@ -25,9 +25,9 @@ async def _get_service_url(service: str) -> str:
     Raises:
         google.api_core.exceptions.NotFound: If the service does not exist.
     """
-    client = run_v2.ServicesAsyncClient()
     name = f"projects/{GCP_PROJECT}/locations/{GCP_REGION}/services/{service}"
-    svc = await client.get_service(name=name)
+    async with run_v2.ServicesAsyncClient() as client:
+        svc = await client.get_service(name=name)
     return svc.uri
 
 
@@ -39,20 +39,20 @@ async def create_http_task_async(
     """Enqueue an HTTP POST task asynchronously. Returns None if task already exists."""
     url = await _get_service_url(service)
 
-    client = tasks_v2.CloudTasksAsyncClient()
-    parent = client.queue_path(GCP_PROJECT, GCP_REGION, queue)
+    async with tasks_v2.CloudTasksAsyncClient() as client:
+        parent = client.queue_path(GCP_PROJECT, GCP_REGION, queue)
 
-    task = Task(
-        name=client.task_path(GCP_PROJECT, GCP_REGION, queue, task_id),
-        http_request={
-            "http_method": HttpMethod.POST,
-            "url": url,
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"id": task_id}).encode(),
-        },
-    )
+        task = Task(
+            name=client.task_path(GCP_PROJECT, GCP_REGION, queue, task_id),
+            http_request={
+                "http_method": HttpMethod.POST,
+                "url": url,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"id": task_id}).encode(),
+            },
+        )
 
-    try:
-        return await client.create_task(parent=parent, task=task)
-    except AlreadyExists:
-        return None
+        try:
+            return await client.create_task(parent=parent, task=task)
+        except AlreadyExists:
+            return None

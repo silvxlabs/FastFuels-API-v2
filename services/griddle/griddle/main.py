@@ -16,11 +16,12 @@ import functions_framework
 from flask import Request
 
 from griddle.dispatch import dispatch_handler
-from griddle.errors import CancelledException, ProcessingError
 from griddle.storage import delete_zarr, save_zarr
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.grids import compute_chunks_doc
 
 
 class StructuredLogHandler(logging.Handler):
@@ -109,6 +110,7 @@ def update_status(
     grid_id: str,
     status: str,
     georeference: dict | None = None,
+    chunks: dict | None = None,
     error: dict | None = None,
 ) -> None:
     """Update grid status.
@@ -117,6 +119,7 @@ def update_status(
         grid_id: Grid document ID
         status: New status ("running", "completed", "failed")
         georeference: Optional georeference dict (for completed status)
+        chunks: Optional chunks layout dict (for completed status)
         error: Optional error dict (for failed status)
 
     Raises:
@@ -134,6 +137,9 @@ def update_status(
 
     if georeference is not None:
         data["georeference"] = georeference
+
+    if chunks is not None:
+        data["chunks"] = chunks
 
     if error is not None:
         data["error"] = error
@@ -276,19 +282,21 @@ def process_grid_request(request: Request):
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)
-        chunk_shape = tuple(grid.get("chunk_shape", (512, 512)))
+        chunk_shape = tuple((grid.get("chunks") or {}).get("shape") or (512, 512))
         save_zarr(grid_id, result, chunk_shape=chunk_shape)
 
-        # Update status to completed with georeference
+        # Update status to completed with georeference and chunks layout
         transform = result.rio.transform()
+        grid_shape = (result.rio.height, result.rio.width)
         update_status(
             grid_id,
             "completed",
             georeference={
                 "crs": str(result.rio.crs),
                 "transform": list(transform)[:6],
-                "shape": [result.rio.height, result.rio.width],
+                "shape": list(grid_shape),
             },
+            chunks=compute_chunks_doc(grid_shape, chunk_shape),
         )
 
         logger.info("Processing complete", extra=ids)

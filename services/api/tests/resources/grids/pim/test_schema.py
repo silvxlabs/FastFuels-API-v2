@@ -56,6 +56,18 @@ class TestPimSource:
         )
         assert source.description == "Test description"
 
+    def test_extent_buffer_cells_defaults_to_zero(self):
+        source = PimSource(product="treemap", version="2022")
+        assert source.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_can_be_set(self):
+        source = PimSource(product="treemap", version="2022", extent_buffer_cells=10)
+        assert source.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            PimSource(product="treemap", version="2022", extent_buffer_cells=-1)
+
 
 class TestTreeMapSource:
     """Tests for TreeMapSource model."""
@@ -166,6 +178,34 @@ class TestCreateTreeMapRequest:
         """Duplicate bands are rejected with a validation error."""
         with pytest.raises(ValidationError):
             CreateTreeMapRequest(bands=["tm_id", "tm_id"])
+
+    def test_extent_buffer_cells_defaults_to_none(self):
+        request = CreateTreeMapRequest()
+        assert request.extent_buffer_cells is None
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        request = CreateTreeMapRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        request = CreateTreeMapRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            CreateTreeMapRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        with pytest.raises(ValidationError):
+            CreateTreeMapRequest(extent_buffer_cells=11)
+
+    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
+        request = CreateTreeMapRequest()
+        assert request.resolved_extent_buffer_cells(0) == 0
+
+    def test_resolved_extent_buffer_cells_preserves_zero(self):
+        request = CreateTreeMapRequest(extent_buffer_cells=0)
+        assert request.resolved_extent_buffer_cells(0) == 0
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""

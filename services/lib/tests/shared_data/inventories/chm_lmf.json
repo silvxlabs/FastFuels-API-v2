@@ -1,16 +1,18 @@
 {
-  "type": "tree",
-  "name": "Test CHM Inventory",
   "description": "Integration test for LMF CHM extraction",
-  "tags": ["test"],
+  "modifications": [],
+  "name": "Test CHM Inventory",
   "source": {
-    "name": "chm",
-    "source_chm_grid_id": "placeholder",
     "algorithm": {
-      "name": "lmf",
+      "footprint_size": 3,
       "min_height": 2.0,
-      "footprint_size": 3
-    }
+      "name": "lmf"
+    },
+    "name": "chm",
+    "source_chm_grid_id": "placeholder"
   },
-  "modifications": []
+  "tags": [
+    "test"
+  ],
+  "type": "tree"
 }

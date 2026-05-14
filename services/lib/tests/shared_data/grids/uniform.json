@@ -1,23 +1,46 @@
 {
-  "name": "test-uniform",
+  "bands": [
+    {
+      "index": 0,
+      "key": "fuel_moisture.1hr",
+      "type": "continuous",
+      "unit": null
+    },
+    {
+      "index": 1,
+      "key": "fuel_moisture.10hr",
+      "type": "continuous",
+      "unit": null
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
   "description": "",
-  "status": "pending",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-uniform",
   "progress": null,
   "source": {
-    "name": "uniform",
     "bands": [
-      {"quantity": "fuel_moisture.1hr", "value": 6.0},
-      {"quantity": "fuel_moisture.10hr", "value": 8.0}
+      {
+        "key": "fuel_moisture.1hr",
+        "value": 6.0
+      },
+      {
+        "key": "fuel_moisture.10hr",
+        "value": 8.0
+      }
     ],
+    "name": "uniform",
     "resolution": 2.0
   },
-  "modifications": [],
-  "bands": [
-    {"key": "fuel_moisture.1hr", "type": "continuous", "unit": null, "index": 0},
-    {"key": "fuel_moisture.10hr", "type": "continuous", "unit": null, "index": 1}
-  ],
-  "georeference": null,
-  "error": null,
-  "tags": [],
-  "chunk_shape": [512, 512]
+  "status": "pending",
+  "tags": []
 }

@@ -262,3 +262,21 @@ class ListDomainsResponse(PaginatedResponse):
     domains: list[Domain] = Field(
         ..., description="The list of domain resources for the current page."
     )
+
+
+class DomainLattice(BaseModel):
+    """Pixel lattice for a domain at a given resolution.
+
+    Uses rasterio conventions:
+    - ``transform`` is ``[a, b, c, d, e, f]`` where ``a`` is pixel width,
+      ``e`` is ``-pixel_height``, and ``(c, f)`` is the upper-left corner.
+    - ``shape`` is ``(height, width)`` in pixels.
+    """
+
+    crs: str = Field(..., description="e.g., 'EPSG:32611'")
+    resolution: float = Field(..., description="Pixel size in meters.")
+    num_buffer_cells: int = Field(..., description="Buffer cells applied on each side.")
+    transform: tuple[float, float, float, float, float, float] = Field(
+        ..., description="Affine transform [a, b, c, d, e, f]"
+    )
+    shape: tuple[int, int] = Field(..., description="(height, width) in pixels")

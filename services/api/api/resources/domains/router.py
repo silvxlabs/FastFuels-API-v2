@@ -26,11 +26,12 @@ from api.db.documents import (
     set_document_async,
     update_document_async,
 )
-from api.dependencies import invalidate_domain_cache
+from api.dependencies import VerifiedDomain, invalidate_domain_cache
 from api.resources.domains.examples import CREATE_DOMAIN_OPENAPI_EXAMPLES
 from api.resources.domains.schema import (
     CreateDomainRequestBody,
     Domain,
+    DomainLattice,
     DomainSortField,
     DomainSortOrder,
     ListDomainsResponse,
@@ -41,6 +42,7 @@ from api.resources.domains.validate import (
     validate_crs,
     validate_domain,
 )
+from lib.alignment import lattice_from_bounds
 from lib.config import (
     DOMAINS_COLLECTION,
     GRIDS_BUCKET,
@@ -48,6 +50,7 @@ from lib.config import (
     INVENTORIES_BUCKET,
     INVENTORIES_COLLECTION,
 )
+from lib.domain_utils import parse_domain_gdf
 
 # Child resource types that cascade-delete when a domain is force-deleted.
 # Each entry defines a Firestore collection, the foreign key linking to the
@@ -572,6 +575,76 @@ async def get_domain(
     domain = Domain(**domain_data)
 
     return domain
+
+
+@router.get(
+    "/{domain_id}/lattice",
+    response_model=DomainLattice,
+    status_code=status.HTTP_200_OK,
+    summary="Get the pixel lattice for a domain at a given resolution",
+)
+async def get_domain_lattice(
+    domain: VerifiedDomain,
+    resolution: Annotated[
+        float,
+        Query(
+            gt=0,
+            description="Pixel size in meters (domain CRS units, always projected).",
+        ),
+    ],
+    num_buffer_cells: Annotated[
+        int,
+        Query(
+            ge=0,
+            description=(
+                "Expand the lattice by N cells on each side. Mirrors the "
+                "buffer semantics of POST /domains/{domain_id}/grids/upload "
+                "and the LANDFIRE/3DEP grid creation endpoints."
+            ),
+        ),
+    ] = 0,
+):
+    """
+    # Get Domain Lattice Endpoint
+
+    Returns the pixel lattice (transform + shape) for the domain at the
+    requested resolution. Use this to align a GeoTIFF before uploading it
+    via `POST /domains/{domain_id}/grids/upload`.
+
+    ## Query Parameters
+
+    - **resolution** (required): Pixel size in meters.
+    - **num_buffer_cells** (optional, default 0): Expand the lattice by
+      `N * resolution` meters on each side.
+
+    ## Response
+
+    - **crs**: The domain CRS (always projected).
+    - **resolution**: Echoes the input.
+    - **num_buffer_cells**: Echoes the input.
+    - **transform**: Affine coefficients `[a, b, c, d, e, f]` (rasterio
+      convention).
+    - **shape**: `[height, width]` in pixels.
+
+    ## Error Responses
+
+    - **404 Not Found**: The domain does not exist or the user does not
+      have access.
+    - **422 Unprocessable Entity**: `resolution` is missing or
+      non-positive, or `num_buffer_cells` is negative.
+    """
+    domain_gdf = parse_domain_gdf(domain)
+    minx, miny, maxx, maxy = domain_gdf.total_bounds
+    pad = num_buffer_cells * resolution
+    bounds = (minx - pad, miny - pad, maxx + pad, maxy + pad)
+    transform, shape = lattice_from_bounds(bounds, resolution)
+    return DomainLattice(
+        crs=domain["crs"]["properties"]["name"],
+        resolution=resolution,
+        num_buffer_cells=num_buffer_cells,
+        transform=tuple(transform)[:6],
+        shape=shape,
+    )
 
 
 @router.patch(

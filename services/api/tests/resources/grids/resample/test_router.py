@@ -20,14 +20,14 @@ from tests.fixtures import make_grid_data
 
 @pytest.fixture(scope="session")
 def complete_3d_grid(firestore_client, domain_for_testing):
-    """A complete 3D grid (tree/inventory-style) — cannot be resampled."""
+    """A complete 3D grid (voxelize/inventory/tree-style) — cannot be resampled."""
     grid_data = make_grid_data(
         domain_id=domain_for_testing["id"],
         name="Complete 3D grid for resample guard tests",
         status="completed",
         source={
-            "name": "inventory",
-            "product": "tree",
+            "name": "tree",
+            "product": "voxelize",
             "description": "3D tree fuel grid from tree inventory voxelization",
             "source_inventory_id": "test-source-inv",
             "resolution": {"horizontal": 2.0, "vertical": 1.0},

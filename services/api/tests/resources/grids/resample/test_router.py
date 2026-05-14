@@ -26,9 +26,9 @@ def complete_3d_grid(firestore_client, domain_for_testing):
         name="Complete 3D grid for resample guard tests",
         status="completed",
         source={
-            "name": "tree",
-            "product": "voxelize",
-            "description": "3D tree fuel grid from tree inventory voxelization",
+            "operation": "voxelize",
+            "input": "inventory",
+            "entity": "tree",
             "source_inventory_id": "test-source-inv",
             "resolution": {"horizontal": 2.0, "vertical": 1.0},
             "bands": ["bulk_density.foliage.live"],

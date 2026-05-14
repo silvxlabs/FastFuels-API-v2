@@ -414,7 +414,7 @@ def _default_bands() -> list[TreeBand]:
     return [TreeBand.bulk_density_foliage_live]
 
 
-class TreeInventorySource(BaseModel):
+class TreeInventoryVoxelizationSource(BaseModel):
     """Source metadata stored on the Grid document for reproducibility.
 
     Records the inventory that was voxelized and every resolved model choice
@@ -423,11 +423,9 @@ class TreeInventorySource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: Literal["tree"] = "tree"
-    product: Literal["voxelize"] = "voxelize"
-    description: Literal["3D tree fuel grid from tree inventory voxelization"] = (
-        "3D tree fuel grid from tree inventory voxelization"
-    )
+    operation: Literal["voxelize"] = "voxelize"
+    input: Literal["inventory"] = "inventory"
+    entity: Literal["tree"] = "tree"
 
     source_inventory_id: str
     resolution: Resolution3D = Field(

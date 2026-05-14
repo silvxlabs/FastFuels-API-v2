@@ -102,6 +102,29 @@ class TestHandleLandfire:
         mock_fetch.assert_called_once_with(
             mock_gdf,
             "2023",
+            remove_bare_ground=False,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+        assert result == mock_result
+
+    @patch("griddle.dispatch.landfire.fetch_fccs")
+    def test_routes_fccs_with_remove_bare_ground(self, mock_fetch):
+        """handle_landfire passes remove_bare_ground=True to fetch_fccs."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        source = {"product": "fccs", "version": "2023", "remove_bare_ground": True}
+
+        result = handle_landfire(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2023",
+            remove_bare_ground=True,
             extent_buffer_cells=0,
             alignment={"target": "domain"},
             target_grid_doc=None,

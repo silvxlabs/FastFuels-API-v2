@@ -201,6 +201,22 @@ class TestFetchFccs:
         negative_values = np.unique(values[values < 0])
         assert set(negative_values).issubset({-1111, -9999})
 
+    def test_remove_bare_ground_removes_zeros(self, roi):
+        """When remove_bare_ground=True, no bare ground cells (code 0) remain."""
+        result = fetch_fccs(roi=roi, remove_bare_ground=True)
+        values = result["fccs"].values
+        valid_mask = ~np.isin(values, [-1111, -9999])
+        assert not np.any(values[valid_mask] == 0)
+
+    def test_remove_bare_ground_false_by_default(self, roi):
+        """remove_bare_ground defaults to False and does not alter the data."""
+        default_result = fetch_fccs(roi=roi)
+        explicit_result = fetch_fccs(roi=roi, remove_bare_ground=False)
+        np.testing.assert_array_equal(
+            default_result["fccs"].values,
+            explicit_result["fccs"].values,
+        )
+
 
 class TestFetchTopography:
     """Integration tests for fetch_topography."""

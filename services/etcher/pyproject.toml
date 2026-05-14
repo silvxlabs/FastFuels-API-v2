@@ -17,6 +17,7 @@ test = [
     "pytest>=9.0.2",
     "pytest-mock",
     "google-cloud-tasks>=2.14.0",
+    "google-cloud-run>=0.10.0",
     "pytest-xdist>=3.5.0",
 ]
 

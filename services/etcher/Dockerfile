@@ -8,7 +8,7 @@ RUN pip install uv
 COPY services/lib/ /app/lib/
 COPY services/etcher/ /app/etcher/
 
-WORKDIR /app/feature
+WORKDIR /app/etcher
 
 RUN uv sync --frozen
 

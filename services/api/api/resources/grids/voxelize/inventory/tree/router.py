@@ -1,7 +1,7 @@
 """
-api/v2/resources/grids/tree/inventory/router.py
+api/v2/resources/grids/voxelize/inventory/tree/router.py
 
-Router for the tree-inventory voxelization grid product.
+Router for voxelizing a tree inventory into a 3D tree fuel grid.
 
 Takes a tree inventory resource and voxelizes it into a 3D grid of canopy
 fuel properties using crown profile and biomass models from fastfuels-core.
@@ -11,21 +11,21 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
-
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.resources.grids.schema import Grid
-from api.resources.grids.tree.inventory.examples import (
+from api.resources.grids.voxelize.inventory.tree.examples import (
     CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES,
 )
-from api.resources.grids.tree.inventory.schema import (
+from api.resources.grids.voxelize.inventory.tree.schema import (
     CreateTreeInventoryRequest,
     TreeInventorySource,
+    build_tree_bands,
 )
-from api.resources.grids.tree.schema import build_tree_bands
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from fastapi import APIRouter, Body, HTTPException, Request, status
+
 from lib.config import (
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,

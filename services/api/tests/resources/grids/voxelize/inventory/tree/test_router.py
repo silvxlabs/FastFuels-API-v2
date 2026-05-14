@@ -1,18 +1,18 @@
 """
-Integration tests for api/resources/grids/tree/inventory/router.py.
+Integration tests for api/resources/grids/voxelize/inventory/tree/router.py.
 
-Tests the POST /domains/{domain_id}/grids/tree/inventory endpoint.
+Tests the POST /domains/{domain_id}/grids/voxelize/inventory/tree endpoint.
 These tests make real HTTP requests to the API and interact with Firestore
 and Cloud Tasks.
 """
 
 import pytest
-from api.resources.grids.tree.inventory.examples import (
+from api.resources.grids.voxelize.inventory.tree.examples import (
     ALL_TREE_INVENTORY_EXAMPLE_VALUES,
 )
+from tests.fixtures import make_domain_data, make_inventory_data
 
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_COLLECTION
-from tests.fixtures import make_domain_data, make_inventory_data
 
 # --- Fixtures ---
 
@@ -69,10 +69,10 @@ def tree_inventory_in_different_domain(
 
 
 class TestCreateTreeInventoryGrid:
-    """POST /domains/{domain_id}/grids/tree/inventory."""
+    """POST /domains/{domain_id}/grids/voxelize/inventory/tree."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/grids/tree/inventory"
+        return f"/domains/{domain_id}/grids/voxelize/inventory/tree"
 
     def test_minimal_request_creates_grid(
         self, client, domain_for_testing, tree_inventory_for_voxelization
@@ -97,8 +97,8 @@ class TestCreateTreeInventoryGrid:
 
         # Source metadata captures every resolved default.
         source = data["source"]
-        assert source["name"] == "inventory"
-        assert source["product"] == "tree"
+        assert source["name"] == "tree"
+        assert source["product"] == "voxelize"
         assert source["source_inventory_id"] == tree_inventory_for_voxelization["id"]
         assert source["resolution"] == {"horizontal": 2.0, "vertical": 1.0}
         assert source["bands"] == ["bulk_density.foliage.live"]
@@ -570,6 +570,6 @@ class TestCreateTreeInventoryGrid:
             f"{response.status_code}: {response.json()}"
         )
         data = response.json()
-        assert data["source"]["name"] == "inventory"
-        assert data["source"]["product"] == "tree"
+        assert data["source"]["name"] == "tree"
+        assert data["source"]["product"] == "voxelize"
         assert data["status"] == "pending"

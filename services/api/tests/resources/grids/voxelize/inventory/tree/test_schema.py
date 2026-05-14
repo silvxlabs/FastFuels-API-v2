@@ -1,26 +1,22 @@
 """
-Unit tests for api/resources/grids/tree/schema.py
-and api/resources/grids/tree/inventory/schema.py.
+Unit tests for api/resources/grids/voxelize/inventory/tree/schema.py.
 
 Pure schema tests with no external dependencies.
 """
 
 import pytest
 from api.resources.grids.schema import BandType
-from api.resources.grids.tree.inventory.examples import (
+from api.resources.grids.voxelize.inventory.tree.examples import (
     ALL_TREE_INVENTORY_EXAMPLE_VALUES,
 )
-from api.resources.grids.tree.inventory.schema import (
-    CreateTreeInventoryRequest,
-    TreeInventorySource,
-)
-from api.resources.grids.tree.schema import (
+from api.resources.grids.voxelize.inventory.tree.schema import (
     TREE_BAND_DEFS,
     AllometryBiomassSource,
     AllometryMaxCrownRadiusSource,
     BiomassComponent,
     BiomassComponentState,
     BiomassEquations,
+    CreateTreeInventoryRequest,
     CrownProfileModel,
     FineBiomassConfig,
     InventoryColumnMaxCrownRadiusSource,
@@ -28,6 +24,7 @@ from api.resources.grids.tree.schema import (
     MaxCrownRadiusUnit,
     MoistureModel,
     TreeBand,
+    TreeInventorySource,
     UniformMoistureValue,
     build_tree_bands,
 )
@@ -649,8 +646,8 @@ class TestTreeInventorySource:
             biomass_source=AllometryBiomassSource(),
             seed=42,
         )
-        assert source.name == "inventory"
-        assert source.product == "tree"
+        assert source.name == "tree"
+        assert source.product == "voxelize"
         assert "tree" in source.description.lower()
 
     def test_max_crown_radius_source_persists_inventory_column(self):
@@ -696,8 +693,8 @@ class TestTreeInventorySource:
             seed=42,
         )
         data = source.model_dump(mode="json", exclude_none=True)
-        assert data["name"] == "inventory"
-        assert data["product"] == "tree"
+        assert data["name"] == "tree"
+        assert data["product"] == "voxelize"
         assert data["source_inventory_id"] == "inv123"
         assert data["resolution"] == {"horizontal": 2.0, "vertical": 1.0}
         assert data["bands"] == ["bulk_density.foliage.live", "fuel_moisture.live"]

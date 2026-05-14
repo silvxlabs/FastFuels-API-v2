@@ -1,5 +1,5 @@
 """
-Example request bodies for the tree/inventory endpoint.
+Example request bodies for the voxelize/inventory/tree endpoint.
 
 These examples are used in:
 1. OpenAPI/Swagger documentation — Users see these as example payloads

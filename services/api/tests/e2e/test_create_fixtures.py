@@ -64,7 +64,7 @@ def test_create_blue_mtn_tree_inventory_voxels(
     create_static_fixture(
         client=client,
         domain_id=blue_mountain_domain["id"],
-        endpoint="/grids/tree/inventory",
+        endpoint="/grids/voxelize/inventory/tree",
         body={
             "source_inventory_id": "static-test-blue-mtn-pim-inventory",
             "resolution": {"horizontal": 2, "vertical": 1},

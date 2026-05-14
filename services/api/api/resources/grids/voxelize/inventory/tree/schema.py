@@ -11,7 +11,6 @@ from enum import StrEnum
 from random import randint
 from typing import Annotated, Literal, Self
 
-from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -20,6 +19,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 
 
 class TreeBand(StrEnum):

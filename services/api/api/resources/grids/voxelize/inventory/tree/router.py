@@ -11,6 +11,8 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
+from fastapi import APIRouter, Body, HTTPException, Request, status
+
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.resources.grids.schema import Grid
@@ -24,8 +26,6 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
-from fastapi import APIRouter, Body, HTTPException, Request, status
-
 from lib.config import (
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,

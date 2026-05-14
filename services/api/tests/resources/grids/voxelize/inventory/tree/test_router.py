@@ -10,9 +10,9 @@ import pytest
 from api.resources.grids.voxelize.inventory.tree.examples import (
     ALL_TREE_INVENTORY_EXAMPLE_VALUES,
 )
-from tests.fixtures import make_domain_data, make_inventory_data
 
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_COLLECTION
+from tests.fixtures import make_domain_data, make_inventory_data
 
 # --- Fixtures ---
 

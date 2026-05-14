@@ -32,7 +32,7 @@ COLLECTION = FEATURES_COLLECTION
 
 
 @router.post(
-    "",
+    "/osm",
     response_model=Feature,
     status_code=status.HTTP_201_CREATED,
     summary="Create a water feature from OpenStreetMap",

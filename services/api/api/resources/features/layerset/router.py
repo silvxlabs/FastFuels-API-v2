@@ -77,7 +77,7 @@ def _extract_bounds(geojson: dict) -> tuple[float, float, float, float] | None:
 
 
 @router.post(
-    "",
+    "/geojson",
     response_model=Feature,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a custom Layerset",

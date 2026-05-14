@@ -19,7 +19,6 @@ class UploadBandDefinition(BaseModel):
     )
     type: BandType
     unit: str | None = None
-    description: str | None = None
 
 
 class CreateGridUploadRequest(BaseModel):

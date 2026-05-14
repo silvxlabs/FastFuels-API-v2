@@ -4,11 +4,11 @@ api/v2/resources/features/layerset/schema.py
 Schemas for the Layerset feature type.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from api.resources.features.schema import CreateFeatureRequestBase
+from api.resources.features.schema import CreateFeatureRequestBase, FeatureType
 
 
 class LayersetSource(BaseModel):
@@ -67,6 +67,7 @@ class LayersetFeatureCollection(BaseModel):
 class CreateLayersetRequestBody(CreateFeatureRequestBase):
     """Request body for uploading a custom hierarchical GeoJSON layerset."""
 
+    type: Literal[FeatureType.layerset] = FeatureType.layerset
     geojson: LayersetFeatureCollection = Field(
         ...,
         description="The hierarchical GeoJSON FeatureCollection data.",

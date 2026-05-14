@@ -6,6 +6,7 @@ These are pure unit tests with no external dependencies.
 """
 
 import pytest
+from api.resources.inventories.tree.upload.examples import ALL_UPLOAD_EXAMPLE_VALUES
 from api.resources.inventories.tree.upload.schema import (
     CreateInventoryUploadRequest,
     InventoryColumnMapping,
@@ -118,3 +119,11 @@ class TestCreateInventoryUploadRequest:
         )
         assert req.name == "Field Survey 2024"
         assert req.tags == ["field", "2024"]
+
+
+class TestOpenApiExamples:
+    @pytest.mark.parametrize("example_name,example_value", ALL_UPLOAD_EXAMPLE_VALUES)
+    def test_example_validates_against_schema(self, example_name, example_value):
+        """Every OpenAPI example must parse without error."""
+        request = CreateInventoryUploadRequest(**example_value)
+        assert request.format is not None

@@ -1,33 +1,33 @@
 """
-Integration tests for api/v2/resources/features/road/router.py
+Integration tests for api/v2/resources/features/water/router.py
 
-Tests the POST /domains/{domain_id}/features/road/osm endpoint.
+Tests the POST /domains/{domain_id}/features/water/osm endpoint.
 These tests make real HTTP requests to the API and interact with Firestore.
 """
 
 from unittest.mock import patch
 
 import pytest
-from api.resources.features.road.examples import ROAD_EXAMPLE_VALUES
+from api.resources.features.water.examples import WATER_EXAMPLE_VALUES
 
 
 # Mock out Cloud Tasks so tests don't attempt to enqueue real background jobs
 @pytest.fixture(autouse=True)
 def mock_create_task():
-    with patch("api.resources.features.road.router.create_http_task_async") as mock:
+    with patch("api.resources.features.water.router.create_http_task_async") as mock:
         yield mock
 
 
-class TestCreateOsmRoadFeature:
-    """Test the POST /domains/{domain_id}/features/road/osm endpoint."""
+class TestCreateOsmWaterFeature:
+    """Test the POST /domains/{domain_id}/features/water/osm endpoint."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/features/road/osm"
+        return f"/domains/{domain_id}/features/water/osm"
 
     def test_minimal_request_creates_feature(self, client, domain_for_testing):
         """Minimal request creates a feature document in pending state."""
         response = client.post(
-            self.route(domain_for_testing["id"]), json={"type": "road"}
+            self.route(domain_for_testing["id"]), json={"type": "water"}
         )
 
         assert response.status_code == 201
@@ -36,7 +36,7 @@ class TestCreateOsmRoadFeature:
         assert "id" in data
         assert len(data["id"]) == 32
         assert data["domain_id"] == domain_for_testing["id"]
-        assert data["type"] == "road"
+        assert data["type"] == "water"
 
         # Background worker hasn't run yet
         assert data["status"] == "pending"
@@ -53,10 +53,10 @@ class TestCreateOsmRoadFeature:
     def test_request_with_metadata(self, client, domain_for_testing):
         """Request accepts name, description, and tags."""
         request_body = {
-            "type": "road",
-            "name": "Project Alpha Roads",
-            "description": "Custom clipped road boundaries",
-            "tags": ["osm", "roads", "alpha"],
+            "type": "water",
+            "name": "Project Alpha Hydrology",
+            "description": "OSM-derived hydrology layer",
+            "tags": ["osm", "water", "alpha"],
         }
 
         response = client.post(self.route(domain_for_testing["id"]), json=request_body)
@@ -64,14 +64,14 @@ class TestCreateOsmRoadFeature:
         assert response.status_code == 201
 
         data = response.json()
-        assert data["name"] == "Project Alpha Roads"
-        assert data["description"] == "Custom clipped road boundaries"
-        assert data["tags"] == ["osm", "roads", "alpha"]
+        assert data["name"] == "Project Alpha Hydrology"
+        assert data["description"] == "OSM-derived hydrology layer"
+        assert data["tags"] == ["osm", "water", "alpha"]
 
     def test_invalid_domain_returns_404(self, client):
         """Non-existent domain_id returns 404."""
         response = client.post(
-            self.route("00000000000000000000000000000000"), json={"type": "road"}
+            self.route("00000000000000000000000000000000"), json={"type": "water"}
         )
 
         assert response.status_code == 404
@@ -80,7 +80,7 @@ class TestCreateOsmRoadFeature:
     def test_wrong_owner_domain_returns_404(self, client, domain_with_different_owner):
         """Domain owned by another user returns 404."""
         response = client.post(
-            self.route(domain_with_different_owner["id"]), json={"type": "road"}
+            self.route(domain_with_different_owner["id"]), json={"type": "water"}
         )
 
         assert response.status_code == 404
@@ -88,18 +88,18 @@ class TestCreateOsmRoadFeature:
     def test_response_excludes_owner_id(self, client, domain_for_testing):
         """Response should not expose the owner_id field to the client."""
         response = client.post(
-            self.route(domain_for_testing["id"]), json={"type": "road"}
+            self.route(domain_for_testing["id"]), json={"type": "water"}
         )
         assert response.status_code == 201
 
         data = response.json()
         assert "owner_id" not in data
 
-    @pytest.mark.parametrize("example_name,example_value", ROAD_EXAMPLE_VALUES)
+    @pytest.mark.parametrize("example_name,example_value", WATER_EXAMPLE_VALUES)
     def test_documented_example_creates_feature(
         self, client, domain_for_testing, example_name, example_value
     ):
-        """Each documented ROAD example payload should successfully create a feature."""
+        """Each documented WATER example payload should successfully create a feature."""
         response = client.post(self.route(domain_for_testing["id"]), json=example_value)
 
         assert response.status_code == 201, (
@@ -108,5 +108,5 @@ class TestCreateOsmRoadFeature:
         )
 
         data = response.json()
-        assert data["type"] == "road"
+        assert data["type"] == "water"
         assert data["source"]["product"] == "osm"

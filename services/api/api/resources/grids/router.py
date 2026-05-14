@@ -50,7 +50,6 @@ from api.resources.grids.schema import (
     UpdateGridRequestBody,
 )
 from api.resources.grids.topography.router import router as topography_router
-from api.resources.grids.tree.router import router as tree_router
 from api.resources.grids.uniform.router import router as uniform_router
 from api.resources.grids.upload.router import router as upload_router
 from api.resources.grids.utils import (
@@ -58,6 +57,7 @@ from api.resources.grids.utils import (
     compute_chunk_slices,
     validate_grid_has_band,
 )
+from api.resources.grids.voxelize.router import router as voxelize_router
 from api.schema import SortOrder
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 
@@ -812,6 +812,6 @@ router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
 router.include_router(canopy_router, prefix="/canopy", tags=["Grids - Canopy"])
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
-router.include_router(tree_router, prefix="/tree")
+router.include_router(voxelize_router, prefix="/voxelize")
 router.include_router(uniform_router, prefix="/uniform", tags=["Grids - Uniform"])
 router.include_router(upload_router, prefix="/upload", tags=["Grids - Upload"])

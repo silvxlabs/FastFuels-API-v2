@@ -239,3 +239,71 @@ class TestCreateGridExportZarr:
         assert data["source"]["grid_id"] == completed_grid["id"]
 
         cleanup_export(firestore_client, data["id"])
+
+
+class TestCreateGridExportNetcdf:
+    """Test the POST /domains/{domain_id}/grids/{grid_id}/exports/netcdf endpoint."""
+
+    def test_create_all_bands(
+        self, client, firestore_client, domain_for_testing, completed_grid
+    ):
+        """Create netcdf export with all bands."""
+        response = client.post(
+            grid_export_route(
+                domain_for_testing["id"], completed_grid["id"], fmt="netcdf"
+            ),
+            json={
+                "name": "All bands netcdf export",
+                "tags": ["test"],
+            },
+        )
+
+        assert response.status_code == 201
+
+        data = response.json()
+        assert data["status"] == "pending"
+        assert data["source"]["name"] == "netcdf"
+        assert data["source"]["grid_id"] == completed_grid["id"]
+        assert data["source"]["bands"] is None
+
+        cleanup_export(firestore_client, data["id"])
+
+    def test_create_band_subset(
+        self, client, firestore_client, domain_for_testing, completed_grid
+    ):
+        """Create netcdf export with a subset of bands."""
+        response = client.post(
+            grid_export_route(
+                domain_for_testing["id"], completed_grid["id"], fmt="netcdf"
+            ),
+            json={
+                "bands": ["fuel_load.1hr"],
+            },
+        )
+
+        assert response.status_code == 201
+
+        data = response.json()
+        assert data["source"]["name"] == "netcdf"
+        assert data["source"]["bands"] == ["fuel_load.1hr"]
+
+        cleanup_export(firestore_client, data["id"])
+
+    def test_create_minimal(
+        self, client, firestore_client, domain_for_testing, completed_grid
+    ):
+        """Minimal netcdf export request."""
+        response = client.post(
+            grid_export_route(
+                domain_for_testing["id"], completed_grid["id"], fmt="netcdf"
+            ),
+            json={},
+        )
+
+        assert response.status_code == 201
+
+        data = response.json()
+        assert data["source"]["name"] == "netcdf"
+        assert data["source"]["grid_id"] == completed_grid["id"]
+
+        cleanup_export(firestore_client, data["id"])

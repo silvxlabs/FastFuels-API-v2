@@ -54,7 +54,7 @@ async def create_grid_export(
 ):
     """Export a grid to the specified format.
 
-    Supported formats: `geotiff`, `zarr` (zipped).
+    Supported formats: `geotiff`, `zarr` (zipped), `netcdf` (CF-1.13).
 
     The grid must belong to this domain and have status `completed`.
     If `bands` is specified, only those bands are included; otherwise

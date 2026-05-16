@@ -89,6 +89,7 @@ class GridExportFormat(StrEnum):
 
     geotiff = "geotiff"
     zarr = "zarr"
+    netcdf = "netcdf"
 
 
 class ExportGridRequest(BaseModel):
@@ -173,7 +174,7 @@ class GridExportSource(BaseModel):
     Recorded in the Export.source field for provenance.
     """
 
-    name: str = Field(..., pattern="^(geotiff|zarr)$")
+    name: GridExportFormat
     grid_id: str
     bands: list[str] | None = Field(
         default=None,

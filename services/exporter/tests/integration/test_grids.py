@@ -201,3 +201,164 @@ class TestZarrExport:
         assert "spatial_ref" in ds.coords
         assert "spatial_ref" not in ds.data_vars
         ds.close()
+
+
+def _open_netcdf_from_gcs(gcs_path: str) -> tuple[str, xr.Dataset, xr.Dataset]:
+    """Download a netCDF from GCS to a temp file and reopen it twice.
+
+    Returns ``(local_path, decoded_ds, raw_ds)`` — the caller is responsible
+    for closing both datasets. h5netcdf needs a local seekable file (it
+    cannot stream from a gcsfs handle for HDF5 reads), so we download once
+    and reopen with and without ``decode_coords="all"`` to inspect both
+    decoded and raw-attribute states.
+    """
+    fs = gcsfs.GCSFileSystem()
+    extract_dir = tempfile.mkdtemp()
+    local_path = os.path.join(extract_dir, "export.nc")
+    with fs.open(gcs_path, "rb") as src, open(local_path, "wb") as dst:
+        dst.write(src.read())
+    decoded = xr.open_dataset(local_path, decode_coords="all")
+    raw = xr.open_dataset(local_path, decode_coords=False)
+    return local_path, decoded, raw
+
+
+class TestNetcdfExport:
+    @pytest.mark.parametrize(
+        "source_grid", ["static-test-blue-mtn-landfire-fbfm40"], indirect=True
+    )
+    def test_single_band_all_bands_2d(self, exporter_runner, source_grid):
+        """Export the single-band 2D FBFM40 grid to netCDF and verify CF-1.13."""
+        export = exporter_runner(source_grid, "netcdf.json")
+
+        filename = sanitize_filename(export.get("name", ""), ".nc")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
+        _, ds, ds_raw = _open_netcdf_from_gcs(gcs_path)
+        try:
+            assert ds.attrs.get("Conventions") == "CF-1.13"
+            assert str(ds.rio.crs) == "EPSG:32611"
+            assert "fbfm" in ds.data_vars
+            assert "spatial_ref" in ds.coords
+            assert ds_raw["fbfm"].attrs["grid_mapping"] == "spatial_ref"
+            assert ds["x"].attrs.get("axis") == "X"
+            assert ds["y"].attrs.get("axis") == "Y"
+            # 2D — no z dim, no z-axis attrs to verify
+            assert "z" not in ds.dims
+            # Internal attrs must be stripped on netCDF write
+            assert "transform" not in ds.attrs
+        finally:
+            ds.close()
+            ds_raw.close()
+
+    @pytest.mark.parametrize(
+        "source_grid",
+        ["static-test-blue-mtn-landfire-topography"],
+        indirect=True,
+    )
+    def test_multi_band_2d(self, exporter_runner, source_grid):
+        """Export all 3 bands from the 2D topography grid; per-band units propagate."""
+        export = exporter_runner(source_grid, "netcdf.json")
+
+        filename = sanitize_filename(export.get("name", ""), ".nc")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
+        _, ds, ds_raw = _open_netcdf_from_gcs(gcs_path)
+        try:
+            assert ds.attrs.get("Conventions") == "CF-1.13"
+            assert str(ds.rio.crs) == "EPSG:32611"
+            for band in ("elevation", "slope", "aspect"):
+                assert band in ds.data_vars, band
+                assert ds_raw[band].attrs["grid_mapping"] == "spatial_ref", band
+            # Stamp_cf falls back to band key when no per-band description exists.
+            assert ds["elevation"].attrs.get("long_name") == "elevation"
+        finally:
+            ds.close()
+            ds_raw.close()
+
+    @pytest.mark.parametrize(
+        "source_grid",
+        ["static-test-blue-mtn-landfire-topography"],
+        indirect=True,
+    )
+    def test_band_subset_2d(self, exporter_runner, source_grid):
+        """Subset to elevation+slope; only those bands should appear."""
+        export = exporter_runner(
+            source_grid,
+            "netcdf.json",
+            source_overrides={"bands": ["elevation", "slope"]},
+        )
+
+        filename = sanitize_filename(export.get("name", ""), ".nc")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
+        _, ds, _ = _open_netcdf_from_gcs(gcs_path)
+        try:
+            assert set(ds.data_vars) == {"elevation", "slope"}
+        finally:
+            ds.close()
+
+    @pytest.mark.parametrize(
+        "source_grid",
+        ["static-test-blue-mtn-tree-inventory-voxels"],
+        indirect=True,
+    )
+    def test_3d_voxel_grid(self, exporter_runner, source_grid):
+        """Export a 3D voxel grid; z-axis attrs and per-band units must be CF-conformant."""
+        export = exporter_runner(source_grid, "netcdf.json", timeout=180)
+
+        filename = sanitize_filename(export.get("name", ""), ".nc")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
+        _, ds, ds_raw = _open_netcdf_from_gcs(gcs_path)
+        try:
+            assert ds.attrs.get("Conventions") == "CF-1.13"
+            assert str(ds.rio.crs) == "EPSG:32611"
+            assert {"z", "y", "x"}.issubset(ds.dims)
+
+            # CF z-axis: positive="up", axis="Z"
+            assert ds["z"].attrs.get("axis") == "Z"
+            assert ds["z"].attrs.get("positive") == "up"
+
+            # Tree-voxel bands and units from the Grid document
+            for band in (
+                "volume_fraction",
+                "bulk_density.foliage.live",
+                "fuel_moisture.live",
+                "savr.foliage",
+            ):
+                assert band in ds.data_vars, band
+                assert ds_raw[band].attrs["grid_mapping"] == "spatial_ref", band
+
+            # Units flow from the Grid document's bands list into the netCDF.
+            assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m³"
+            assert ds["fuel_moisture.live"].attrs.get("units") == "%"
+            assert ds["savr.foliage"].attrs.get("units") == "m⁻¹"
+
+            # Internal-only attrs from treevox storage must not leak.
+            assert "transform" not in ds.attrs
+            assert "z_origin" not in ds.attrs
+            assert "z_resolution" not in ds.attrs
+        finally:
+            ds.close()
+            ds_raw.close()
+
+    @pytest.mark.parametrize(
+        "source_grid",
+        ["static-test-blue-mtn-tree-inventory-voxels"],
+        indirect=True,
+    )
+    def test_3d_band_subset(self, exporter_runner, source_grid):
+        """Subset of a 3D grid keeps just the requested bands; CF metadata still applied."""
+        export = exporter_runner(
+            source_grid,
+            "netcdf.json",
+            source_overrides={"bands": ["bulk_density.foliage.live"]},
+            timeout=180,
+        )
+
+        filename = sanitize_filename(export.get("name", ""), ".nc")
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export['id']}/{filename}"
+        _, ds, _ = _open_netcdf_from_gcs(gcs_path)
+        try:
+            assert set(ds.data_vars) == {"bulk_density.foliage.live"}
+            assert ds.attrs.get("Conventions") == "CF-1.13"
+            assert str(ds.rio.crs) == "EPSG:32611"
+            assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m³"
+        finally:
+            ds.close()

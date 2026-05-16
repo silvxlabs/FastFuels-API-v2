@@ -85,7 +85,8 @@
       "type": "allometry"
     },
     "crown_profile_model": "purves",
-    "description": "3D tree fuel grid from tree inventory voxelization",
+    "entity": "tree",
+    "input": "inventory",
     "max_crown_radius_source": {
       "type": "allometry"
     },
@@ -95,8 +96,7 @@
         "value": 100.0
       }
     },
-    "name": "inventory",
-    "product": "tree",
+    "operation": "voxelize",
     "resolution": {
       "horizontal": 2.0,
       "vertical": 1.0

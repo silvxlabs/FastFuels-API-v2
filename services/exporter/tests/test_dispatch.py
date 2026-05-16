@@ -44,6 +44,22 @@ class TestDispatchHandler:
         if isinstance(exc_info.value, ProcessingError):
             assert exc_info.value.code != "UNKNOWN_FORMAT"
 
+    def test_netcdf_source_name_recognized(self):
+        """netcdf source name is dispatched (will fail on missing grid, but not UNKNOWN_FORMAT)."""
+        export = {
+            "id": "test-export",
+            "source": {
+                "name": "netcdf",
+                "grid_id": "nonexistent",
+            },
+        }
+
+        with pytest.raises(Exception) as exc_info:
+            dispatch_handler(export, self._noop_progress)
+
+        if isinstance(exc_info.value, ProcessingError):
+            assert exc_info.value.code != "UNKNOWN_FORMAT"
+
     def test_geotiff_source_name_recognized(self):
         """geotiff source name is dispatched (will fail on missing grid, but not UNKNOWN_FORMAT)."""
         export = {

@@ -1,0 +1,18 @@
+{
+  "description": "Integration test export",
+  "domain_id": "test-domain",
+  "error": null,
+  "expiration_days": 1,
+  "expires_on": null,
+  "name": "Test NetCDF Export",
+  "owner_id": "integration-test",
+  "progress": null,
+  "signed_url": null,
+  "source": {
+    "bands": null,
+    "grid_id": "PLACEHOLDER",
+    "name": "netcdf"
+  },
+  "status": "pending",
+  "tags": []
+}

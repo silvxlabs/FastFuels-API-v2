@@ -8,6 +8,7 @@ dependencies = [
     "functions-framework>=3.10.0",
     "gcsfs>=2024.1.0",
     "geopandas>=1.0.0",
+    "h5netcdf[h5py]>=1.8",
     "lib[firestore,gcs,zarr]",
     "pandas>=2.0.0",
     "pyarrow>=15.0.0",

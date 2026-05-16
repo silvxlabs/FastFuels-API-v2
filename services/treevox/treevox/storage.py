@@ -16,6 +16,7 @@ constraints this file enforces.
 from __future__ import annotations
 
 import logging
+import warnings
 
 import dask.array as da
 import numpy as np
@@ -122,7 +123,11 @@ def init_store(
     ds.attrs["transform"] = [hr, 0.0, x_origin, 0.0, -hr, y_origin]
     ds.attrs["z_origin"] = float(z_origin)
     ds.attrs["z_resolution"] = float(vr)
-    ds.to_zarr(path, mode="w", compute=False, encoding=encoding, consolidated=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message="Consolidated metadata", category=UserWarning
+        )
+        ds.to_zarr(path, mode="w", compute=False, encoding=encoding, consolidated=True)
 
 
 def read_union(path: str, y_slice: slice, x_slice: slice) -> xr.Dataset:

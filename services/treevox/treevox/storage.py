@@ -109,6 +109,13 @@ def init_store(
     )
     ds = ds.rio.write_crs(crs)
 
+    # CF §5.6: link each data var to the spatial_ref coord so
+    # `xr.open_zarr(..., decode_coords="all")` promotes spatial_ref back
+    # to a coord on reopen — without this, rioxarray.open_rasterio-style
+    # auto-discovery fails and `.rio.crs` returns None.
+    for v in ds.data_vars:
+        ds[v].attrs["grid_mapping"] = "spatial_ref"
+
     # Derive transform from cell-center coords and resolution.
     x_origin = float(x_coords[0]) - hr / 2
     y_origin = float(y_coords[0]) + hr / 2

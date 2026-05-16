@@ -229,8 +229,11 @@ class TestGridExportFormat:
     def test_zarr(self):
         assert GridExportFormat.zarr == "zarr"
 
-    def test_has_2_members(self):
-        assert len(GridExportFormat) == 2
+    def test_netcdf(self):
+        assert GridExportFormat.netcdf == "netcdf"
+
+    def test_has_3_members(self):
+        assert len(GridExportFormat) == 3
 
 
 class TestExportGridRequest:

@@ -23,8 +23,8 @@ from lib.gcs import exists
 
 SINGLE_BAND = [{"key": "fbfm", "type": "categorical"}]
 MULTI_BAND = [
-    {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m3"},
-    {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m3"},
+    {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m**3"},
+    {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m**3"},
 ]
 
 # GeoTIFF bounds inside domain_for_testing extent (x=[500000,501000], y=[5200000,5201000])

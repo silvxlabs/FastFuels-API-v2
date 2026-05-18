@@ -18,6 +18,8 @@ from api.resources.grids.canopy.schema import (
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
+from lib.units import validate_unit
+
 
 class TestLandfireCanopyFuelBand:
     """Tests for the LandfireCanopyFuelBand enum."""
@@ -54,7 +56,9 @@ class TestLandfireCanopyFuelBandDefs:
         assert LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand.cbd]["key"] == "cbd"
 
     def test_cbd_unit_is_kg_per_m3(self):
-        assert LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand.cbd]["unit"] == "kg/m^3"
+        assert (
+            LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand.cbd]["unit"] == "kg/m**3"
+        )
 
     def test_cbh_key(self):
         assert LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand.cbh]["key"] == "cbh"
@@ -71,6 +75,10 @@ class TestLandfireCanopyFuelBandDefs:
     def test_all_bands_are_continuous(self):
         for band_def in LANDFIRE_CANOPY_BAND_DEFS.values():
             assert band_def["type"] == BandType.continuous
+
+    def test_all_units_are_canonical(self):
+        for band_def in LANDFIRE_CANOPY_BAND_DEFS.values():
+            validate_unit(band_def.get("unit"))
 
 
 class TestBuildLandfireCanopyFuelBands:
@@ -93,7 +101,7 @@ class TestBuildLandfireCanopyFuelBands:
         assert len(bands) == 1
         assert bands[0].key == "cbd"
         assert bands[0].index == 0
-        assert bands[0].unit == "kg/m^3"
+        assert bands[0].unit == "kg/m**3"
 
     def test_subset_preserves_order(self):
         bands = build_landfire_canopy_bands(

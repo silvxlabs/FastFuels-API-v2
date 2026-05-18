@@ -262,15 +262,15 @@ def treevox_runner():
         # Create grid document mirroring what the API writes.
         grid_id = f"test-{uuid4().hex}"
         _BAND_DEFS = {
-            "bulk_density.foliage.live": {"type": "continuous", "unit": "kg/m³"},
-            "bulk_density.foliage.dead": {"type": "continuous", "unit": "kg/m³"},
-            "bulk_density.branchwood.live": {"type": "continuous", "unit": "kg/m³"},
-            "bulk_density.branchwood.dead": {"type": "continuous", "unit": "kg/m³"},
-            "bulk_density.fine.live": {"type": "continuous", "unit": "kg/m³"},
-            "bulk_density.fine.dead": {"type": "continuous", "unit": "kg/m³"},
+            "bulk_density.foliage.live": {"type": "continuous", "unit": "kg/m**3"},
+            "bulk_density.foliage.dead": {"type": "continuous", "unit": "kg/m**3"},
+            "bulk_density.branchwood.live": {"type": "continuous", "unit": "kg/m**3"},
+            "bulk_density.branchwood.dead": {"type": "continuous", "unit": "kg/m**3"},
+            "bulk_density.fine.live": {"type": "continuous", "unit": "kg/m**3"},
+            "bulk_density.fine.dead": {"type": "continuous", "unit": "kg/m**3"},
             "fuel_moisture.live": {"type": "continuous", "unit": "%"},
             "fuel_moisture.dead": {"type": "continuous", "unit": "%"},
-            "savr.foliage": {"type": "continuous", "unit": "m⁻¹"},
+            "savr.foliage": {"type": "continuous", "unit": "1/m"},
             "spcd": {"type": "categorical", "unit": None},
             "tree_id": {"type": "categorical", "unit": None},
             "volume_fraction": {"type": "continuous", "unit": None},

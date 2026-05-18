@@ -84,8 +84,8 @@ class TestBuildDataset:
         _write_geotiff(path, n_bands=2)
 
         bands_spec = [
-            {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m3"},
-            {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m3"},
+            {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m**3"},
+            {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m**3"},
         ]
         ds = _build_dataset(path, bands_spec, DOMAIN_CRS, DOMAIN_GDF)
 
@@ -99,11 +99,11 @@ class TestBuildDataset:
         _write_geotiff(path, n_bands=1)
 
         bands_spec = [
-            {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m3"}
+            {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m**3"}
         ]
         ds = _build_dataset(path, bands_spec, DOMAIN_CRS, DOMAIN_GDF)
 
-        assert ds["bulk_density.foliage"].attrs.get("units") == "kg/m3"
+        assert ds["bulk_density.foliage"].attrs.get("units") == "kg/m**3"
 
     def test_no_unit_no_attribute(self, tmp_path):
         """Band without unit does not set attrs['units']."""

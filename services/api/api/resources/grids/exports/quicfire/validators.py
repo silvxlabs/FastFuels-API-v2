@@ -42,13 +42,13 @@ from lib.config import GRIDS_COLLECTION
 
 # Per-role unit and dimensionality contract.
 _ROLE_CONTRACT: dict[str, tuple[int, str]] = {
-    "canopy_bulk_density": (3, "kg/m³"),
+    "canopy_bulk_density": (3, "kg/m**3"),
     "canopy_moisture": (3, "%"),
-    "canopy_savr": (3, "m⁻¹"),
-    "surface_fuel_load": (2, "kg/m²"),
+    "canopy_savr": (3, "1/m"),
+    "surface_fuel_load": (2, "kg/m**2"),
     "surface_fuel_depth": (2, "m"),
     "surface_moisture": (2, "%"),
-    "surface_savr": (2, "m⁻¹"),
+    "surface_savr": (2, "1/m"),
     "topography": (2, "m"),
 }
 

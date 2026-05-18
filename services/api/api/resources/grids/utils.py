@@ -56,7 +56,7 @@ def validate_band_unit(
         grid_data: Grid document data from Firestore.
         grid_id: Grid ID (for error messages).
         band_key: The band key to check.
-        expected_unit: The unit string the band must carry (e.g. 'kg/m³').
+        expected_unit: The unit string the band must carry (e.g. 'kg/m**3').
 
     Raises:
         HTTPException(422): If the band's unit does not match.

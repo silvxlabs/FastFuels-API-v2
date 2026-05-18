@@ -76,27 +76,27 @@ UNIFORM_BAND_DEFS: dict[UniformBand, dict] = {
     UniformBand.fuel_load_1hr: {
         "key": "fuel_load.1hr",
         "type": BandType.continuous,
-        "unit": "kg/m²",
+        "unit": "kg/m**2",
     },
     UniformBand.fuel_load_10hr: {
         "key": "fuel_load.10hr",
         "type": BandType.continuous,
-        "unit": "kg/m²",
+        "unit": "kg/m**2",
     },
     UniformBand.fuel_load_100hr: {
         "key": "fuel_load.100hr",
         "type": BandType.continuous,
-        "unit": "kg/m²",
+        "unit": "kg/m**2",
     },
     UniformBand.fuel_load_live_herb: {
         "key": "fuel_load.live_herb",
         "type": BandType.continuous,
-        "unit": "kg/m²",
+        "unit": "kg/m**2",
     },
     UniformBand.fuel_load_live_woody: {
         "key": "fuel_load.live_woody",
         "type": BandType.continuous,
-        "unit": "kg/m²",
+        "unit": "kg/m**2",
     },
     UniformBand.fuel_depth: {
         "key": "fuel_depth",

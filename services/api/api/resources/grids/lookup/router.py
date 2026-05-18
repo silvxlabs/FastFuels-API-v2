@@ -59,10 +59,10 @@ async def create_fbfm40_lookup(
 
     - **source_grid_id**: (required) Grid containing FBFM40 codes.
     - **bands**: (required) Bands to look up. Valid values:
-      - `fuel_load.1hr`, `fuel_load.10hr`, `fuel_load.100hr` - Dead fuel loads (kg/m²)
-      - `fuel_load.live_herb`, `fuel_load.live_woody` - Live fuel loads (kg/m²)
-      - `savr.1hr`, `savr.10hr`, `savr.100hr` - Dead fuel SAV ratios (m⁻¹)
-      - `savr.live_herb`, `savr.live_woody` - Live fuel SAV ratios (m⁻¹)
+      - `fuel_load.1hr`, `fuel_load.10hr`, `fuel_load.100hr` - Dead fuel loads (kg/m**2)
+      - `fuel_load.live_herb`, `fuel_load.live_woody` - Live fuel loads (kg/m**2)
+      - `savr.1hr`, `savr.10hr`, `savr.100hr` - Dead fuel SAV ratios (1/m)
+      - `savr.live_herb`, `savr.live_woody` - Live fuel SAV ratios (1/m)
       - `fuel_depth` - Fuel bed depth (m)
       - `moisture_of_extinction` - Dead fuel moisture of extinction (%)
       - `heat_content` - Fuel heat content (kJ/kg)

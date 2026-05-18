@@ -1148,6 +1148,7 @@ name = "lib"
 version = "0.1.0"
 source = { editable = "../lib" }
 dependencies = [
+    { name = "pint" },
     { name = "python-dotenv" },
 ]
 
@@ -1189,6 +1190,7 @@ requires-dist = [
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.23.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.9.0" },
     { name = "numpy", marker = "extra == 'raster'", specifier = ">=2.0.0" },
+    { name = "pint", specifier = ">=0.25" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
     { name = "rioxarray", marker = "extra == 'raster'", specifier = ">=0.21.0" },

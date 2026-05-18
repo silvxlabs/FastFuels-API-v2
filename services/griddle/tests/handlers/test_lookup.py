@@ -202,7 +202,7 @@ class TestUnitConversion:
     """Tests for imperial-to-metric unit conversion."""
 
     def test_fuel_load_conversion(self):
-        """Fuel load: tons/acre → kg/m²."""
+        """Fuel load: tons/acre → kg/m**2."""
         # GR1: 0.10 t/ac
         imperial = np.array([0.10])
         metric = _convert_to_metric(imperial, "fuel_load_1hr")

@@ -18,6 +18,8 @@ from api.resources.grids.uniform.schema import (
 )
 from pydantic import ValidationError
 
+from lib.units import validate_unit
+
 
 class TestUniformBand:
     """Tests for UniformBand enum."""
@@ -111,7 +113,7 @@ class TestUniformBandDefs:
         assert UNIFORM_BAND_DEFS[UniformBand.curing]["unit"] == "%"
 
     def test_fuel_load_unit_is_kg_per_m2(self):
-        """Fuel load bands use kg/m² unit."""
+        """Fuel load bands use kg/m**2 unit."""
         for b in [
             UniformBand.fuel_load_1hr,
             UniformBand.fuel_load_10hr,
@@ -119,10 +121,14 @@ class TestUniformBandDefs:
             UniformBand.fuel_load_live_herb,
             UniformBand.fuel_load_live_woody,
         ]:
-            assert UNIFORM_BAND_DEFS[b]["unit"] == "kg/m²"
+            assert UNIFORM_BAND_DEFS[b]["unit"] == "kg/m**2"
 
     def test_fuel_depth_unit_is_meters(self):
         assert UNIFORM_BAND_DEFS[UniformBand.fuel_depth]["unit"] == "m"
+
+    def test_all_units_are_canonical(self):
+        for d in UNIFORM_BAND_DEFS.values():
+            validate_unit(d.get("unit"))
 
     def test_key_matches_enum_value(self):
         """Each def's key matches the enum member's string value."""
@@ -330,7 +336,7 @@ class TestBuildUniformBands:
         assert bands[0].unit == "%"
         assert bands[0].index == 0
         assert bands[1].key == "fuel_load.1hr"
-        assert bands[1].unit == "kg/m²"
+        assert bands[1].unit == "kg/m**2"
         assert bands[1].index == 1
         assert bands[2].key == "fuel_depth"
         assert bands[2].unit == "m"

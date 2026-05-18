@@ -10,13 +10,13 @@
       "index": 1,
       "key": "slope",
       "type": "continuous",
-      "unit": "degrees"
+      "unit": "deg"
     },
     {
       "index": 2,
       "key": "aspect",
       "type": "continuous",
-      "unit": "degrees"
+      "unit": "deg"
     }
   ],
   "chunks": {

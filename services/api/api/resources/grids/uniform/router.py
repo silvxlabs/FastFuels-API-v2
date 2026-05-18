@@ -66,7 +66,7 @@ async def create_uniform_grid(
 
     **Curing** (unit: %): `curing`
 
-    **Fuel load** (unit: kg/m²): `fuel_load.1hr`, `fuel_load.10hr`,
+    **Fuel load** (unit: kg/m**2): `fuel_load.1hr`, `fuel_load.10hr`,
     `fuel_load.100hr`, `fuel_load.live_herb`, `fuel_load.live_woody`
 
     **Fuel depth** (unit: m): `fuel_depth`

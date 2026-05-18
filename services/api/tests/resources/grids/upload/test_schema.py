@@ -27,10 +27,10 @@ class TestGridUploadFormat:
 class TestUploadBandDefinition:
     def test_continuous_band_valid(self):
         band = UploadBandDefinition(
-            key="bulk_density.foliage", type="continuous", unit="kg/m3"
+            key="bulk_density.foliage", type="continuous", unit="kg/m**3"
         )
         assert band.key == "bulk_density.foliage"
-        assert band.unit == "kg/m3"
+        assert band.unit == "kg/m**3"
 
     def test_categorical_band_valid(self):
         band = UploadBandDefinition(key="fbfm", type="categorical")
@@ -52,11 +52,15 @@ class TestCreateGridUploadRequest:
     def test_multi_band_request(self):
         req = CreateGridUploadRequest(
             bands=[
-                {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m3"},
+                {
+                    "key": "bulk_density.foliage",
+                    "type": "continuous",
+                    "unit": "kg/m**3",
+                },
                 {
                     "key": "bulk_density.branchwood",
                     "type": "continuous",
-                    "unit": "kg/m3",
+                    "unit": "kg/m**3",
                 },
             ],
         )

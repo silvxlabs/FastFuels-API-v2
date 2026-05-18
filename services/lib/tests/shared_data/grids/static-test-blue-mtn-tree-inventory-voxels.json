@@ -10,7 +10,7 @@
       "index": 1,
       "key": "bulk_density.foliage.live",
       "type": "continuous",
-      "unit": "kg/m\u00b3"
+      "unit": "kg/m**3"
     },
     {
       "index": 2,
@@ -22,7 +22,7 @@
       "index": 3,
       "key": "savr.foliage",
       "type": "continuous",
-      "unit": "m\u207b\u00b9"
+      "unit": "1/m"
     }
   ],
   "chunks": {

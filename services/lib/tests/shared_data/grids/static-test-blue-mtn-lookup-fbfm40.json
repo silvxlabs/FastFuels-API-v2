@@ -4,7 +4,7 @@
       "index": 0,
       "key": "fuel_load.1hr",
       "type": "continuous",
-      "unit": "kg/m\u00b2"
+      "unit": "kg/m**2"
     },
     {
       "index": 1,
@@ -16,7 +16,7 @@
       "index": 2,
       "key": "savr.1hr",
       "type": "continuous",
-      "unit": "m\u207b\u00b9"
+      "unit": "1/m"
     }
   ],
   "chunks": {

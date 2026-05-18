@@ -99,7 +99,7 @@ class TestExportNetcdfUnit:
                     {
                         "key": "fuel_load.1hr",
                         "type": "continuous",
-                        "unit": "kg/m^2",
+                        "unit": "kg/m**2",
                         "index": 1,
                     },
                 ]
@@ -197,7 +197,7 @@ class TestExportNetcdfUnit:
                     {
                         "key": "fuel_load.1hr",
                         "type": "continuous",
-                        "unit": "kg/m^2",
+                        "unit": "kg/m**2",
                         "index": 1,
                     },
                 ]
@@ -232,7 +232,7 @@ class TestExportNetcdfUnit:
         # xarray hoists it from attrs to encoding on decoded reopen.
         for var in ("fbfm", "fuel_load.1hr"):
             assert ds_raw[var].attrs["grid_mapping"] == "spatial_ref", var
-        assert ds["fuel_load.1hr"].attrs.get("units") == "kg/m^2"
+        assert ds["fuel_load.1hr"].attrs.get("units") == "kg/m**2"
         assert ds["x"].attrs.get("axis") == "X"
         assert ds["y"].attrs.get("axis") == "Y"
         ds.close()
@@ -360,7 +360,7 @@ class TestExportNetcdfIntegration:
                     {
                         "key": "fuel_load.1hr",
                         "type": "continuous",
-                        "unit": "kg/m^2",
+                        "unit": "kg/m**2",
                         "index": 1,
                     },
                 ]
@@ -383,7 +383,7 @@ class TestExportNetcdfIntegration:
             assert CRS(result.rio.crs) == CRS(crs_str)
             assert "fbfm" in result.data_vars
             assert "fuel_load.1hr" in result.data_vars
-            assert result["fuel_load.1hr"].attrs.get("units") == "kg/m^2"
+            assert result["fuel_load.1hr"].attrs.get("units") == "kg/m**2"
             result.close()
 
     @patch("exporter.handlers.netcdf.get_document")

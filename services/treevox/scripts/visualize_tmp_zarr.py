@@ -206,7 +206,7 @@ def main():
         x,
         y,
         title="Integrated Foliage Load (column sum of bulk density * dz)",
-        cbar_label="Foliage Load (kg/m^2)",
+        cbar_label="Foliage Load (kg/m**2)",
         cmap="Greens",
         out=OUTPUT_DIR / "foliage_load_column.png",
         mask=(column_bd == 0),

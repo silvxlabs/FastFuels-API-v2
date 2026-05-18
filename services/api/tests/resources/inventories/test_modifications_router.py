@@ -13,7 +13,7 @@ import pytest
 from lib.config import GRIDS_COLLECTION, INVENTORIES_COLLECTION
 from tests.fixtures import make_grid_data, make_inventory_data
 
-pytest.skip("Not implemented yet")
+pytest.skip("Not implemented yet", allow_module_level=True)
 
 
 @pytest.fixture(scope="session")

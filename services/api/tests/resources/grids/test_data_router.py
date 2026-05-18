@@ -169,7 +169,7 @@ def completed_3d_grid_in_firestore(firestore_client, domain_for_testing):
             {
                 "key": "bulk_density.foliage.live",
                 "type": "continuous",
-                "unit": "kg/m³",
+                "unit": "kg/m**3",
                 "index": 0,
             },
         ],
@@ -554,7 +554,7 @@ class TestGetGridDataJson:
                 {
                     "key": "bulk_density.foliage.live",
                     "type": "continuous",
-                    "unit": "kg/m³",
+                    "unit": "kg/m**3",
                     "index": 0,
                 }
             ],

@@ -11,12 +11,12 @@ in ``source["<role>"]`` (each a ``{grid_id, band}`` dict).
 
 Surface and canopy values are merged at the bottom slab (k=0):
 
-- ``rhof`` (kg/m³): ``merged[0] = canopy[0] + surface_load / dz``
+- ``rhof`` (kg/m**3): ``merged[0] = canopy[0] + surface_load / dz``
 - ``moist`` (fraction, after dividing input % by 100): ``max`` of canopy[0]
   and surface (v1-parity default); ``weighted_avg`` is opt-in via
   ``source["moist_merge"]``
 - ``fueldepth`` (m): ``merged[0] = surface_depth`` (canopy contributes 0)
-- ``savr`` (m⁻¹, mass-weighted): converted to particle size scale (m)
+- ``savr`` (1/m, mass-weighted): converted to particle size scale (m)
   via ``2/SAVR`` before write
 
 Oversized role grids are cropped to the fire-grid extent by integer
@@ -148,7 +148,7 @@ def export_quicfire(
             savr_arr[0] = np.where(
                 total_rhof_k0 > 0, savr_numerator / total_rhof_k0, 0.0
             )
-            # SAVR (m⁻¹) → particle size scale (m): 2 / SAVR. Zero where SAVR
+            # SAVR (1/m) → particle size scale (m): 2 / SAVR. Zero where SAVR
             # is non-positive or NaN — those cells carry no resolvable fuel
             # geometry.
             treesss = np.where(savr_arr > 0, 2.0 / savr_arr, 0.0).astype(np.float32)

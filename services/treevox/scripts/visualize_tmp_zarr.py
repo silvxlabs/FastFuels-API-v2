@@ -2,7 +2,7 @@
 
 Reads `bulk_density.foliage.live` (nz, ny, nx) from the zarr store and produces:
   - 2D canopy height map (highest z with non-zero bulk density)
-  - 2D column-summed bulk density (kg/m^3 summed over z)
+  - 2D column-summed bulk density (kg/m**3 summed over z)
   - 3D PyVista rendering of canopy voxels (PNG + optional interactive window)
   - Vertical (x-z) cross-section through mid-y, averaged over a few rows
 
@@ -103,7 +103,7 @@ def plot_canopy_3d(bd, x, y, dx, dy, dz, out):
         cmap="Greens",
         opacity=0.5,
         clim=[0, float(bd.max())],
-        scalar_bar_args={"title": "Canopy Bulk Density (kg/m^3)"},
+        scalar_bar_args={"title": "Canopy Bulk Density (kg/m**3)"},
     )
     pl.add_axes()
     pl.set_background("white")
@@ -122,7 +122,7 @@ def show_canopy_interactive(bd, x, y, dx, dy, dz):
         cmap="Greens",
         opacity=0.5,
         clim=[0, float(bd.max())],
-        scalar_bar_args={"title": "Canopy Bulk Density (kg/m^3)"},
+        scalar_bar_args={"title": "Canopy Bulk Density (kg/m**3)"},
     )
     pl.add_axes()
     pl.set_background("white")
@@ -157,7 +157,7 @@ def plot_cross_section(bd, x, dx, dz, out, y_avg_width=10):
         interpolation="nearest",
     )
     cbar = fig.colorbar(im, ax=ax, fraction=0.02, pad=0.03)
-    cbar.set_label("Canopy Bulk Density (kg/m^3)", fontsize=11)
+    cbar.set_label("Canopy Bulk Density (kg/m**3)", fontsize=11)
     ax.set_xlabel("Easting (m)", fontsize=12)
     ax.set_ylabel("Height Above Ground (m)", fontsize=12)
     ax.set_title(
@@ -206,7 +206,7 @@ def main():
         x,
         y,
         title="Integrated Foliage Load (column sum of bulk density * dz)",
-        cbar_label="Foliage Load (kg/m^2)",
+        cbar_label="Foliage Load (kg/m**2)",
         cmap="Greens",
         out=OUTPUT_DIR / "foliage_load_column.png",
         mask=(column_bd == 0),

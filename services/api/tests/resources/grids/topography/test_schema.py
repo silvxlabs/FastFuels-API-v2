@@ -20,6 +20,8 @@ from api.resources.grids.topography.schema import (
 )
 from pydantic import ValidationError
 
+from lib.units import validate_unit
+
 
 class TestTopographyBand:
     """Tests for TopographyBand enum."""
@@ -202,17 +204,21 @@ class TestTopographyBandDefs:
         assert TOPOGRAPHY_BAND_DEFS[TopographyBand.slope]["key"] == "slope"
 
     def test_slope_unit(self):
-        assert TOPOGRAPHY_BAND_DEFS[TopographyBand.slope]["unit"] == "degrees"
+        assert TOPOGRAPHY_BAND_DEFS[TopographyBand.slope]["unit"] == "deg"
 
     def test_aspect_key(self):
         assert TOPOGRAPHY_BAND_DEFS[TopographyBand.aspect]["key"] == "aspect"
 
     def test_aspect_unit(self):
-        assert TOPOGRAPHY_BAND_DEFS[TopographyBand.aspect]["unit"] == "degrees"
+        assert TOPOGRAPHY_BAND_DEFS[TopographyBand.aspect]["unit"] == "deg"
 
     def test_all_bands_are_continuous(self):
         for band_def in TOPOGRAPHY_BAND_DEFS.values():
             assert band_def["type"] == BandType.continuous
+
+    def test_all_units_are_canonical(self):
+        for band_def in TOPOGRAPHY_BAND_DEFS.values():
+            validate_unit(band_def.get("unit"))
 
 
 class TestBuildTopographyBands:
@@ -239,7 +245,7 @@ class TestBuildTopographyBands:
         assert len(bands) == 1
         assert bands[0].key == "slope"
         assert bands[0].index == 0
-        assert bands[0].unit == "degrees"
+        assert bands[0].unit == "deg"
 
     def test_subset_preserves_order(self):
         bands = build_topography_bands(

@@ -30,7 +30,7 @@ class CacheEntry:
     ------
     biomass_arrays
         List of 3D numpy arrays — each a `(nz, ny, nx)` canopy biomass
-        realization in kg/m³ sampled from the bin-representative tree's
+        realization in kg/m**3 sampled from the bin-representative tree's
         crown profile. Shape is consistent across the list (determined by
         the tree's crown dimensions + voxel resolution). Length varies by
         bin: scales with canopy volume and tree frequency via
@@ -473,7 +473,7 @@ def build_chunk_cache(
          b. `sample_occupied_cells(canopy_mask, alpha=0.5, beta=0.5, seed)`
             — stochastic sub-voxel occupancy.
          c. `VoxelizedTree(tree, sampled, hr, vr).distribute_biomass()` →
-            per-voxel kg/m³ array.
+            per-voxel kg/m**3 array.
          d. Sanitizes non-finite values (`foliage_biomass / 0 volume`
             edge case inside fastfuels-core) to zero so the downstream
             zarr store never receives NaN/Inf.
@@ -757,7 +757,7 @@ def _apply_bands(
     biomass_clip
         The source-slice view into the bin's biomass array, i.e.
         `biomass_array[source_slices]`. Same shape as `buf[buf_slices]`.
-        Non-zero values mark voxels the tree occupies; values are kg/m³
+        Non-zero values mark voxels the tree occupies; values are kg/m**3
         of foliage biomass.
     species_code
         FIA species code (int), from `CacheEntry.species_code`. Written

@@ -121,11 +121,11 @@ class TestBand:
     def test_band_with_unit(self):
         """Band with unit specified."""
         band = Band(
-            key="fuel_load.1hr", type=BandType.continuous, unit="kg/m²", index=1
+            key="fuel_load.1hr", type=BandType.continuous, unit="kg/m**2", index=1
         )
         assert band.key == "fuel_load.1hr"
         assert band.type == BandType.continuous
-        assert band.unit == "kg/m²"
+        assert band.unit == "kg/m**2"
         assert band.index == 1
 
     def test_key_is_required(self):
@@ -151,19 +151,19 @@ class TestBand:
     def test_model_dump(self):
         """Model serializes correctly."""
         band = Band(
-            key="fuel_load.1hr", type=BandType.continuous, unit="kg/m²", index=1
+            key="fuel_load.1hr", type=BandType.continuous, unit="kg/m**2", index=1
         )
         data = band.model_dump()
         assert data == {
             "key": "fuel_load.1hr",
             "type": "continuous",
-            "unit": "kg/m²",
+            "unit": "kg/m**2",
             "index": 1,
         }
 
     def test_dot_notation_keys_preserved(self):
         """Dot notation in keys is preserved."""
-        band = Band(key="savr.live_herb", type=BandType.continuous, unit="m⁻¹", index=5)
+        band = Band(key="savr.live_herb", type=BandType.continuous, unit="1/m", index=5)
         assert band.key == "savr.live_herb"
 
 

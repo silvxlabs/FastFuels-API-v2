@@ -48,32 +48,32 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
     TreeBand.bulk_density_foliage_live: {
         "key": "bulk_density.foliage.live",
         "type": BandType.continuous,
-        "unit": "kg/m³",
+        "unit": "kg/m**3",
     },
     TreeBand.bulk_density_foliage_dead: {
         "key": "bulk_density.foliage.dead",
         "type": BandType.continuous,
-        "unit": "kg/m³",
+        "unit": "kg/m**3",
     },
     TreeBand.bulk_density_branchwood_live: {
         "key": "bulk_density.branchwood.live",
         "type": BandType.continuous,
-        "unit": "kg/m³",
+        "unit": "kg/m**3",
     },
     TreeBand.bulk_density_branchwood_dead: {
         "key": "bulk_density.branchwood.dead",
         "type": BandType.continuous,
-        "unit": "kg/m³",
+        "unit": "kg/m**3",
     },
     TreeBand.bulk_density_fine_live: {
         "key": "bulk_density.fine.live",
         "type": BandType.continuous,
-        "unit": "kg/m³",
+        "unit": "kg/m**3",
     },
     TreeBand.bulk_density_fine_dead: {
         "key": "bulk_density.fine.dead",
         "type": BandType.continuous,
-        "unit": "kg/m³",
+        "unit": "kg/m**3",
     },
     TreeBand.fuel_moisture_live: {
         "key": "fuel_moisture.live",
@@ -88,7 +88,7 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
     TreeBand.savr_foliage: {
         "key": "savr.foliage",
         "type": BandType.continuous,
-        "unit": "m⁻¹",
+        "unit": "1/m",
     },
     TreeBand.spcd: {
         "key": "spcd",

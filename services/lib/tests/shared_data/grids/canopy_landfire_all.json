@@ -10,7 +10,7 @@
       "index": 1,
       "key": "cbd",
       "type": "continuous",
-      "unit": "kg/m^3"
+      "unit": "kg/m**3"
     },
     {
       "index": 2,

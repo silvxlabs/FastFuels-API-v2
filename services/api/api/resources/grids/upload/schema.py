@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from api.resources.grids.schema import BandType, Grid
+from lib.units import validate_unit
 
 
 class GridUploadFormat(StrEnum):
@@ -18,7 +19,22 @@ class UploadBandDefinition(BaseModel):
         ..., description="Dot-notation variable name, e.g. 'bulk_density.foliage'"
     )
     type: BandType
-    unit: str | None = None
+    unit: str | None = Field(
+        None,
+        description=(
+            "Physical unit of the band's pixel values, in UDUNITS-2-conformant "
+            "ASCII form with `**` for exponents (e.g. `kg/m**3`, `1/m`, `%`). "
+            "Optional for categorical/identifier bands. Non-canonical forms "
+            "(`kg/m³`, `kg/m^3`, `kg/m3`) are rejected. See docs/units.md."
+        ),
+        examples=["kg/m**3", "1/m", "%", "m"],
+    )
+
+    @field_validator("unit")
+    @classmethod
+    def _check_canonical_unit(cls, v: str | None) -> str | None:
+        validate_unit(v)
+        return v
 
 
 class CreateGridUploadRequest(BaseModel):

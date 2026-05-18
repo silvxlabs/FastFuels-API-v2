@@ -46,7 +46,7 @@ class TestCreateLandfireCanopy:
         assert data["bands"][0]["unit"] == "m"
         assert data["bands"][0]["index"] == 0
         assert data["bands"][1]["key"] == "cbd"
-        assert data["bands"][1]["unit"] == "kg/m^3"
+        assert data["bands"][1]["unit"] == "kg/m**3"
         assert data["bands"][1]["index"] == 1
         assert data["bands"][2]["key"] == "cbh"
         assert data["bands"][2]["unit"] == "m"

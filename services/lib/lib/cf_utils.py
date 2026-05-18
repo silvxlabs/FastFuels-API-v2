@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import xarray as xr
 
+from lib.units import validate_unit
+
 CF_CONVENTIONS = "CF-1.13"
 
 
@@ -58,6 +60,7 @@ def stamp_cf(
         ds[var].attrs.setdefault("long_name", var)
         unit = unit_by_key.get(var)
         if unit:
+            validate_unit(unit)
             ds[var].attrs["units"] = unit
 
     return ds

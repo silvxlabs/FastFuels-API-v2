@@ -250,6 +250,19 @@ class TestZ:
             _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)
         assert exc.value.code == "NONUNIFORM_Z"
 
+    def test_single_z_layer_rejected(self, tmp_path):
+        """nz=1 must be rejected — z_resolution cannot be derived from one level.
+
+        Without this check, _build_netcdf_dataset returns successfully and
+        handle_grid_netcdf later crashes with IndexError on z_vals[1].
+        """
+        ds = _build_3d_dataset(shape=(1, 20, 40), z_coords=np.array([0.0]))
+        path = _write_nc(ds, tmp_path / "nz1.nc")
+
+        with pytest.raises(ProcessingError) as exc:
+            _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)
+        assert exc.value.code == "SINGLE_Z_LAYER"
+
 
 class TestOverlap:
     def test_no_overlap(self, tmp_path):

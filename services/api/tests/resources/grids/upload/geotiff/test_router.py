@@ -1,7 +1,7 @@
 """
-Integration tests for api/v2/resources/grids/upload/router.py
+Integration tests for api/v2/resources/grids/upload/geotiff/router.py
 
-Tests the upload grid creation endpoint.
+Tests the GeoTIFF upload grid creation endpoint.
 These tests make real HTTP requests to the API and interact with Firestore.
 """
 
@@ -14,7 +14,9 @@ import numpy as np
 import pytest
 import rasterio
 import requests
-from api.resources.grids.upload.examples import ALL_GRID_UPLOAD_EXAMPLE_VALUES
+from api.resources.grids.upload.geotiff.examples import (
+    ALL_GRID_UPLOAD_EXAMPLE_VALUES,
+)
 from rasterio.crs import CRS
 from rasterio.transform import from_bounds
 
@@ -33,10 +35,10 @@ _TIFF_XMAX, _TIFF_YMAX = 500900.0, 5200900.0
 
 
 class TestCreateGridUpload:
-    """Test the POST /domains/{domain_id}/grids/upload endpoint."""
+    """Test the POST /domains/{domain_id}/grids/upload/geotiff endpoint."""
 
     def route(self, domain_id):
-        return f"/domains/{domain_id}/grids/upload"
+        return f"/domains/{domain_id}/grids/upload/geotiff"
 
     def test_minimal_request_returns_201(
         self, client, domain_for_testing, firestore_client
@@ -243,7 +245,7 @@ class TestUploadFullFlow:
 
         try:
             response = client.post(
-                f"/domains/{domain_id}/grids/upload",
+                f"/domains/{domain_id}/grids/upload/geotiff",
                 json={"bands": SINGLE_BAND, "name": "E2E Test Grid"},
             )
             assert response.status_code == 201, response.text

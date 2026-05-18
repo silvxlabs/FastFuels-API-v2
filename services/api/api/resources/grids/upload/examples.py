@@ -15,8 +15,8 @@ EXAMPLE_UPLOAD_SINGLE_BAND = {
 EXAMPLE_UPLOAD_MULTI_BAND = {
     "format": "geotiff",
     "bands": [
-        {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m3"},
-        {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m3"},
+        {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m**3"},
+        {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m**3"},
     ],
     "name": "Custom bulk density",
     "tags": ["lidar"],

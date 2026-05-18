@@ -47,11 +47,11 @@ class TestCreateLandfireTopography:
         assert data["bands"][0]["index"] == 0
         assert data["bands"][1]["key"] == "slope"
         assert data["bands"][1]["type"] == "continuous"
-        assert data["bands"][1]["unit"] == "degrees"
+        assert data["bands"][1]["unit"] == "deg"
         assert data["bands"][1]["index"] == 1
         assert data["bands"][2]["key"] == "aspect"
         assert data["bands"][2]["type"] == "continuous"
-        assert data["bands"][2]["unit"] == "degrees"
+        assert data["bands"][2]["unit"] == "deg"
         assert data["bands"][2]["index"] == 2
 
     def test_elevation_only(self, client, domain_for_testing):

@@ -60,7 +60,15 @@ class Band(BaseModel):
 
     key: str = Field(..., description="Dot-notation key (e.g., 'fuel_load.1hr')")
     type: BandType
-    unit: str | None = None
+    unit: str | None = Field(
+        None,
+        description=(
+            "Physical unit of the band's pixel values, in UDUNITS-2-conformant "
+            "ASCII form with `**` for exponents (e.g. `kg/m**3`, `1/m`, `%`). "
+            "`None` for categorical/identifier bands. See docs/units.md."
+        ),
+        examples=["kg/m**3", "1/m", "%", "m"],
+    )
     index: int
 
 

@@ -17,6 +17,8 @@ from api.resources.grids.lookup.schema import (
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
+from lib.units import validate_unit
+
 
 class TestLookupSource:
     """Tests for LookupSource base model."""
@@ -257,7 +259,7 @@ class TestFbfm40LookupBandMetadata:
             assert b in FBFM40_LOOKUP_BAND_METADATA
 
     def test_fuel_load_units_are_kg_per_m2(self):
-        """Fuel load bands use kg/m² unit."""
+        """Fuel load bands use kg/m**2 unit."""
         for b in [
             Fbfm40LookupBand.fuel_load_1hr,
             Fbfm40LookupBand.fuel_load_10hr,
@@ -267,10 +269,10 @@ class TestFbfm40LookupBandMetadata:
         ]:
             band_type, unit = FBFM40_LOOKUP_BAND_METADATA[b]
             assert band_type == BandType.continuous
-            assert unit == "kg/m²"
+            assert unit == "kg/m**2"
 
     def test_savr_units_are_inverse_meters(self):
-        """SAVR bands use m⁻¹ unit."""
+        """SAVR bands use 1/m unit."""
         for b in [
             Fbfm40LookupBand.savr_1hr,
             Fbfm40LookupBand.savr_10hr,
@@ -280,7 +282,7 @@ class TestFbfm40LookupBandMetadata:
         ]:
             band_type, unit = FBFM40_LOOKUP_BAND_METADATA[b]
             assert band_type == BandType.continuous
-            assert unit == "m⁻¹"
+            assert unit == "1/m"
 
     def test_fuel_depth_unit_is_meters(self):
         """Fuel depth uses m unit."""
@@ -307,6 +309,10 @@ class TestFbfm40LookupBandMetadata:
         band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.is_dynamic]
         assert band_type == BandType.categorical
         assert unit is None
+
+    def test_all_units_are_canonical(self):
+        for _band_type, unit in FBFM40_LOOKUP_BAND_METADATA.values():
+            validate_unit(unit)
 
 
 class TestGetFbfm40LookupBand:

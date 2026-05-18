@@ -159,7 +159,7 @@ class TestCreateFbfm40Lookup:
         assert len(data["bands"]) == 1
         assert data["bands"][0]["key"] == "fuel_load.1hr"
         assert data["bands"][0]["type"] == "continuous"
-        assert data["bands"][0]["unit"] == "kg/m²"
+        assert data["bands"][0]["unit"] == "kg/m**2"
         assert data["bands"][0]["index"] == 0
 
     def test_request_with_metadata(

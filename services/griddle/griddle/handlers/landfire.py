@@ -342,7 +342,7 @@ def fetch_canopy_landfire(
     Returns:
         Dataset with one named variable per requested band, decoded from
         the int16 storage representation into physical units (m for chm/cbh,
-        kg/m^3 for cbd, % for cc) with NaN at both LANDFIRE nodata sentinels.
+        kg/m**3 for cbd, % for cc) with NaN at both LANDFIRE nodata sentinels.
     """
     alignment = alignment or {"target": "domain"}
     variables: dict[str, DataArray] = {}

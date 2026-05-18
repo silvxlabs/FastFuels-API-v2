@@ -326,9 +326,9 @@ class TestNetcdfExport:
                 assert ds_raw[band].attrs["grid_mapping"] == "spatial_ref", band
 
             # Units flow from the Grid document's bands list into the netCDF.
-            assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m³"
+            assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m**3"
             assert ds["fuel_moisture.live"].attrs.get("units") == "%"
-            assert ds["savr.foliage"].attrs.get("units") == "m⁻¹"
+            assert ds["savr.foliage"].attrs.get("units") == "1/m"
 
             # Internal-only attrs from treevox storage must not leak.
             assert "transform" not in ds.attrs
@@ -359,6 +359,6 @@ class TestNetcdfExport:
             assert set(ds.data_vars) == {"bulk_density.foliage.live"}
             assert ds.attrs.get("Conventions") == "CF-1.13"
             assert str(ds.rio.crs) == "EPSG:32611"
-            assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m³"
+            assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m**3"
         finally:
             ds.close()

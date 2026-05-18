@@ -250,7 +250,7 @@ class TestExportNetcdfUnit:
                     {
                         "key": "bulk_density.foliage.live",
                         "type": "continuous",
-                        "unit": "kg/m^3",
+                        "unit": "kg/m**3",
                         "index": 0,
                     },
                 ]
@@ -277,7 +277,7 @@ class TestExportNetcdfUnit:
         ds = xr.open_dataset(captured["path"], decode_coords="all")
         assert ds["z"].attrs.get("axis") == "Z"
         assert ds["z"].attrs.get("positive") == "up"
-        assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m^3"
+        assert ds["bulk_density.foliage.live"].attrs.get("units") == "kg/m**3"
         ds.close()
 
     @patch("exporter.handlers.netcdf._upload_file")
@@ -299,7 +299,7 @@ class TestExportNetcdfUnit:
             None,
             fake_grid_snapshot(
                 [
-                    {"key": "bulk_density.foliage.live", "unit": "kg/m^3"},
+                    {"key": "bulk_density.foliage.live", "unit": "kg/m**3"},
                 ]
             ),
         )

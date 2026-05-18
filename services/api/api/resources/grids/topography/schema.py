@@ -46,12 +46,12 @@ TOPOGRAPHY_BAND_DEFS = {
     TopographyBand.slope: {
         "key": "slope",
         "type": BandType.continuous,
-        "unit": "degrees",
+        "unit": "deg",
     },
     TopographyBand.aspect: {
         "key": "aspect",
         "type": BandType.continuous,
-        "unit": "degrees",
+        "unit": "deg",
     },
 }
 

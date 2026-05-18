@@ -30,6 +30,8 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
 )
 from pydantic import ValidationError
 
+from lib.units import validate_unit
+
 
 class TestTreeBand:
     """TreeBand enum values match the spec."""
@@ -57,15 +59,15 @@ class TestTreeBand:
     @pytest.mark.parametrize(
         "band,expected_type,expected_unit",
         [
-            (TreeBand.bulk_density_foliage_live, BandType.continuous, "kg/m³"),
-            (TreeBand.bulk_density_foliage_dead, BandType.continuous, "kg/m³"),
-            (TreeBand.bulk_density_branchwood_live, BandType.continuous, "kg/m³"),
-            (TreeBand.bulk_density_branchwood_dead, BandType.continuous, "kg/m³"),
-            (TreeBand.bulk_density_fine_live, BandType.continuous, "kg/m³"),
-            (TreeBand.bulk_density_fine_dead, BandType.continuous, "kg/m³"),
+            (TreeBand.bulk_density_foliage_live, BandType.continuous, "kg/m**3"),
+            (TreeBand.bulk_density_foliage_dead, BandType.continuous, "kg/m**3"),
+            (TreeBand.bulk_density_branchwood_live, BandType.continuous, "kg/m**3"),
+            (TreeBand.bulk_density_branchwood_dead, BandType.continuous, "kg/m**3"),
+            (TreeBand.bulk_density_fine_live, BandType.continuous, "kg/m**3"),
+            (TreeBand.bulk_density_fine_dead, BandType.continuous, "kg/m**3"),
             (TreeBand.fuel_moisture_live, BandType.continuous, "%"),
             (TreeBand.fuel_moisture_dead, BandType.continuous, "%"),
-            (TreeBand.savr_foliage, BandType.continuous, "m⁻¹"),
+            (TreeBand.savr_foliage, BandType.continuous, "1/m"),
             (TreeBand.spcd, BandType.categorical, None),
             (TreeBand.tree_id, BandType.categorical, None),
             (TreeBand.volume_fraction, BandType.continuous, None),
@@ -77,6 +79,10 @@ class TestTreeBand:
         assert definition["type"] == expected_type
         assert definition["unit"] == expected_unit
 
+    def test_all_units_are_canonical(self):
+        for entry in TREE_BAND_DEFS.values():
+            validate_unit(entry.get("unit"))
+
 
 class TestBuildTreeBands:
     """build_tree_bands assigns indices in request order."""
@@ -86,7 +92,7 @@ class TestBuildTreeBands:
         assert len(bands) == 1
         assert bands[0].key == "bulk_density.foliage.live"
         assert bands[0].type == BandType.continuous
-        assert bands[0].unit == "kg/m³"
+        assert bands[0].unit == "kg/m**3"
         assert bands[0].index == 0
 
     def test_indices_match_request_order(self):

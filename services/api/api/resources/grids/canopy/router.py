@@ -201,7 +201,7 @@ async def create_landfire_canopy(
 
     Available bands:
     - **chm**: canopy height in meters
-    - **cbd**: canopy bulk density in kg/m^3
+    - **cbd**: canopy bulk density in kg/m**3
     - **cbh**: canopy base height in meters
     - **cc**:  canopy cover in percent (0-100)
 

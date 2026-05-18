@@ -50,7 +50,7 @@ LANDFIRE_CANOPY_BAND_DEFS = {
     LandfireCanopyFuelBand.cbd: {
         "key": "cbd",
         "type": BandType.continuous,
-        "unit": "kg/m^3",
+        "unit": "kg/m**3",
     },
     LandfireCanopyFuelBand.cbh: {
         "key": "cbh",
@@ -158,7 +158,7 @@ class LandfireCanopySource(CanopySource):
 
     Returns one or more continuous canopy bands at 30m resolution (CONUS)
     from the LANDFIRE program: ``chm`` (canopy height, m), ``cbd`` (canopy
-    bulk density, kg/m^3), ``cbh`` (canopy base height, m), and ``cc``
+    bulk density, kg/m**3), ``cbh`` (canopy base height, m), and ``cc``
     (canopy cover, %).
     """
 
@@ -176,7 +176,7 @@ class CreateLandfireCanopyRequest(CreateSourceGridRequestBase):
     Returns a grid with one or more continuous canopy bands at 30m
     resolution (CONUS):
     - chm: Canopy height (m)
-    - cbd: Canopy bulk density (kg/m^3)
+    - cbd: Canopy bulk density (kg/m**3)
     - cbh: Canopy base height (m)
     - cc:  Canopy cover (%)
 

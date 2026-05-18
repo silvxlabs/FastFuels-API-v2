@@ -103,7 +103,7 @@ contribute. All three default to additive semantics:
   then converted to particle size scale (`2/SAVR`, in meters) before
   being written to `treesss.dat`.
 
-Surface bulk density is computed as `fuel_load / dz` (kg/m³ averaged
+Surface bulk density is computed as `fuel_load / dz` (kg/m**3 averaged
 over the fire-grid cell volume), per QUIC-Fire convention. The actual
 surface fuel layer thickness is encoded separately in
 `treesfueldepth.dat`.
@@ -115,8 +115,8 @@ backwards-compatible additions to the `Literal` type.
 Validation (router pre-write):
 - Every grid exists, is owned by the user, lives in this domain, has `status="completed"`.
 - Every named band exists on its grid and carries the role-required unit
-  (`canopy_bulk_density` → `kg/m³`, moisture → `%`, fuel_load → `kg/m²`,
-  depth/elevation → `m`, SAVR → `m⁻¹`).
+  (`canopy_bulk_density` → `kg/m**3`, moisture → `%`, fuel_load → `kg/m**2`,
+  depth/elevation → `m`, SAVR → `1/m`).
 - Canopy roles are 3D, surface and topography roles are 2D.
 - Every grid's cell size matches the canopy grid's `dx`. On mismatch the
   router returns 422 with a pointer to `POST .../grids/{id}/resample`; the
@@ -185,7 +185,7 @@ Each export format has its own source schema with `name` identifying the format:
             "domain": {"crs": "...", "bbox": [...]},
             "fire_grid": {"nx": ..., "ny": ..., "nz": ..., "transform": [...], "z_origin": ..., "z_resolution": ..., "crs": "..."},
             "roles": {
-                "canopy_bulk_density": {"grid_id": "tree_xyz", "band": "bulk_density.foliage.live", "unit": "kg/m³", "dimensionality": 3, "shape": [...], "transform": [...], "crs": "..."},
+                "canopy_bulk_density": {"grid_id": "tree_xyz", "band": "bulk_density.foliage.live", "unit": "kg/m**3", "dimensionality": 3, "shape": [...], "transform": [...], "crs": "..."},
                 "canopy_moisture":     {"...": "..."},
                 "...": "..."
             }

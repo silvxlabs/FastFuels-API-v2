@@ -116,7 +116,7 @@ class TestCreateTreeInventoryGrid:
         assert len(data["bands"]) == 1
         assert data["bands"][0]["key"] == "bulk_density.foliage.live"
         assert data["bands"][0]["type"] == "continuous"
-        assert data["bands"][0]["unit"] == "kg/m³"
+        assert data["bands"][0]["unit"] == "kg/m**3"
         assert data["bands"][0]["index"] == 0
 
     def test_all_bands_request_creates_grid(

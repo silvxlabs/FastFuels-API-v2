@@ -52,7 +52,7 @@ def canopy_grid(firestore_client, domain_for_testing):
             {
                 "key": "bulk_density.foliage.live",
                 "type": "continuous",
-                "unit": "kg/m³",
+                "unit": "kg/m**3",
                 "index": 0,
             },
             {
@@ -64,7 +64,7 @@ def canopy_grid(firestore_client, domain_for_testing):
             {
                 "key": "savr.foliage",
                 "type": "continuous",
-                "unit": "m⁻¹",
+                "unit": "1/m",
                 "index": 2,
             },
         ],
@@ -86,11 +86,11 @@ def surface_grid(firestore_client, domain_for_testing):
             {
                 "key": "fuel_load.1hr",
                 "type": "continuous",
-                "unit": "kg/m²",
+                "unit": "kg/m**2",
                 "index": 0,
             },
             {"key": "fuel_depth", "type": "continuous", "unit": "m", "index": 1},
-            {"key": "savr.1hr", "type": "continuous", "unit": "m⁻¹", "index": 2},
+            {"key": "savr.1hr", "type": "continuous", "unit": "1/m", "index": 2},
         ],
         georeference=GEOREF_2D,
     )
@@ -149,7 +149,7 @@ def pending_canopy_grid(firestore_client, domain_for_testing):
             {
                 "key": "bulk_density.foliage.live",
                 "type": "continuous",
-                "unit": "kg/m³",
+                "unit": "kg/m**3",
                 "index": 0,
             },
             {
@@ -177,7 +177,7 @@ def coarse_surface_grid(firestore_client, domain_for_testing):
             {
                 "key": "fuel_load.1hr",
                 "type": "continuous",
-                "unit": "kg/m²",
+                "unit": "kg/m**2",
                 "index": 0,
             },
             {"key": "fuel_depth", "type": "continuous", "unit": "m", "index": 1},
@@ -207,7 +207,7 @@ def two_d_canopy_shaped_grid(firestore_client, domain_for_testing):
             {
                 "key": "bulk_density.foliage.live",
                 "type": "continuous",
-                "unit": "kg/m³",
+                "unit": "kg/m**3",
                 "index": 0,
             },
         ],
@@ -492,8 +492,8 @@ class TestQuicfireExportValidation:
         surface_grid,
         surface_moisture_grid,
     ):
-        # Use the surface grid's fuel_load.1hr (kg/m²) where canopy_bulk_density
-        # expects kg/m³. Both grid + band exist; only the unit is wrong.
+        # Use the surface grid's fuel_load.1hr (kg/m**2) where canopy_bulk_density
+        # expects kg/m**3. Both grid + band exist; only the unit is wrong.
         body = _minimal_body(
             canopy_grid["id"], surface_grid["id"], surface_moisture_grid["id"]
         )

@@ -128,7 +128,7 @@ class QuicfireExportRequest(BaseModel):
     canopy_bulk_density: FieldSource = Field(
         ...,
         description=(
-            "3D canopy bulk density (kg/m³). Must reference a band on a 3D "
+            "3D canopy bulk density (kg/m**3). Must reference a band on a 3D "
             "tree grid, e.g. 'bulk_density.foliage.live'."
         ),
     )
@@ -142,7 +142,7 @@ class QuicfireExportRequest(BaseModel):
     canopy_savr: FieldSource | None = Field(
         default=None,
         description=(
-            "3D canopy SAVR (m⁻¹), optional. When provided, must be paired "
+            "3D canopy SAVR (1/m), optional. When provided, must be paired "
             "with `surface_savr`; together they produce `treesss.dat` in the "
             "output zip."
         ),
@@ -150,7 +150,7 @@ class QuicfireExportRequest(BaseModel):
     surface_fuel_load: FieldSource = Field(
         ...,
         description=(
-            "2D surface fuel load (kg/m²). Typically a lookup-grid band, e.g. "
+            "2D surface fuel load (kg/m**2). Typically a lookup-grid band, e.g. "
             "'fuel_load.1hr'."
         ),
     )
@@ -170,7 +170,7 @@ class QuicfireExportRequest(BaseModel):
     )
     surface_savr: FieldSource | None = Field(
         default=None,
-        description=("2D surface SAVR (m⁻¹), optional. Pairs with `canopy_savr`."),
+        description=("2D surface SAVR (1/m), optional. Pairs with `canopy_savr`."),
     )
     topography: FieldSource | None = Field(
         default=None,

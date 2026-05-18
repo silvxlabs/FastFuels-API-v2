@@ -102,7 +102,12 @@ def make_grid_data(
         "bands": bands
         or [
             {"key": "fbfm", "type": "categorical", "unit": None, "index": 0},
-            {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m²", "index": 1},
+            {
+                "key": "fuel_load.1hr",
+                "type": "continuous",
+                "unit": "kg/m**2",
+                "index": 1,
+            },
         ],
         "georeference": (
             georeference

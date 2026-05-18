@@ -78,7 +78,7 @@ def _canopy_doc(**overrides) -> dict:
             {
                 "key": "bulk_density.foliage.live",
                 "type": "continuous",
-                "unit": "kg/m³",
+                "unit": "kg/m**3",
                 "index": 0,
             },
             {
@@ -87,7 +87,7 @@ def _canopy_doc(**overrides) -> dict:
                 "unit": "%",
                 "index": 1,
             },
-            {"key": "savr.foliage", "type": "continuous", "unit": "m⁻¹", "index": 2},
+            {"key": "savr.foliage", "type": "continuous", "unit": "1/m", "index": 2},
         ],
     }
     return _grid_doc(**(defaults | overrides))
@@ -98,9 +98,14 @@ def _surface_doc(**overrides) -> dict:
         "shape": (_NY, _NX),
         "transform": _FIRE_TRANSFORM,
         "bands": [
-            {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m²", "index": 0},
+            {
+                "key": "fuel_load.1hr",
+                "type": "continuous",
+                "unit": "kg/m**2",
+                "index": 0,
+            },
             {"key": "fuel_depth", "type": "continuous", "unit": "m", "index": 1},
-            {"key": "savr.1hr", "type": "continuous", "unit": "m⁻¹", "index": 2},
+            {"key": "savr.1hr", "type": "continuous", "unit": "1/m", "index": 2},
         ],
     }
     return _grid_doc(**(defaults | overrides))
@@ -176,7 +181,9 @@ class TestCheckRoleContract:
 
     def test_missing_band(self):
         doc = _canopy_doc(
-            bands=[{"key": "other", "type": "continuous", "unit": "kg/m³", "index": 0}]
+            bands=[
+                {"key": "other", "type": "continuous", "unit": "kg/m**3", "index": 0}
+            ]
         )
         with pytest.raises(HTTPException) as exc:
             _check_role_contract(
@@ -192,7 +199,7 @@ class TestCheckRoleContract:
                 {
                     "key": "bulk_density.foliage.live",
                     "type": "continuous",
-                    "unit": "kg/m²",
+                    "unit": "kg/m**2",
                     "index": 0,
                 }
             ]
@@ -213,7 +220,7 @@ class TestCheckRoleContract:
                 {
                     "key": "bulk_density.foliage.live",
                     "type": "continuous",
-                    "unit": "kg/m³",
+                    "unit": "kg/m**3",
                     "index": 0,
                 }
             ],

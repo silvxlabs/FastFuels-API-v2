@@ -200,8 +200,8 @@ class TestMultiBandUpload:
         grid_id = f"test-{uuid4().hex}"
         domain_id = f"test-{uuid4().hex}"
         bands_spec = [
-            {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m3"},
-            {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m3"},
+            {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m**3"},
+            {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m**3"},
         ]
 
         domain_doc = _load_domain_doc(domain_id)

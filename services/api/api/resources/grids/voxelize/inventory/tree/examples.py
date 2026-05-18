@@ -158,7 +158,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "description": (
             "Voxelizes a tree inventory with all defaults. The request only "
             "needs the source inventory ID. Produces a single "
-            "`bulk_density.foliage.live` band (kg/m³) at 2 m × 2 m × 1 m voxel "
+            "`bulk_density.foliage.live` band (kg/m**3) at 2 m × 2 m × 1 m voxel"
             "resolution using the Purves crown profile and NSVB biomass "
             "models. Use this when you only need foliage mass per voxel."
         ),
@@ -233,7 +233,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "Reads per-tree foliage biomass from the `foliage_biomass` "
             "inventory column instead of estimating foliage biomass with "
             "allometric equations. The column values must be per-tree kg; "
-            "area-normalized fuel loads such as kg/m² are not accepted."
+            "area-normalized fuel loads such as kg/m**2 are not accepted."
         ),
     },
     "with_branchwood_biomass": {

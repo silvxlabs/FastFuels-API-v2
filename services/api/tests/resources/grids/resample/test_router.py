@@ -44,7 +44,7 @@ def complete_3d_grid(firestore_client, domain_for_testing):
             {
                 "key": "bulk_density.foliage.live",
                 "type": "continuous",
-                "unit": "kg/m³",
+                "unit": "kg/m**3",
                 "index": 0,
             },
         ],

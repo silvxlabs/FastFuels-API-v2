@@ -7,6 +7,26 @@ rioxarray spatial metadata (CRS, transform, spatial_ref coordinate).
 Uses consolidated metadata for fast remote reads. This is experimental
 for zarr v3 stores (zarr-specs#309) but stable in zarr-python and a
 good fit for our write-once, read-many grids on GCS.
+
+## CRS metadata convention
+
+This module **never** passes the `encoding=` kwarg to `to_zarr`. The
+kwarg fully replaces each variable's encoding dict, which would wipe the
+`grid_mapping` field that `rio.write_crs` / `decode_coords="all"` placed
+there. Without `grid_mapping` in encoding, xarray's CF encoder cannot
+write a CRS-reference attribute to the on-disk zarr, and downstream
+readers see `ds.rio.crs is None`.
+
+If you need per-variable encoding (compression, fill values, dtype),
+mutate `var.encoding[...]` directly **before** calling `save_zarr` and
+leave the kwarg unused. See `services/lib/lib/cf_utils.py` for the full
+convention and the corresponding netCDF write-side pattern in
+`services/exporter/exporter/handlers/netcdf.py`.
+
+`load_zarr` uses `decode_coords="all"` so callers always get a Dataset
+where `spatial_ref` is a coord and `ds.rio.crs` is populated, regardless
+of whether the on-disk zarr stored `grid_mapping` in attrs (treevox
+writer) or in encoding (anything written via `save_zarr`).
 """
 
 import warnings

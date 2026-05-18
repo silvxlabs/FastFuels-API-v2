@@ -75,12 +75,21 @@ def export_netcdf(
     progress("Writing netCDF...", 70)
     filename = sanitize_filename(export.get("name", ""), ".nc")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
-    encoding = {k: {"zlib": True, "complevel": 4} for k in ds.data_vars}
+
+    # Set compression on each var.encoding rather than passing the encoding
+    # kwarg to to_netcdf. Passing encoding via kwarg REPLACES the variable's
+    # entire encoding dict at write time (xarray/backends/writers.py), which
+    # wipes the grid_mapping field that decode_coords="all" left there. By
+    # mutating var.encoding in place we preserve grid_mapping so xarray's CF
+    # encoder can migrate it to attrs on the netCDF.
+    for var in ds.data_vars:
+        ds[var].encoding["zlib"] = True
+        ds[var].encoding["complevel"] = 4
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         local_path = os.path.join(tmp_dir, "export.nc")
         try:
-            ds.to_netcdf(local_path, engine="h5netcdf", encoding=encoding)
+            ds.to_netcdf(local_path, engine="h5netcdf")
         except Exception as e:
             raise ProcessingError(
                 code="NETCDF_WRITE_ERROR",

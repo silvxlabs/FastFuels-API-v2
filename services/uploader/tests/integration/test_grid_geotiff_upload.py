@@ -1,9 +1,9 @@
 """
-Integration tests for uploader/handlers/grid.py
+Integration tests for uploader/handlers/grid.py — GeoTIFF handler.
 
-Tests the full handle_grid pipeline against real GCP resources.
+Tests the full handle_grid_geotiff pipeline against real GCP resources.
 Each test creates domain + grid Firestore docs, uploads a real GeoTIFF to
-UPLOADS_BUCKET, calls handle_grid directly, and asserts results.
+UPLOADS_BUCKET, calls handle_grid_geotiff directly, and asserts results.
 """
 
 import json
@@ -19,7 +19,7 @@ import rasterio
 from google.cloud import storage
 from rasterio.crs import CRS
 from rasterio.transform import from_bounds
-from uploader.handlers.grid import handle_grid
+from uploader.handlers.grid import handle_grid_geotiff
 
 import lib.gcs.blobs as _gcs_blobs
 from lib.config import (
@@ -164,7 +164,7 @@ class TestSingleBandUpload:
         set_document(GRIDS_COLLECTION, grid_id, grid_doc)
 
         try:
-            handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
+            handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             _, snap = get_document(GRIDS_COLLECTION, grid_id)
             result = snap.to_dict()
@@ -212,7 +212,7 @@ class TestMultiBandUpload:
         set_document(GRIDS_COLLECTION, grid_id, grid_doc)
 
         try:
-            handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
+            handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             _, snap = get_document(GRIDS_COLLECTION, grid_id)
             result = snap.to_dict()
@@ -253,7 +253,7 @@ class TestErrorCases:
             from lib.errors import ProcessingError
 
             with pytest.raises(ProcessingError) as exc_info:
-                handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
+                handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "BAND_COUNT_MISMATCH"
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
@@ -282,7 +282,7 @@ class TestErrorCases:
             from lib.errors import ProcessingError
 
             with pytest.raises(ProcessingError) as exc_info:
-                handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
+                handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "MISSING_CRS"
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
@@ -320,7 +320,7 @@ class TestErrorCases:
             from lib.errors import ProcessingError
 
             with pytest.raises(ProcessingError) as exc_info:
-                handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
+                handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "CRS_MISMATCH"
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
@@ -357,7 +357,7 @@ class TestErrorCases:
             from lib.errors import ProcessingError
 
             with pytest.raises(ProcessingError) as exc_info:
-                handle_grid(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
+                handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "NO_OVERLAP"
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")

@@ -9,6 +9,7 @@ dependencies = [
     "lib[firestore,gcs,raster,zarr]",
     "dask[dataframe]>=2024.1.0",
     "geopandas>=1.1.2",
+    "h5netcdf[h5py]>=1.8",
     "pandas>=2.0.0",
     "pandera>=0.20.0",
     "pyarrow>=18.0.0",
@@ -17,7 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=9.0.2",
+    "exporter",
 ]
 
 [tool.uv.sources]
 lib = { path = "../lib", editable = true }
+exporter = { path = "../exporter", editable = true }

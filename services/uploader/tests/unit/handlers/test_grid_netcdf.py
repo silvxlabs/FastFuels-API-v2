@@ -264,6 +264,18 @@ class TestZ:
         assert exc.value.code == "SINGLE_Z_LAYER"
 
 
+class TestPixelGeometry:
+    def test_non_square_pixels_rejected(self, tmp_path):
+        """dx != dy must be rejected — the contract assumes square pixels."""
+        # bounds=800x400, shape=(40, 40) → dx=20, dy=10 → non-square
+        ds = _build_2d_dataset(bounds=_DEFAULT_BOUNDS, shape=(40, 40))
+        path = _write_nc(ds, tmp_path / "nonsquare.nc")
+
+        with pytest.raises(ProcessingError) as exc:
+            _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)
+        assert exc.value.code == "NON_SQUARE_PIXELS"
+
+
 class TestOverlap:
     def test_no_overlap(self, tmp_path):
         # Place the dataset far north of the domain.
@@ -278,13 +290,14 @@ class TestOverlap:
 class TestBuffer:
     def test_buffer_expands_clip(self, tmp_path):
         """num_buffer_cells > 0 retains more pixels around the domain."""
+        # 2000m x 1500m bounds with shape=(150, 200) → 10m square pixels.
         extended_bounds = (
             DOMAIN_BOUNDS[0] - 200,
             DOMAIN_BOUNDS[1] - 200,
-            DOMAIN_BOUNDS[2] + 200,
-            DOMAIN_BOUNDS[3] + 200,
+            DOMAIN_BOUNDS[0] - 200 + 2000,
+            DOMAIN_BOUNDS[1] - 200 + 1500,
         )
-        ds = _build_2d_dataset(bounds=extended_bounds, shape=(60, 80))
+        ds = _build_2d_dataset(bounds=extended_bounds, shape=(150, 200))
         path = _write_nc(ds, tmp_path / "padded.nc")
 
         out0 = _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)

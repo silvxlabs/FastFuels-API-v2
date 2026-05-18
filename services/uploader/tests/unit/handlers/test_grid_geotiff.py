@@ -43,10 +43,11 @@ def _write_geotiff(
     n_bands=1,
     crs=DOMAIN_CRS,
     set_crs=True,
-    width=20,
+    width=40,
     height=20,
     bounds=_DEFAULT_BOUNDS,
 ):
+    """Defaults produce square pixels: bounds=800x400m, 40x20 cells → 20m square."""
     """Write a small GeoTIFF to path. Each band has constant value equal to the band index."""
     xmin, ymin, xmax, ymax = bounds
     transform = from_bounds(xmin, ymin, xmax, ymax, width, height)
@@ -166,14 +167,16 @@ class TestBuildDataset:
     def test_num_buffer_cells_expands_clip_bounds(self, tmp_path):
         """num_buffer_cells > 0 keeps extra pixels outside the domain bounds."""
         path = str(tmp_path / "with_buffer.tif")
-        # GeoTIFF that extends ~200m beyond the domain on every side.
+        # GeoTIFF that extends beyond the domain with square 10m pixels.
+        # Domain ~1306m x 882m; pad to clean multiples for square pixels.
         extended_bounds = (
             DOMAIN_BOUNDS[0] - 200,
             DOMAIN_BOUNDS[1] - 200,
-            DOMAIN_BOUNDS[2] + 200,
-            DOMAIN_BOUNDS[3] + 200,
+            DOMAIN_BOUNDS[0] - 200 + 2000,
+            DOMAIN_BOUNDS[1] - 200 + 1500,
         )
-        _write_geotiff(path, n_bands=1, bounds=extended_bounds, width=80, height=60)
+        # 2000m / 200 cells = 10m dx; 1500m / 150 cells = 10m dy → square.
+        _write_geotiff(path, n_bands=1, bounds=extended_bounds, width=200, height=150)
 
         bands_spec = [{"key": "fbfm", "type": "categorical", "unit": None}]
 
@@ -201,6 +204,18 @@ class TestBuildDataset:
 
         assert ds_default.rio.width == ds_zero.rio.width
         assert ds_default.rio.height == ds_zero.rio.height
+
+    def test_non_square_pixels_rejected(self, tmp_path):
+        """dx != dy must be rejected — the contract assumes square pixels."""
+        path = str(tmp_path / "nonsquare.tif")
+        # bounds=800x400, width=40, height=40 → dx=20, dy=10 → non-square
+        _write_geotiff(path, n_bands=1, width=40, height=40, bounds=_DEFAULT_BOUNDS)
+
+        bands_spec = [{"key": "fbfm", "type": "categorical", "unit": None}]
+        with pytest.raises(ProcessingError) as exc_info:
+            _build_dataset(path, bands_spec, DOMAIN_CRS, DOMAIN_GDF)
+
+        assert exc_info.value.code == "NON_SQUARE_PIXELS"
 
     def test_result_has_spatial_metadata(self, tmp_path):
         """Output Dataset has CRS and transform accessible via .rio."""

@@ -122,6 +122,7 @@ def _build_dataset(
         ProcessingError: MISSING_CRS if the GeoTIFF has no CRS.
         ProcessingError: BAND_COUNT_MISMATCH if band count doesn't match spec.
         ProcessingError: CRS_MISMATCH if the GeoTIFF CRS does not match the domain CRS.
+        ProcessingError: NON_SQUARE_PIXELS if the GeoTIFF has dx != dy.
         ProcessingError: NO_OVERLAP if the GeoTIFF does not intersect the domain.
     """
     # chunks={"x":512,"y":512} → dask-backed lazy arrays; pixel data deferred until compute.
@@ -156,10 +157,22 @@ def _build_dataset(
             suggestion=f"Use gdalwarp -t_srs {domain_crs_str} input.tif output.tif to reproject.",
         )
 
+    transform = da.rio.transform()
+    dx = abs(float(transform.a))
+    dy = abs(float(transform.e))
+    if not np.isclose(dx, dy):
+        raise ProcessingError(
+            code="NON_SQUARE_PIXELS",
+            message=(
+                f"GeoTIFF has non-square pixels (dx={dx}, dy={dy}). "
+                "Grid uploads require square pixels."
+            ),
+            suggestion="Use gdalwarp -tr <res> <res> to resample to square pixels.",
+        )
+
     xmin, ymin, xmax, ymax = domain_gdf.total_bounds
     if num_buffer_cells > 0:
-        pixel_size = abs(float(da.rio.transform().a))
-        padding = num_buffer_cells * pixel_size
+        padding = num_buffer_cells * dx
         xmin -= padding
         ymin -= padding
         xmax += padding
@@ -309,8 +322,8 @@ def _build_netcdf_dataset(
 
     Raises:
         ProcessingError: WRONG_DIMS, MISSING_CRS, CRS_MISMATCH, INVALID_UNITS,
-            MISSING_Z_POSITIVE, SINGLE_Z_LAYER, NONUNIFORM_Z, or NO_OVERLAP
-            per spec.
+            MISSING_Z_POSITIVE, SINGLE_Z_LAYER, NONUNIFORM_Z, NON_SQUARE_PIXELS,
+            or NO_OVERLAP per spec.
     """
     ds = xr.open_dataset(
         source,
@@ -401,10 +414,21 @@ def _build_netcdf_dataset(
                 ),
             )
 
+    transform = ds.rio.transform()
+    dx = abs(float(transform.a))
+    dy = abs(float(transform.e))
+    if not np.isclose(dx, dy):
+        raise ProcessingError(
+            code="NON_SQUARE_PIXELS",
+            message=(
+                f"netCDF has non-square pixels (dx={dx}, dy={dy}). "
+                "Grid uploads require square pixels."
+            ),
+        )
+
     xmin, ymin, xmax, ymax = domain_gdf.total_bounds
     if num_buffer_cells > 0:
-        pixel_size = abs(float(ds.rio.transform().a))
-        padding = num_buffer_cells * pixel_size
+        padding = num_buffer_cells * dx
         xmin -= padding
         ymin -= padding
         xmax += padding

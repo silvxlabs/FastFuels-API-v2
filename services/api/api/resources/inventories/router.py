@@ -29,9 +29,6 @@ from api.db.documents import (
 from api.dependencies import VerifiedDomain
 from api.resources.inventories.cache import get_inventory_metadata, read_partition
 from api.resources.inventories.exports.router import router as exports_router
-from api.resources.inventories.modifications.router import (
-    router as modifications_router,
-)
 from api.resources.inventories.schema import (
     Inventory,
     InventoryDataFormat,
@@ -590,11 +587,11 @@ async def get_inventory_data(
 
 
 router.include_router(tree_router, prefix="/tree")
-router.include_router(
-    modifications_router,
-    prefix="/{inventory_id}/modifications",
-    tags=["Inventories - Modifications"],
-)
+# router.include_router(
+#     modifications_router,
+#     prefix="/{inventory_id}/modifications",
+#     tags=["Inventories - Modifications"],
+# )
 router.include_router(
     exports_router,
     prefix="/{inventory_id}/exports",

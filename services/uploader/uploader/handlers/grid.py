@@ -309,7 +309,8 @@ def _build_netcdf_dataset(
 
     Raises:
         ProcessingError: WRONG_DIMS, MISSING_CRS, CRS_MISMATCH, INVALID_UNITS,
-            MISSING_Z_POSITIVE, NONUNIFORM_Z, or NO_OVERLAP per spec.
+            MISSING_Z_POSITIVE, SINGLE_Z_LAYER, NONUNIFORM_Z, or NO_OVERLAP
+            per spec.
     """
     ds = xr.open_dataset(
         source,
@@ -382,15 +383,23 @@ def _build_netcdf_dataset(
                 ),
             )
         z_vals = ds["z"].values
-        if len(z_vals) >= 2:
-            diffs = np.diff(z_vals)
-            if not np.allclose(diffs, diffs[0]):
-                raise ProcessingError(
-                    code="NONUNIFORM_Z",
-                    message=(
-                        "netCDF z-coord must be uniformly spaced (z_resolution is scalar)."
-                    ),
-                )
+        if len(z_vals) < 2:
+            raise ProcessingError(
+                code="SINGLE_Z_LAYER",
+                message=(
+                    "netCDF 3D variable has only one z level; z_resolution "
+                    "(cell thickness) cannot be derived from a single coordinate. "
+                    "Upload as 2D (drop the z dim) or include at least two z levels."
+                ),
+            )
+        diffs = np.diff(z_vals)
+        if not np.allclose(diffs, diffs[0]):
+            raise ProcessingError(
+                code="NONUNIFORM_Z",
+                message=(
+                    "netCDF z-coord must be uniformly spaced (z_resolution is scalar)."
+                ),
+            )
 
     xmin, ymin, xmax, ymax = domain_gdf.total_bounds
     if num_buffer_cells > 0:

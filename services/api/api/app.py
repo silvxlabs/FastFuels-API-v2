@@ -38,10 +38,84 @@ CORS_ORIGINS = {
 preview_origin_regex = r"https://silvx-fastfuels--.*\.web\.app"
 
 
+API_DESCRIPTION = """
+A JSON API for generating high-resolution 3D fuel inputs for physics-based
+wildfire simulation models such as **QUIC-Fire**, **FIRETEC**, and **FDS**.
+
+> ⚠️ **Beta — under active development.** v2 is a ground-up redesign of the
+> FastFuels API. Endpoints, request/response schemas, and resource semantics
+> may change without notice while the API is in beta. Pin to a specific
+> deployment and follow the changelog if you are building against it.
+
+## What's here
+
+- **Domains** — geographic areas of interest that anchor all other resources.
+- **Features** — vector layers (roads, water, etc.) attached to a domain.
+- **Inventories** — tree / fuel inventories sampled within a domain.
+- **Grids** — rasterized surface, canopy, and topography fields aligned to a
+  domain's grid.
+- **Exports** — packaged outputs (Zarr, NetCDF, QUIC-Fire inputs, …) generated
+  from a domain's inventories and grids.
+
+## Design
+
+Read the design philosophy and resource guides in the
+[FastFuels-API-v2 repository](https://github.com/silvxlabs/FastFuels-API-v2)
+before integrating — v2 favors explicit, reproducible primitives over the
+convenience helpers that shipped in v1.
+
+## Feedback
+
+Found a bug or have a request? Open an issue on
+[GitHub](https://github.com/silvxlabs/FastFuels-API-v2/issues).
+"""
+
+OPENAPI_TAGS = [
+    {"name": "Index", "description": "Service metadata and welcome endpoint."},
+    {
+        "name": "Domains",
+        "description": "Geographic areas of interest. All other resources hang off a domain.",
+    },
+    {
+        "name": "Features",
+        "description": "Vector layers (roads, water, etc.) attached to a domain.",
+    },
+    {
+        "name": "Inventories",
+        "description": "Tree and fuel inventories sampled within a domain.",
+    },
+    {
+        "name": "Grids",
+        "description": "Rasterized surface, canopy, and topography fields aligned to a domain's grid.",
+    },
+    {
+        "name": "Exports",
+        "description": "Packaged outputs generated from a domain's inventories and grids.",
+    },
+    {"name": "Keys", "description": "Manage API keys used to authenticate requests."},
+    {
+        "name": "Applications",
+        "description": "Applications registered against the FastFuels API.",
+    },
+]
+
+
 app = FastAPI(
     title="FastFuels API",
-    description="A JSON API for creating, editing, and retrieving 3D fuels data for next generation fire behavior models.",
-    version="2.0.0",
+    summary="3D fuels for next-generation fire behavior models.",
+    description=API_DESCRIPTION,
+    version="2.0.0-beta",
+    terms_of_service="https://fastfuels.silvxlabs.com/terms",
+    contact={
+        "name": "Silvx Labs",
+        "url": "https://silvxlabs.com",
+        "email": "support@silvxlabs.com",
+    },
+    license_info={
+        "name": "Proprietary — Silvx Labs",
+        "url": "https://fastfuels.silvxlabs.com/terms",
+    },
+    openapi_tags=OPENAPI_TAGS,
     separate_input_output_schemas=False,
 )
 
@@ -73,9 +147,52 @@ app.add_middleware(
 api_router = APIRouter()
 
 
-@app.get("/", tags=["Index"])
+@app.get(
+    "/",
+    tags=["Index"],
+    summary="Welcome / service metadata",
+    description="Returns service metadata, documentation links, and the current "
+    "deployment status. Useful as a liveness check and as a starting "
+    "point for discovering the API.",
+)
 async def index():
-    return {"message": "FastFuels API"}
+    return {
+        "name": "FastFuels API",
+        "version": app.version,
+        "status": "beta",
+        "message": (
+            "Welcome to FastFuels v2 — the next-generation API for 3D fuels. "
+            "v2 is in active development; schemas and endpoints may change "
+            "without notice."
+        ),
+        "environment": DEPLOYMENT_ENV,
+        "documentation": {
+            "swagger": {
+                "url": "/docs",
+                "description": "Interactive API documentation (Swagger UI).",
+            },
+            "redoc": {
+                "url": "/redoc",
+                "description": "Static API documentation (ReDoc).",
+            },
+            "openapi": {
+                "url": "/openapi.json",
+                "description": "Raw OpenAPI 3.1 schema.",
+            },
+            "repository": {
+                "url": "https://github.com/silvxlabs/FastFuels-API-v2",
+                "description": "Source code, design docs, and changelog.",
+            },
+        },
+        "webApplication": {
+            "url": "https://beta-app-fastfuels-silvxlabs.web.app",
+            "description": "Beta web application for creating, editing, and visualizing FastFuels v2 data.",
+        },
+        "feedback": {
+            "issues": "https://github.com/silvxlabs/FastFuels-API-v2/issues",
+            "email": "support@silvxlabs.com",
+        },
+    }
 
 
 # Include resource routers

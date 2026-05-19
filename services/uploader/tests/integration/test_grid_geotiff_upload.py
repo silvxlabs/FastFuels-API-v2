@@ -185,7 +185,6 @@ class TestSingleBandUpload:
 
             zarr_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
             assert exists(zarr_path)
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
             import xarray as xr
 
@@ -262,7 +261,6 @@ class TestErrorCases:
                 handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "BAND_COUNT_MISMATCH"
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
         finally:
             gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
@@ -291,7 +289,6 @@ class TestErrorCases:
                 handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "MISSING_CRS"
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
         finally:
             gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
@@ -329,7 +326,6 @@ class TestErrorCases:
                 handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "CRS_MISMATCH"
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
         finally:
             gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
@@ -366,7 +362,6 @@ class TestErrorCases:
                 handle_grid_geotiff(grid_id, UPLOADS_BUCKET, object_name, grid_doc)
 
             assert exc_info.value.code == "NO_OVERLAP"
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
         finally:
             gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"

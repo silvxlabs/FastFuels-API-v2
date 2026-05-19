@@ -314,7 +314,6 @@ class TestUploadFullFlow:
 
             completed = _poll_grid(client, domain_id, grid_id)
 
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
             assert completed["georeference"]["crs"] == domain_crs
             assert len(completed["georeference"]["transform"]) == 6
             assert len(completed["georeference"]["shape"]) == 2

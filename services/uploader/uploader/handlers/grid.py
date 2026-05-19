@@ -24,7 +24,6 @@ from lib.config import DOMAINS_COLLECTION, GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
-from lib.gcs import delete_file
 from lib.grids import compute_chunks_doc
 from lib.units import validate_unit
 from lib.zarr_utils import save_zarr
@@ -51,46 +50,40 @@ def handle_grid_geotiff(
 
     gcs_path = f"gs://{bucket}/{object_name}"
 
-    try:
-        _, domain_snap = get_document(DOMAINS_COLLECTION, domain_id)
-        domain_data = domain_snap.to_dict()
-        domain_gdf = parse_domain_gdf(domain_data)
-        domain_crs_str = domain_data["crs"]["properties"]["name"]
+    _, domain_snap = get_document(DOMAINS_COLLECTION, domain_id)
+    domain_data = domain_snap.to_dict()
+    domain_gdf = parse_domain_gdf(domain_data)
+    domain_crs_str = domain_data["crs"]["properties"]["name"]
 
-        dataset = _build_dataset(
-            gcs_path,
-            bands_spec,
-            domain_crs_str,
-            domain_gdf,
-            num_buffer_cells=num_buffer_cells,
-        )
+    dataset = _build_dataset(
+        gcs_path,
+        bands_spec,
+        domain_crs_str,
+        domain_gdf,
+        num_buffer_cells=num_buffer_cells,
+    )
 
-        output_path = f"gs://{GRIDS_BUCKET}/{resource_id}"
-        save_zarr(output_path, dataset, chunk_shape=_CHUNK_SHAPE)
+    output_path = f"gs://{GRIDS_BUCKET}/{resource_id}"
+    save_zarr(output_path, dataset, chunk_shape=_CHUNK_SHAPE)
 
-        transform = dataset.rio.transform()
-        grid_shape = (dataset.rio.height, dataset.rio.width)
+    transform = dataset.rio.transform()
+    grid_shape = (dataset.rio.height, dataset.rio.width)
 
-        update_document(
-            GRIDS_COLLECTION,
-            resource_id,
-            {
-                "status": "completed",
-                "modified_on": datetime.now(UTC),
-                "georeference": {
-                    "crs": str(dataset.rio.crs),
-                    "transform": list(transform)[:6],
-                    "shape": list(grid_shape),
-                },
-                "chunks": compute_chunks_doc(grid_shape, _CHUNK_SHAPE),
-                "progress": {"message": "Complete", "percent": 100},
+    update_document(
+        GRIDS_COLLECTION,
+        resource_id,
+        {
+            "status": "completed",
+            "modified_on": datetime.now(UTC),
+            "georeference": {
+                "crs": str(dataset.rio.crs),
+                "transform": list(transform)[:6],
+                "shape": list(grid_shape),
             },
-        )
-    finally:
-        try:
-            delete_file(gcs_path)
-        except Exception:
-            pass
+            "chunks": compute_chunks_doc(grid_shape, _CHUNK_SHAPE),
+            "progress": {"message": "Complete", "percent": 100},
+        },
+    )
 
 
 def _build_dataset(
@@ -218,86 +211,76 @@ def handle_grid_netcdf(
 
     gcs_path = f"gs://{bucket}/{object_name}"
 
-    try:
-        _, domain_snap = get_document(DOMAINS_COLLECTION, domain_id)
-        domain_data = domain_snap.to_dict()
-        domain_gdf = parse_domain_gdf(domain_data)
-        domain_crs_str = domain_data["crs"]["properties"]["name"]
+    _, domain_snap = get_document(DOMAINS_COLLECTION, domain_id)
+    domain_data = domain_snap.to_dict()
+    domain_gdf = parse_domain_gdf(domain_data)
+    domain_crs_str = domain_data["crs"]["properties"]["name"]
 
-        # gcsfs file-like read avoids /tmp staging (Cloud Run has no local
-        # disk). The dataset is dask-backed by this file handle, so everything
-        # that touches it must run inside the with-block.
-        fs = gcsfs.GCSFileSystem()
-        with fs.open(gcs_path, "rb") as f:
-            dataset = _build_netcdf_dataset(
-                f, domain_crs_str, domain_gdf, num_buffer_cells
+    # gcsfs file-like read avoids /tmp staging (Cloud Run has no local
+    # disk). The dataset is dask-backed by this file handle, so everything
+    # that touches it must run inside the with-block.
+    fs = gcsfs.GCSFileSystem()
+    with fs.open(gcs_path, "rb") as f:
+        dataset = _build_netcdf_dataset(f, domain_crs_str, domain_gdf, num_buffer_cells)
+
+        output_path = f"gs://{GRIDS_BUCKET}/{resource_id}"
+        is_3d = "z" in dataset.sizes
+
+        ny = dataset.sizes["y"]
+        nx = dataset.sizes["x"]
+        transform = list(dataset.rio.transform())[:6]
+
+        if is_3d:
+            nz = dataset.sizes["z"]
+            z_vals = dataset["z"].values
+            dz = float(z_vals[1] - z_vals[0])
+            georeference = {
+                "crs": str(dataset.rio.crs),
+                "transform": transform,
+                "shape": [nz, ny, nx],
+                "z_resolution": dz,
+                "z_origin": float(z_vals[0]) - dz / 2,
+            }
+            grid_shape = (nz, ny, nx)
+            chunk_shape = (nz, _CHUNK_SHAPE[0], _CHUNK_SHAPE[1])
+        else:
+            georeference = {
+                "crs": str(dataset.rio.crs),
+                "transform": transform,
+                "shape": [ny, nx],
+            }
+            grid_shape = (ny, nx)
+            chunk_shape = _CHUNK_SHAPE
+
+        save_zarr(output_path, dataset, chunk_shape=chunk_shape)
+
+        bands = []
+        for i, var_name in enumerate(dataset.data_vars):
+            da = dataset[var_name]
+            band_type = (
+                "categorical" if np.issubdtype(da.dtype, np.integer) else "continuous"
             )
-
-            output_path = f"gs://{GRIDS_BUCKET}/{resource_id}"
-            is_3d = "z" in dataset.sizes
-
-            ny = dataset.sizes["y"]
-            nx = dataset.sizes["x"]
-            transform = list(dataset.rio.transform())[:6]
-
-            if is_3d:
-                nz = dataset.sizes["z"]
-                z_vals = dataset["z"].values
-                dz = float(z_vals[1] - z_vals[0])
-                georeference = {
-                    "crs": str(dataset.rio.crs),
-                    "transform": transform,
-                    "shape": [nz, ny, nx],
-                    "z_resolution": dz,
-                    "z_origin": float(z_vals[0]) - dz / 2,
-                }
-                grid_shape = (nz, ny, nx)
-                chunk_shape = (nz, _CHUNK_SHAPE[0], _CHUNK_SHAPE[1])
-            else:
-                georeference = {
-                    "crs": str(dataset.rio.crs),
-                    "transform": transform,
-                    "shape": [ny, nx],
-                }
-                grid_shape = (ny, nx)
-                chunk_shape = _CHUNK_SHAPE
-
-            save_zarr(output_path, dataset, chunk_shape=chunk_shape)
-
-            bands = []
-            for i, var_name in enumerate(dataset.data_vars):
-                da = dataset[var_name]
-                band_type = (
-                    "categorical"
-                    if np.issubdtype(da.dtype, np.integer)
-                    else "continuous"
-                )
-                bands.append(
-                    {
-                        "key": str(var_name),
-                        "type": band_type,
-                        "unit": da.attrs.get("units"),
-                        "index": i,
-                    }
-                )
-
-            update_document(
-                GRIDS_COLLECTION,
-                resource_id,
+            bands.append(
                 {
-                    "status": "completed",
-                    "modified_on": datetime.now(UTC),
-                    "bands": bands,
-                    "georeference": georeference,
-                    "chunks": compute_chunks_doc(grid_shape, chunk_shape),
-                    "progress": {"message": "Complete", "percent": 100},
-                },
+                    "key": str(var_name),
+                    "type": band_type,
+                    "unit": da.attrs.get("units"),
+                    "index": i,
+                }
             )
-    finally:
-        try:
-            delete_file(gcs_path)
-        except Exception:
-            pass
+
+        update_document(
+            GRIDS_COLLECTION,
+            resource_id,
+            {
+                "status": "completed",
+                "modified_on": datetime.now(UTC),
+                "bands": bands,
+                "georeference": georeference,
+                "chunks": compute_chunks_doc(grid_shape, chunk_shape),
+                "progress": {"message": "Complete", "percent": 100},
+            },
+        )
 
 
 def _build_netcdf_dataset(

@@ -110,14 +110,20 @@ def _upload_geotiff(
     n_bands: int = 1,
     crs: str = DOMAIN_CRS,
     set_crs: bool = True,
-    width: int = 30,
+    width: int = 40,
     height: int = 20,
     tiff_xmin: float = TIFF_XMIN,
     tiff_ymin: float = TIFF_YMIN,
     tiff_xmax: float = TIFF_XMAX,
     tiff_ymax: float = TIFF_YMAX,
 ) -> str:
-    """Write a GeoTIFF and upload it to UPLOADS_BUCKET. Returns the object_name."""
+    """Write a GeoTIFF and upload it to UPLOADS_BUCKET. Returns the object_name.
+
+    Defaults produce square pixels: default TIFF bounds are 800m x 400m
+    (UTM) and WGS84 mismatch bounds are 0.04deg x 0.02deg — both yield
+    20m / 0.001deg square pixels at width=40, height=20. The
+    NON_SQUARE_PIXELS validator rejects anything else.
+    """
     object_name = f"grids/{grid_id}/{_UPLOAD_FILENAME}"
     transform = from_bounds(tiff_xmin, tiff_ymin, tiff_xmax, tiff_ymax, width, height)
 

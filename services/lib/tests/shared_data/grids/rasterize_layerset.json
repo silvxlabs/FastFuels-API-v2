@@ -20,7 +20,7 @@
       "resolution": 10.0,
       "method": null
     },
-    "description": "Rasterized hierarchical fuelbed layerset",
+    "description": "Rasterized fuelbed layerset",
     "extent_buffer_cells": 0,
     "layerset_id": "PLACEHOLDER",
     "name": "layerset",

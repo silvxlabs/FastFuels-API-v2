@@ -99,8 +99,10 @@ async def create_layerset(
     """
     # Create Layerset Endpoint
 
-    Uploads a custom hierarchical GeoJSON file as a new feature resource.
-    The GeoJSON payload is validated and directly saved to Cloud Storage.
+    Uploads a flat GeoJSON FeatureCollection of fuelbed polygons as a new
+    feature resource. Each Feature's ``properties`` block carries one
+    fuelbed's input columns for ``fastfuels_core.rasterize_layerset``. The
+    payload is validated and saved directly to Cloud Storage.
 
     ## Path Parameters
     - **domain_id**: (string) The domain this layerset belongs to.
@@ -109,7 +111,7 @@ async def create_layerset(
     - **name**: (string) Name of the layerset.
     - **description**: (string) Description of the data.
     - **tags**: (array of strings) Searchable tags.
-    - **geojson**: (object) A valid hierarchical GeoJSON FeatureCollection.
+    - **geojson**: (object) A valid flat GeoJSON FeatureCollection of fuelbed polygons.
 
     ## Response
     Returns the created Feature resource with a status of `completed`.

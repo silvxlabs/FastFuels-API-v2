@@ -9,12 +9,20 @@ Feature carries one fuelbed's attributes on ``properties`` and a polygon on
 of ``fastfuels_core.rasterize_layerset`` directly so the downstream worker
 can build the input GeoDataFrame with a single ``gpd.read_file`` call.
 
+Geometry and feature wrappers come from ``geojson_pydantic`` (the same
+package the Domains schema uses) so we get RFC 7946 coordinate validation
+for free. We extend ``FeatureCollection`` to carry the optional GeoJSON
+``crs``/``name`` block that ``fastfuels_core`` reads to anchor units and
+projection.
+
 See ``fastfuels_core.layersets`` for the rasterizer's column documentation.
 """
 
 from enum import StrEnum
 from typing import Any, Literal
 
+from geojson_pydantic import Feature, FeatureCollection
+from geojson_pydantic.geometries import MultiPolygon, Polygon
 from pydantic import BaseModel, Field, model_validator
 
 from api.resources.features.schema import CreateFeatureRequestBase, FeatureType
@@ -81,59 +89,49 @@ class LayersetProperties(BaseModel):
         return self
 
 
-# --- GeoJSON geometry + feature wrappers -------------------------------------
+# --- GeoJSON wrappers (via geojson_pydantic) ---------------------------------
 
 
-class LayersetGeometry(BaseModel):
-    """Polygon or MultiPolygon geometry attached to each Feature.
+class LayersetFeature(Feature[Polygon | MultiPolygon, LayersetProperties]):
+    """One Feature in the layerset FeatureCollection.
 
-    Both GeoJSON polygon types are accepted because standard tooling
-    (QGIS, GDAL, geopandas) emits ``Polygon`` for single-ring features
-    and ``MultiPolygon`` for multi-ring ones. The downstream rasterizer
-    and bounds extraction (via ``shapely.geometry.shape``) handle both.
-
-    Coordinates are intentionally typed as ``list[Any]`` to accept the
-    deeply nested ring arrays without locking the schema to a specific
-    coordinate dimensionality.
+    Inherits coordinate validation from ``geojson_pydantic``. Both
+    ``Polygon`` and ``MultiPolygon`` are accepted because standard tooling
+    (QGIS, GDAL, geopandas) emits ``Polygon`` for single-ring features and
+    ``MultiPolygon`` for multi-ring ones. ``properties`` is narrowed to
+    non-Optional because every fuelbed row must carry the rasterizer's
+    required columns.
     """
 
-    type: Literal["Polygon", "MultiPolygon"]
-    coordinates: list[Any] = Field(default_factory=list)
-
-
-class LayersetFeature(BaseModel):
-    """One Feature in the layerset FeatureCollection."""
-
-    type: Literal["Feature"] = "Feature"
     properties: LayersetProperties
-    geometry: LayersetGeometry
 
 
 class LayersetCrs(BaseModel):
     """Optional GeoJSON crs block.
 
-    Per RFC 7946, ``crs`` is deprecated at the GeoJSON level, but the team's
-    pipeline emits it and downstream consumers (geopandas, this server) read
-    it to anchor the bounds extracted in the upload router.
+    Per RFC 7946, ``crs`` is deprecated at the GeoJSON level (and
+    ``geojson_pydantic`` therefore omits it), but the team's pipeline emits
+    it and downstream consumers (geopandas, this server) read it to anchor
+    bounds and the projected-CRS check in the upload router.
     """
 
     type: str = "name"
     properties: dict[str, Any] = Field(default_factory=dict)
 
 
-class LayersetFeatureCollection(BaseModel):
-    """Standard GeoJSON FeatureCollection of fuelbed polygons.
+class LayersetFeatureCollection(FeatureCollection[LayersetFeature]):
+    """GeoJSON FeatureCollection of fuelbed polygons.
 
-    ``name`` and ``crs`` are optional and pass through to the stored GeoJSON
-    without server-side reinterpretation. At least one Feature is required —
-    ``fastfuels_core.rasterize_layerset`` rejects empty inputs, so we surface
-    the error at upload time rather than at rasterize time.
+    Extends ``geojson_pydantic.FeatureCollection`` with the optional
+    GeoJSON ``crs`` and ``name`` members (RFC 7946 deprecates ``crs``, but
+    we need it to anchor the projected-CRS check in the upload router).
+    At least one Feature is required — ``fastfuels_core.rasterize_layerset``
+    rejects empty inputs, so we surface the error at upload time rather
+    than at rasterize time.
     """
 
-    type: Literal["FeatureCollection"] = "FeatureCollection"
     name: str | None = None
     crs: LayersetCrs | None = None
-    features: list[LayersetFeature] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def at_least_one_feature(self) -> "LayersetFeatureCollection":

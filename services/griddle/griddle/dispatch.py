@@ -10,10 +10,19 @@ from datetime import date
 import geopandas as gpd
 import xarray as xr
 
-from griddle.handlers import chm, landfire, lookup, pim, resample, threedep, uniform
+from griddle.handlers import (
+    chm,
+    landfire,
+    layerset,
+    lookup,
+    pim,
+    resample,
+    threedep,
+    uniform,
+)
 from lib.config import GRIDS_COLLECTION
 from lib.errors import ProcessingError
-from lib.firestore import DocumentNotFoundError, get_document
+from lib.firestore import DocumentNotFoundError, get_document, update_document
 
 META_CHM_ATTRIBUTION = {
     "1": {
@@ -88,6 +97,8 @@ def dispatch_handler(
     match source_name:
         case "landfire":
             return handle_landfire(domain_gdf, source, progress_callback)
+        case "layerset":
+            return handle_layerset(grid, domain_gdf, source, progress_callback)
         case "lookup":
             return handle_lookup(grid, source, progress_callback)
         case "resample":
@@ -196,6 +207,49 @@ def handle_pim(
                 message=f"Unknown PIM product: {product}",
                 suggestion="Supported products: treemap",
             )
+
+
+def handle_layerset(
+    grid: dict,
+    domain_gdf: gpd.GeoDataFrame,
+    source: dict,
+    progress: Callable[[str, int | None], None],
+) -> xr.Dataset:
+    """Handle layerset rasterization source grids.
+
+    The Grid's ``bands`` field cannot be set at API create time because
+    the band layout is derived from the input layerset's unique
+    ``fuel_type`` values. After rasterization completes here we build the
+    real bands list from the output Dataset and persist it to Firestore
+    so downstream consumers (exports, the Grid GET endpoint) see the
+    actual data layout.
+    """
+    domain_id = grid["domain_id"]
+    layerset_id = source["layerset_id"]
+    overlap_method = source.get("overlap_method", "mean")
+    extent_buffer_cells = source.get("extent_buffer_cells", 0)
+    alignment = source.get("alignment") or {"target": "domain"}
+    target_grid_doc = _load_target_grid_doc(alignment)
+
+    progress(f"Rasterizing layerset {layerset_id}...", 10)
+
+    ds = layerset.fetch_layerset(
+        domain_gdf=domain_gdf,
+        layerset_id=layerset_id,
+        domain_id=domain_id,
+        overlap_method=overlap_method,
+        progress=progress,
+        extent_buffer_cells=extent_buffer_cells,
+        alignment=alignment,
+        target_grid_doc=target_grid_doc,
+    )
+
+    # Persist the real bands list — see docstring above.
+    bands = layerset.build_layerset_bands(ds)
+    update_document(GRIDS_COLLECTION, grid["id"], {"bands": bands})
+    grid["bands"] = bands  # keep the in-memory dict consistent for the caller
+
+    return ds
 
 
 def handle_lookup(

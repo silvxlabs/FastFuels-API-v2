@@ -27,10 +27,12 @@ from griddle.handlers.layerset import (
 from lib.errors import ProcessingError
 from lib.testing import SHARED_TEST_FEATURES_DIR
 
-# Shared real Lubrecht layerset (also used by the integration tests). Lives
-# in lib/tests/shared_data/features/ alongside every other reusable fixture
-# in the repo — see the surrounding handler tests for the same convention.
-FIXTURE_PATH = SHARED_TEST_FEATURES_DIR / "lubrecht_layerset.geojson"
+# Shared example layerset (also used by the integration tests). Polygon shapes
+# derived from a Lubrecht site layerset, translated into the bounds of the
+# Blackfoot example domain so the example pairs cleanly with that domain in
+# both unit and integration tests. Lives in lib/tests/shared_data/features/
+# alongside every other reusable fixture in the repo.
+FIXTURE_PATH = SHARED_TEST_FEATURES_DIR / "blackfoot_example_layerset.geojson"
 
 # Known alignment destination used to exercise the post-rasterize reprojection
 # branch. Pinned via monkeypatching resolve_alignment_destination so the test

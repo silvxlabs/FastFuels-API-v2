@@ -3,10 +3,12 @@ Integration tests for layerset rasterization.
 
 Exercises the full pipeline: domain + layerset GeoJSON in Firestore/GCS,
 through ``handle_layerset`` → ``fastfuels_core.layersets.rasterize_layerset``
-→ Zarr writeback → Firestore ``bands`` writeback. The Lubrecht layerset
-fixture (``services/lib/tests/shared_data/features/lubrecht_layerset.geojson``)
+→ Zarr writeback → Firestore ``bands`` writeback. The shared example
+fixture (``services/lib/tests/shared_data/features/blackfoot_example_layerset.geojson``)
 declares 7 features spanning 3 fuel_types (``shrub``, ``herb``, ``litter``)
-in EPSG:32612.
+in EPSG:32612. Polygon shapes are derived from a Lubrecht site layerset,
+translated into the Blackfoot example domain's bounds so the integration
+tests pair cleanly with that domain.
 
 Notes:
 - ``rasterize_layerset`` uses random placement for the ``random_clusters``
@@ -36,7 +38,7 @@ EXPECTED_BAND_COORD = [
 EXPECTED_FUEL_TYPES = {"shrub", "herb", "litter"}
 
 
-def test_lubrecht_layerset_native_rasterization(griddle_runner):
+def test_blackfoot_example_layerset_native_rasterization(griddle_runner):
     """Native-alignment rasterize: one var per fuel_type, 5 bands each, EPSG:32612.
 
     Also verifies that ``handle_layerset`` writes the Grid doc's ``bands``
@@ -51,7 +53,7 @@ def test_lubrecht_layerset_native_rasterization(griddle_runner):
     result = griddle_runner(
         "blackfoot.json",
         "rasterize_layerset.json",
-        feature_file="lubrecht_layerset.geojson",
+        feature_file="blackfoot_example_layerset.geojson",
         timeout=180,
     )
     ds = result.ds
@@ -86,18 +88,21 @@ def test_lubrecht_layerset_native_rasterization(griddle_runner):
     assert unit_for["shrub.heat_of_combustion"] == "kJ/kg"
 
 
-def test_lubrecht_layerset_domain_alignment(griddle_runner):
+def test_blackfoot_example_layerset_domain_alignment(griddle_runner):
     """Domain alignment reprojects the rasterized output to the domain's CRS.
 
-    ``blue_mtn.json`` declares EPSG:32611 while the Lubrecht layerset is
+    ``blue_mtn.json`` declares EPSG:32611 while the example layerset is
     EPSG:32612, so a successful run proves the per-variable post-process
     reprojection (mirroring ``resample.py``) wired in Task 8 works
-    end-to-end across multi-variable, multi-band Datasets.
+    end-to-end across multi-variable, multi-band Datasets. Note: blue_mtn's
+    extent does not spatially overlap the layerset polygons, so this test
+    asserts only the reprojection plumbing — the data values land outside
+    the destination extent and the Zarr is expected to be all-NaN.
     """
     result = griddle_runner(
         "blue_mtn.json",
         "rasterize_layerset.json",
-        feature_file="lubrecht_layerset.geojson",
+        feature_file="blackfoot_example_layerset.geojson",
         source_overrides={
             "alignment": {
                 "target": "domain",

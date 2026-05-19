@@ -36,6 +36,23 @@ def test_lookup(griddle_runner, source_grid):
 Static test data lives in GCS at `gs://{GRIDS_BUCKET}/static-test-*` and is
 created by `services/api/tests/e2e/`. Never deleted by integration test cleanup.
 
+### Feature-consuming handlers (layerset)
+
+Read a Feature GeoJSON from `gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson`.
+The `griddle_runner` accepts a `feature_file` kwarg that uploads a fixture
+from `services/lib/tests/shared_data/features/` to that path before running
+the handler, and cleans up the blob on teardown. `layerset_id` is auto-injected
+into `source_overrides` when the caller hasn't already set one.
+
+```python
+def test_layerset(griddle_runner):
+    result = griddle_runner(
+        "blue_mtn.json", "rasterize_layerset.json",
+        feature_file="lubrecht_layerset.geojson",
+    )
+    assert "shrub" in result.ds.data_vars
+```
+
 ## Test Data
 
 - **Domain GeoJSONs**: `tests/data/domains/` (e.g., `blue_mtn.json`)

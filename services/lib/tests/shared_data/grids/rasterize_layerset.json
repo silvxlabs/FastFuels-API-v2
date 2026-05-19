@@ -1,0 +1,32 @@
+{
+  "bands": [],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-rasterize-layerset",
+  "progress": null,
+  "source": {
+    "alignment": {
+      "target": "native",
+      "resolution": 10.0,
+      "method": null
+    },
+    "description": "Rasterized hierarchical fuelbed layerset",
+    "extent_buffer_cells": 0,
+    "layerset_id": "PLACEHOLDER",
+    "name": "layerset",
+    "overlap_method": "mean",
+    "product": "layerset"
+  },
+  "status": "pending",
+  "tags": []
+}

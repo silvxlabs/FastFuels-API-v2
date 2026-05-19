@@ -26,12 +26,17 @@ import xarray as xr
 from lib.config import (
     DEPLOYMENT_ENV,
     DOMAINS_COLLECTION,
+    FEATURES_BUCKET,
     GRIDS_BUCKET,
     GRIDS_COLLECTION,
 )
 from lib.firestore.documents import delete_document, get_document, set_document
-from lib.gcs.blobs import delete_directory, exists
-from lib.testing import SHARED_TEST_DOMAINS_DIR, SHARED_TEST_GRIDS_DIR
+from lib.gcs.blobs import delete_directory, delete_file, exists, upload_json
+from lib.testing import (
+    SHARED_TEST_DOMAINS_DIR,
+    SHARED_TEST_FEATURES_DIR,
+    SHARED_TEST_GRIDS_DIR,
+)
 
 
 class GriddleResult(NamedTuple):
@@ -43,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 GRIDS_DIR = SHARED_TEST_GRIDS_DIR
+FEATURES_DIR = SHARED_TEST_FEATURES_DIR
 
 
 def load_json(path: Path) -> dict:
@@ -199,6 +205,7 @@ def griddle_runner():
     """
     domain_ids = []
     grid_ids = []
+    feature_blobs: list[str] = []
     datasets = []
 
     def _run(
@@ -206,6 +213,9 @@ def griddle_runner():
         grid_file: str,
         timeout: int = 300,
         source_overrides: dict | None = None,
+        *,
+        feature_file: str | None = None,
+        feature_id: str | None = None,
     ) -> GriddleResult:
         # Create domain document
         domain_data = load_json(DOMAINS_DIR / domain_file)
@@ -214,6 +224,22 @@ def griddle_runner():
         data["id"] = domain_id
         set_document(DOMAINS_COLLECTION, domain_id, data)
         domain_ids.append(domain_id)
+
+        # Optionally upload a feature GeoJSON to the FEATURES_BUCKET path the
+        # API would write to (``{domain_id}/{feature_id}.geojson``). Used by
+        # handlers that read a Feature from GCS — currently just layerset.
+        # Auto-injects ``layerset_id`` into ``source_overrides`` when the
+        # caller didn't already set one.
+        if feature_file is not None:
+            if feature_id is None:
+                feature_id = f"test-{uuid4().hex}"
+            feature_gcs_path = (
+                f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
+            )
+            upload_json(feature_gcs_path, load_json(FEATURES_DIR / feature_file))
+            feature_blobs.append(feature_gcs_path)
+            source_overrides = dict(source_overrides or {})
+            source_overrides.setdefault("layerset_id", feature_id)
 
         # Create grid document
         grid_data = load_json(GRIDS_DIR / grid_file)
@@ -266,6 +292,10 @@ def griddle_runner():
         if exists(gcs_path):
             delete_directory(gcs_path)
         delete_document(GRIDS_COLLECTION, grid_id)
+
+    for feature_blob in feature_blobs:
+        if exists(feature_blob):
+            delete_file(feature_blob)
 
     for domain_id in domain_ids:
         delete_document(DOMAINS_COLLECTION, domain_id)

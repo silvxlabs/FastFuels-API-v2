@@ -1,27 +1,19 @@
 """
-Unit tests for api/v2/resources/grids/upload/schema.py
+Unit tests for api/v2/resources/grids/upload/geotiff/schema.py
 
-Tests the upload grid schema models and validation.
+Tests the GeoTIFF upload grid schema models and validation.
 Pure unit tests with no external dependencies.
 """
 
 import pytest
-from api.resources.grids.upload.examples import ALL_GRID_UPLOAD_EXAMPLE_VALUES
-from api.resources.grids.upload.schema import (
-    CreateGridUploadRequest,
-    GridUploadFormat,
+from api.resources.grids.upload.geotiff.examples import (
+    ALL_GRID_UPLOAD_EXAMPLE_VALUES,
+)
+from api.resources.grids.upload.geotiff.schema import (
+    CreateGeoTIFFUploadRequest,
     UploadBandDefinition,
 )
 from pydantic import ValidationError
-
-
-class TestGridUploadFormat:
-    def test_geotiff_valid(self):
-        assert GridUploadFormat("geotiff") == GridUploadFormat.geotiff
-
-    def test_invalid_format_raises(self):
-        with pytest.raises(ValueError):
-            GridUploadFormat("shapefile")
 
 
 class TestUploadBandDefinition:
@@ -41,16 +33,15 @@ class TestUploadBandDefinition:
             UploadBandDefinition(key="x", type="nominal")
 
 
-class TestCreateGridUploadRequest:
+class TestCreateGeoTIFFUploadRequest:
     def test_minimal_request(self):
-        req = CreateGridUploadRequest(bands=[{"key": "fbfm", "type": "categorical"}])
-        assert req.format == GridUploadFormat.geotiff
+        req = CreateGeoTIFFUploadRequest(bands=[{"key": "fbfm", "type": "categorical"}])
         assert req.name == ""
         assert req.tags == []
         assert len(req.bands) == 1
 
     def test_multi_band_request(self):
-        req = CreateGridUploadRequest(
+        req = CreateGeoTIFFUploadRequest(
             bands=[
                 {
                     "key": "bulk_density.foliage",
@@ -68,7 +59,7 @@ class TestCreateGridUploadRequest:
         assert req.bands[0].key == "bulk_density.foliage"
 
     def test_with_metadata(self):
-        req = CreateGridUploadRequest(
+        req = CreateGeoTIFFUploadRequest(
             bands=[{"key": "fbfm", "type": "categorical"}],
             name="Custom FBFM40",
             description="Derived from LiDAR",
@@ -79,24 +70,20 @@ class TestCreateGridUploadRequest:
 
     def test_empty_bands_raises(self):
         with pytest.raises(ValidationError):
-            CreateGridUploadRequest(bands=[])
+            CreateGeoTIFFUploadRequest(bands=[])
 
     def test_missing_bands_raises(self):
         with pytest.raises(ValidationError):
-            CreateGridUploadRequest()
+            CreateGeoTIFFUploadRequest()
 
     def test_invalid_band_type_raises(self):
         with pytest.raises(ValidationError):
-            CreateGridUploadRequest(bands=[{"key": "fbfm", "type": "nominal"}])
-
-    def test_format_defaults_to_geotiff(self):
-        req = CreateGridUploadRequest(bands=[{"key": "fbfm", "type": "categorical"}])
-        assert req.format == GridUploadFormat.geotiff
+            CreateGeoTIFFUploadRequest(bands=[{"key": "fbfm", "type": "nominal"}])
 
     def test_duplicate_band_keys_raises(self):
         """Two bands with the same key must be rejected at validation time."""
         with pytest.raises(ValidationError):
-            CreateGridUploadRequest(
+            CreateGeoTIFFUploadRequest(
                 bands=[
                     {"key": "fbfm", "type": "categorical"},
                     {"key": "fbfm", "type": "categorical"},
@@ -104,11 +91,11 @@ class TestCreateGridUploadRequest:
             )
 
     def test_num_buffer_cells_defaults_to_zero(self):
-        req = CreateGridUploadRequest(bands=[{"key": "fbfm", "type": "categorical"}])
+        req = CreateGeoTIFFUploadRequest(bands=[{"key": "fbfm", "type": "categorical"}])
         assert req.num_buffer_cells == 0
 
     def test_num_buffer_cells_accepts_positive_int(self):
-        req = CreateGridUploadRequest(
+        req = CreateGeoTIFFUploadRequest(
             bands=[{"key": "fbfm", "type": "categorical"}],
             num_buffer_cells=5,
         )
@@ -116,7 +103,7 @@ class TestCreateGridUploadRequest:
 
     def test_num_buffer_cells_negative_raises(self):
         with pytest.raises(ValidationError):
-            CreateGridUploadRequest(
+            CreateGeoTIFFUploadRequest(
                 bands=[{"key": "fbfm", "type": "categorical"}],
                 num_buffer_cells=-1,
             )
@@ -128,5 +115,5 @@ class TestOpenApiExamples:
     )
     def test_example_validates_against_schema(self, example_name, example_value):
         """Every OpenAPI example must parse without error."""
-        req = CreateGridUploadRequest(**example_value)
+        req = CreateGeoTIFFUploadRequest(**example_value)
         assert len(req.bands) >= 1

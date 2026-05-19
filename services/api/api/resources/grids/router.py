@@ -36,6 +36,7 @@ from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.fccs.router import router as fccs_router
 from api.resources.grids.lookup.router import router as lookup_router
 from api.resources.grids.pim.router import router as pim_router
+from api.resources.grids.rasterize.router import router as rasterize_router
 from api.resources.grids.resample.router import router as resample_router
 from api.resources.grids.schema import (
     DenseGridData,
@@ -811,6 +812,7 @@ router.include_router(
 router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
 router.include_router(canopy_router, prefix="/canopy", tags=["Grids - Canopy"])
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
+router.include_router(rasterize_router, prefix="/rasterize", tags=["Grids - Rasterize"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(voxelize_router, prefix="/voxelize")
 router.include_router(uniform_router, prefix="/uniform", tags=["Grids - Uniform"])

@@ -9,6 +9,36 @@ These helpers stamp the in-memory xarray Dataset right before
 `ds.to_netcdf(...)`. The stored zarr is left alone — CF metadata is only
 required at the netCDF I/O boundary; rioxarray auto-discovers CRS from
 the `spatial_ref` coord on zarr reopen via `decode_coords="all"`.
+
+## Convention: `grid_mapping` lives in `var.encoding`, never `var.attrs`
+
+Per the CF spec and xarray docs (user-guide/weather-climate.rst):
+
+> CF variable attributes — `coordinates`, `bounds`, `grid_mapping` — are
+> parsed by xarray. The attribute values are decoded into ENCODING
+> information, and the variables in those values are interpreted as
+> non-dimension coordinates.
+
+`rio.write_crs(...)` and `open_*(..., decode_coords="all")` both place
+`grid_mapping` in `var.encoding`. xarray's CF encoder migrates it to the
+on-disk attrs at `to_netcdf` / `to_zarr` time via
+`pop_to(var.encoding, var.attrs, "grid_mapping")` — which **raises
+ValueError** if both `encoding` and `attrs` carry the key. So `stamp_cf`
+does **not** write `attrs["grid_mapping"]`: doing so would clash with
+the encoder on any Dataset that came from a zarr round-trip.
+
+## The `encoding=` kwarg trap
+
+`Dataset.to_netcdf(..., encoding={k: {...}})` (and the equivalent for
+`to_zarr`) **replaces** `variables[k].encoding` wholesale — see
+`xarray/backends/writers.py` and the encoding setter at
+`xarray/core/variable.py`. If you pass `encoding={'fbfm': {'zlib': True}}`
+to write a CRS-bearing dataset, the kwarg-supplied dict has no
+`grid_mapping`, the original `var.encoding["grid_mapping"]` is wiped, and
+the resulting file has no CRS reference. **Do not pass the encoding
+kwarg on CRS-bearing datasets** — mutate `var.encoding` in place
+instead. See `services/exporter/exporter/handlers/netcdf.py` for the
+compression pattern.
 """
 
 from __future__ import annotations
@@ -56,7 +86,12 @@ def stamp_cf(
 
     unit_by_key = {b["key"]: b.get("unit") for b in bands}
     for var in ds.data_vars:
-        ds[var].attrs["grid_mapping"] = "spatial_ref"
+        # Do not stamp grid_mapping into attrs. Per CF + xarray conventions,
+        # grid_mapping belongs in var.encoding (rio.write_crs and
+        # decode_coords="all" both put it there). xarray's CF encoder at
+        # to_netcdf/to_zarr time runs pop_to(encoding, attrs, "grid_mapping")
+        # to materialize the attribute on disk. Stamping attrs ourselves
+        # causes the encoder to raise "grid_mapping already exists in attrs".
         ds[var].attrs.setdefault("long_name", var)
         unit = unit_by_key.get(var)
         if unit:

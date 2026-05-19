@@ -1,5 +1,5 @@
 """
-Example request bodies for the grid upload endpoint.
+Example request bodies for the GeoTIFF grid upload endpoint.
 
 These examples are used in:
 1. OpenAPI/Swagger documentation
@@ -7,13 +7,11 @@ These examples are used in:
 """
 
 EXAMPLE_UPLOAD_SINGLE_BAND = {
-    "format": "geotiff",
     "bands": [{"key": "fbfm", "type": "categorical"}],
     "name": "Custom FBFM40",
 }
 
 EXAMPLE_UPLOAD_MULTI_BAND = {
-    "format": "geotiff",
     "bands": [
         {"key": "bulk_density.foliage", "type": "continuous", "unit": "kg/m**3"},
         {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m**3"},

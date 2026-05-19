@@ -6,6 +6,8 @@ Object path convention: {resource_type}/{resource_id}/{filename}
 """
 
 from lib.errors import ProcessingError
+from uploader.handlers.grid import handle_grid_geotiff, handle_grid_netcdf
+from uploader.handlers.inventory import handle_inventory
 
 
 def dispatch_handler(
@@ -25,17 +27,24 @@ def dispatch_handler(
         doc: Resource document loaded from Firestore
 
     Raises:
-        ProcessingError: If resource type has no registered handler
+        ProcessingError: If resource type has no registered handler, or if a
+            "grids" doc has an unknown source.format.
     """
     match resource_type:
         case "inventories":
-            from uploader.handlers.inventory import handle_inventory
-
             handle_inventory(resource_id, bucket, object_name, doc)
         case "grids":
-            from uploader.handlers.grid import handle_grid
-
-            handle_grid(resource_id, bucket, object_name, doc)
+            fmt = (doc.get("source") or {}).get("format")
+            match fmt:
+                case "geotiff":
+                    handle_grid_geotiff(resource_id, bucket, object_name, doc)
+                case "netcdf":
+                    handle_grid_netcdf(resource_id, bucket, object_name, doc)
+                case _:
+                    raise ProcessingError(
+                        code="UNKNOWN_GRID_FORMAT",
+                        message=f"No uploader handler for grid format: {fmt}",
+                    )
         case _:
             raise ProcessingError(
                 code="UNKNOWN_RESOURCE_TYPE",

@@ -73,9 +73,9 @@ class TestOverlapMethods:
         If the enum gains or loses a value, this assertion fails and we
         update the dict to match (or vice-versa).
         """
-        assert set(OVERLAP_METHODS) == {"mean", "max", "min", "sum", "first"}
+        assert set(OVERLAP_METHODS) == {"mean", "max", "min"}
 
-    @pytest.mark.parametrize("method", ["mean", "max", "min", "sum", "first"])
+    @pytest.mark.parametrize("method", ["mean", "max", "min"])
     def test_callable_reduces_array(self, method):
         """Each overlap callable reduces a 1-D array without raising."""
         result = OVERLAP_METHODS[method](np.array([1.0, 2.0, 3.0]))

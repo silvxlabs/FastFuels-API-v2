@@ -125,13 +125,24 @@ class LayersetFeatureCollection(BaseModel):
     """Standard GeoJSON FeatureCollection of fuelbed polygons.
 
     ``name`` and ``crs`` are optional and pass through to the stored GeoJSON
-    without server-side reinterpretation.
+    without server-side reinterpretation. At least one Feature is required —
+    ``fastfuels_core.rasterize_layerset`` rejects empty inputs, so we surface
+    the error at upload time rather than at rasterize time.
     """
 
     type: Literal["FeatureCollection"] = "FeatureCollection"
     name: str | None = None
     crs: LayersetCrs | None = None
     features: list[LayersetFeature] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def at_least_one_feature(self) -> "LayersetFeatureCollection":
+        if not self.features:
+            raise ValueError(
+                "Layerset must contain at least one Feature. "
+                "An empty FeatureCollection cannot be rasterized."
+            )
+        return self
 
 
 # --- Request Body ------------------------------------------------------------

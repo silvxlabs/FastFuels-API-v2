@@ -46,20 +46,38 @@ class TestLayersetSource:
         }
 
 
+# One valid Feature used across the request-body tests below. Reused so each
+# test focuses on the field under exercise rather than re-declaring geometry.
+_MINIMAL_FEATURE = {
+    "type": "Feature",
+    "properties": {
+        "fuel_type": "shrub",
+        "fuel_loading": 1.0,
+        "fuel_height": 1.0,
+        "percent_cover": 50,
+        "distribution": "homogeneous",
+    },
+    "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]],
+    },
+}
+
+
 class TestCreateLayersetRequestBody:
     """Tests for CreateLayersetRequestBody model."""
 
     def test_minimal_valid_request(self):
-        """Minimal request requires type='layerset' and a geojson FeatureCollection."""
+        """Minimal request requires type='layerset' and a non-empty FeatureCollection."""
         request = CreateLayersetRequestBody(
             type="layerset",
-            geojson={"type": "FeatureCollection", "features": []},
+            geojson={"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
         )
         assert request.type == FeatureType.layerset
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
-        assert request.geojson.features == []
+        assert len(request.geojson.features) == 1
 
     def test_geojson_is_required(self):
         """The geojson field cannot be omitted."""
@@ -71,8 +89,17 @@ class TestCreateLayersetRequestBody:
         with pytest.raises(ValidationError):
             CreateLayersetRequestBody(
                 type="road",
+                geojson={"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
+            )
+
+    def test_empty_feature_collection_rejected(self):
+        """An empty FeatureCollection is rejected at schema validation time."""
+        with pytest.raises(ValidationError) as exc_info:
+            CreateLayersetRequestBody(
+                type="layerset",
                 geojson={"type": "FeatureCollection", "features": []},
             )
+        assert "at least one Feature" in str(exc_info.value)
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional metadata fields."""
@@ -81,7 +108,7 @@ class TestCreateLayersetRequestBody:
             name="Test Layerset",
             description="A test custom layerset.",
             tags=["custom", "test"],
-            geojson={"type": "FeatureCollection", "features": []},
+            geojson={"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
         )
         assert request.type == FeatureType.layerset
         assert request.name == "Test Layerset"

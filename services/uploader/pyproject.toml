@@ -18,9 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=9.0.2",
-    "exporter",
 ]
 
 [tool.uv.sources]
 lib = { path = "../lib", editable = true }
-exporter = { path = "../exporter", editable = true }

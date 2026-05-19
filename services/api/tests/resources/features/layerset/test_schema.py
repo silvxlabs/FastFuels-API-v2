@@ -1,8 +1,9 @@
 """
 Unit tests for api/v2/resources/features/layerset/schema.py
 
-Tests the Layerset schema models, source metadata, and hierarchical GeoJSON
-structure. These are pure unit tests with no external dependencies.
+Tests the Layerset schema models, source metadata, and the flat GeoJSON
+FeatureCollection shape. These are pure unit tests with no external
+dependencies.
 """
 
 import pytest
@@ -121,6 +122,43 @@ class TestLayersetFeatureCollection:
         request = CreateLayersetRequestBody(**EXAMPLE_LAYERSET_MINIMAL)
         assert request.geojson.crs is not None
         assert request.geojson.crs.properties["name"] == "urn:ogc:def:crs:EPSG::32612"
+
+    def test_polygon_geometry_is_accepted(self):
+        """A Feature with a plain Polygon geometry is accepted alongside MultiPolygon.
+
+        Standard GeoJSON tooling commonly emits Polygon for single-ring
+        features; rejecting them would force users to wrap exports.
+        """
+        request = CreateLayersetRequestBody(
+            type="layerset",
+            geojson={
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "fuel_type": "shrub",
+                            "fuel_loading": 1.0,
+                            "fuel_height": 1.0,
+                            "percent_cover": 50,
+                            "distribution": "homogeneous",
+                        },
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [0.0, 0.0],
+                                    [1.0, 0.0],
+                                    [1.0, 1.0],
+                                    [0.0, 0.0],
+                                ]
+                            ],
+                        },
+                    }
+                ],
+            },
+        )
+        assert request.geojson.features[0].geometry.type == "Polygon"
 
     def test_random_clusters_requires_patch_size(self):
         """A random_clusters feature without patch_size is rejected at validation."""

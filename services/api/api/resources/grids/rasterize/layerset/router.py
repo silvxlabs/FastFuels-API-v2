@@ -53,8 +53,8 @@ async def create_layerset_rasterize(
     """
     # Create Layerset-Rasterized Grid
 
-    Rasterizes a previously-uploaded hierarchical fuelbed layerset into a
-    grid aligned to the domain (default) or to a target grid.
+    Rasterizes a previously-uploaded fuelbed layerset into a grid aligned
+    to the domain (default) or to a target grid.
 
     The `layerset_id` must reference a Feature uploaded for this domain via
     `POST /domains/{domain_id}/features/layerset` and owned by the caller.

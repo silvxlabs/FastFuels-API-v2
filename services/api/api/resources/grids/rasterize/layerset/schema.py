@@ -3,12 +3,11 @@ api/v2/resources/grids/rasterize/layerset/schema.py
 
 Schema models for the layerset rasterization grid product.
 
-A layerset is a hierarchical fuelbed GeoJSON uploaded via
-``POST /domains/{id}/features/layerset``. This product rasterizes that
-GeoJSON into a Zarr grid aligned to a domain or target grid. The actual
-rasterization math lives in ``fastfuels_core.rasterize_layerset``; while
-that update is in flight, the griddle handler uses a private stub with
-the same signature.
+A layerset is a flat GeoJSON FeatureCollection of fuelbed polygons
+uploaded via ``POST /domains/{id}/features/layerset``. This product
+rasterizes that GeoJSON into a Zarr grid aligned to a domain or target
+grid. The rasterization math lives in
+``fastfuels_core.layersets.rasterize_layerset``.
 """
 
 from enum import StrEnum
@@ -46,9 +45,7 @@ class LayersetSource(BaseModel):
     overlap_method: OverlapMethod
     extent_buffer_cells: int
     alignment: dict
-    description: Literal["Rasterized hierarchical fuelbed layerset"] = (
-        "Rasterized hierarchical fuelbed layerset"
-    )
+    description: Literal["Rasterized fuelbed layerset"] = "Rasterized fuelbed layerset"
 
 
 class CreateLayersetRasterizeRequest(CreateSourceGridRequestBase):

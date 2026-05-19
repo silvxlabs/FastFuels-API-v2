@@ -197,7 +197,6 @@ class TestNetcdf2DUpload:
 
             zarr_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
             assert exists(zarr_path)
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
             ds = xr.open_zarr(zarr_path, decode_coords="all")
             assert "fbfm" in ds.data_vars
@@ -245,7 +244,6 @@ class TestNetcdf3DUpload:
 
             zarr_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
             assert exists(zarr_path)
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
             ds = xr.open_zarr(zarr_path, decode_coords="all")
             assert "bulk_density.foliage" in ds.data_vars

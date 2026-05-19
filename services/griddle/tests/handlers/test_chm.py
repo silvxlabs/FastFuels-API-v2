@@ -14,7 +14,7 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.chm import _query_tile_index, fetch_meta_chm, fetch_naip_chm
 from rasterio.crs import CRS
-from rasterio.transform import from_bounds
+from rasterio.transform import from_bounds, from_origin
 from shapely.geometry import box
 
 from lib.errors import ProcessingError
@@ -638,7 +638,6 @@ class TestFetchNaipChm:
 
         merged_da = _make_mock_raster(raw_values).extract_window.return_value
         merged_da = merged_da.squeeze("band", drop=True)
-        merged_da = merged_da / 100.0
         mock_merge.return_value = merged_da
 
         progress = MagicMock()
@@ -651,3 +650,83 @@ class TestFetchNaipChm:
         mock_merge.assert_called_once()
         assert isinstance(ds, xr.Dataset)
         assert tile_metadata["tile_count"] == 2
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_multi_tile_does_not_leak_scaled_nodata(self, mock_query, mock_raster_cls):
+        """Regression for the chunk-boundary garbage bug.
+
+        When two NAIP tiles get reprojected to the same shared destination
+        lattice, each tile fills the cells outside its own footprint with the
+        uint16 source nodata sentinel (65535). If the per-tile scale factor is
+        applied BEFORE merge_arrays, the sentinel becomes 655.35 and
+        merge_arrays (which keys on the original nodata value) can no longer
+        mask it — so one tile's "scaled garbage" half overwrites the other
+        tile's valid half in the mosaic.
+
+        Setup: two non-overlapping tiles, A's valid half on the left and B's
+        valid half on the right, with the rest of each tile filled with the
+        uint16 nodata sentinel. Both halves must survive in the merged float
+        output, and NO pixel may hold the post-scale sentinel value 655.35.
+        """
+        height = width = 8
+        nodata_u16 = 65535
+        # Build a north-up transform so merge_arrays accepts the rasters.
+        transform = from_origin(west=0.0, north=height, xsize=1.0, ysize=1.0)
+        crs = "EPSG:32611"
+
+        # North-up y coords (decreasing) so write_transform doesn't flip.
+        y_coords = np.arange(height, 0, -1) - 0.5  # pixel centers, top -> bottom
+        x_coords = np.arange(width) + 0.5
+
+        def _half_tile_raster(values):
+            da = xr.DataArray(
+                values[np.newaxis, :, :],
+                dims=["band", "y", "x"],
+                coords={
+                    "band": [1],
+                    "y": y_coords,
+                    "x": x_coords,
+                },
+            )
+            da = da.rio.write_crs(crs).rio.write_transform(transform)
+            # Real RasterConnection.extract_window output carries the source
+            # nodata; mirror that so merge_arrays has something to mask on.
+            da = da.rio.write_nodata(nodata_u16)
+            mr = MagicMock()
+            mr.raster_resolution = 1
+            mr.extract_window.return_value = da
+            return mr
+
+        # Tile A: valid value 1000 (= 10.00 m) on the left half, nodata on the right.
+        tile_a = np.full((height, width), nodata_u16, dtype=np.uint16)
+        tile_a[:, : width // 2] = 1000
+        # Tile B: nodata on the left half, valid value 2000 (= 20.00 m) on the right.
+        tile_b = np.full((height, width), nodata_u16, dtype=np.uint16)
+        tile_b[:, width // 2 :] = 2000
+
+        mock_raster_cls.side_effect = [
+            _half_tile_raster(tile_a),
+            _half_tile_raster(tile_b),
+        ]
+        mock_query.return_value = _make_naip_query_result(
+            urls=["http://fake/a.tif", "http://fake/b.tif"]
+        )
+        progress = MagicMock()
+
+        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        values = ds["chm"].values
+
+        # The post-scale sentinel value would be 65535 / 100 = 655.35.
+        # Before the fix, half the mosaic was filled with this garbage value.
+        scaled_sentinel = (np.abs(values - 655.35) < 0.01).sum()
+        assert scaled_sentinel == 0, (
+            f"{scaled_sentinel}/{values.size} pixels still hold the "
+            f"scaled-nodata sentinel (65535/100 = 655.35)"
+        )
+
+        # Each tile's valid half must be preserved in the mosaic.
+        left = values[:, : width // 2]
+        right = values[:, width // 2 :]
+        assert np.allclose(left, 10.0), f"left half lost tile A: {np.unique(left)}"
+        assert np.allclose(right, 20.0), f"right half lost tile B: {np.unique(right)}"

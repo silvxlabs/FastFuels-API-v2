@@ -277,4 +277,5 @@ class SparseGridData(BaseModel):
 class GridDataResponse(BaseModel):
     shape: list[int]
     order: Literal["C", "F"]
+    metadata: GridDataChunkMetadata
     data: DenseGridData | SparseGridData = Field(discriminator="format")

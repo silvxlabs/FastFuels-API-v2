@@ -305,10 +305,18 @@ class TestResponseModels:
         r = GridDataResponse(
             shape=[47, 61],
             order="C",
+            metadata=GridDataChunkMetadata(
+                index=0,
+                shape=(47, 61),
+                offset=(0, 0),
+                transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+            ),
             data={"format": "dense", "values": [1, 2, 3]},
         )
         assert r.shape == [47, 61]
         assert r.order == "C"
+        assert r.metadata.index == 0
+        assert r.metadata.shape == (47, 61)
         assert isinstance(r.data, DenseGridData)
         assert r.data.format == "dense"
         assert r.data.values == [1, 2, 3]
@@ -317,6 +325,12 @@ class TestResponseModels:
         r = GridDataResponse(
             shape=[2, 3],
             order="C",
+            metadata=GridDataChunkMetadata(
+                index=0,
+                shape=(2, 3),
+                offset=(0, 0),
+                transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+            ),
             data={
                 "format": "sparse",
                 "fill_value": 0,
@@ -334,6 +348,12 @@ class TestResponseModels:
         r = GridDataResponse(
             shape=[2, 3],
             order="C",
+            metadata=GridDataChunkMetadata(
+                index=0,
+                shape=(2, 3),
+                offset=(0, 0),
+                transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+            ),
             data={
                 "format": "sparse",
                 "fill_value": None,

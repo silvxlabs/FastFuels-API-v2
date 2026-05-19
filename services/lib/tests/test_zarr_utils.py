@@ -92,6 +92,49 @@ class TestSaveZarrChunking:
             save_zarr(path, da, chunk_shape=(32, 32))
 
 
+class TestSaveZarr3DChunking:
+    """save_zarr must accept a 3-tuple chunk_shape and enforce it on disk."""
+
+    @staticmethod
+    def _make_3d_dataset(shape: tuple[int, int, int]) -> xr.Dataset:
+        nz, ny, nx = shape
+        transform = from_bounds(
+            500000, 4200000, 500000 + nx * 30, 4200000 + ny * 30, nx, ny
+        )
+        z = np.arange(nz, dtype=np.float64)
+        y = np.arange(ny)
+        x = np.arange(nx)
+        da = xr.DataArray(
+            np.random.rand(nz, ny, nx).astype(np.float32),
+            dims=("z", "y", "x"),
+            coords={"z": z, "y": y, "x": x},
+        )
+        ds = xr.Dataset({"density": da}).rio.write_crs("EPSG:32610")
+        return ds.rio.write_transform(transform)
+
+    def test_three_tuple_enforces_z_chunking(self, tmp_path):
+        """A 3-tuple chunk_shape produces matching on-disk z/y/x chunks."""
+        nz = 7
+        ds = self._make_3d_dataset(shape=(nz, 100, 120))
+        path = str(tmp_path / "z_chunked.zarr")
+
+        save_zarr(path, ds, chunk_shape=(nz, 32, 32))
+
+        store = zarr.open(path, mode="r")
+        assert store["density"].chunks == (nz, 32, 32)
+
+    def test_three_tuple_independent_z_chunk(self, tmp_path):
+        """The z chunk dimension is honored independently of nz."""
+        ds = self._make_3d_dataset(shape=(10, 100, 120))
+        path = str(tmp_path / "z_partial.zarr")
+
+        # Ask for z-chunks of 5 (so each var has 2 chunks along z).
+        save_zarr(path, ds, chunk_shape=(5, 32, 32))
+
+        store = zarr.open(path, mode="r")
+        assert store["density"].chunks == (5, 32, 32)
+
+
 class TestChunkingWithSpatialMetadata:
     """Tests that chunking preserves CRS, transform, and spatial_ref."""
 

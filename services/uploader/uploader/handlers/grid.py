@@ -235,7 +235,6 @@ def handle_grid_netcdf(
 
             output_path = f"gs://{GRIDS_BUCKET}/{resource_id}"
             is_3d = "z" in dataset.sizes
-            save_zarr(output_path, dataset, chunk_shape=_CHUNK_SHAPE)
 
             ny = dataset.sizes["y"]
             nx = dataset.sizes["x"]
@@ -262,6 +261,8 @@ def handle_grid_netcdf(
                 }
                 grid_shape = (ny, nx)
                 chunk_shape = _CHUNK_SHAPE
+
+            save_zarr(output_path, dataset, chunk_shape=chunk_shape)
 
             bands = []
             for i, var_name in enumerate(dataset.data_vars):

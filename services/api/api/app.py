@@ -105,15 +105,9 @@ app = FastAPI(
     summary="3D fuels for next-generation fire behavior models.",
     description=API_DESCRIPTION,
     version="2.0.0-beta",
-    terms_of_service="https://fastfuels.silvxlabs.com/terms",
-    contact={
-        "name": "Silvx Labs",
-        "url": "https://silvxlabs.com",
-        "email": "support@silvxlabs.com",
-    },
     license_info={
-        "name": "Proprietary — Silvx Labs",
-        "url": "https://fastfuels.silvxlabs.com/terms",
+        "name": "MIT",
+        "url": "https://github.com/silvxlabs/FastFuels-API-v2/blob/main/LICENSE",
     },
     openapi_tags=OPENAPI_TAGS,
     separate_input_output_schemas=False,
@@ -190,7 +184,7 @@ async def index():
         },
         "feedback": {
             "issues": "https://github.com/silvxlabs/FastFuels-API-v2/issues",
-            "email": "support@silvxlabs.com",
+            "email": "support.fastfuels@silvxlabs.com",
         },
     }
 

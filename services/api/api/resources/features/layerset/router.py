@@ -5,11 +5,13 @@ Router for custom Layerset uploads.
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Request, status
+from shapely.geometry import shape
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
@@ -26,54 +28,58 @@ from lib.gcs.blobs import upload_json
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# GeoJSON spec default when no crs block is declared on the FeatureCollection.
+_DEFAULT_CRS = "EPSG:4326"
+
+
+def _parse_crs_name(geojson: dict) -> str:
+    """Extract an ``EPSG:<code>`` string from the GeoJSON's optional crs block.
+
+    Accepts both bare ``"EPSG:32612"`` and the URN form
+    ``"urn:ogc:def:crs:EPSG::32612"``. Falls back to ``EPSG:4326`` when the
+    crs block is missing — the GeoJSON spec default.
+    """
+    name = (geojson.get("crs") or {}).get("properties", {}).get("name", "")
+    if not name:
+        return _DEFAULT_CRS
+    if name.startswith("EPSG:"):
+        return name
+    match = re.search(r"EPSG::?(\d+)", name)
+    if match:
+        return f"EPSG:{match.group(1)}"
+    return name  # pass through unrecognized forms; downstream surfaces the issue
+
 
 def _extract_bounds(geojson: dict) -> tuple[float, float, float, float] | None:
+    """Compute the union bounding box across every ``Feature.geometry``.
+
+    The bounds are expressed in the GeoJSON's own coordinate units — i.e.
+    whatever the top-level ``crs`` block declares. Returns ``None`` when no
+    feature carries a non-empty geometry.
     """
-    Crawls the hierarchical layerset GeoJSON to find the total bounding box
-    across all strata and fuelbeds. Uses a recursive generator to handle
-    arbitrary coordinate nesting depths.
-    """
-    min_x, min_y, max_x, max_y = (
-        float("inf"),
-        float("inf"),
-        float("-inf"),
-        float("-inf"),
-    )
-    has_coords = False
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+    found = False
 
-    def _get_points(coords_array):
-        """Recursively yields (x, y) tuples from arbitrarily nested lists."""
-        if not coords_array:
-            return
+    for feature in geojson.get("features", []):
+        geom_dict = feature.get("geometry") or {}
+        if not geom_dict.get("coordinates"):
+            continue
+        try:
+            geom = shape(geom_dict)
+        except Exception as e:  # malformed geometry — log and skip, not fatal
+            logger.warning(f"Skipping malformed geometry in layerset upload: {e}")
+            continue
+        if geom.is_empty:
+            continue
+        bx_min, by_min, bx_max, by_max = geom.bounds
+        min_x = min(min_x, bx_min)
+        min_y = min(min_y, by_min)
+        max_x = max(max_x, bx_max)
+        max_y = max(max_y, by_max)
+        found = True
 
-        # If the first item is a number, we've hit the bottom [x, y] array
-        if isinstance(coords_array[0], (int, float)):
-            if len(coords_array) >= 2:
-                yield coords_array[0], coords_array[1]
-        else:
-            # Otherwise, it's a nested list, so keep digging
-            for item in coords_array:
-                if isinstance(item, list):
-                    yield from _get_points(item)
-
-    features = geojson.get("features", [])
-    for feature in features:
-        fuelbeds = feature.get("properties", {}).get("fuelbeds", [])
-        for fuelbed in fuelbeds:
-            coords = fuelbed.get("polygons", {}).get("coordinates", [])
-
-            # Safely extract all points regardless of nesting depth
-            for x, y in _get_points(coords):
-                min_x = min(min_x, x)
-                min_y = min(min_y, y)
-                max_x = max(max_x, x)
-                max_y = max(max_y, y)
-                has_coords = True
-
-    if has_coords:
-        return (min_x, min_y, max_x, max_y)
-
-    return None
+    return (min_x, min_y, max_x, max_y) if found else None
 
 
 @router.post(
@@ -119,40 +125,45 @@ async def create_layerset(
     gcs_blob_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
     upload_json(gcs_blob_path, geojson_dict)
 
-    # 3. Compute total bounds across all nested geometries
+    # 3. Compute bounds across every Feature.geometry, anchored to whatever
+    #    CRS the GeoJSON declares (or EPSG:4326 per the GeoJSON default).
     georef = None
     try:
         bounds = _extract_bounds(geojson_dict)
         if bounds:
-            # Note: We assume standard unprojected WGS84 for raw geojson uploads
-            georef = FeatureGeoreference(crs="EPSG:4326", bounds=bounds)
+            georef = FeatureGeoreference(
+                crs=_parse_crs_name(geojson_dict),
+                bounds=bounds,
+            )
     except Exception as e:
-        logger.warning(f"Failed to extract bounds from custom GeoJSON: {e}")
+        logger.warning(f"Failed to extract bounds from layerset GeoJSON: {e}")
 
-    # 4. Construct the Feature metadata
+    # 4. Construct the Feature metadata as a Firestore dict.
+    #    `owner_id` is intentionally not part of the Feature schema (matches
+    #    the repo-wide pattern for resource models); it lives on the
+    #    Firestore document for access-control filtering only. See
+    #    services/api/api/resources/domains/router.py:239 for the same note.
     now = datetime.now(UTC)
     source = LayersetSource()
 
-    feature = Feature(
-        id=feature_id,
-        domain_id=domain_id,
-        type=body.type,
-        name=body.name,
-        description=body.description,
-        tags=body.tags,
-        status=JobStatus.completed,
-        created_on=now,
-        modified_on=now,
-        source=source.model_dump(),
-        georeference=georef,
-        owner_id=owner_id,
-    )
+    feature_data = {
+        "id": feature_id,
+        "domain_id": domain_id,
+        "type": body.type.value,
+        "name": body.name,
+        "description": body.description,
+        "status": JobStatus.completed.value,
+        "progress": None,
+        "created_on": now,
+        "modified_on": now,
+        "source": source.model_dump(),
+        "georeference": georef.model_dump() if georef is not None else None,
+        "error": None,
+        "tags": body.tags,
+        "owner_id": owner_id,
+    }
 
     # 5. Save metadata to Firestore
-    await set_document_async(
-        collection=FEATURES_COLLECTION,
-        document_id=feature_id,
-        data=feature.model_dump(exclude_none=True),
-    )
+    await set_document_async(FEATURES_COLLECTION, feature_id, feature_data)
 
-    return feature
+    return Feature(**feature_data)

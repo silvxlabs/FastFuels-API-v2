@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 import gcsfs
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import xarray as xr
 from rioxarray.merge import merge_arrays
@@ -75,9 +76,16 @@ def _process_intersecting_tiles(
     n_tiles = len(fetch_urls)
     tile_arrays = []
     method_name = alignment.get("method") or "bilinear"
+    # All tiles in a single fetch share the same scale (Meta = 1.0,
+    # NAIP = 100.0). The scale is applied once after merging.
+    if len(set(scale_factors)) != 1:
+        raise ProcessingError(
+            code="INTERNAL_ERROR",
+            message="Mixed scale factors across tiles are not supported.",
+        )
 
     with cog_env(**gdal_env):
-        for i, (url, scale) in enumerate(zip(fetch_urls, scale_factors)):
+        for i, url in enumerate(fetch_urls):
             progress(
                 f"Fetching CHM tile {i + 1}/{n_tiles}...",
                 10 + int(60 * (i + 1) / n_tiles),
@@ -101,14 +109,14 @@ def _process_intersecting_tiles(
                 **dest,
             )
 
-            # Squeeze band dimension to satisfy strict 2D requirements
-            data_2d = data.squeeze("band", drop=True)
-
-            # Apply scale factor if needed (e.g., NAIP UInt16 -> Float meters)
-            if scale != 1.0:
-                data_2d = data_2d / scale
-
-            tile_arrays.append(data_2d)
+            # Squeeze band dimension to satisfy strict 2D requirements.
+            # Keep the tile in its native dtype so merge_arrays can compose
+            # with the source nodata sentinel — applying the scale factor
+            # here would convert the sentinel into an indistinguishable
+            # float value (e.g. NAIP 65535/100 = 655.35) and merge_arrays
+            # would then overwrite valid pixels with scaled-nodata garbage
+            # across tile boundaries.
+            tile_arrays.append(data.squeeze("band", drop=True))
 
     progress("Building dataset...", 80)
 
@@ -118,8 +126,17 @@ def _process_intersecting_tiles(
     else:
         chm_da = merge_arrays(tile_arrays)
 
-    # Ensure float32 to avoid unnecessary float64 memory usage
+    # Now that compositing is done, mask the source nodata sentinel to NaN
+    # and apply the scale factor (e.g. NAIP UInt16 -> float meters). Both
+    # happen post-merge so the sentinel never survives into output pixels.
+    nodata = chm_da.rio.nodata
     chm_da = chm_da.astype("float32")
+    if nodata is not None:
+        chm_da = chm_da.where(chm_da != np.float32(nodata))
+    scale = scale_factors[0]
+    if scale != 1.0:
+        chm_da = chm_da / np.float32(scale)
+    chm_da = chm_da.rio.write_nodata(np.float32("nan"))
 
     # Wrap in xr.Dataset with strict variable naming
     ds = xr.Dataset({"chm": chm_da})

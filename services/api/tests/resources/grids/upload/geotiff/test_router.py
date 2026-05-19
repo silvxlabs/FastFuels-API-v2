@@ -29,10 +29,6 @@ MULTI_BAND = [
     {"key": "bulk_density.branchwood", "type": "continuous", "unit": "kg/m**3"},
 ]
 
-# GeoTIFF bounds inside domain_for_testing extent (x=[500000,501000], y=[5200000,5201000])
-_TIFF_XMIN, _TIFF_YMIN = 500100.0, 5200100.0
-_TIFF_XMAX, _TIFF_YMAX = 500900.0, 5200900.0
-
 
 class TestCreateGridUpload:
     """Test the POST /domains/{domain_id}/grids/upload/geotiff endpoint."""
@@ -204,12 +200,28 @@ def _poll_grid(client, domain_id, grid_id, timeout=120) -> dict:
     pytest.fail(f"Grid did not complete within {timeout}s")
 
 
-def _make_geotiff_file(domain_crs: str, n_bands: int = 1) -> Path:
-    """Write a small GeoTIFF in domain_crs to a temp file and return the path."""
-    width, height = 20, 20
-    transform = from_bounds(
-        _TIFF_XMIN, _TIFF_YMIN, _TIFF_XMAX, _TIFF_YMAX, width, height
-    )
+def _make_geotiff_file(
+    domain_crs: str,
+    bbox: tuple[float, float, float, float],
+    n_bands: int = 1,
+) -> Path:
+    """Write a small GeoTIFF in domain_crs to a temp file and return the path.
+
+    `bbox` is the domain bounding box (xmin, ymin, xmax, ymax). The GeoTIFF
+    sits strictly inside `bbox` with a 10% margin per side. Pixels are forced
+    square (NON_SQUARE_PIXELS is rejected by the uploader).
+    """
+    xmin, ymin, xmax, ymax = bbox
+    mx, my = (xmax - xmin) * 0.1, (ymax - ymin) * 0.1
+    tx0, ty0, tx1, ty1 = xmin + mx, ymin + my, xmax - mx, ymax - my
+    # Square pixels: pick the smaller per-axis pixel size and trim to fit.
+    n_cells = 20
+    span = min(tx1 - tx0, ty1 - ty0)
+    pixel = span / n_cells
+    tx1 = tx0 + n_cells * pixel
+    ty1 = ty0 + n_cells * pixel
+    width = height = n_cells
+    transform = from_bounds(tx0, ty0, tx1, ty1, width, height)
     epsg = int(domain_crs.split(":")[1])
     f = tempfile.NamedTemporaryFile(suffix=".tif", delete=False)
     f.close()
@@ -227,6 +239,30 @@ def _make_geotiff_file(domain_crs: str, n_bands: int = 1) -> Path:
         for b in range(1, n_bands + 1):
             dst.write(np.full((height, width), float(b), dtype="float32"), b)
     return Path(f.name)
+
+
+class TestGeotiffHelperFixtureCoupling:
+    """Regression: the GeoTIFF helper must derive bounds from the domain bbox.
+
+    Previously, _TIFF_XMIN/YMIN/MAX module constants were hand-chosen to lie
+    inside domain_for_testing. If that fixture's bbox ever moved, the full-flow
+    test silently became a NO_OVERLAP failure that looked like a real bug.
+    """
+
+    def test_helper_accepts_bbox_and_lies_inside_it(self, domain_for_testing):
+        domain_crs = domain_for_testing["crs"]["properties"]["name"]
+        # Move the bbox far from the original hardcoded constants.
+        fake_bbox = (700000.0, 4900000.0, 701000.0, 4901000.0)
+
+        tiff_path = _make_geotiff_file(domain_crs, bbox=fake_bbox, n_bands=1)
+        try:
+            with rasterio.open(tiff_path) as src:
+                tx0, ty0, tx1, ty1 = src.bounds
+            # The GeoTIFF must sit strictly inside the supplied bbox.
+            assert fake_bbox[0] <= tx0 and tx1 <= fake_bbox[2]
+            assert fake_bbox[1] <= ty0 and ty1 <= fake_bbox[3]
+        finally:
+            tiff_path.unlink(missing_ok=True)
 
 
 class TestUploadFullFlow:
@@ -256,7 +292,9 @@ class TestUploadFullFlow:
             content_type = data["upload"]["content_type"]
             max_size_bytes = data["upload"]["max_size_bytes"]
 
-            tiff_path = _make_geotiff_file(domain_crs, n_bands=1)
+            tiff_path = _make_geotiff_file(
+                domain_crs, bbox=tuple(domain_for_testing["bbox"]), n_bands=1
+            )
             try:
                 with open(tiff_path, "rb") as f:
                     put_response = requests.put(

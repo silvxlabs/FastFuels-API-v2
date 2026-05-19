@@ -4,11 +4,14 @@ acceptance criteria.
 
 For each rank (2D and 3D):
 1. Synthesize a source Grid (zarr in GRIDS_BUCKET + Firestore doc).
-2. Run the real exporter handler (services/exporter, #241) to produce a
-   CF-conformant netCDF in EXPORTS_BUCKET.
-3. Stage that .nc into UPLOADS_BUCKET as if a user uploaded it.
-4. Run the upload handler.
-5. Assert the destination Grid's values, dims, CRS, transform, and
+2. Build a CF-conformant netCDF inline (mirroring the logic in
+   services/exporter/exporter/handlers/netcdf.py::export_netcdf) and
+   write it directly to UPLOADS_BUCKET. Inlined rather than imported
+   so the uploader service does not need an editable dep on exporter
+   (which fails in the production Docker image — the exporter source
+   is not copied into the uploader's container).
+3. Run the upload handler.
+4. Assert the destination Grid's values, dims, CRS, transform, and
    (3D-only) z_resolution/z_origin equal the source's.
 
 The source Grid is sized to fit inside the blue_mtn domain so the upload
@@ -27,11 +30,11 @@ import numpy as np
 import pytest
 import rioxarray  # noqa: F401  registers .rio accessor
 import xarray as xr
-from exporter.handlers.netcdf import export_netcdf
 from google.cloud import storage
 from uploader.handlers.grid import handle_grid_netcdf
 
 import lib.gcs.blobs as _gcs_blobs
+from lib.cf_utils import stamp_cf
 from lib.config import (
     DOMAINS_COLLECTION,
     GRIDS_BUCKET,
@@ -42,6 +45,10 @@ from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, delete_file, exists
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 from lib.zarr_utils import save_zarr
+
+# Internal attrs that the exporter strips before CF stamping — same list
+# as services/exporter/exporter/handlers/netcdf.py::_INTERNAL_ATTRS_TO_STRIP.
+_INTERNAL_ATTRS_TO_STRIP = ("transform", "z_origin", "z_resolution")
 
 _BLUE_MTN_PATH = SHARED_TEST_DOMAINS_DIR / "blue_mtn.json"
 DOMAIN_CRS = "EPSG:32611"
@@ -125,20 +132,33 @@ def _build_3d_source() -> tuple[xr.Dataset, list[dict]]:
     return ds, bands
 
 
-def _stage_export_to_uploads(export_gcs_path: str, dest_object_name: str) -> None:
-    """Download from EXPORTS_BUCKET and re-upload to UPLOADS_BUCKET."""
-    without_scheme = export_gcs_path.removeprefix("gs://")
-    src_bucket_name, src_blob_path = without_scheme.split("/", 1)
-    client = storage.Client()
+def _export_netcdf_to_uploads(
+    src_zarr_path: str, bands: list[dict], dest_object_name: str
+) -> None:
+    """Build a CF netCDF from a source zarr and write it directly to UPLOADS_BUCKET.
+
+    Mirrors services/exporter/exporter/handlers/netcdf.py::export_netcdf
+    (read zarr → strip internal attrs → stamp_cf → set zlib encoding →
+    write h5netcdf → upload), but inline to avoid a cross-service dep
+    on `exporter` from the uploader's pyproject.toml.
+    """
+    ds = xr.open_zarr(src_zarr_path, decode_coords="all")
+    for k in _INTERNAL_ATTRS_TO_STRIP:
+        ds.attrs.pop(k, None)
+    stamp_cf(ds, bands=bands, vertical=("z" in ds.dims))
+    # Per cf_utils convention: mutate var.encoding in place. Passing
+    # encoding= kwarg to to_netcdf would wipe grid_mapping.
+    for var in ds.data_vars:
+        ds[var].encoding["zlib"] = True
+        ds[var].encoding["complevel"] = 4
+
     with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as f:
         tmp_path = f.name
     try:
-        client.bucket(src_bucket_name).blob(src_blob_path).download_to_filename(
-            tmp_path
-        )
-        client.bucket(UPLOADS_BUCKET).blob(dest_object_name).upload_from_filename(
-            tmp_path
-        )
+        ds.to_netcdf(tmp_path, engine="h5netcdf")
+        storage.Client().bucket(UPLOADS_BUCKET).blob(
+            dest_object_name
+        ).upload_from_filename(tmp_path)
     finally:
         os.unlink(tmp_path)
 
@@ -153,14 +173,12 @@ def _run_roundtrip(
     """
     src_grid_id = f"test-src-{uuid4().hex}"
     dst_grid_id = f"test-dst-{uuid4().hex}"
-    export_id = f"test-exp-{uuid4().hex}"
     domain_id = f"test-{uuid4().hex}"
 
     upload_object_name = f"grids/{dst_grid_id}/upload.nc"
 
     src_zarr = f"gs://{GRIDS_BUCKET}/{src_grid_id}"
     dst_zarr = f"gs://{GRIDS_BUCKET}/{dst_grid_id}"
-    export_gcs_path = None
     upload_path = f"gs://{UPLOADS_BUCKET}/{upload_object_name}"
 
     try:
@@ -181,16 +199,11 @@ def _run_roundtrip(
             },
         )
 
-        # 2. Run the real netCDF exporter
-        export_doc = {"id": export_id, "name": "roundtrip"}
-        source_arg = {"grid_id": src_grid_id, "bands": None}
-        export_gcs_path = export_netcdf(export_doc, source_arg, lambda *a, **k: None)
-        assert exists(export_gcs_path), f"exporter did not produce {export_gcs_path}"
+        # 2. Build CF netCDF inline and stage it into UPLOADS_BUCKET.
+        _export_netcdf_to_uploads(src_zarr, bands, upload_object_name)
+        assert exists(upload_path), f"inline export did not produce {upload_path}"
 
-        # 3. Stage the .nc into UPLOADS_BUCKET
-        _stage_export_to_uploads(export_gcs_path, upload_object_name)
-
-        # 4. Persist destination grid doc (mirrors what the upload route writes)
+        # 3. Persist destination grid doc (mirrors what the upload route writes)
         dst_doc = {
             "id": dst_grid_id,
             "domain_id": domain_id,
@@ -205,10 +218,10 @@ def _run_roundtrip(
         }
         set_document(GRIDS_COLLECTION, dst_grid_id, dst_doc)
 
-        # 5. Run the upload handler
+        # 4. Run the upload handler
         handle_grid_netcdf(dst_grid_id, UPLOADS_BUCKET, upload_object_name, dst_doc)
 
-        # 6. Load both zarrs for comparison
+        # 5. Load both zarrs for comparison
         src_reload = xr.open_zarr(src_zarr, decode_coords="all")
         dst_reload = xr.open_zarr(dst_zarr, decode_coords="all")
 
@@ -221,11 +234,6 @@ def _run_roundtrip(
         for path in (src_zarr, dst_zarr):
             if exists(path):
                 delete_directory(path)
-        if export_gcs_path:
-            try:
-                delete_file(export_gcs_path)
-            except Exception:
-                pass
         if exists(upload_path):
             try:
                 delete_file(upload_path)

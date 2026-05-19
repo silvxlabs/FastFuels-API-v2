@@ -125,6 +125,42 @@ def make_grid_data(
     return data
 
 
+def make_layerset_feature_data(
+    domain_id: str,
+    owner_id: str | None = None,
+    name: str = "Test Layerset",
+    description: str = "Test layerset created by fixture",
+    tags: list | None = None,
+) -> dict:
+    """Factory function for a layerset Feature document.
+
+    Mirrors the doc shape written by
+    ``services/api/api/resources/features/layerset/router.py``.
+    Use to seed a layerset that the rasterize endpoint can reference by
+    ``layerset_id``. No GCS upload is performed — router-level tests only
+    need the Firestore doc.
+    """
+    return {
+        "id": f"test-{uuid.uuid4().hex}",
+        "domain_id": domain_id,
+        "type": "layerset",
+        "name": name,
+        "description": description,
+        "status": "completed",
+        "progress": None,
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
+        "source": {"product": "Upload", "description": "User-uploaded layerset"},
+        "georeference": {
+            "crs": "EPSG:4326",
+            "bounds": (-114.12, 46.82, -114.09, 46.84),
+        },
+        "error": None,
+        "tags": tags or [],
+    }
+
+
 def make_inventory_data(
     domain_id: str,
     owner_id: str | None = None,

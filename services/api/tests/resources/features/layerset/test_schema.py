@@ -89,20 +89,65 @@ class TestCreateLayersetRequestBody:
 
 
 class TestLayersetFeatureCollection:
-    """Smoke test for the hierarchical schema using the documented example."""
+    """Smoke tests for the flat-GeoJSON schema using the documented example."""
 
     def test_documented_example_payload_parses(self):
-        """The example payload from examples.py parses into the model.
-
-        The interior schemas (LayersetFeature / LayersetProperties / Fuelbed /
-        LayersetMultiPolygon) intentionally use `Any` for the deeply nested
-        coordinate arrays and settings dicts, so the contract this pins is
-        'the example shape stays accepted', not field-level validation.
-        """
+        """The example payload from examples.py parses into the model."""
         request = CreateLayersetRequestBody(**EXAMPLE_LAYERSET_MINIMAL)
 
         assert isinstance(request.geojson, LayersetFeatureCollection)
-        assert len(request.geojson.features) == 8  # the eight required strata
-        strata_names = [f.properties.strata for f in request.geojson.features]
-        assert "Shrub1" in strata_names
-        assert "GroundFuels" in strata_names
+        assert len(request.geojson.features) == 7
+
+        # Every feature has the rasterizer's required columns on properties
+        for feature in request.geojson.features:
+            assert feature.properties.fuel_type
+            assert feature.properties.distribution.value in {
+                "homogeneous",
+                "uniform_random",
+                "random_clusters",
+            }
+
+        # fuel_type values are a small canonical set on the example
+        fuel_types = {f.properties.fuel_type for f in request.geojson.features}
+        assert fuel_types == {"shrub", "herb", "litter"}
+
+        # The team's per-fuelbed traceability identifier is preserved
+        strata_fbs = {f.properties.strata_fb for f in request.geojson.features}
+        assert "Shrub1_52" in strata_fbs
+        assert "LitterLichenMoss_53" in strata_fbs
+
+    def test_top_level_crs_block_is_preserved(self):
+        """The optional crs block on the FeatureCollection round-trips."""
+        request = CreateLayersetRequestBody(**EXAMPLE_LAYERSET_MINIMAL)
+        assert request.geojson.crs is not None
+        assert request.geojson.crs.properties["name"] == "urn:ogc:def:crs:EPSG::32612"
+
+    def test_random_clusters_requires_patch_size(self):
+        """A random_clusters feature without patch_size is rejected at validation."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            CreateLayersetRequestBody(
+                type="layerset",
+                geojson={
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {
+                                "fuel_type": "shrub",
+                                "fuel_loading": 1.0,
+                                "fuel_height": 1.0,
+                                "percent_cover": 50,
+                                "distribution": "random_clusters",
+                                # patch_size deliberately omitted
+                            },
+                            "geometry": {
+                                "type": "MultiPolygon",
+                                "coordinates": [],
+                            },
+                        }
+                    ],
+                },
+            )
+        assert "patch_size" in str(exc_info.value)

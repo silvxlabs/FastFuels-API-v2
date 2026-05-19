@@ -104,15 +104,15 @@ class TestCreateLayerset:
         assert "owner_id" not in data
 
     def test_extracts_georeference_from_geojson(self, client, domain_for_testing):
-        """When the payload contains coordinates, response georeference reflects bounds.
+        """Response georeference reflects the union bounds of every feature's geometry.
 
-        The minimal example payload's Shrub1 polygon has these four corners
-        (one closing point repeated):
-            x in [-114.11217537297199, -114.09545796676623]
-            y in [  46.82496749915157,   46.83247945986190]
-        All other strata have empty coordinates, so bounds come from Shrub1 alone.
+        The example payload declares ``crs == EPSG:32612`` (UTM 12N meters)
+        on the FeatureCollection. The union bounds across all seven features
+        span the Blackfoot-area UTM rectangle below (Lubrecht polygon shapes
+        translated into the Blackfoot example domain); both the CRS and the
+        bounds round-trip into the stored Feature's ``georeference``.
         """
-        # Use the documented "minimal" example which includes Shrub1 coordinates
+        # Use the documented "minimal" example with all 7 features.
         payload = LAYERSET_EXAMPLE_VALUES[0][1]  # ("minimal", EXAMPLE_LAYERSET_MINIMAL)
 
         response = client.post(self.route(domain_for_testing["id"]), json=payload)
@@ -120,14 +120,14 @@ class TestCreateLayerset:
 
         data = response.json()
         assert data["georeference"] is not None
-        assert data["georeference"]["crs"] == "EPSG:4326"
+        assert data["georeference"]["crs"] == "EPSG:32612"
 
         bounds = data["georeference"]["bounds"]
         assert len(bounds) == 4
-        assert bounds[0] == pytest.approx(-114.11217537297199)
-        assert bounds[1] == pytest.approx(46.82496749915157)
-        assert bounds[2] == pytest.approx(-114.09545796676623)
-        assert bounds[3] == pytest.approx(46.83247945986190)
+        assert bounds[0] == pytest.approx(294029.28510358, abs=0.01)
+        assert bounds[1] == pytest.approx(5198853.44471689, abs=0.01)
+        assert bounds[2] == pytest.approx(294849.82095037, abs=0.01)
+        assert bounds[3] == pytest.approx(5199877.74955579, abs=0.01)
 
     @pytest.mark.parametrize("example_name,example_value", LAYERSET_EXAMPLE_VALUES)
     def test_documented_example_creates_feature(

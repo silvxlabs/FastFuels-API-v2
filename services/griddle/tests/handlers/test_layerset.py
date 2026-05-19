@@ -25,8 +25,12 @@ from griddle.handlers.layerset import (
 )
 
 from lib.errors import ProcessingError
+from lib.testing import SHARED_TEST_FEATURES_DIR
 
-FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "layerset_minimal.geojson"
+# Shared real Lubrecht layerset (also used by the integration tests). Lives
+# in lib/tests/shared_data/features/ alongside every other reusable fixture
+# in the repo — see the surrounding handler tests for the same convention.
+FIXTURE_PATH = SHARED_TEST_FEATURES_DIR / "lubrecht_layerset.geojson"
 
 # Known alignment destination used to exercise the post-rasterize reprojection
 # branch. Pinned via monkeypatching resolve_alignment_destination so the test
@@ -88,7 +92,8 @@ class TestFixtureGeoJson:
     def test_fixture_loads_as_flat_gdf(self):
         gdf = gpd.read_file(FIXTURE_PATH)
         assert isinstance(gdf, gpd.GeoDataFrame)
-        assert len(gdf) == 3
+        # Lubrecht fixture: 7 features spanning {shrub, herb, litter} × multiple fuelbeds
+        assert len(gdf) == 7
         # CRS is honoured from the GeoJSON's own crs block
         assert gdf.crs is not None
         assert "32612" in str(gdf.crs)

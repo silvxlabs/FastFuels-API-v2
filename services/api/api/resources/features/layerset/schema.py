@@ -84,15 +84,20 @@ class LayersetProperties(BaseModel):
 # --- GeoJSON geometry + feature wrappers -------------------------------------
 
 
-class LayersetMultiPolygon(BaseModel):
-    """MultiPolygon geometry attached to each Feature.
+class LayersetGeometry(BaseModel):
+    """Polygon or MultiPolygon geometry attached to each Feature.
+
+    Both GeoJSON polygon types are accepted because standard tooling
+    (QGIS, GDAL, geopandas) emits ``Polygon`` for single-ring features
+    and ``MultiPolygon`` for multi-ring ones. The downstream rasterizer
+    and bounds extraction (via ``shapely.geometry.shape``) handle both.
 
     Coordinates are intentionally typed as ``list[Any]`` to accept the
     deeply nested ring arrays without locking the schema to a specific
     coordinate dimensionality.
     """
 
-    type: Literal["MultiPolygon"] = "MultiPolygon"
+    type: Literal["Polygon", "MultiPolygon"]
     coordinates: list[Any] = Field(default_factory=list)
 
 
@@ -101,7 +106,7 @@ class LayersetFeature(BaseModel):
 
     type: Literal["Feature"] = "Feature"
     properties: LayersetProperties
-    geometry: LayersetMultiPolygon
+    geometry: LayersetGeometry
 
 
 class LayersetCrs(BaseModel):

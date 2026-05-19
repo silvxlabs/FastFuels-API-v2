@@ -37,9 +37,11 @@ OVERLAP_METHODS: dict[str, Callable] = {
     "max": np.max,
     "min": np.min,
     "sum": np.sum,
-    # `first` returns the leading value along the reduction axis. The lambda
-    # tolerates `axis=None` (numpy reductions default to axis 0 in that case).
-    "first": lambda a, axis=None: np.take(a, 0, axis=axis if axis is not None else 0),
+    # `first` returns the leading value along the reduction axis. Defaults
+    # to axis 0 so callers that omit `axis` get unambiguous semantics
+    # (np.mean/max/etc. reduce the whole array when `axis=None`, which
+    # would diverge from `np.take(a, 0)`).
+    "first": lambda a, axis=0: np.take(a, 0, axis=axis),
 }
 
 # Per-band units reported by fastfuels_core.layersets.rasterize_layerset.

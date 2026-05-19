@@ -14,7 +14,7 @@ domain_id comes from the URL path parameter, not the request body.
 # site layerset, translated into the bounds of the BLACKFOOT example domain
 # so the documented `/features/layerset/geojson` example produces meaningful
 # downstream rasterization results when paired with that domain.
-_HIERARCHICAL_GEOJSON = {
+_EXAMPLE_GEOJSON = {
     "type": "FeatureCollection",
     "name": "blackfoot_example_layerset",
     "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::32612"}},
@@ -209,7 +209,7 @@ _HIERARCHICAL_GEOJSON = {
 
 EXAMPLE_LAYERSET_MINIMAL = {
     "type": "layerset",
-    "geojson": _HIERARCHICAL_GEOJSON,
+    "geojson": _EXAMPLE_GEOJSON,
     # "description": "TO BE PAIRED WITH BLACKFOOT EXAMPLE DOMAIN",
 }
 
@@ -218,7 +218,7 @@ EXAMPLE_LAYERSET_WITH_METADATA = {
     "name": "Custom Surface Fuels",
     # "description": "TO BE PAIRED WITH BLACKFOOT EXAMPLE DOMAIN",
     "tags": ["surface-fuels", "custom", "shrub"],
-    "geojson": _HIERARCHICAL_GEOJSON,
+    "geojson": _EXAMPLE_GEOJSON,
 }
 
 CREATE_LAYERSET_OPENAPI_EXAMPLES = {
@@ -226,7 +226,7 @@ CREATE_LAYERSET_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_LAYERSET_MINIMAL,
         "summary": "Minimal request",
         "description": (
-            "Uploads a hierarchical GeoJSON layerset with default metadata. "
+            "Uploads a flat GeoJSON layerset with default metadata. "
             "The system will automatically extract bounding box coordinates."
         ),
     },

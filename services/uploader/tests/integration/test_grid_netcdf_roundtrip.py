@@ -141,8 +141,16 @@ def _export_netcdf_to_uploads(
     (read zarr → strip internal attrs → stamp_cf → set zlib encoding →
     write h5netcdf → upload), but inline to avoid a cross-service dep
     on `exporter` from the uploader's pyproject.toml.
+
+    Note: .load() forces an eager read of the zarr into memory before
+    handing the Dataset to h5netcdf. The lazy-dask write path through
+    h5netcdf can silently write zeros for int data on some Linux x86_64
+    HDF5 / numpy wheel combinations (CI hits this; macOS arm64 does not).
+    The roundtrip-test datasets are tiny (kilobytes), so eager load is
+    cheap; the real production exporter on Cloud Run has the same
+    vulnerability for int-dtype grids and tracks #__ separately.
     """
-    ds = xr.open_zarr(src_zarr_path, decode_coords="all")
+    ds = xr.open_zarr(src_zarr_path, decode_coords="all").load()
     for k in _INTERNAL_ATTRS_TO_STRIP:
         ds.attrs.pop(k, None)
     stamp_cf(ds, bands=bands, vertical=("z" in ds.dims))

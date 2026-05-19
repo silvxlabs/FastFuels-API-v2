@@ -32,22 +32,21 @@ from lib.errors import ProcessingError
 
 # Maps the API-surface OverlapMethod string values to numpy callables.
 # Keep keys in sync with api.resources.grids.rasterize.layerset.schema.OverlapMethod.
+# Limited to mean/min/max because fastfuels_core.rasterize_layerset raises
+# ValueError for anything else.
 OVERLAP_METHODS: dict[str, Callable] = {
     "mean": np.mean,
     "max": np.max,
     "min": np.min,
-    "sum": np.sum,
-    # `first` returns the leading value along the reduction axis. Defaults
-    # to axis 0 so callers that omit `axis` get unambiguous semantics
-    # (np.mean/max/etc. reduce the whole array when `axis=None`, which
-    # would diverge from `np.take(a, 0)`).
-    "first": lambda a, axis=0: np.take(a, 0, axis=axis),
 }
 
 # Per-band units reported by fastfuels_core.layersets.rasterize_layerset.
-# Keep keys in sync with the published 5-band output coord.
+# Keep keys in sync with the published 5-band output coord. Values must be
+# in canonical ASCII UDUNITS-2 form (see docs/units.md). The drift guard
+# is in tests/handlers/test_layerset.py::TestLayersetBandUnits — matches
+# the repo-wide pattern used by uniform/topography/lookup/canopy/voxelize.
 _LAYERSET_BAND_UNITS: dict[str, str] = {
-    "loading": "kg/m²",
+    "loading": "kg/m**2",
     "height": "m",
     "live_fuel_moisture": "%",
     "dead_fuel_moisture": "%",
@@ -207,7 +206,7 @@ def build_layerset_bands(ds: xr.Dataset) -> list[dict]:
     shape so the worker can write it directly to Firestore without crossing
     the API↔griddle package boundary.
 
-    Each layerset band carries continuous physical units (kg/m², m, %, kJ/kg).
+    Each layerset band carries continuous physical units (kg/m**2, m, %, kJ/kg).
     """
     bands: list[dict] = []
     idx = 0

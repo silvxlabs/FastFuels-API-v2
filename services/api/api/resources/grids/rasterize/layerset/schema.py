@@ -22,13 +22,15 @@ from api.resources.grids.schema import (
 
 
 class OverlapMethod(StrEnum):
-    """Per-cell reduction applied when multiple polygons overlap a cell."""
+    """Per-cell reduction when multiple polygons of the same ``fuel_type``
+    overlap a cell. Applies to ``height`` and the optional bands only —
+    ``loading`` is always summed by ``fastfuels_core.rasterize_layerset``
+    regardless of this setting.
+    """
 
     mean = "mean"
     max = "max"
     min = "min"
-    sum = "sum"
-    first = "first"
 
 
 class LayersetSource(BaseModel):

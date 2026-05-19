@@ -19,6 +19,7 @@ import pytest
 from affine import Affine
 from fastfuels_core.layersets import rasterize_layerset
 from griddle.handlers.layerset import (
+    _LAYERSET_BAND_UNITS,
     OVERLAP_METHODS,
     build_layerset_bands,
     fetch_layerset,
@@ -26,6 +27,7 @@ from griddle.handlers.layerset import (
 
 from lib.errors import ProcessingError
 from lib.testing import SHARED_TEST_FEATURES_DIR
+from lib.units import validate_unit
 
 # Shared example layerset (also used by the integration tests). Polygon shapes
 # derived from a Lubrecht site layerset, translated into the bounds of the
@@ -73,9 +75,9 @@ class TestOverlapMethods:
         If the enum gains or loses a value, this assertion fails and we
         update the dict to match (or vice-versa).
         """
-        assert set(OVERLAP_METHODS) == {"mean", "max", "min", "sum", "first"}
+        assert set(OVERLAP_METHODS) == {"mean", "max", "min"}
 
-    @pytest.mark.parametrize("method", ["mean", "max", "min", "sum", "first"])
+    @pytest.mark.parametrize("method", ["mean", "max", "min"])
     def test_callable_reduces_array(self, method):
         """Each overlap callable reduces a 1-D array without raising."""
         result = OVERLAP_METHODS[method](np.array([1.0, 2.0, 3.0]))
@@ -145,6 +147,21 @@ class TestRealRasterizeLayerset:
         assert "32612" in str(ds.rio.crs)
 
 
+class TestLayersetBandUnits:
+    """Drift guard for ``_LAYERSET_BAND_UNITS``.
+
+    Mirrors the convention in `uniform/test_schema.py`,
+    `topography/test_schema.py`, etc.: each hardcoded band-unit dict in
+    the codebase carries a test that re-validates every value through
+    `lib.units.validate_unit`, so a typo or non-canonical form is caught
+    in CI rather than at runtime.
+    """
+
+    def test_all_units_are_canonical(self):
+        for unit in _LAYERSET_BAND_UNITS.values():
+            validate_unit(unit)
+
+
 class TestBuildLayersetBands:
     """Tests for ``build_layerset_bands`` — derives the Grid's bands field
     from the rasterized output Dataset."""
@@ -171,7 +188,7 @@ class TestBuildLayersetBands:
 
         # Units track the rasterizer's per-band documentation
         unit_for = {b["key"]: b["unit"] for b in bands}
-        assert unit_for["shrub.loading"] == "kg/m²"
+        assert unit_for["shrub.loading"] == "kg/m**2"
         assert unit_for["shrub.height"] == "m"
         assert unit_for["shrub.live_fuel_moisture"] == "%"
         assert unit_for["shrub.heat_of_combustion"] == "kJ/kg"

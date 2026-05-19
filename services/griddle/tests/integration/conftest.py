@@ -213,7 +213,6 @@ def griddle_runner():
         grid_file: str,
         timeout: int = 300,
         source_overrides: dict | None = None,
-        *,
         feature_file: str | None = None,
         feature_id: str | None = None,
     ) -> GriddleResult:

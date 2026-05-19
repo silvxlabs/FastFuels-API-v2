@@ -10,7 +10,8 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Request, status
+import pyproj
+from fastapi import APIRouter, Body, HTTPException, Request, status
 from shapely.geometry import shape
 
 from api.db.documents import set_document_async
@@ -48,6 +49,37 @@ def _parse_crs_name(geojson: dict) -> str:
     if match:
         return f"EPSG:{match.group(1)}"
     return name  # pass through unrecognized forms; downstream surfaces the issue
+
+
+def _require_projected_crs(crs_string: str) -> None:
+    """Raise 422 if ``crs_string`` is geographic or unparseable.
+
+    ``fastfuels_core.rasterize_layerset`` rejects geographic CRSes at
+    rasterize time (resolution would otherwise be in degrees, not meters).
+    Validating at upload turns a deferred worker crash into an immediate,
+    actionable error for the user.
+    """
+    try:
+        crs = pyproj.CRS.from_user_input(crs_string)
+    except pyproj.exceptions.CRSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Could not parse CRS {crs_string!r}: {exc}. Declare a "
+                "projected CRS on the GeoJSON's top-level `crs` block "
+                "(e.g. `EPSG:32612` for UTM 12N)."
+            ),
+        ) from exc
+    if crs.is_geographic:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Layerset CRS is geographic ({crs_string}). Rasterization "
+                "requires a projected CRS so cell sizes are in meters. "
+                "Reproject the GeoJSON to a UTM (or other projected) CRS "
+                "and declare it on the FeatureCollection's `crs` block."
+            ),
+        )
 
 
 def _extract_bounds(geojson: dict) -> tuple[float, float, float, float] | None:
@@ -123,7 +155,12 @@ async def create_layerset(
     # 1. Convert the pydantic GeoJSON model back to a dictionary
     geojson_dict = body.geojson.model_dump(exclude_none=True)
 
-    # 2. Upload directly to GCS using the shared library
+    # 2. Validate CRS before uploading. Geographic / unparseable CRSes
+    #    are rejected here so the failure surfaces to the caller as a 422
+    #    instead of a deferred rasterize crash.
+    _require_projected_crs(_parse_crs_name(geojson_dict))
+
+    # 3. Upload directly to GCS using the shared library
     gcs_blob_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
     upload_json(gcs_blob_path, geojson_dict)
 

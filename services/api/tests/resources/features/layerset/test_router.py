@@ -20,11 +20,41 @@ from api.resources.features.layerset.examples import LAYERSET_EXAMPLE_VALUES
 # FEATURES_BUCKET. (This mirrors how the existing road/water mock_create_task
 # fixtures are vestigial in practice — the real Cloud Tasks dispatch happens.)
 
-# A truly minimal valid payload: just the required type and an empty
-# FeatureCollection. Useful for tests that don't exercise the bounds path.
+# A minimal valid upload payload. The schema requires at least one Feature
+# (empty collections can't be rasterized) and the router requires a projected
+# CRS (geographic CRSes break rasterization in meters).
+_PROJECTED_CRS_BLOCK = {
+    "type": "name",
+    "properties": {"name": "urn:ogc:def:crs:EPSG::32612"},
+}
+_MINIMAL_FEATURE = {
+    "type": "Feature",
+    "properties": {
+        "fuel_type": "shrub",
+        "fuel_loading": 1.0,
+        "fuel_height": 1.0,
+        "percent_cover": 50,
+        "distribution": "homogeneous",
+    },
+    "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [294000.0, 5199000.0],
+                [294100.0, 5199000.0],
+                [294100.0, 5199100.0],
+                [294000.0, 5199000.0],
+            ]
+        ],
+    },
+}
 _MINIMAL_PAYLOAD = {
     "type": "layerset",
-    "geojson": {"type": "FeatureCollection", "features": []},
+    "geojson": {
+        "type": "FeatureCollection",
+        "crs": _PROJECTED_CRS_BLOCK,
+        "features": [_MINIMAL_FEATURE],
+    },
 }
 
 
@@ -128,6 +158,65 @@ class TestCreateLayerset:
         assert bounds[1] == pytest.approx(5198853.44471689, abs=0.01)
         assert bounds[2] == pytest.approx(294849.82095037, abs=0.01)
         assert bounds[3] == pytest.approx(5199877.74955579, abs=0.01)
+
+    def test_empty_feature_collection_returns_422(self, client, domain_for_testing):
+        """An empty FeatureCollection is rejected at schema validation."""
+        payload = {
+            "type": "layerset",
+            "geojson": {
+                "type": "FeatureCollection",
+                "crs": _PROJECTED_CRS_BLOCK,
+                "features": [],
+            },
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=payload)
+        assert response.status_code == 422
+
+    def test_no_crs_block_returns_422(self, client, domain_for_testing):
+        """Omitting the GeoJSON `crs` block defaults to geographic EPSG:4326
+        per the GeoJSON spec, which the rasterizer rejects. Surface this at
+        upload time so the user gets a 422 instead of a deferred worker crash.
+        """
+        payload = {
+            "type": "layerset",
+            "geojson": {"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=payload)
+        assert response.status_code == 422
+        assert "projected" in response.json()["detail"].lower()
+
+    def test_geographic_crs_block_returns_422(self, client, domain_for_testing):
+        """An explicit geographic CRS (e.g. EPSG:4326) is rejected."""
+        payload = {
+            "type": "layerset",
+            "geojson": {
+                "type": "FeatureCollection",
+                "crs": {
+                    "type": "name",
+                    "properties": {"name": "urn:ogc:def:crs:EPSG::4326"},
+                },
+                "features": [_MINIMAL_FEATURE],
+            },
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=payload)
+        assert response.status_code == 422
+        assert "geographic" in response.json()["detail"].lower()
+
+    def test_unparseable_crs_returns_422(self, client, domain_for_testing):
+        """A CRS string that pyproj can't parse returns 422 with a clear message."""
+        payload = {
+            "type": "layerset",
+            "geojson": {
+                "type": "FeatureCollection",
+                "crs": {
+                    "type": "name",
+                    "properties": {"name": "not-a-real-crs"},
+                },
+                "features": [_MINIMAL_FEATURE],
+            },
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=payload)
+        assert response.status_code == 422
 
     @pytest.mark.parametrize("example_name,example_value", LAYERSET_EXAMPLE_VALUES)
     def test_documented_example_creates_feature(

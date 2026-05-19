@@ -170,7 +170,7 @@ class TestCreateLayersetRasterize:
 
     # --- Overlap method ---------------------------------------------------
 
-    @pytest.mark.parametrize("method", ["mean", "max", "min", "sum", "first"])
+    @pytest.mark.parametrize("method", ["mean", "max", "min"])
     def test_each_overlap_method_accepted(
         self, client, domain_for_testing, caller_layerset, method
     ):

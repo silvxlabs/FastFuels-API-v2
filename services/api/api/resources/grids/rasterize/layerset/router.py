@@ -62,8 +62,10 @@ async def create_layerset_rasterize(
     ## Request Body
 
     - **layerset_id**: (required) Feature ID of the layerset to rasterize.
-    - **overlap_method**: (optional) Per-cell reduction when polygons overlap
-      a single cell. One of `mean`, `max`, `min`, `sum`, `first`. Default: `mean`.
+    - **overlap_method**: (optional) Per-cell reduction when polygons of the
+      same `fuel_type` overlap a single cell. One of `mean`, `max`, `min`.
+      Default: `mean`. (Loading is always summed across overlapping polygons
+      regardless of this setting.)
     - **alignment**: (optional) See alignment docs. Default: anchored to domain.
     - **extent_buffer_cells**: (optional) Buffer in result-grid cells around
       the domain extent. Cells inside the buffered extent that fall outside

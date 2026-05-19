@@ -312,6 +312,31 @@ def _assert_dense_binary_matches_zarr(response, expected: np.ndarray) -> None:
     np.testing.assert_array_equal(actual, expected)
 
 
+def _assert_bundled_metadata_matches(payload: dict, metadata: dict) -> None:
+    """Bundled metadata in a JSON data response matches the standalone metadata endpoint."""
+    assert payload["metadata"] == metadata
+
+
+def _assert_binary_chunk_headers_match(response, metadata: dict) -> None:
+    """X-Data-Offset / X-Data-Transform headers match the standalone metadata endpoint."""
+    offset = tuple(int(v) for v in response.headers["X-Data-Offset"].split(","))
+    assert list(offset) == list(metadata["offset"])
+    transform = tuple(float(v) for v in response.headers["X-Data-Transform"].split(","))
+    assert list(transform) == pytest.approx(list(metadata["transform"]))
+    if metadata.get("z_origin") is not None:
+        assert float(response.headers["X-Data-Z-Origin"]) == pytest.approx(
+            metadata["z_origin"]
+        )
+    else:
+        assert "X-Data-Z-Origin" not in response.headers
+    if metadata.get("z_resolution") is not None:
+        assert float(response.headers["X-Data-Z-Resolution"]) == pytest.approx(
+            metadata["z_resolution"]
+        )
+    else:
+        assert "X-Data-Z-Resolution" not in response.headers
+
+
 def _assert_sparse_binary_matches_zarr(response, expected: np.ndarray) -> None:
     assert response.headers["content-type"] == "application/octet-stream"
     assert response.headers["X-Data-Format"] == "sparse"
@@ -748,6 +773,7 @@ class TestGetGridDataJson:
         response = client.get(url, params=params)
         assert response.status_code == 200
 
+        _assert_bundled_metadata_matches(response.json(), metadata)
         expected = _read_static_zarr_chunk(STATIC_NAME, STATIC_BAND, metadata)
         _assert_dense_json_matches_zarr(response.json(), expected)
 
@@ -769,6 +795,7 @@ class TestGetGridDataJson:
         response = client.get(url, params=params)
         assert response.status_code == 200
 
+        _assert_bundled_metadata_matches(response.json(), metadata)
         expected = _read_static_zarr_chunk(STATIC_NAME, STATIC_BAND, metadata)
         _assert_sparse_json_matches_zarr(response.json(), expected)
 
@@ -805,6 +832,7 @@ class TestGetGridDataJson:
         response = client.get(url, params=params)
         assert response.status_code == 200
 
+        _assert_bundled_metadata_matches(response.json(), metadata)
         expected = _read_static_zarr_chunk(STATIC_3D_NAME, STATIC_3D_BAND, metadata)
         _assert_sparse_json_matches_zarr(response.json(), expected)
 
@@ -1073,6 +1101,7 @@ class TestGetGridDataBinary:
         response = client.get(url, params=params)
         assert response.status_code == 200
 
+        _assert_binary_chunk_headers_match(response, metadata)
         expected = _read_static_zarr_chunk(STATIC_NAME, STATIC_BAND, metadata)
         _assert_dense_binary_matches_zarr(response, expected)
 
@@ -1094,6 +1123,7 @@ class TestGetGridDataBinary:
         response = client.get(url, params=params)
         assert response.status_code == 200
 
+        _assert_binary_chunk_headers_match(response, metadata)
         expected = _read_static_zarr_chunk(STATIC_NAME, STATIC_BAND, metadata)
         _assert_sparse_binary_matches_zarr(response, expected)
 
@@ -1112,6 +1142,7 @@ class TestGetGridDataBinary:
         response = client.get(url, params=params)
         assert response.status_code == 200
 
+        _assert_binary_chunk_headers_match(response, metadata)
         expected = _read_static_zarr_chunk(STATIC_3D_NAME, STATIC_3D_BAND, metadata)
         _assert_dense_binary_matches_zarr(response, expected)
 
@@ -1133,5 +1164,6 @@ class TestGetGridDataBinary:
         response = client.get(url, params=params)
         assert response.status_code == 200
 
+        _assert_binary_chunk_headers_match(response, metadata)
         expected = _read_static_zarr_chunk(STATIC_3D_NAME, STATIC_3D_BAND, metadata)
         _assert_sparse_binary_matches_zarr(response, expected)

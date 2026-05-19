@@ -520,6 +520,18 @@ async def get_chunk_metadata(
         )
 
 
+def _chunk_metadata_headers(meta: GridDataChunkMetadata) -> dict[str, str]:
+    headers = {
+        "X-Data-Offset": ",".join(str(v) for v in meta.offset),
+        "X-Data-Transform": ",".join(str(v) for v in meta.transform),
+    }
+    if meta.z_origin is not None:
+        headers["X-Data-Z-Origin"] = str(meta.z_origin)
+    if meta.z_resolution is not None:
+        headers["X-Data-Z-Resolution"] = str(meta.z_resolution)
+    return headers
+
+
 async def _read_grid_chunk(
     request: Request,
     domain: VerifiedDomain,
@@ -556,12 +568,13 @@ async def _read_grid_chunk(
 
     array = await get_grid_array(grid_id, band)
     data = await array.getitem(compute_chunk_slices(meta))
-    return data, array
+    return data, array, meta
 
 
 @router.get(
     "/{grid_id}/data/{band}/{chunk_index}",
     response_model=GridDataResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
     summary="Get band data for a chunk (JSON)",
 )
@@ -595,8 +608,10 @@ async def get_grid_data_json(
     - **grid_id**: The grid identifier.
     - **band**: Band key to read (must be present in the grid's `bands`).
     - **chunk_index**: Zero-based flat chunk index. 2D grids index in (y, x);
-      3D grids index in (z, y, x). Use `GET …/chunks/{chunk_index}` to
-      discover chunk shape and offset.
+      3D grids index in (z, y, x). The chunk's shape, offset, and affine
+      transform are returned alongside the data — no separate metadata call
+      is required. (`GET …/chunks/{chunk_index}` is still available for
+      clients that want to lay out chunks before fetching data.)
 
     ## Query Parameters
 
@@ -608,8 +623,11 @@ async def get_grid_data_json(
 
     ## Response
 
-    Both variants share `shape` (chunk dimensions) and `order` (flattening
-    order used for the values).
+    Both variants share `shape` (chunk dimensions), `order` (flattening
+    order used for the values), and `metadata` (the chunk's index, shape,
+    offset, and affine transform — and `z_origin`/`z_resolution` for 3D
+    grids). The CRS does not vary per chunk; read it from the grid's
+    `georeference.crs`.
 
     **Dense** (`array_format=dense`): `data.format = "dense"`, `data.values`
     is a flat list of all cells.
@@ -627,7 +645,9 @@ async def get_grid_data_json(
     - **413**: Response would exceed the size limit. Try `array_format=sparse`,
       the `/binary` variant, or a smaller chunk.
     """
-    data, array = await _read_grid_chunk(request, domain, grid_id, band, chunk_index)
+    data, array, meta = await _read_grid_chunk(
+        request, domain, grid_id, band, chunk_index
+    )
 
     if array_format == GridDataArrayFormat.sparse:
         raw_fill = getattr(getattr(array, "metadata", None), "fill_value", None)
@@ -642,6 +662,7 @@ async def get_grid_data_json(
         return GridDataResponse(
             shape=list(data.shape),
             order=order.value,
+            metadata=meta,
             data=SparseGridData(
                 format="sparse",
                 fill_value=fill_value,
@@ -659,6 +680,7 @@ async def get_grid_data_json(
     return GridDataResponse(
         shape=list(data.shape),
         order=order.value,
+        metadata=meta,
         data=DenseGridData(
             format="dense",
             values=data.ravel(order=order.value).tolist(),
@@ -703,8 +725,10 @@ async def get_grid_data_binary(
     - **grid_id**: The grid identifier.
     - **band**: Band key to read (must be present in the grid's `bands`).
     - **chunk_index**: Zero-based flat chunk index. 2D grids index in (y, x);
-      3D grids index in (z, y, x). Use `GET …/chunks/{chunk_index}` to
-      discover chunk shape and offset.
+      3D grids index in (z, y, x). The chunk's shape, offset, and affine
+      transform are returned alongside the data — no separate metadata call
+      is required. (`GET …/chunks/{chunk_index}` is still available for
+      clients that want to lay out chunks before fetching data.)
 
     ## Query Parameters
 
@@ -721,6 +745,11 @@ async def get_grid_data_binary(
     - `X-Data-Shape`: comma-separated chunk dimensions (e.g., `47,61`).
     - `X-Data-Order`: flattening order used (`C` or `F`).
     - `X-Data-Format`: `dense` or `sparse`.
+    - `X-Data-Offset`: comma-separated pixel offset of this chunk within
+      the full grid (2D: `row,col`; 3D: `z,row,col`).
+    - `X-Data-Transform`: comma-separated six-element affine transform for
+      the chunk's spatial extent.
+    - `X-Data-Z-Origin`, `X-Data-Z-Resolution`: present only for 3D grids.
 
     **Dense** (`array_format=dense`): body is the flattened cells as raw
     bytes.
@@ -747,8 +776,11 @@ async def get_grid_data_binary(
     - **413**: Response would exceed the size limit. Try `array_format=sparse`
       or a smaller chunk.
     """
-    data, array = await _read_grid_chunk(request, domain, grid_id, band, chunk_index)
+    data, array, meta = await _read_grid_chunk(
+        request, domain, grid_id, band, chunk_index
+    )
     shape_header = ",".join(str(s) for s in data.shape)
+    chunk_headers = _chunk_metadata_headers(meta)
 
     if array_format == GridDataArrayFormat.sparse:
         raw_fill = getattr(getattr(array, "metadata", None), "fill_value", None)
@@ -768,6 +800,7 @@ async def get_grid_data_binary(
             "X-Data-NNZ": str(len(indices)),
             "X-Data-Index-Dtype": str(indices.dtype),
             "X-Data-Value-Dtype": str(values.dtype),
+            **chunk_headers,
         }
         if fill_value is not None:
             headers["X-Data-Fill-Value"] = str(fill_value)
@@ -792,6 +825,7 @@ async def get_grid_data_binary(
             "X-Data-Dtype": str(data.dtype),
             "X-Data-Order": order.value,
             "X-Data-Format": "dense",
+            **chunk_headers,
         },
     )
 

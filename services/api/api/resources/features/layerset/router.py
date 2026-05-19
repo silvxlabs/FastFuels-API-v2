@@ -14,6 +14,7 @@ import pyproj
 from fastapi import APIRouter, Body, HTTPException, Request, status
 from shapely.geometry import shape
 
+from api.db.blobs import upload_json
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.resources.features.layerset.examples import CREATE_LAYERSET_OPENAPI_EXAMPLES
@@ -24,7 +25,6 @@ from api.resources.features.layerset.schema import (
 from api.resources.features.schema import Feature, FeatureGeoreference
 from api.schema import JobStatus
 from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
-from lib.gcs.blobs import upload_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -162,7 +162,7 @@ async def create_layerset(
 
     # 3. Upload directly to GCS using the shared library
     gcs_blob_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
-    upload_json(gcs_blob_path, geojson_dict)
+    await upload_json(gcs_blob_path, geojson_dict)
 
     # 3. Compute bounds across every Feature.geometry, anchored to whatever
     #    CRS the GeoJSON declares (or EPSG:4326 per the GeoJSON default).

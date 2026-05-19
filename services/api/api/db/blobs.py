@@ -7,6 +7,7 @@ Note: gcsfs async methods are prefixed with underscore (e.g., _exists, _rm).
 This is the official async API, not private methods.
 """
 
+import json
 import logging
 
 import gcsfs
@@ -14,6 +15,13 @@ import gcsfs
 logger = logging.getLogger(__name__)
 
 gcsfs_client: gcsfs.GCSFileSystem = gcsfs.GCSFileSystem(asynchronous=True)
+
+
+async def upload_json(gcs_path: str, data: dict) -> None:
+    """Upload a JSON dict directly to GCS from memory."""
+    if gcs_path.startswith("gs://"):
+        gcs_path = gcs_path[5:]
+    await gcsfs_client._pipe_file(gcs_path, json.dumps(data).encode())
 
 
 async def delete_directory(bucket_name: str, directory_path: str) -> None:

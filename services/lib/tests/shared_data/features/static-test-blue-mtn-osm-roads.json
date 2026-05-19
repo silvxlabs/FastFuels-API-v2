@@ -1,0 +1,25 @@
+{
+  "description": "",
+  "error": null,
+  "georeference": {
+    "bounds": [
+      720226.0,
+      5189762.0,
+      721534.0,
+      5190646.0
+    ],
+    "crs": "EPSG:32611"
+  },
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "description": "OpenStreetMap road network",
+    "product": "osm"
+  },
+  "status": "completed",
+  "tags": [],
+  "type": "road"
+}

@@ -10,8 +10,10 @@ from datetime import datetime
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    HTTPException,
     Query,
     Request,
+    Response,
     status,
 )
 
@@ -23,6 +25,15 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.resources.features.cache import (
+    DEFAULT_PAGE_SIZE,
+    GEOJSON_MEDIA_TYPE,
+    MAX_PAGE_SIZE,
+    InvalidFeatureGeoJSON,
+    PageOutOfRange,
+    PageTooLarge,
+    fetch_feature_page,
+)
 from api.resources.features.layerset.router import router as layerset_router
 from api.resources.features.road.router import router as road_router
 from api.resources.features.schema import (
@@ -377,6 +388,119 @@ async def delete_feature(
     # Delete the target GeoJSON blob asynchronously
     file_path = f"{domain_id}/{feature_id}.geojson"
     background_tasks.add_task(delete_file_safe, FEATURES_BUCKET, file_path)
+
+
+@router.get(
+    "/{feature_id}/data",
+    status_code=status.HTTP_200_OK,
+    summary="Get feature GeoJSON (paginated)",
+    responses={200: {"content": {GEOJSON_MEDIA_TYPE: {}}}},
+)
+async def get_feature_data(
+    request: Request,
+    domain: VerifiedDomain,
+    feature_id: str,
+    page: int = Query(0, ge=0, description="Zero-indexed page number."),
+    size: int = Query(
+        DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=MAX_PAGE_SIZE,
+        description="Features per page.",
+    ),
+):
+    """
+    # Get Feature Data
+
+    Returns a page of features from a completed feature resource's GeoJSON
+    blob as a self-contained `FeatureCollection`. Defaults are sized so a
+    typical OSM road/water blob comes back in a single request; clients with
+    larger feature counts can paginate via `page` / `size`.
+
+    ## Path Parameters
+
+    - **domain_id**: The domain the feature belongs to.
+    - **feature_id**: The unique identifier of the feature.
+
+    ## Query Parameters
+
+    - **page**: (integer, optional) Zero-indexed page number. Default `0`.
+    - **size**: (integer, optional) Features per page (1-5000). Default `1000`.
+
+    ## Response
+
+    `application/geo+json` body — a valid GeoJSON `FeatureCollection` that
+    can be saved straight to `.geojson` or piped into a renderer. The
+    top-level `crs` block from the source file is preserved unchanged.
+
+    Headers carry pagination metadata so the body stays a clean GeoJSON
+    object:
+
+    - `X-Page` — page index echoed back.
+    - `X-Page-Size` — page size echoed back.
+    - `X-Num-Features` — features in this page (≤ `size`).
+    - `X-Total-Features` — total features in the source blob.
+    - `X-Has-More` — `"true"` if more pages remain, else `"false"`.
+
+    ## Error Responses
+
+    - **404 Not Found**: Feature does not exist, is not accessible, or is
+      not in `completed` status.
+    - **413 Content Too Large**: Page payload exceeds the 30 MB cap. Lower
+      `size` and retry.
+    - **422 Unprocessable Entity**: `page` is out of range, or the
+      underlying GeoJSON blob is missing / malformed.
+    """
+    await get_document_async(
+        FEATURES_COLLECTION,
+        feature_id,
+        owner_id=request.state.id,
+        domain_id=domain["id"],
+        document_status="completed",
+    )
+
+    try:
+        page_bytes, num_features, total = await fetch_feature_page(
+            domain["id"], feature_id, page, size
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Feature GeoJSON not found in storage. "
+                "Re-create the feature to enable data streaming."
+            ),
+        ) from exc
+    except InvalidFeatureGeoJSON as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Feature GeoJSON is malformed: {exc}",
+        ) from exc
+    except PageOutOfRange as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Page {exc.page} (size {exc.size}) out of range. "
+                f"Feature has {exc.total} feature(s)."
+            ),
+        ) from exc
+    except PageTooLarge as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"Page payload ({exc.page_bytes} bytes) exceeds API response "
+                f"limit ({exc.limit} bytes). Request a smaller `size`."
+            ),
+        ) from exc
+
+    has_more = (page + 1) * size < total
+    headers = {
+        "X-Page": str(page),
+        "X-Page-Size": str(size),
+        "X-Num-Features": str(num_features),
+        "X-Total-Features": str(total),
+        "X-Has-More": "true" if has_more else "false",
+    }
+    return Response(content=page_bytes, media_type=GEOJSON_MEDIA_TYPE, headers=headers)
 
 
 router.include_router(road_router, prefix="/road", tags=["Features - Road"])

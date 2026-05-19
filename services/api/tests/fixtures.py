@@ -207,6 +207,34 @@ def make_inventory_data(
     }
 
 
+def make_feature_data(
+    domain_id: str,
+    owner_id: str | None = None,
+    type: str = "road",
+    name: str = "",
+    product: str = "osm",
+    tags: list | None = None,
+    status: str = "completed",
+    georeference: dict | None = None,
+) -> dict:
+    """Factory function to create feature data as stored in Firestore."""
+    return {
+        "id": f"test-feat-{uuid.uuid4().hex[:8]}",
+        "domain_id": domain_id,
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
+        "type": type,
+        "name": name,
+        "description": "",
+        "status": status,
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
+        "source": {"product": product},
+        "tags": tags or [],
+        "georeference": georeference
+        or {"crs": "EPSG:4326", "bounds": [-120.0, 40.0, -119.0, 41.0]},
+    }
+
+
 def make_application_data(
     owner_id: str | None = None,
     name: str = "Test Application",

@@ -48,7 +48,7 @@ into `source_overrides` when the caller hasn't already set one.
 def test_layerset(griddle_runner):
     result = griddle_runner(
         "blue_mtn.json", "rasterize_layerset.json",
-        feature_file="lubrecht_layerset.geojson",
+        feature_file="blackfoot_example_layerset.geojson",
     )
     assert "shrub" in result.ds.data_vars
 ```

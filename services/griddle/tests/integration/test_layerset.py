@@ -82,7 +82,7 @@ def test_blackfoot_example_layerset_native_rasterization(griddle_runner):
     # Every band entry is a continuous physical quantity; spot-check units.
     assert {b["type"] for b in bands} == {"continuous"}
     unit_for = {b["key"]: b["unit"] for b in bands}
-    assert unit_for["shrub.loading"] == "kg/m²"
+    assert unit_for["shrub.loading"] == "kg/m**2"
     assert unit_for["herb.height"] == "m"
     assert unit_for["litter.live_fuel_moisture"] == "%"
     assert unit_for["shrub.heat_of_combustion"] == "kJ/kg"

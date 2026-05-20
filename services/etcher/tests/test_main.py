@@ -125,7 +125,7 @@ def test_processing_error(
     assert len(failed_calls) == 1
 
 
-@patch("etcher.main.delete_geojson")
+@patch("etcher.main.delete_features")
 @patch("etcher.main._load_domain")
 @patch("etcher.main.dispatch_handler")
 @patch("etcher.main.update_status")

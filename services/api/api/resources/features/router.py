@@ -361,7 +361,6 @@ async def delete_feature(
     # Delete Feature Endpoint
 
     Permanently deletes a feature resource by its unique identifier.
-    This action cannot be undone and will delete the associated GeoJSON file in GCS.
     """
     domain_id = domain["id"]
 
@@ -374,8 +373,8 @@ async def delete_feature(
         document_id=feature_id,
     )
 
-    # Delete the target GeoJSON blob asynchronously
-    file_path = f"{domain_id}/{feature_id}.geojson"
+    # Delete the target Parquet blob asynchronously
+    file_path = f"{domain_id}/{feature_id}.parquet"
     background_tasks.add_task(delete_file_safe, FEATURES_BUCKET, file_path)
 
 

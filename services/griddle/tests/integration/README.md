@@ -38,11 +38,15 @@ created by `services/api/tests/e2e/`. Never deleted by integration test cleanup.
 
 ### Feature-consuming handlers (layerset)
 
-Read a Feature GeoJSON from `gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson`.
+Read a Feature Parquet from `gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet`.
 The `griddle_runner` accepts a `feature_file` kwarg that uploads a fixture
 from `services/lib/tests/shared_data/features/` to that path before running
 the handler, and cleans up the blob on teardown. `layerset_id` is auto-injected
 into `source_overrides` when the caller hasn't already set one.
+
+The fixture is stored as text GeoJSON (per the testing protocol); the
+conftest converts it to GeoParquet in-memory before uploading to GCS,
+since the handler reads Parquet in production.
 
 ```python
 def test_layerset(griddle_runner):

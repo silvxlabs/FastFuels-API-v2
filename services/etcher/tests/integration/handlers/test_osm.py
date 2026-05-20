@@ -2,10 +2,10 @@
 Integration tests for OSM feature generation.
 
 Tests the full feature pipeline: Firestore setup -> process_feature_request ->
-verify GCS GeoJSON output + Firestore georeference. Uses a standard test domain
+verify GCS Parquet output + Firestore georeference. Uses a standard test domain
 with live queries to OpenStreetMap via OSMnx.
 
-These tests hit real OSM APIs and write real GeoJSON to GCS/Firestore, so
+These tests hit real OSM APIs and write real Parquet to GCS/Firestore, so
 they require valid credentials and network access.
 
 Most tests share a single pipeline run per feature type via module-scoped
@@ -71,7 +71,7 @@ def shared_road_feature():
     yield feature
 
     # Cleanup
-    gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
+    gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
     if exists(gcs_path):
         delete_file(gcs_path)
     delete_document(FEATURES_COLLECTION, feature_id)
@@ -109,7 +109,7 @@ def shared_water_feature():
     yield feature
 
     # Cleanup
-    gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
+    gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
     if exists(gcs_path):
         delete_file(gcs_path)
     delete_document(FEATURES_COLLECTION, feature_id)
@@ -118,16 +118,16 @@ def shared_water_feature():
 
 @pytest.fixture(scope="module")
 def shared_road_gdf(shared_road_feature):
-    """Read the GeoJSON from the shared road feature once."""
-    path = f"gs://{FEATURES_BUCKET}/{shared_road_feature['domain_id']}/{shared_road_feature['id']}.geojson"
-    return gpd.read_file(path)
+    """Read the Parquet from the shared road feature once."""
+    path = f"gs://{FEATURES_BUCKET}/{shared_road_feature['domain_id']}/{shared_road_feature['id']}.parquet"
+    return gpd.read_parquet(path)
 
 
 @pytest.fixture(scope="module")
 def shared_water_gdf(shared_water_feature):
-    """Read the GeoJSON from the shared water feature once."""
-    path = f"gs://{FEATURES_BUCKET}/{shared_water_feature['domain_id']}/{shared_water_feature['id']}.geojson"
-    return gpd.read_file(path)
+    """Read the Parquet from the shared water feature once."""
+    path = f"gs://{FEATURES_BUCKET}/{shared_water_feature['domain_id']}/{shared_water_feature['id']}.parquet"
+    return gpd.read_parquet(path)
 
 
 # --- ROAD TESTS ---
@@ -140,8 +140,8 @@ def test_road_pipeline_completes(shared_road_feature):
     assert "bounds" in shared_road_feature["georeference"]
 
 
-def test_road_geojson_has_correct_columns(shared_road_gdf):
-    """Output road GeoJSON should have exactly geometry, type, and name."""
+def test_road_parquet_has_correct_columns(shared_road_gdf):
+    """Output road Parquet should have exactly geometry, type, and name."""
     if len(shared_road_gdf) == 0:
         pytest.skip("No roads generated (sparse domain); skipping column validation")
     assert sorted(shared_road_gdf.columns.tolist()) == sorted(
@@ -190,8 +190,8 @@ def test_water_pipeline_completes(shared_water_feature):
     assert "bounds" in shared_water_feature["georeference"]
 
 
-def test_water_geojson_has_correct_columns(shared_water_gdf):
-    """Output water GeoJSON should have exactly geometry and name."""
+def test_water_parquet_has_correct_columns(shared_water_gdf):
+    """Output water Parquet should have exactly geometry and name."""
     if len(shared_water_gdf) == 0:
         pytest.skip(
             "No water features generated (sparse domain); skipping column validation"

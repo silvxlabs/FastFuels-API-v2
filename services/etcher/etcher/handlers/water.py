@@ -3,7 +3,7 @@ Water feature handlers for OSM data.
 
 Queries OpenStreetMap for water bodies and waterways. Leaves existing
 polygon features (lakes/reservoirs) intact, dynamically buffers linear
-features (rivers/streams) into polygons, and saves the result as GeoJSON.
+features (rivers/streams) into polygons, and saves the result as GeoParquet.
 """
 
 import logging
@@ -13,7 +13,7 @@ import osmnx as ox
 import pandas as pd
 from shapely.geometry import box
 
-from etcher.storage import save_geojson
+from etcher.storage import save_features
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +101,9 @@ def handle_osm(
         else:
             final_gdf = gpd.GeoDataFrame(geometry=[], crs=native_crs)
 
-    # Write GeoJSON directly to GCS
-    progress("Saving GeoJSON to storage...", 90)
-    save_geojson(domain_id, feature_id, final_gdf)
+    # Write GeoParquet directly to GCS
+    progress("Saving features to storage...", 90)
+    save_features(domain_id, feature_id, final_gdf)
 
     # Compute georeference from domain
     progress("Computing georeference...", 95)

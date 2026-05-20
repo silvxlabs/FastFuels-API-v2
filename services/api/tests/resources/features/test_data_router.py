@@ -435,4 +435,4 @@ class TestGetFeatureDataPartition:
                 partition_index=0,
             )
         assert exc.value.status_code == 413
-        assert "re-create" in exc.value.detail.lower()
+        assert "support.fastfuels@silvxlabs.com" in exc.value.detail.lower()

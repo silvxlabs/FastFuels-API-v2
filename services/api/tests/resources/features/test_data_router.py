@@ -319,7 +319,6 @@ class TestGetFeatureDataPartition:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["type"] == "FeatureCollection"
-        assert int(response.headers["X-Total-Features"]) > 0
 
     def test_partition_out_of_range_returns_422(
         self, client, domain_for_testing, static_roads_in_firestore

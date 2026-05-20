@@ -4,17 +4,18 @@ api/v2/resources/features/layerset/router.py
 Router for custom Layerset uploads.
 """
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
+import geopandas as gpd
 import pyproj
 from fastapi import APIRouter, Body, HTTPException, Request, status
 from shapely.geometry import shape
 
-from api.db.blobs import upload_json
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.resources.features.layerset.examples import CREATE_LAYERSET_OPENAPI_EXAMPLES
@@ -158,26 +159,33 @@ async def create_layerset(
     # 2. Validate CRS before uploading. Geographic / unparseable CRSes
     #    are rejected here so the failure surfaces to the caller as a 422
     #    instead of a deferred rasterize crash.
-    _require_projected_crs(_parse_crs_name(geojson_dict))
+    crs = _parse_crs_name(geojson_dict)
+    _require_projected_crs(crs)
 
-    # 3. Upload directly to GCS using the shared library
-    gcs_blob_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
-    await upload_json(gcs_blob_path, geojson_dict)
+    # 3. Convert to a GeoDataFrame and write GeoParquet to GCS.
+    #    Format choices match etcher.storage.save_features so all feature
+    #    blobs share a single on-disk schema regardless of writer. The
+    #    pyarrow-backed to_parquet path keeps the API GDAL-free.
+    gcs_blob_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+    gdf = gpd.GeoDataFrame.from_features(geojson_dict["features"], crs=crs)
+    await asyncio.to_thread(
+        gdf.to_parquet,
+        gcs_blob_path,
+        compression="zstd",
+        row_group_size=1000,
+    )
 
-    # 3. Compute bounds across every Feature.geometry, anchored to whatever
+    # 4. Compute bounds across every Feature.geometry, anchored to whatever
     #    CRS the GeoJSON declares (or EPSG:4326 per the GeoJSON default).
     georef = None
     try:
         bounds = _extract_bounds(geojson_dict)
         if bounds:
-            georef = FeatureGeoreference(
-                crs=_parse_crs_name(geojson_dict),
-                bounds=bounds,
-            )
+            georef = FeatureGeoreference(crs=crs, bounds=bounds)
     except Exception as e:
         logger.warning(f"Failed to extract bounds from layerset GeoJSON: {e}")
 
-    # 4. Construct the Feature metadata as a Firestore dict.
+    # 5. Construct the Feature metadata as a Firestore dict.
     #    `owner_id` is intentionally not part of the Feature schema (matches
     #    the repo-wide pattern for resource models); it lives on the
     #    Firestore document for access-control filtering only. See
@@ -202,7 +210,7 @@ async def create_layerset(
         "owner_id": owner_id,
     }
 
-    # 5. Save metadata to Firestore
+    # 6. Save metadata to Firestore
     await set_document_async(FEATURES_COLLECTION, feature_id, feature_data)
 
     return Feature(**feature_data)

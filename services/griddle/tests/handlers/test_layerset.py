@@ -1,8 +1,8 @@
 """
 Tests for the layerset rasterization handler.
 
-Unit-level only — no GCP required. The GeoJSON fetch is patched at
-``griddle.handlers.layerset.gpd.read_file`` and alignment resolution is
+Unit-level only — no GCP required. The Parquet fetch is patched at
+``griddle.handlers.layerset.gpd.read_parquet`` and alignment resolution is
 patched at ``griddle.handlers.layerset.resolve_alignment_destination``
 so the tests can pin a known output shape regardless of the
 ``domain_gdf`` fixture.
@@ -34,6 +34,10 @@ from lib.units import validate_unit
 # Blackfoot example domain so the example pairs cleanly with that domain in
 # both unit and integration tests. Lives in lib/tests/shared_data/features/
 # alongside every other reusable fixture in the repo.
+# Fixture is stored as GeoJSON (diffable, reviewable text) per the testing
+# protocol. The handler reads GeoParquet from GCS in production; tests
+# convert in-memory and either patch the read_parquet call (unit tests)
+# or upload as Parquet to a temp GCS path (integration tests).
 FIXTURE_PATH = SHARED_TEST_FEATURES_DIR / "blackfoot_example_layerset.geojson"
 
 # Known alignment destination used to exercise the post-rasterize reprojection
@@ -54,16 +58,18 @@ def _patch_dest(monkeypatch):
     )
 
 
-def _patch_read_file_with_fixture(fixture_path: Path = FIXTURE_PATH):
-    """Patch ``gpd.read_file`` at the handler's import site to return our fixture.
+def _patch_read_parquet_with_fixture(fixture_path: Path = FIXTURE_PATH):
+    """Patch ``gpd.read_parquet`` at the handler's import site to return our fixture.
 
-    The patch only short-circuits the GCS fetch; the real geopandas still loads
-    the local fixture, so the full path GeoJSON → flat GeoDataFrame → real
-    ``rasterize_layerset`` is exercised.
+    The patch short-circuits the GCS fetch — we load the local GeoJSON
+    fixture into a GeoDataFrame (matching the shape the production
+    ``read_parquet`` call would return) and feed that into the rest of
+    the handler. The full path GeoDataFrame → real ``rasterize_layerset``
+    is still exercised end-to-end.
     """
     real_gdf = gpd.read_file(fixture_path)
     return patch(
-        "griddle.handlers.layerset.gpd.read_file",
+        "griddle.handlers.layerset.gpd.read_parquet",
         return_value=real_gdf,
     )
 
@@ -84,13 +90,13 @@ class TestOverlapMethods:
         assert isinstance(result, (int, float, np.floating, np.integer))
 
 
-class TestFixtureGeoJson:
+class TestFixture:
     """Confirms the fixture loads as a flat GeoDataFrame with the expected columns.
 
-    These assertions defend the contract that ``gpd.read_file`` over a flat
-    layerset GeoJSON produces exactly the input columns expected by
-    ``fastfuels_core.rasterize_layerset``. The handler relies on this directly
-    — no flattening step in between.
+    These assertions defend the contract that the fixture produces exactly
+    the input columns expected by ``fastfuels_core.rasterize_layerset``.
+    The handler relies on the loaded GeoDataFrame shape directly — no
+    flattening step in between.
     """
 
     def test_fixture_loads_as_flat_gdf(self):
@@ -98,7 +104,7 @@ class TestFixtureGeoJson:
         assert isinstance(gdf, gpd.GeoDataFrame)
         # Lubrecht fixture: 7 features spanning {shrub, herb, litter} × multiple fuelbeds
         assert len(gdf) == 7
-        # CRS is honoured from the GeoJSON's own crs block
+        # CRS is honoured from the GeoJSON's crs block
         assert gdf.crs is not None
         assert "32612" in str(gdf.crs)
 
@@ -212,7 +218,7 @@ class TestFetchLayerset:
             _should_not_be_called,
         )
 
-        with _patch_read_file_with_fixture():
+        with _patch_read_parquet_with_fixture():
             ds = fetch_layerset(
                 domain_gdf=domain_gdf,
                 layerset_id="abc123",
@@ -234,7 +240,7 @@ class TestFetchLayerset:
         domain_gdf = MagicMock()
         progress = MagicMock()
 
-        with _patch_read_file_with_fixture():
+        with _patch_read_parquet_with_fixture():
             ds = fetch_layerset(
                 domain_gdf=domain_gdf,
                 layerset_id="abc123",
@@ -270,12 +276,14 @@ class TestFetchLayerset:
         assert exc_info.value.code == "UNKNOWN_OVERLAP_METHOD"
 
     def test_missing_layerset_raises_layerset_not_found(self):
-        """A FileNotFoundError from gpd.read_file is translated to LAYERSET_NOT_FOUND."""
+        """A FileNotFoundError from gpd.read_parquet is translated to LAYERSET_NOT_FOUND."""
 
         def _raise_fnf(*args, **kwargs):
             raise FileNotFoundError("simulated missing object in GCS")
 
-        with patch("griddle.handlers.layerset.gpd.read_file", side_effect=_raise_fnf):
+        with patch(
+            "griddle.handlers.layerset.gpd.read_parquet", side_effect=_raise_fnf
+        ):
             with pytest.raises(ProcessingError) as exc_info:
                 fetch_layerset(
                     domain_gdf=MagicMock(),

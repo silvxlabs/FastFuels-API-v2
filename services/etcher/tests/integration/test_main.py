@@ -64,8 +64,8 @@ def firestore_feature():
     yield _create
 
     for domain_id, feature_id in created_ids:
-        # Clean up GCS GeoJSON if it exists
-        gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
+        # Clean up GCS Parquet if it exists
+        gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
         if exists(gcs_path):
             delete_file(gcs_path)
         delete_document(FEATURES_COLLECTION, feature_id)
@@ -98,8 +98,8 @@ class TestProcessFeatureRequest:
         assert feature["status"] == "completed"
         assert feature["georeference"] is not None
 
-    def test_geojson_written_to_gcs(self, firestore_domain, firestore_feature):
-        """Processing should write a GeoJSON file to GCS."""
+    def test_parquet_written_to_gcs(self, firestore_domain, firestore_feature):
+        """Processing should write a GeoParquet file to GCS."""
         from etcher.main import process_feature_request
 
         domain_id = firestore_domain()
@@ -108,8 +108,8 @@ class TestProcessFeatureRequest:
         request = MockRequest(data={"id": feature_id})
         process_feature_request(request)
 
-        gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
-        assert exists(gcs_path), f"Expected GeoJSON data at {gcs_path}"
+        gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+        assert exists(gcs_path), f"Expected GeoParquet data at {gcs_path}"
 
     def test_missing_domain_marks_failed(self, firestore_feature):
         """Referencing a nonexistent domain should mark feature as failed."""

@@ -101,7 +101,7 @@ class TestHandleOsm:
     def mock_feature(self):
         return {"id": "feat-999", "domain_id": "dom-456", "type": "water"}
 
-    @patch("etcher.handlers.water.save_geojson")
+    @patch("etcher.handlers.water.save_features")
     @patch("etcher.handlers.water.ox.features_from_polygon")
     def test_happy_path(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf, sample_osm_water
@@ -115,7 +115,7 @@ class TestHandleOsm:
         # Ensure OSMnx was called
         mock_osmnx.assert_called_once()
 
-        # Ensure save_geojson was called
+        # Ensure save_features was called
         mock_save.assert_called_once()
         args, _ = mock_save.call_args
 
@@ -133,7 +133,7 @@ class TestHandleOsm:
         assert "georeference" in result
         assert result["georeference"]["crs"] == "EPSG:32610"
 
-    @patch("etcher.handlers.water.save_geojson")
+    @patch("etcher.handlers.water.save_features")
     @patch("etcher.handlers.water.ox.features_from_polygon")
     def test_empty_osmnx_response(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
@@ -145,13 +145,13 @@ class TestHandleOsm:
 
         handle_osm(mock_feature, {}, sample_domain_gdf, progress)
 
-        # save_geojson should be called with an empty GDF in the native CRS
+        # save_features should be called with an empty GDF in the native CRS
         mock_save.assert_called_once()
         saved_gdf = mock_save.call_args[0][2]
         assert saved_gdf.empty
         assert saved_gdf.crs == sample_domain_gdf.crs
 
-    @patch("etcher.handlers.water.save_geojson")
+    @patch("etcher.handlers.water.save_features")
     @patch("etcher.handlers.water.ox.features_from_polygon")
     def test_osmnx_raises_exception(
         self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
@@ -163,7 +163,7 @@ class TestHandleOsm:
 
         handle_osm(mock_feature, {}, sample_domain_gdf, progress)
 
-        # Should swallow the exception and save an empty GeoJSON
+        # Should swallow the exception and save an empty Parquet
         mock_save.assert_called_once()
         saved_gdf = mock_save.call_args[0][2]
         assert saved_gdf.empty

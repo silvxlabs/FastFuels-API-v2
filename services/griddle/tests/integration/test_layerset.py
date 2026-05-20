@@ -1,7 +1,7 @@
 """
 Integration tests for layerset rasterization.
 
-Exercises the full pipeline: domain + layerset GeoJSON in Firestore/GCS,
+Exercises the full pipeline: domain + layerset GeoParquet in Firestore/GCS,
 through ``handle_layerset`` → ``fastfuels_core.layersets.rasterize_layerset``
 → Zarr writeback → Firestore ``bands`` writeback. The shared example
 fixture (``services/lib/tests/shared_data/features/blackfoot_example_layerset.geojson``)

@@ -17,7 +17,7 @@ from flask import Request
 
 from etcher.dispatch import dispatch_handler
 from etcher.errors import CancelledException, ProcessingError
-from etcher.storage import delete_geojson
+from etcher.storage import delete_features
 from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.firestore import DocumentNotFoundError, get_document, update_document
@@ -193,7 +193,7 @@ def process_feature_request(request: Request):
 
     except CancelledException:
         logger.info("Cancelled during processing", extra=ids)
-        delete_geojson(domain_id, feature_id)
+        delete_features(domain_id, feature_id)
         return "OK", 200
 
     except ProcessingError as e:
@@ -201,7 +201,7 @@ def process_feature_request(request: Request):
         try:
             update_status(feature_id, "failed", error=e.to_dict())
         except CancelledException:
-            delete_geojson(domain_id, feature_id)
+            delete_features(domain_id, feature_id)
         return "OK", 200
 
     except Exception as e:

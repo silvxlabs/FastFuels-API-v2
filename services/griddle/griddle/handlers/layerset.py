@@ -1,10 +1,10 @@
 """
 Layerset rasterization handler.
 
-Loads a flat GeoJSON layerset from GCS into a ``GeoDataFrame`` whose columns
+Loads a flat layerset GeoParquet from GCS into a ``GeoDataFrame`` whose columns
 already match ``fastfuels_core.rasterize_layerset``'s input contract (one row
-per fuelbed, ``fuel_type`` / ``fuel_loading`` / ``fuel_height`` / etc. on
-``properties``), rasterizes it via ``fastfuels_core.layersets.rasterize_layerset``,
+per fuelbed, ``fuel_type`` / ``fuel_loading`` / ``fuel_height`` / etc.),
+rasterizes it via ``fastfuels_core.layersets.rasterize_layerset``,
 and reprojects the result to the request's alignment destination when one
 is asked for.
 
@@ -73,12 +73,12 @@ def fetch_layerset(
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
 ) -> xr.Dataset:
-    """Load a layerset GeoJSON from GCS and rasterize it.
+    """Load a layerset GeoParquet from GCS and rasterize it.
 
     Args:
         domain_gdf: Domain geometry used to resolve the alignment destination.
         layerset_id: Feature ID of the layerset (stored at
-            ``gs://{FEATURES_BUCKET}/{domain_id}/{layerset_id}.geojson``).
+            ``gs://{FEATURES_BUCKET}/{domain_id}/{layerset_id}.parquet``).
         domain_id: Domain the layerset belongs to. Used to build the GCS path.
         overlap_method: One of ``OVERLAP_METHODS``' keys.
         progress: Progress callback ``(message, percent)``.
@@ -96,7 +96,7 @@ def fetch_layerset(
 
     Raises:
         ProcessingError: ``UNKNOWN_OVERLAP_METHOD`` for an unrecognized
-            overlap method; ``LAYERSET_NOT_FOUND`` when the GeoJSON is
+            overlap method; ``LAYERSET_NOT_FOUND`` when the Parquet is
             missing from GCS.
     """
     if overlap_method not in OVERLAP_METHODS:
@@ -107,14 +107,14 @@ def fetch_layerset(
         )
     overlap_callable = OVERLAP_METHODS[overlap_method]
 
-    progress("Loading layerset GeoJSON...", 10)
-    gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{layerset_id}.geojson"
+    progress("Loading layerset Parquet...", 10)
+    gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{layerset_id}.parquet"
     try:
-        # The GeoJSON is a flat FeatureCollection where each Feature's
-        # properties block carries one fuelbed row of input columns for
-        # ``fastfuels_core.rasterize_layerset``. geopandas honours the
-        # GeoJSON's declared crs (the team's payloads use EPSG:32612).
-        gdf = gpd.read_file(gcs_path)
+        # The Parquet is a flat layerset where each row carries one fuelbed's
+        # input columns for ``fastfuels_core.rasterize_layerset``. The CRS is
+        # stored on the GeoParquet metadata and round-trips through
+        # ``gpd.read_parquet`` (the team's payloads use EPSG:32612).
+        gdf = gpd.read_parquet(gcs_path)
     except FileNotFoundError as e:
         raise ProcessingError(
             code="LAYERSET_NOT_FOUND",

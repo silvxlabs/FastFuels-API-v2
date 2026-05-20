@@ -13,12 +13,15 @@ Tests receive a GriddleResult (ds, grid_id) and write their own assertions.
 import asyncio
 import json
 import logging
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import NamedTuple
 from uuid import uuid4
 
 import gcsfs
+import geopandas as gpd
 import numpy as np
 import pytest
 import xarray as xr
@@ -31,7 +34,12 @@ from lib.config import (
     GRIDS_COLLECTION,
 )
 from lib.firestore.documents import delete_document, get_document, set_document
-from lib.gcs.blobs import delete_directory, delete_file, exists, upload_json
+from lib.gcs.blobs import (
+    delete_directory,
+    delete_file,
+    exists,
+    upload_file,
+)
 from lib.testing import (
     SHARED_TEST_DOMAINS_DIR,
     SHARED_TEST_FEATURES_DIR,
@@ -224,18 +232,31 @@ def griddle_runner():
         set_document(DOMAINS_COLLECTION, domain_id, data)
         domain_ids.append(domain_id)
 
-        # Optionally upload a feature GeoJSON to the FEATURES_BUCKET path the
-        # API would write to (``{domain_id}/{feature_id}.geojson``). Used by
+        # Optionally upload a feature to the FEATURES_BUCKET path the API
+        # would write to (``{domain_id}/{feature_id}.parquet``). Used by
         # handlers that read a Feature from GCS — currently just layerset.
         # Auto-injects ``layerset_id`` into ``source_overrides`` when the
         # caller didn't already set one.
+        #
+        # Fixtures live on disk as GeoJSON (diffable text, per the testing
+        # protocol). The production handler reads GeoParquet, so we
+        # convert in-memory and upload the Parquet form to GCS — the
+        # on-disk fixture format and production storage format are
+        # deliberately decoupled.
         if feature_file is not None:
             if feature_id is None:
                 feature_id = f"test-{uuid4().hex}"
             feature_gcs_path = (
-                f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
+                f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
             )
-            upload_json(feature_gcs_path, load_json(FEATURES_DIR / feature_file))
+            gdf = gpd.read_file(FEATURES_DIR / feature_file)
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                gdf.to_parquet(tmp_path, compression="zstd", row_group_size=1000)
+                upload_file(tmp_path, feature_gcs_path)
+            finally:
+                os.unlink(tmp_path)
             feature_blobs.append(feature_gcs_path)
             source_overrides = dict(source_overrides or {})
             source_overrides.setdefault("layerset_id", feature_id)

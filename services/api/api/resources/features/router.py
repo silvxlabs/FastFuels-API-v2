@@ -11,6 +11,7 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     HTTPException,
+    Path,
     Query,
     Request,
     Response,
@@ -26,13 +27,12 @@ from api.db.documents import (
 )
 from api.dependencies import VerifiedDomain
 from api.resources.features.cache import (
-    DEFAULT_PAGE_SIZE,
     GEOJSON_MEDIA_TYPE,
-    MAX_PAGE_SIZE,
-    InvalidFeatureGeoJSON,
-    PageOutOfRange,
-    PageTooLarge,
-    fetch_feature_page,
+    InvalidFeatureParquet,
+    PartitionOutOfRange,
+    PartitionTooLarge,
+    fetch_partition_geojson,
+    get_feature_metadata,
 )
 from api.resources.features.layerset.router import router as layerset_router
 from api.resources.features.road.router import router as road_router
@@ -390,64 +390,58 @@ async def delete_feature(
 
 
 @router.get(
-    "/{feature_id}/data",
+    "/{feature_id}/data/metadata",
     status_code=status.HTTP_200_OK,
-    summary="Get feature GeoJSON (paginated)",
-    responses={200: {"content": {GEOJSON_MEDIA_TYPE: {}}}},
+    summary="Get feature data partition layout",
 )
-async def get_feature_data(
+async def get_feature_data_metadata(
     request: Request,
     domain: VerifiedDomain,
     feature_id: str,
-    page: int = Query(0, ge=0, description="Zero-indexed page number."),
-    size: int = Query(
-        DEFAULT_PAGE_SIZE,
-        ge=1,
-        le=MAX_PAGE_SIZE,
-        description="Features per page.",
-    ),
 ):
     """
-    # Get Feature Data
+    # Get Feature Data Metadata
 
-    Returns a page of features from a completed feature resource's GeoJSON
-    blob as a self-contained `FeatureCollection`. Defaults are sized so a
-    typical OSM road/water blob comes back in a single request; clients with
-    larger feature counts can paginate via `page` / `size`.
+    Returns the partition layout for a completed feature's data blob. Use
+    this to discover how many partitions exist before streaming them via
+    `GET /domains/{domain_id}/features/{feature_id}/data/{partition_index}`.
 
     ## Path Parameters
 
     - **domain_id**: The domain the feature belongs to.
     - **feature_id**: The unique identifier of the feature.
 
-    ## Query Parameters
-
-    - **page**: (integer, optional) Zero-indexed page number. Default `0`.
-    - **size**: (integer, optional) Features per page (1-5000). Default `1000`.
-
     ## Response
 
-    `application/geo+json` body — a valid GeoJSON `FeatureCollection` that
-    can be saved straight to `.geojson` or piped into a renderer. The
-    top-level `crs` block from the source file is preserved unchanged.
+    JSON object describing the partition layout of the underlying
+    GeoParquet blob:
 
-    Headers carry pagination metadata so the body stays a clean GeoJSON
-    object:
+    ```json
+    {
+      "total_features": 5400,
+      "partition_size": 1000,
+      "partition_count": 6
+    }
+    ```
 
-    - `X-Page` — page index echoed back.
-    - `X-Page-Size` — page size echoed back.
-    - `X-Num-Features` — features in this page (≤ `size`).
-    - `X-Total-Features` — total features in the source blob.
-    - `X-Has-More` — `"true"` if more pages remain, else `"false"`.
+    - **total_features**: Number of features in the source blob.
+    - **partition_size**: Maximum features returned by one
+      `/data/{partition_index}` call. All partitions hold `partition_size`
+      features except the final one, which holds the remainder
+      (`total_features mod partition_size`, or `partition_size` if exact).
+    - **partition_count**: Number of valid `partition_index` values. Iterate
+      `partition_index` from `0` to `partition_count - 1` to retrieve every
+      feature exactly once, in source order.
+
+    A feature with zero features has `partition_count = 0` — no
+    `/data/{partition_index}` calls are valid in that case.
 
     ## Error Responses
 
-    - **404 Not Found**: Feature does not exist, is not accessible, or is
-      not in `completed` status.
-    - **413 Content Too Large**: Page payload exceeds the 30 MB cap. Lower
-      `size` and retry.
-    - **422 Unprocessable Entity**: `page` is out of range, or the
-      underlying GeoJSON blob is missing / malformed.
+    - **404 Not Found**: Feature does not exist or is not accessible to the
+      caller.
+    - **422 Unprocessable Entity**: Feature is not in `completed` status, or
+      the underlying GeoParquet blob is missing / malformed.
     """
     await get_document_async(
         FEATURES_COLLECTION,
@@ -458,48 +452,123 @@ async def get_feature_data(
     )
 
     try:
-        page_bytes, num_features, total = await fetch_feature_page(
-            domain["id"], feature_id, page, size
+        metadata = await get_feature_metadata(domain["id"], feature_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "Feature data blob not found in storage. "
+                "Re-create the feature to enable data streaming."
+            ),
+        ) from exc
+    except InvalidFeatureParquet as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Feature data blob is malformed: {exc}",
+        ) from exc
+
+    return metadata.to_dict()
+
+
+@router.get(
+    "/{feature_id}/data/{partition_index}",
+    status_code=status.HTTP_200_OK,
+    summary="Get one partition of feature data as GeoJSON",
+    responses={200: {"content": {GEOJSON_MEDIA_TYPE: {}}}},
+)
+async def get_feature_data_partition(
+    request: Request,
+    domain: VerifiedDomain,
+    feature_id: str,
+    partition_index: int = Path(
+        ...,
+        ge=0,
+        description=(
+            "Zero-indexed partition number. Valid range is "
+            "`0` ≤ `partition_index` < `partition_count` from "
+            "`GET /data/metadata`."
+        ),
+    ),
+):
+    """
+    # Get Feature Data Partition
+
+    Returns one partition of a completed feature's data as a self-contained
+    GeoJSON `FeatureCollection`. To stream the full collection, first call
+    `GET /domains/{domain_id}/features/{feature_id}/data/metadata` to
+    discover `partition_count`, then GET this endpoint for each
+    `partition_index` from `0` to `partition_count - 1`. The concatenated
+    `features` arrays reproduce the source feature list in source order.
+
+    ## Path Parameters
+
+    - **domain_id**: The domain the feature belongs to.
+    - **feature_id**: The unique identifier of the feature.
+    - **partition_index**: Zero-indexed partition number. Must be `< partition_count`
+      from `/data/metadata`.
+
+    ## Response
+
+    `application/geo+json` body — a valid GeoJSON `FeatureCollection`
+    containing up to `partition_size` features. Each feature's `properties`
+    and `geometry` round-trip from the source GeoParquet via geopandas.
+
+    ## Error Responses
+
+    - **404 Not Found**: Feature does not exist or is not accessible to the
+      caller.
+    - **413 Content Too Large**: Serialized partition exceeds the 30 MB
+      response cap. The feature was written with too large a partition
+      size — re-creating the feature is the only fix.
+    - **422 Unprocessable Entity**: `partition_index` is past the last
+      partition, the feature is not in `completed` status, or the
+      underlying GeoParquet blob is missing / malformed.
+    """
+    await get_document_async(
+        FEATURES_COLLECTION,
+        feature_id,
+        owner_id=request.state.id,
+        domain_id=domain["id"],
+        document_status="completed",
+    )
+
+    try:
+        payload, _num_features, _total = await fetch_partition_geojson(
+            domain["id"], feature_id, partition_index
         )
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                "Feature GeoJSON not found in storage. "
+                "Feature data blob not found in storage. "
                 "Re-create the feature to enable data streaming."
             ),
         ) from exc
-    except InvalidFeatureGeoJSON as exc:
+    except InvalidFeatureParquet as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Feature GeoJSON is malformed: {exc}",
+            detail=f"Feature data blob is malformed: {exc}",
         ) from exc
-    except PageOutOfRange as exc:
+    except PartitionOutOfRange as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Page {exc.page} (size {exc.size}) out of range. "
-                f"Feature has {exc.total} feature(s)."
+                f"Partition {exc.partition_index} out of range. "
+                f"Feature has {exc.partition_count} partition(s); "
+                f"valid indices are 0..{exc.partition_count - 1}."
             ),
         ) from exc
-    except PageTooLarge as exc:
+    except PartitionTooLarge as exc:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=(
-                f"Page payload ({exc.page_bytes} bytes) exceeds API response "
-                f"limit ({exc.limit} bytes). Request a smaller `size`."
+                f"Partition payload ({exc.payload_bytes} bytes) exceeds API "
+                f"response limit ({exc.limit} bytes). Re-create the feature "
+                "to write smaller partitions."
             ),
         ) from exc
 
-    has_more = (page + 1) * size < total
-    headers = {
-        "X-Page": str(page),
-        "X-Page-Size": str(size),
-        "X-Num-Features": str(num_features),
-        "X-Total-Features": str(total),
-        "X-Has-More": "true" if has_more else "false",
-    }
-    return Response(content=page_bytes, media_type=GEOJSON_MEDIA_TYPE, headers=headers)
+    return Response(content=payload, media_type=GEOJSON_MEDIA_TYPE)
 
 
 router.include_router(road_router, prefix="/road", tags=["Features - Road"])

@@ -1,238 +1,132 @@
 """
 api/v2/resources/features/cache.py
 
-Async byte-offset index + warm byte-range fetch for the Feature data
-streaming endpoint.
+Per-feature GeoDataFrame cache + partitioned GeoJSON page fetch.
 
-The cache stores only a compact per-feature byte-offset table; raw
-GeoJSON bytes are not retained. On cache hit, paginated requests issue
-a single async GCS GET with a Range header for just the bytes the page
-needs and splice them with the cached header / footer slabs.
+Feature blobs are GeoParquet and immutable post-completion. The cache
+reads the entire file once via ``geopandas.read_parquet`` and slices
+the resulting GeoDataFrame into fixed-size partitions in memory.
 """
 
 import asyncio
-import json
 from dataclasses import dataclass
 
-import gcsfs
+import geopandas as gpd
 from ring import lru
 
 from lib.config import FEATURES_BUCKET
 
-# Data-streaming invariants — single source of truth.
-# The router imports these for FastAPI Query defaults and exception → HTTP
-# status mapping; the cache enforces the size cap itself.
-MAX_PAGE_SIZE = 5000
-DEFAULT_PAGE_SIZE = 1000
-MAX_GEOJSON_BYTES = 30 * 1024 * 1024
+# Fixed partition size for the streaming endpoint. Matches the writer's
+# ``row_group_size`` and is exposed in the /data/metadata response so
+# clients know what to expect from each /data/{partition_index} page.
+PARTITION_SIZE = 1000
+MAX_RESPONSE_BYTES = 30 * 1024 * 1024
 GEOJSON_MEDIA_TYPE = "application/geo+json"
 
 
 @dataclass(frozen=True)
-class FeatureIndex:
-    """Compact byte-offset table for a single GeoJSON FeatureCollection.
+class FeatureMetadata:
+    """Partition layout for a feature blob."""
 
-    `header_bytes` covers byte 0 through (and including) the `[` that opens
-    the `features` array. `footer_bytes` is the matching `]` through EOF,
-    closing the array and the outer object. `offsets` records the byte
-    range of each Feature object inside the array.
+    total_features: int
+    partition_size: int
+    partition_count: int
 
-    Splicing `header_bytes + <feature_byte_slice> + footer_bytes` always
-    yields a valid stand-alone GeoJSON FeatureCollection.
-    """
-
-    header_bytes: bytes
-    footer_bytes: bytes
-    offsets: tuple[tuple[int, int], ...]
-
-    @property
-    def total_features(self) -> int:
-        return len(self.offsets)
+    def to_dict(self) -> dict:
+        return {
+            "total_features": self.total_features,
+            "partition_size": self.partition_size,
+            "partition_count": self.partition_count,
+        }
 
 
-class InvalidFeatureGeoJSON(Exception):
-    """The blob exists but is not a parseable {..., "features": [...]} shape."""
+class InvalidFeatureParquet(Exception):
+    """The blob exists but is not parseable as GeoParquet."""
 
 
-class PageOutOfRange(Exception):
-    """`page * size` is beyond the last feature."""
+class PartitionOutOfRange(Exception):
+    """``partition_index`` is outside ``[0, partition_count)``."""
 
-    def __init__(self, page: int, size: int, total: int):
-        super().__init__(f"page {page} (size {size}) out of range for {total} features")
-        self.page = page
-        self.size = size
-        self.total = total
-
-
-class PageTooLarge(Exception):
-    """Assembled page exceeds `MAX_GEOJSON_BYTES`."""
-
-    def __init__(self, page_bytes: int, limit: int):
+    def __init__(self, partition_index: int, partition_count: int):
         super().__init__(
-            f"page payload {page_bytes} bytes exceeds {limit} bytes; lower `size`"
+            f"partition {partition_index} out of range "
+            f"(file has {partition_count} partition(s))"
         )
-        self.page_bytes = page_bytes
+        self.partition_index = partition_index
+        self.partition_count = partition_count
+
+
+class PartitionTooLarge(Exception):
+    """The serialized GeoJSON partition exceeds ``MAX_RESPONSE_BYTES``."""
+
+    def __init__(self, payload_bytes: int, limit: int):
+        super().__init__(
+            f"partition payload {payload_bytes} bytes exceeds {limit} bytes"
+        )
+        self.payload_bytes = payload_bytes
         self.limit = limit
 
 
-_WHITESPACE = " \t\n\r"
-
-
-def _scan_offsets(text: str) -> tuple[list[tuple[int, int]], int, int]:
-    """Step through the `features` array recording (start, end) per feature.
-
-    Uses `json.JSONDecoder.raw_decode` (C-implemented) for the actual
-    feature parsing; the parsed dicts are immediately discarded — we keep
-    only the byte ranges.
-
-    Returns `(offsets, header_end, footer_start)` where `header_end` is the
-    index immediately past the opening `[` and `footer_start` is the index
-    of the closing `]`.
-    """
-    decoder = json.JSONDecoder()
-    key_pos = text.find('"features"')
-    if key_pos < 0:
-        raise InvalidFeatureGeoJSON("no top-level 'features' key found")
-
-    n = len(text)
-    i = key_pos + len('"features"')
-    while i < n and text[i] in _WHITESPACE:
-        i += 1
-    if i >= n or text[i] != ":":
-        raise InvalidFeatureGeoJSON("expected ':' after 'features' key")
-    i += 1
-    while i < n and text[i] in _WHITESPACE:
-        i += 1
-    if i >= n or text[i] != "[":
-        raise InvalidFeatureGeoJSON("'features' value is not an array")
-
-    header_end = i + 1
-    i = header_end
-
-    offsets: list[tuple[int, int]] = []
-    while i < n and text[i] in _WHITESPACE:
-        i += 1
-    while i < n and text[i] != "]":
-        try:
-            _obj, end = decoder.raw_decode(text, i)
-        except json.JSONDecodeError as exc:
-            raise InvalidFeatureGeoJSON(
-                f"malformed feature at byte {i}: {exc.msg}"
-            ) from exc
-        offsets.append((i, end))
-        j = end
-        while j < n and text[j] in _WHITESPACE:
-            j += 1
-        if j < n and text[j] == ",":
-            j += 1
-            while j < n and text[j] in _WHITESPACE:
-                j += 1
-        i = j
-
-    if i >= n or text[i] != "]":
-        raise InvalidFeatureGeoJSON("'features' array never closed")
-    footer_start = i
-    return offsets, header_end, footer_start
-
-
-def _build_index_sync(raw: bytes) -> FeatureIndex:
-    """CPU-bound index build. Run under `asyncio.to_thread`."""
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise InvalidFeatureGeoJSON(f"GeoJSON is not valid UTF-8: {exc}") from exc
-    offsets, header_end, footer_start = _scan_offsets(text)
-    return FeatureIndex(
-        header_bytes=text[:header_end].encode("utf-8"),
-        footer_bytes=text[footer_start:].encode("utf-8"),
-        offsets=tuple(offsets),
-    )
-
-
 def _blob_path(domain_id: str, feature_id: str) -> str:
-    return f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
+    return f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
 
 
-@lru(maxsize=128, force_asyncio=True)
-async def get_feature_index(domain_id: str, feature_id: str) -> FeatureIndex:
-    """Read the GeoJSON once, scan for feature byte ranges, drop the raw bytes.
-
-    Cached by `(domain_id, feature_id)`. Cache entries persist for the life
-    of the process; features are immutable post-completion so no
-    invalidation is needed.
-
-    Raises:
-        FileNotFoundError: blob is not present on GCS.
-        InvalidFeatureGeoJSON: blob exists but is not a parseable
-            `{..., "features": [...]}` shape.
-    """
-    return await asyncio.to_thread(_read_and_build_index, domain_id, feature_id)
+def _read_sync(domain_id: str, feature_id: str) -> gpd.GeoDataFrame:
+    try:
+        return gpd.read_parquet(_blob_path(domain_id, feature_id))
+    except FileNotFoundError:
+        raise
+    except Exception as exc:
+        raise InvalidFeatureParquet(str(exc)) from exc
 
 
-def _read_and_build_index(domain_id: str, feature_id: str) -> FeatureIndex:
-    """Sync entrypoint: read the GeoJSON bytes and build the index.
-
-    Uses gcsfs's sync wrapper (`cat_file`, no underscore), which schedules
-    the underlying coroutine on fsspec's dedicated internal loop. Calling
-    the async `_cat_file` directly from the FastAPI request loop pins the
-    aiohttp session to that loop and breaks once a different loop touches
-    it (e.g. after a layerset upload uses the same module-level
-    `gcsfs_client` in `lib.gcs.blobs`).
-    """
-    fs = gcsfs.GCSFileSystem()
-    raw = fs.cat_file(_blob_path(domain_id, feature_id))
-    return _build_index_sync(raw)
-
-
-def _read_byte_range(domain_id: str, feature_id: str, start: int, end: int) -> bytes:
-    """Sync byte-range read; runs under ``asyncio.to_thread`` from the handler."""
-    fs = gcsfs.GCSFileSystem()
-    return fs.cat_file(_blob_path(domain_id, feature_id), start=start, end=end)
-
-
-async def fetch_feature_page(
-    domain_id: str,
-    feature_id: str,
-    page: int,
-    size: int,
-) -> tuple[bytes, int, int]:
-    """Return `(page_bytes, num_features, total_features)`.
-
-    `page_bytes` is a self-contained GeoJSON FeatureCollection containing
-    the requested page of features and the source file's original top-level
-    fields (CRS block etc.) — suitable for streaming directly to the client.
+@lru(maxsize=64, force_asyncio=True)
+async def get_feature_gdf(domain_id: str, feature_id: str) -> gpd.GeoDataFrame:
+    """Cached whole-file GeoDataFrame read.
 
     Raises:
         FileNotFoundError: blob is missing on GCS.
-        InvalidFeatureGeoJSON: blob is malformed.
-        PageOutOfRange: `page * size >= total_features` and `total_features > 0`.
-        PageTooLarge: assembled page exceeds `MAX_GEOJSON_BYTES`.
+        InvalidFeatureParquet: blob exists but is not parseable as GeoParquet.
     """
-    index = await get_feature_index(domain_id, feature_id)
-    total = index.total_features
+    return await asyncio.to_thread(_read_sync, domain_id, feature_id)
 
-    if total == 0:
-        if page > 0:
-            raise PageOutOfRange(page, size, total)
-        page_bytes = index.header_bytes + index.footer_bytes
-        if len(page_bytes) > MAX_GEOJSON_BYTES:
-            raise PageTooLarge(len(page_bytes), MAX_GEOJSON_BYTES)
-        return page_bytes, 0, 0
 
-    start_idx = page * size
-    if start_idx >= total:
-        raise PageOutOfRange(page, size, total)
-    end_idx = min(start_idx + size, total)
-    page_offsets = index.offsets[start_idx:end_idx]
+def _partition_count(total_features: int) -> int:
+    return (total_features + PARTITION_SIZE - 1) // PARTITION_SIZE
 
-    body = await asyncio.to_thread(
-        _read_byte_range,
-        domain_id,
-        feature_id,
-        page_offsets[0][0],
-        page_offsets[-1][1],
+
+async def get_feature_metadata(domain_id: str, feature_id: str) -> FeatureMetadata:
+    gdf = await get_feature_gdf(domain_id, feature_id)
+    n = len(gdf)
+    return FeatureMetadata(
+        total_features=n,
+        partition_size=PARTITION_SIZE,
+        partition_count=_partition_count(n),
     )
-    page_bytes = index.header_bytes + body + index.footer_bytes
-    if len(page_bytes) > MAX_GEOJSON_BYTES:
-        raise PageTooLarge(len(page_bytes), MAX_GEOJSON_BYTES)
-    return page_bytes, end_idx - start_idx, total
+
+
+async def fetch_partition_geojson(
+    domain_id: str, feature_id: str, partition_index: int
+) -> tuple[bytes, int, int]:
+    """Return ``(payload_bytes, num_features_in_partition, total_features)``.
+
+    ``payload_bytes`` is a self-contained GeoJSON FeatureCollection for one
+    partition, ready to stream to the client.
+
+    Raises:
+        FileNotFoundError: blob is missing on GCS.
+        InvalidFeatureParquet: blob is malformed Parquet.
+        PartitionOutOfRange: ``partition_index`` is past the last partition.
+        PartitionTooLarge: serialized payload exceeds ``MAX_RESPONSE_BYTES``.
+    """
+    gdf = await get_feature_gdf(domain_id, feature_id)
+    n = len(gdf)
+    partition_count = _partition_count(n)
+    if partition_index < 0 or partition_index >= partition_count:
+        raise PartitionOutOfRange(partition_index, partition_count)
+    start = partition_index * PARTITION_SIZE
+    end = min(start + PARTITION_SIZE, n)
+    payload = gdf.iloc[start:end].to_json().encode("utf-8")
+    if len(payload) > MAX_RESPONSE_BYTES:
+        raise PartitionTooLarge(len(payload), MAX_RESPONSE_BYTES)
+    return payload, end - start, n

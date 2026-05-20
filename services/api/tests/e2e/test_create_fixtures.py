@@ -197,7 +197,7 @@ def test_create_blue_mtn_osm_roads(
     """Create OSM road feature fixture on Blue Mountain domain.
 
     Exercises the etcher worker's road extraction pipeline and produces a
-    static GeoJSON blob for the feature data streaming endpoint tests.
+    static GeoParquet blob for the feature data streaming endpoint tests.
     """
     create_static_feature_fixture(
         client=client,
@@ -215,7 +215,7 @@ def test_create_blue_mtn_osm_water(
     """Create OSM water feature fixture on Blue Mountain domain.
 
     Exercises the etcher worker's water extraction pipeline and produces a
-    static GeoJSON blob for the feature data streaming endpoint tests.
+    static GeoParquet blob for the feature data streaming endpoint tests.
     """
     create_static_feature_fixture(
         client=client,

@@ -370,7 +370,7 @@ def _save_feature_json_template(feature: dict, static_name: str) -> None:
     """Save a completed feature document as a JSON template.
 
     Always overwrites so the template stays consistent with the regenerated
-    GeoJSON in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS).
+    GeoParquet in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS).
     """
     out_path = STATIC_FEATURES_DIR / f"{static_name}.json"
     template = {k: v for k, v in feature.items() if k not in STRIP_FIELDS}
@@ -383,14 +383,15 @@ def create_static_feature_fixture(firestore_client, test_owner_id):
     """Factory fixture that creates a static feature fixture in GCS.
 
     Creates a feature via the API, polls for completion, copies the
-    single ``{domain_id}/{feature_id}.geojson`` blob to a static path under
-    the same domain, saves a JSON template, then deletes the temporary
+    single ``{domain_id}/{feature_id}.parquet`` blob to a static path under
+    the bucket root, saves a JSON template, then deletes the temporary
     feature.
 
     Unlike grids and inventories (which are GCS directories), features are
-    single GeoJSON files — the copy uses ``fs.cp(src, dst)`` without
-    ``recursive=True``. The static blob lives under the same domain prefix
-    so the API's blob resolver still finds it.
+    single GeoParquet files — the copy uses ``fs.cp(src, dst)`` without
+    ``recursive=True``. The static blob lives at the bucket root; the
+    integration-test conftest copies it into the test domain at session
+    start so the API's domain-prefixed blob resolver still finds it.
     """
 
     def _create(
@@ -421,20 +422,20 @@ def create_static_feature_fixture(firestore_client, test_owner_id):
                 client, domain_id, "features", feature_id
             )
 
-            # Copy the single GeoJSON blob to a stable bucket-root path.
-            # Production stores features at {bucket}/{domain_id}/{feature_id}.geojson,
+            # Copy the single GeoParquet blob to a stable bucket-root path.
+            # Production stores features at {bucket}/{domain_id}/{feature_id}.parquet,
             # but the e2e test's Blue Mountain domain is destroyed at session end —
             # so we keep the static fixture at the bucket root and the integration
             # test conftest copies it into the test domain at session start.
             fs = gcsfs.GCSFileSystem()
-            src = f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.geojson"
-            dst = f"{FEATURES_BUCKET}/{static_name}.geojson"
+            src = f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+            dst = f"{FEATURES_BUCKET}/{static_name}.parquet"
 
             if fs.exists(dst):
                 fs.rm(dst)
 
             fs.cp(src, dst)
-            logger.info(f"Copied GeoJSON gs://{src} -> gs://{dst}")
+            logger.info(f"Copied GeoParquet gs://{src} -> gs://{dst}")
 
             # Save JSON template
             _save_feature_json_template(completed_feature, static_name)

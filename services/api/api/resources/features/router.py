@@ -518,8 +518,10 @@ async def get_feature_data_partition(
     - **404 Not Found**: Feature does not exist or is not accessible to the
       caller.
     - **413 Content Too Large**: Serialized partition exceeds the 30 MB
-      response cap. The feature was written with too large a partition
-      size — re-creating the feature is the only fix.
+      response cap. Partition size is fixed server-side and cannot be
+      adjusted by re-creating the feature; contact
+      `support.fastfuels@silvxlabs.com` so the partition size can be
+      reduced for your feature.
     - **422 Unprocessable Entity**: `partition_index` is past the last
       partition, the feature is not in `completed` status, or the
       underlying GeoParquet blob is missing / malformed.
@@ -563,8 +565,10 @@ async def get_feature_data_partition(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=(
                 f"Partition payload ({exc.payload_bytes} bytes) exceeds API "
-                f"response limit ({exc.limit} bytes). Re-create the feature "
-                "to write smaller partitions."
+                f"response limit ({exc.limit} bytes). Partition size is fixed "
+                "server-side and cannot be adjusted by re-creating the "
+                "feature; contact support.fastfuels@silvxlabs.com so the "
+                "partition size can be reduced for your feature."
             ),
         ) from exc
 

@@ -1,24 +1,30 @@
 """
 api/v2/resources/features/cache.py
 
-Per-feature GeoDataFrame cache + partitioned GeoJSON page fetch.
+Partitioned GeoJSON page fetch for feature data blobs.
 
-Feature blobs are GeoParquet and immutable post-completion. The cache
-reads the entire file once via ``geopandas.read_parquet`` and slices
-the resulting GeoDataFrame into fixed-size partitions in memory.
+Feature blobs are GeoParquet written with row groups sized at
+``PARTITION_SIZE``. Each ``partition_index`` maps to one row group:
+``/data/metadata`` reads only the file footer, and
+``/data/{partition_index}`` range-reads the single requested row group.
+No whole-file load, no in-process cache.
 """
 
 import asyncio
 from dataclasses import dataclass
 
+import gcsfs
 import geopandas as gpd
-from ring import lru
+import pyarrow.parquet as pq
 
 from lib.config import FEATURES_BUCKET
 
-# Fixed partition size for the streaming endpoint. Matches the writer's
-# ``row_group_size`` and is exposed in the /data/metadata response so
-# clients know what to expect from each /data/{partition_index} page.
+# Writer-configured row group size for feature data. The two writers
+# (``services/etcher/etcher/storage.py`` and
+# ``services/api/api/resources/features/layerset/router.py``) must pass
+# ``row_group_size=PARTITION_SIZE`` so ``partition_index`` aligns with
+# row group index. Surfaced in the /data/metadata response as the
+# documented maximum partition size.
 PARTITION_SIZE = 1000
 MAX_RESPONSE_BYTES = 30 * 1024 * 1024
 GEOJSON_MEDIA_TYPE = "application/geo+json"
@@ -68,41 +74,69 @@ class PartitionTooLarge(Exception):
 
 
 def _blob_path(domain_id: str, feature_id: str) -> str:
-    return f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+    return f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
 
 
-def _read_sync(domain_id: str, feature_id: str) -> gpd.GeoDataFrame:
+def _open_parquet_file(domain_id: str, feature_id: str) -> pq.ParquetFile:
+    """Open the GeoParquet file's footer. No row-group data is read.
+
+    Raises:
+        FileNotFoundError: blob is missing on GCS.
+        InvalidFeatureParquet: blob exists but is not parseable as GeoParquet.
+    """
+    fs = gcsfs.GCSFileSystem()
     try:
-        return gpd.read_parquet(_blob_path(domain_id, feature_id))
+        return pq.ParquetFile(_blob_path(domain_id, feature_id), filesystem=fs)
     except FileNotFoundError:
         raise
     except Exception as exc:
         raise InvalidFeatureParquet(str(exc)) from exc
 
 
-@lru(maxsize=64, force_asyncio=True)
-async def get_feature_gdf(domain_id: str, feature_id: str) -> gpd.GeoDataFrame:
-    """Cached whole-file GeoDataFrame read.
+def _read_metadata_sync(domain_id: str, feature_id: str) -> FeatureMetadata:
+    pf = _open_parquet_file(domain_id, feature_id)
+    return FeatureMetadata(
+        total_features=pf.metadata.num_rows,
+        partition_size=PARTITION_SIZE,
+        partition_count=pf.num_row_groups,
+    )
+
+
+async def get_feature_metadata(domain_id: str, feature_id: str) -> FeatureMetadata:
+    """Read the GeoParquet footer and return its partition layout.
 
     Raises:
         FileNotFoundError: blob is missing on GCS.
         InvalidFeatureParquet: blob exists but is not parseable as GeoParquet.
     """
-    return await asyncio.to_thread(_read_sync, domain_id, feature_id)
+    return await asyncio.to_thread(_read_metadata_sync, domain_id, feature_id)
 
 
-def _partition_count(total_features: int) -> int:
-    return (total_features + PARTITION_SIZE - 1) // PARTITION_SIZE
-
-
-async def get_feature_metadata(domain_id: str, feature_id: str) -> FeatureMetadata:
-    gdf = await get_feature_gdf(domain_id, feature_id)
-    n = len(gdf)
-    return FeatureMetadata(
-        total_features=n,
-        partition_size=PARTITION_SIZE,
-        partition_count=_partition_count(n),
+def _read_partition_sync(
+    domain_id: str, feature_id: str, partition_index: int
+) -> tuple[bytes, int, int]:
+    pf = _open_parquet_file(domain_id, feature_id)
+    partition_count = pf.num_row_groups
+    total = pf.metadata.num_rows
+    if partition_index < 0 or partition_index >= partition_count:
+        raise PartitionOutOfRange(partition_index, partition_count)
+    try:
+        table = pf.read_row_group(partition_index)
+    except Exception as exc:
+        raise InvalidFeatureParquet(str(exc)) from exc
+    gdf = gpd.GeoDataFrame.from_arrow(table)
+    # `from_arrow` produces a fresh RangeIndex starting at 0 per row group.
+    # Shift it by the sum of preceding row group sizes so the GeoJSON "id"
+    # field stays continuous across partitions and matches what
+    # ``gpd.read_parquet(<whole file>).to_json()`` would emit.
+    start_offset = sum(
+        pf.metadata.row_group(j).num_rows for j in range(partition_index)
     )
+    gdf.index = range(start_offset, start_offset + len(gdf))
+    payload = gdf.to_json().encode("utf-8")
+    if len(payload) > MAX_RESPONSE_BYTES:
+        raise PartitionTooLarge(len(payload), MAX_RESPONSE_BYTES)
+    return payload, len(gdf), total
 
 
 async def fetch_partition_geojson(
@@ -110,8 +144,8 @@ async def fetch_partition_geojson(
 ) -> tuple[bytes, int, int]:
     """Return ``(payload_bytes, num_features_in_partition, total_features)``.
 
-    ``payload_bytes`` is a self-contained GeoJSON FeatureCollection for one
-    partition, ready to stream to the client.
+    ``payload_bytes`` is a self-contained GeoJSON FeatureCollection for the
+    requested row group, range-read from GCS.
 
     Raises:
         FileNotFoundError: blob is missing on GCS.
@@ -119,14 +153,6 @@ async def fetch_partition_geojson(
         PartitionOutOfRange: ``partition_index`` is past the last partition.
         PartitionTooLarge: serialized payload exceeds ``MAX_RESPONSE_BYTES``.
     """
-    gdf = await get_feature_gdf(domain_id, feature_id)
-    n = len(gdf)
-    partition_count = _partition_count(n)
-    if partition_index < 0 or partition_index >= partition_count:
-        raise PartitionOutOfRange(partition_index, partition_count)
-    start = partition_index * PARTITION_SIZE
-    end = min(start + PARTITION_SIZE, n)
-    payload = gdf.iloc[start:end].to_json().encode("utf-8")
-    if len(payload) > MAX_RESPONSE_BYTES:
-        raise PartitionTooLarge(len(payload), MAX_RESPONSE_BYTES)
-    return payload, end - start, n
+    return await asyncio.to_thread(
+        _read_partition_sync, domain_id, feature_id, partition_index
+    )

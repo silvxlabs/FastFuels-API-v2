@@ -188,3 +188,39 @@ def test_create_blue_mtn_uniform_moisture(
         },
         static_name="static-test-blue-mtn-uniform-moisture",
     )
+
+
+@pytest.mark.dependency()
+def test_create_blue_mtn_osm_roads(
+    create_static_feature_fixture, client, blue_mountain_domain
+):
+    """Create OSM road feature fixture on Blue Mountain domain.
+
+    Exercises the etcher worker's road extraction pipeline and produces a
+    static GeoParquet blob for the feature data streaming endpoint tests.
+    """
+    create_static_feature_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/features/road/osm",
+        body={"name": "static-test-blue-mtn-osm-roads"},
+        static_name="static-test-blue-mtn-osm-roads",
+    )
+
+
+@pytest.mark.dependency()
+def test_create_blue_mtn_osm_water(
+    create_static_feature_fixture, client, blue_mountain_domain
+):
+    """Create OSM water feature fixture on Blue Mountain domain.
+
+    Exercises the etcher worker's water extraction pipeline and produces a
+    static GeoParquet blob for the feature data streaming endpoint tests.
+    """
+    create_static_feature_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/features/water/osm",
+        body={"name": "static-test-blue-mtn-osm-water"},
+        static_name="static-test-blue-mtn-osm-water",
+    )

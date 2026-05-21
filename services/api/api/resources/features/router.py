@@ -38,6 +38,7 @@ from api.resources.features.layerset.router import router as layerset_router
 from api.resources.features.road.router import router as road_router
 from api.resources.features.schema import (
     Feature,
+    FeatureDataMetadata,
     FeatureSortField,
     FeatureType,
     ListFeaturesResponse,
@@ -391,6 +392,7 @@ async def delete_feature(
 
 @router.get(
     "/{feature_id}/data/metadata",
+    response_model=FeatureDataMetadata,
     status_code=status.HTTP_200_OK,
     summary="Get feature data partition layout",
 )
@@ -398,7 +400,7 @@ async def get_feature_data_metadata(
     request: Request,
     domain: VerifiedDomain,
     feature_id: str,
-):
+) -> FeatureDataMetadata:
     """
     # Get Feature Data Metadata
 
@@ -419,22 +421,28 @@ async def get_feature_data_metadata(
     ```json
     {
       "total_features": 5400,
-      "partition_size": 1000,
-      "partition_count": 6
+      "partition_count": 6,
+      "partitions": [
+        {"index": 0, "num_features": 1000},
+        {"index": 1, "num_features": 1000},
+        {"index": 2, "num_features": 1000},
+        {"index": 3, "num_features": 1000},
+        {"index": 4, "num_features": 1000},
+        {"index": 5, "num_features": 400}
+      ]
     }
     ```
 
-    - **total_features**: Number of features in the source blob.
-    - **partition_size**: Maximum features returned by one
-      `/data/{partition_index}` call. All partitions hold `partition_size`
-      features except the final one, which holds the remainder
-      (`total_features mod partition_size`, or `partition_size` if exact).
+    - **total_features**: Total number of features across all partitions.
     - **partition_count**: Number of valid `partition_index` values. Iterate
-      `partition_index` from `0` to `partition_count - 1` to retrieve every
-      feature exactly once, in source order.
+      from `0` to `partition_count - 1` to retrieve every feature exactly
+      once, in source order.
+    - **partitions**: Per-partition row counts read directly from the
+      GeoParquet footer. Sum of `num_features` equals `total_features`.
 
-    A feature with zero features has `partition_count = 0` — no
-    `/data/{partition_index}` calls are valid in that case.
+    A feature with zero features has `partition_count = 0` and an empty
+    `partitions` list — no `/data/{partition_index}` calls are valid in
+    that case.
 
     ## Error Responses
 
@@ -452,7 +460,7 @@ async def get_feature_data_metadata(
     )
 
     try:
-        metadata = await get_feature_metadata(domain["id"], feature_id)
+        return await get_feature_metadata(domain["id"], feature_id)
     except FileNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -466,8 +474,6 @@ async def get_feature_data_metadata(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Feature data blob is malformed: {exc}",
         ) from exc
-
-    return metadata.to_dict()
 
 
 @router.get(
@@ -552,13 +558,20 @@ async def get_feature_data_partition(
             detail=f"Feature data blob is malformed: {exc}",
         ) from exc
     except PartitionOutOfRange as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
+        if exc.partition_count == 0:
+            detail = (
+                f"Partition {exc.partition_index} out of range. "
+                "Feature has 0 partitions; no /data/{i} calls are valid."
+            )
+        else:
+            detail = (
                 f"Partition {exc.partition_index} out of range. "
                 f"Feature has {exc.partition_count} partition(s); "
                 f"valid indices are 0..{exc.partition_count - 1}."
-            ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=detail,
         ) from exc
     except PartitionTooLarge as exc:
         raise HTTPException(

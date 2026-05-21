@@ -3,47 +3,37 @@ api/v2/resources/features/cache.py
 
 Partitioned GeoJSON page fetch for feature data blobs.
 
-Feature blobs are GeoParquet written with row groups sized at
-``PARTITION_SIZE``. Each ``partition_index`` maps to one row group:
-``/data/metadata`` reads only the file footer, and
+Feature blobs are GeoParquet written with row groups (see
+``services/etcher/etcher/storage.py`` and
+``services/api/api/resources/features/layerset/router.py``). Each
+``partition_index`` maps to one row group: ``/data/metadata`` reads only the
+file footer and reports actual per-row-group row counts, and
 ``/data/{partition_index}`` range-reads the single requested row group.
-No whole-file load, no in-process cache.
+
+The opened ``ParquetFile`` is held in an in-process LRU keyed on
+``(domain_id, feature_id)`` so the footer is fetched at most once per
+feature per process. Features are immutable after completion (only
+``name``/``description``/``tags`` are PATCHable), so cache invalidation is
+unnecessary.
 """
 
 import asyncio
-from dataclasses import dataclass
+import functools
 
 import gcsfs
 import geopandas as gpd
+import pyarrow as pa
 import pyarrow.parquet as pq
 
+from api.resources.features.schema import (
+    FeatureDataMetadata,
+    FeaturePartitionInfo,
+)
 from lib.config import FEATURES_BUCKET
 
-# Writer-configured row group size for feature data. The two writers
-# (``services/etcher/etcher/storage.py`` and
-# ``services/api/api/resources/features/layerset/router.py``) must pass
-# ``row_group_size=PARTITION_SIZE`` so ``partition_index`` aligns with
-# row group index. Surfaced in the /data/metadata response as the
-# documented maximum partition size.
-PARTITION_SIZE = 1000
 MAX_RESPONSE_BYTES = 30 * 1024 * 1024
 GEOJSON_MEDIA_TYPE = "application/geo+json"
-
-
-@dataclass(frozen=True)
-class FeatureMetadata:
-    """Partition layout for a feature blob."""
-
-    total_features: int
-    partition_size: int
-    partition_count: int
-
-    def to_dict(self) -> dict:
-        return {
-            "total_features": self.total_features,
-            "partition_size": self.partition_size,
-            "partition_count": self.partition_count,
-        }
+_PARQUET_FILE_CACHE_SIZE = 128
 
 
 class InvalidFeatureParquet(Exception):
@@ -54,10 +44,17 @@ class PartitionOutOfRange(Exception):
     """``partition_index`` is outside ``[0, partition_count)``."""
 
     def __init__(self, partition_index: int, partition_count: int):
-        super().__init__(
-            f"partition {partition_index} out of range "
-            f"(file has {partition_count} partition(s))"
-        )
+        if partition_count == 0:
+            message = (
+                f"partition {partition_index} out of range: "
+                "feature has 0 partitions, no /data/{i} calls are valid"
+            )
+        else:
+            message = (
+                f"partition {partition_index} out of range "
+                f"(file has {partition_count} partition(s))"
+            )
+        super().__init__(message)
         self.partition_index = partition_index
         self.partition_count = partition_count
 
@@ -77,8 +74,20 @@ def _blob_path(domain_id: str, feature_id: str) -> str:
     return f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
 
 
+@functools.lru_cache(maxsize=_PARQUET_FILE_CACHE_SIZE)
 def _open_parquet_file(domain_id: str, feature_id: str) -> pq.ParquetFile:
     """Open the GeoParquet file's footer. No row-group data is read.
+
+    LRU-cached on ``(domain_id, feature_id)`` so a client doing
+    ``1 × /data/metadata + N × /data/{i}`` issues a single footer fetch per
+    process instead of ``N + 1``. ``functools.lru_cache`` is thread-safe and
+    does not cache exceptions, so failed opens (missing blob, transient GCS
+    error) re-try on the next call.
+
+    Only ``FileNotFoundError`` (missing blob) and ``pyarrow.lib.ArrowInvalid``
+    (corrupt Parquet) are mapped to typed exceptions; transient gcsfs / auth /
+    network failures propagate untouched so they surface as 500s rather than a
+    misleading "malformed blob" 422.
 
     Raises:
         FileNotFoundError: blob is missing on GCS.
@@ -87,22 +96,24 @@ def _open_parquet_file(domain_id: str, feature_id: str) -> pq.ParquetFile:
     fs = gcsfs.GCSFileSystem()
     try:
         return pq.ParquetFile(_blob_path(domain_id, feature_id), filesystem=fs)
-    except FileNotFoundError:
-        raise
-    except Exception as exc:
+    except pa.lib.ArrowInvalid as exc:
         raise InvalidFeatureParquet(str(exc)) from exc
 
 
-def _read_metadata_sync(domain_id: str, feature_id: str) -> FeatureMetadata:
+def _read_metadata_sync(domain_id: str, feature_id: str) -> FeatureDataMetadata:
     pf = _open_parquet_file(domain_id, feature_id)
-    return FeatureMetadata(
+    partitions = [
+        FeaturePartitionInfo(index=i, num_features=pf.metadata.row_group(i).num_rows)
+        for i in range(pf.num_row_groups)
+    ]
+    return FeatureDataMetadata(
         total_features=pf.metadata.num_rows,
-        partition_size=PARTITION_SIZE,
         partition_count=pf.num_row_groups,
+        partitions=partitions,
     )
 
 
-async def get_feature_metadata(domain_id: str, feature_id: str) -> FeatureMetadata:
+async def get_feature_metadata(domain_id: str, feature_id: str) -> FeatureDataMetadata:
     """Read the GeoParquet footer and return its partition layout.
 
     Raises:
@@ -122,7 +133,7 @@ def _read_partition_sync(
         raise PartitionOutOfRange(partition_index, partition_count)
     try:
         table = pf.read_row_group(partition_index)
-    except Exception as exc:
+    except pa.lib.ArrowInvalid as exc:
         raise InvalidFeatureParquet(str(exc)) from exc
     gdf = gpd.GeoDataFrame.from_arrow(table)
     # `from_arrow` produces a fresh RangeIndex starting at 0 per row group.

@@ -129,6 +129,12 @@ def static_roads_gdf():
 
 
 @pytest.fixture(scope="session")
+def static_water_gdf():
+    """The static water GeoParquet parsed locally for cross-check assertions."""
+    return _load_static_parquet(STATIC_WATER)
+
+
+@pytest.fixture(scope="session")
 def pending_feature_in_firestore(firestore_client, domain_for_testing):
     """A pending feature (not completed) for 422 validation."""
     feat = make_feature_data(
@@ -188,23 +194,33 @@ class TestGetFeatureDataMetadata:
 
         body = response.json()
         n = len(static_roads_gdf)
-        expected_partitions = (
-            n + features_cache.PARTITION_SIZE - 1
-        ) // features_cache.PARTITION_SIZE
 
         assert body["total_features"] == n
-        assert body["partition_size"] == features_cache.PARTITION_SIZE
-        assert body["partition_count"] == expected_partitions
+        assert len(body["partitions"]) == body["partition_count"]
+        assert sum(p["num_features"] for p in body["partitions"]) == n
+        # Writers pin row_group_size=1000; no partition should exceed that.
+        assert all(p["num_features"] <= 1000 for p in body["partitions"])
+        assert [p["index"] for p in body["partitions"]] == list(
+            range(body["partition_count"])
+        )
 
     def test_water_metadata_returns_200(
-        self, client, domain_for_testing, static_water_in_firestore
+        self,
+        client,
+        domain_for_testing,
+        static_water_in_firestore,
+        static_water_gdf,
     ):
         response = client.get(metadata_route(domain_for_testing["id"], STATIC_WATER))
         assert response.status_code == 200, response.text
+
         body = response.json()
-        assert body["total_features"] >= 0
-        assert body["partition_size"] == features_cache.PARTITION_SIZE
-        assert body["partition_count"] >= 0
+        n = len(static_water_gdf)
+
+        assert body["total_features"] == n
+        assert len(body["partitions"]) == body["partition_count"]
+        assert sum(p["num_features"] for p in body["partitions"]) == n
+        assert all(p["num_features"] <= 1000 for p in body["partitions"])
 
     def test_unknown_feature_returns_404(self, client, domain_for_testing):
         response = client.get(
@@ -262,8 +278,10 @@ class TestGetFeatureDataPartition:
         body = response.json()
         assert body["type"] == "FeatureCollection"
 
+        # Writers pin row_group_size=1000, so partition 0 holds up to that
+        # many features (or `n` if the entire blob fits in one row group).
         n = len(static_roads_gdf)
-        expected_first_size = min(features_cache.PARTITION_SIZE, n)
+        expected_first_size = min(1000, n)
         assert len(body["features"]) == expected_first_size
 
     def test_iterating_partitions_reproduces_source(

@@ -203,7 +203,7 @@ def test_create_blue_mtn_osm_roads(
         client=client,
         domain_id=blue_mountain_domain["id"],
         endpoint="/features/road/osm",
-        body={},
+        body={"name": "static-test-blue-mtn-osm-roads"},
         static_name="static-test-blue-mtn-osm-roads",
     )
 
@@ -221,6 +221,6 @@ def test_create_blue_mtn_osm_water(
         client=client,
         domain_id=blue_mountain_domain["id"],
         endpoint="/features/water/osm",
-        body={},
+        body={"name": "static-test-blue-mtn-osm-water"},
         static_name="static-test-blue-mtn-osm-water",
     )

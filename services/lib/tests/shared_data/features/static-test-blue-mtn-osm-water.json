@@ -10,7 +10,7 @@
     ],
     "crs": "EPSG:32611"
   },
-  "name": "",
+  "name": "static-test-blue-mtn-osm-water",
   "progress": {
     "message": "Complete",
     "percent": 100

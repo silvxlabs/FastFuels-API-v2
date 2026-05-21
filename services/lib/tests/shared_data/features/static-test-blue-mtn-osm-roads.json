@@ -10,7 +10,7 @@
     ],
     "crs": "EPSG:32611"
   },
-  "name": "",
+  "name": "static-test-blue-mtn-osm-roads",
   "progress": {
     "message": "Complete",
     "percent": 100

@@ -4,38 +4,12 @@ Integration tests for api/v2/resources/features/router.py
 Tests the standard CRUD endpoints (GET, LIST, PATCH, DELETE).
 """
 
-from datetime import datetime
 from unittest.mock import patch
-from uuid import uuid4
 
 import pytest
 
 from lib.config import FEATURES_COLLECTION
-
-
-def make_feature_data(
-    domain_id: str,
-    owner_id: str = "test-owner",
-    type: str = "road",
-    name: str = "",
-    product: str = "osm",
-    tags: list[str] = None,
-) -> dict:
-    """Helper to generate valid feature document dictionaries."""
-    return {
-        "id": f"test-feat-{uuid4().hex[:8]}",
-        "domain_id": domain_id,
-        "owner_id": owner_id,
-        "type": type,
-        "name": name,
-        "description": "",
-        "status": "completed",
-        "created_on": datetime.now(),
-        "modified_on": datetime.now(),
-        "source": {"product": product},
-        "tags": tags or [],
-        "georeference": {"crs": "EPSG:4326", "bounds": [-120.0, 40.0, -119.0, 41.0]},
-    }
+from tests.fixtures import make_feature_data
 
 
 # Mocks

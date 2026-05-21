@@ -88,3 +88,32 @@ class ListFeaturesResponse(PaginatedResponse):
     """Paginated response for listing features."""
 
     features: list[Feature]
+
+
+class FeaturePartitionInfo(BaseModel):
+    """One row group's feature count, surfaced via ``/data/metadata``."""
+
+    index: int = Field(..., description="Zero-based partition index.")
+    num_features: int = Field(..., description="Number of features in this partition.")
+
+
+class FeatureDataMetadata(BaseModel):
+    """Partition layout for a feature blob."""
+
+    total_features: int = Field(
+        ..., description="Total number of features across all partitions."
+    )
+    partition_count: int = Field(
+        ...,
+        description=(
+            "Number of valid `partition_index` values. Iterate from 0 to "
+            "`partition_count - 1` to retrieve every feature exactly once."
+        ),
+    )
+    partitions: list[FeaturePartitionInfo] = Field(
+        ...,
+        description=(
+            "Per-partition row counts read from the GeoParquet footer. "
+            "Useful for sizing client-side buffers."
+        ),
+    )

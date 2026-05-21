@@ -276,9 +276,11 @@ class TestGetFeatureDataPartition:
         """Round-trip: concatenating every partition reproduces the source
         GeoDataFrame feature-by-feature.
 
-        Compares against ``static_roads_gdf.to_json()`` — the same serialization
-        the server runs in ``cache._row_group_to_geojson_bytes`` would produce
-        on the full source — so per-feature equality is exact.
+        The server reads each row group via ``pq.ParquetFile.read_row_group``
+        and serializes it through ``gpd.GeoDataFrame.to_json``. Comparing
+        against ``static_roads_gdf.to_json()`` (the whole-file serialization
+        of the same data) yields exact per-feature equality so long as the
+        row-group reader preserves source order and continuous feature ids.
         """
         meta = client.get(metadata_route(domain_for_testing["id"], STATIC_ROADS)).json()
         partition_count = meta["partition_count"]

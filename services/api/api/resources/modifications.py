@@ -38,18 +38,6 @@ class SpatialOperator(StrEnum):
     intersects = "intersects"
 
 
-class SpatialTarget(StrEnum):
-    """
-    Specifies which part of the cell/item is tested against the geometry.
-
-    - centroid: Test only the cell's centroid point against the geometry
-    - cell: Test the entire cell bounds against the geometry
-    """
-
-    centroid = "centroid"
-    cell = "cell"
-
-
 class Modifier(StrEnum):
     """Modifiers for modification actions."""
 
@@ -92,11 +80,6 @@ class BaseSpatialCondition(BaseModel):
         ...,
         description="The spatial relationship to test: 'within' (inside geometry), "
         "'outside' (not inside geometry), or 'intersects' (overlaps geometry)",
-    )
-    target: SpatialTarget = Field(
-        default=SpatialTarget.centroid,
-        description="Which part of the cell to test against the geometry: "
-        "'centroid' (cell center point) or 'cell' (entire cell bounds)",
     )
 
 

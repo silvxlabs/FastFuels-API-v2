@@ -67,14 +67,15 @@ class CreateLayersetRasterizeRequest(CreateSourceGridRequestBase):
         default=OverlapMethod.mean,
         description="Per-cell reduction when polygons overlap a cell.",
     )
-    extent_buffer_cells: int | None = Field(
-        default=None,
+    extent_buffer_cells: int = Field(
+        0,
         ge=0,
         le=10,
         description=(
             "Buffer in result-grid cells around the domain extent. Cells "
             "inside the buffered extent that fall outside polygon coverage "
-            "are populated with the rasterizer's fill value. Maximum: 10 cells."
+            "are populated with the rasterizer's fill value. Default 0 adds "
+            "no buffer. Maximum: 10 cells."
         ),
     )
 

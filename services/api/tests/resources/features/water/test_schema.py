@@ -43,6 +43,24 @@ class TestOsmWaterSource:
         data = source.model_dump()
         assert data["product"] == "osm"
         assert data["description"] == "OpenStreetMap water features"
+        assert data["extent_buffer_m"] == 0
+
+    def test_extent_buffer_m_default(self):
+        """Buffer defaults to 0 (clip exactly to domain)."""
+        assert OsmWaterSource().extent_buffer_m == 0
+
+    def test_extent_buffer_m_accepts_valid_range(self):
+        """Buffer accepts 0, fractional values, and the upper bound 100."""
+        assert OsmWaterSource(extent_buffer_m=0).extent_buffer_m == 0
+        assert OsmWaterSource(extent_buffer_m=12.5).extent_buffer_m == 12.5
+        assert OsmWaterSource(extent_buffer_m=100).extent_buffer_m == 100
+
+    def test_extent_buffer_m_rejects_out_of_range(self):
+        """Buffer is bounded to [0, 100]."""
+        with pytest.raises(ValidationError):
+            OsmWaterSource(extent_buffer_m=-1)
+        with pytest.raises(ValidationError):
+            OsmWaterSource(extent_buffer_m=101)
 
 
 class TestCreateOsmWaterFeatureRequest:
@@ -55,6 +73,35 @@ class TestCreateOsmWaterFeatureRequest:
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
+        assert request.extent_buffer_m == 0
+
+    def test_extent_buffer_m_accepts_valid_range(self):
+        """Buffer accepts 0, fractional values, and the upper bound 100."""
+        assert (
+            CreateOsmWaterFeatureRequest(
+                type="water", extent_buffer_m=0
+            ).extent_buffer_m
+            == 0
+        )
+        assert (
+            CreateOsmWaterFeatureRequest(
+                type="water", extent_buffer_m=12.5
+            ).extent_buffer_m
+            == 12.5
+        )
+        assert (
+            CreateOsmWaterFeatureRequest(
+                type="water", extent_buffer_m=100
+            ).extent_buffer_m
+            == 100
+        )
+
+    def test_extent_buffer_m_rejects_out_of_range(self):
+        """Buffer is bounded to [0, 100]."""
+        with pytest.raises(ValidationError):
+            CreateOsmWaterFeatureRequest(type="water", extent_buffer_m=-1)
+        with pytest.raises(ValidationError):
+            CreateOsmWaterFeatureRequest(type="water", extent_buffer_m=101)
 
     def test_type_must_be_water(self):
         """The type field cannot be set to any other feature type."""

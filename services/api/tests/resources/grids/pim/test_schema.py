@@ -179,9 +179,9 @@ class TestCreateTreeMapRequest:
         with pytest.raises(ValidationError):
             CreateTreeMapRequest(bands=["tm_id", "tm_id"])
 
-    def test_extent_buffer_cells_defaults_to_none(self):
+    def test_extent_buffer_cells_defaults_to_zero(self):
         request = CreateTreeMapRequest()
-        assert request.extent_buffer_cells is None
+        assert request.extent_buffer_cells == 0
 
     def test_extent_buffer_cells_accepts_positive(self):
         request = CreateTreeMapRequest(extent_buffer_cells=10)
@@ -198,14 +198,6 @@ class TestCreateTreeMapRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateTreeMapRequest(extent_buffer_cells=11)
-
-    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
-        request = CreateTreeMapRequest()
-        assert request.resolved_extent_buffer_cells(0) == 0
-
-    def test_resolved_extent_buffer_cells_preserves_zero(self):
-        request = CreateTreeMapRequest(extent_buffer_cells=0)
-        assert request.resolved_extent_buffer_cells(0) == 0
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""

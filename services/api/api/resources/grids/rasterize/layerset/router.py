@@ -99,7 +99,7 @@ async def create_layerset_rasterize(
     source = LayersetSource(
         layerset_id=body.layerset_id,
         overlap_method=body.overlap_method,
-        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+        extent_buffer_cells=body.extent_buffer_cells,
         alignment=body.alignment.model_dump(),
     )
     bands = build_layerset_bands()

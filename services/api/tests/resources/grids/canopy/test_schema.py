@@ -158,9 +158,9 @@ class TestCreateMetaChmRequest:
         request = CreateMetaChmRequest(version="1")
         assert request.version == "1"
 
-    def test_extent_buffer_cells_defaults_to_none(self):
+    def test_extent_buffer_cells_defaults_to_zero(self):
         request = CreateMetaChmRequest()
-        assert request.extent_buffer_cells is None
+        assert request.extent_buffer_cells == 0
 
     def test_extent_buffer_cells_accepts_positive(self):
         request = CreateMetaChmRequest(extent_buffer_cells=10)
@@ -177,14 +177,6 @@ class TestCreateMetaChmRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateMetaChmRequest(extent_buffer_cells=11)
-
-    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
-        request = CreateMetaChmRequest()
-        assert request.resolved_extent_buffer_cells(0) == 0
-
-    def test_resolved_extent_buffer_cells_preserves_zero(self):
-        request = CreateMetaChmRequest(extent_buffer_cells=0)
-        assert request.resolved_extent_buffer_cells(0) == 0
 
 
 class TestAttribution:
@@ -291,9 +283,9 @@ class TestCreateNaipChmRequest:
         assert request.description == "A test grid"
         assert request.tags == ["test", "chm", "naip"]
 
-    def test_extent_buffer_cells_defaults_to_none(self):
+    def test_extent_buffer_cells_defaults_to_zero(self):
         request = CreateNaipChmRequest()
-        assert request.extent_buffer_cells is None
+        assert request.extent_buffer_cells == 0
 
     def test_extent_buffer_cells_accepts_zero(self):
         request = CreateNaipChmRequest(extent_buffer_cells=0)
@@ -310,7 +302,3 @@ class TestCreateNaipChmRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateNaipChmRequest(extent_buffer_cells=11)
-
-    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
-        request = CreateNaipChmRequest()
-        assert request.resolved_extent_buffer_cells(0) == 0

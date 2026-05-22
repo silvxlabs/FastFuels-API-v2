@@ -64,6 +64,12 @@ async def create_osm_water_feature(
     - **name**: (optional) Name for the water feature.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing features.
+    - **extent_buffer_m**: (optional) Distance in meters to expand the domain
+      extent outward before clipping fetched water features. Lets streams and
+      rivers that exit the domain at the boundary extend slightly past the
+      edge, providing context for visualization and downstream operations.
+      Applied in the domain's projected CRS. If omitted, water features are
+      clipped exactly to the domain boundary. Range: 0–100 meters.
 
     ## Response
 
@@ -76,7 +82,7 @@ async def create_osm_water_feature(
 
     feature_id = uuid.uuid4().hex
     request_time = datetime.now()
-    source = OsmWaterSource()
+    source = OsmWaterSource(extent_buffer_m=body.extent_buffer_m)
 
     feature_data = {
         "id": feature_id,

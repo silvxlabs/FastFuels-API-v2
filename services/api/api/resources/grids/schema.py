@@ -133,7 +133,25 @@ class CreateGridRequestBase(BaseModel):
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
-    modifications: list[GridModification] = Field(default_factory=list)
+    modifications: list[GridModification] = Field(
+        default_factory=list,
+        description=(
+            "Rules applied to the grid after it is built from its source. Each "
+            "rule has a list of `conditions` (ANDed together) and a list of "
+            "`actions` (applied where the conditions match). Conditions can be "
+            "attribute-based (compare a band value) or spatial (test cell "
+            "location against a geometry). Spatial conditions come in two "
+            "variants discriminated by `source`: `geometry` (inline GeoJSON) "
+            "or `feature` (reference a persisted Feature resource — road, "
+            "water, layerset — in the same domain by `feature_id`). Both "
+            "spatial variants accept `buffer_m` (meters, applied in the "
+            "domain's projected CRS) to widen the geometry, and `target` "
+            "(`centroid` or `cell`) to choose which part of the cell is "
+            "tested. Actions modify band values via `replace`, `multiply`, "
+            "`divide`, `add`, or `subtract`. See the `GridModification` "
+            "schema for the full field reference and worked examples."
+        ),
+    )
 
 
 class CreateSourceGridRequestBase(CreateGridRequestBase):

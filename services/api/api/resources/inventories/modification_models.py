@@ -10,12 +10,17 @@ conversion via pint for conditions and actions.
 
 import ast
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 import pint
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+)
 
-from api.resources.modifications import Modifier, Operator
+from api.resources.modifications import Modifier, Operator, SpatialOperator
 
 ureg = pint.UnitRegistry()
 
@@ -219,15 +224,125 @@ class RemoveAction(BaseModel):
     modifier: Literal["remove"] = "remove"
 
 
+class InventoryGeometrySpatialCondition(BaseModel):
+    """Spatial condition that tests tree locations against an inline GeoJSON
+    geometry.
+
+    Trees are points, so the test is always point-in-(optionally-buffered)-geometry.
+    Use this variant when the geometry is supplied directly in the request; for a
+    persisted geometry hosted as a Feature resource, use
+    ``InventoryFeatureSpatialCondition``.
+    """
+
+    source: Literal["geometry"] = Field(
+        ...,
+        description=(
+            "Discriminator selecting this variant. Must be the literal "
+            'string `"geometry"`. Use `"feature"` instead to reference '
+            "a persisted Feature resource by id."
+        ),
+    )
+    operator: SpatialOperator = Field(
+        ...,
+        description=(
+            "The spatial relationship to test between each tree's point "
+            "and the geometry: `within` (tree is inside the geometry), "
+            "`outside` (tree is not inside the geometry), or `intersects`."
+        ),
+    )
+    geometry: dict = Field(
+        ...,
+        description=(
+            "Inline GeoJSON geometry. Polygon and MultiPolygon are the "
+            "common shapes; LineString geometries should typically be "
+            "paired with a non-zero `buffer_m` since a tree point almost "
+            "never lies exactly on a line."
+        ),
+    )
+    crs: dict | None = Field(
+        default=None,
+        description=(
+            "CRS of `geometry`, expressed as a GeoJSON CRS object "
+            '(`{"type": "name", "properties": {"name": "EPSG:..."}}`). '
+            "Defaults to the domain CRS when null."
+        ),
+    )
+    buffer_m: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Optional buffer distance in meters applied to the geometry "
+            "(in the domain's projected CRS) before testing. Use a non-zero "
+            "buffer to widen the masked region beyond the literal geometry."
+        ),
+    )
+
+
+class InventoryFeatureSpatialCondition(BaseModel):
+    """Spatial condition that tests tree locations against a persisted Feature
+    resource.
+
+    The referenced Feature must belong to the same domain as the inventory.
+    The processing service loads the feature's geometry, reprojects it into
+    the domain CRS, optionally buffers it, and then evaluates the spatial
+    operator against each tree's point coordinate.
+
+    A non-zero ``buffer_m`` is typically required for linestring features
+    (e.g. roads), since tree points almost never intersect a bare linestring.
+    """
+
+    source: Literal["feature"] = Field(
+        ...,
+        description=(
+            "Discriminator selecting this variant. Must be the literal "
+            'string `"feature"`. Use `"geometry"` instead to supply '
+            "inline GeoJSON."
+        ),
+    )
+    operator: SpatialOperator = Field(
+        ...,
+        description=(
+            "The spatial relationship to test between each tree's point "
+            "and the feature's geometry: `within`, `outside`, or `intersects`."
+        ),
+    )
+    feature_id: str = Field(
+        ...,
+        description=(
+            "ID of a Feature resource (road, water, or layerset) hosted in "
+            "the same domain as the inventory. Cross-domain references are "
+            "rejected; the feature must be in `completed` status."
+        ),
+    )
+    buffer_m: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Optional buffer distance in meters applied to the feature "
+            "geometry (in the domain's projected CRS) before testing. "
+            "Effectively required for linestring features such as roads "
+            "since a tree point almost never intersects a bare linestring."
+        ),
+    )
+
+
+InventorySpatialCondition = Annotated[
+    InventoryGeometrySpatialCondition | InventoryFeatureSpatialCondition,
+    Field(discriminator="source"),
+]
+
+
 class InventoryModification(BaseModel):
     """A modification rule: when all conditions match, apply actions.
 
     If a RemoveAction is present, it must be the only action.
     """
 
-    conditions: list[InventoryModificationCondition | InventoryExpressionCondition] = (
-        Field(..., min_length=1)
-    )
+    conditions: list[
+        InventoryModificationCondition
+        | InventoryExpressionCondition
+        | InventorySpatialCondition
+    ] = Field(..., min_length=1)
     actions: list[InventoryModificationAction | RemoveAction] = Field(..., min_length=1)
 
     @field_validator("conditions", "actions", mode="before")

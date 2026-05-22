@@ -10,6 +10,8 @@ from api.resources.inventories.modification_models import (
     ATTRIBUTE_UNITS,
     InventoryAttribute,
     InventoryExpressionCondition,
+    InventoryFeatureSpatialCondition,
+    InventoryGeometrySpatialCondition,
     InventoryModification,
     InventoryModificationAction,
     InventoryModificationCondition,
@@ -355,3 +357,209 @@ class TestApplyModificationsRequest:
         )
         assert req.name == "Modified trees"
         assert req.tags == ["modified"]
+
+
+# =============================================================================
+# InventoryGeometrySpatialCondition Tests
+# =============================================================================
+
+
+SAMPLE_POLYGON = {
+    "type": "Polygon",
+    "coordinates": [
+        [[-120.0, 38.0], [-119.0, 38.0], [-119.0, 39.0], [-120.0, 39.0], [-120.0, 38.0]]
+    ],
+}
+
+
+class TestInventoryGeometrySpatialCondition:
+    def test_minimal_valid(self):
+        cond = InventoryGeometrySpatialCondition(
+            source="geometry", operator="within", geometry=SAMPLE_POLYGON
+        )
+        assert cond.source == "geometry"
+        assert cond.operator == "within"
+        assert cond.geometry == SAMPLE_POLYGON
+        assert cond.crs is None
+        assert cond.buffer_m is None
+
+    def test_source_required(self):
+        with pytest.raises(ValidationError):
+            InventoryGeometrySpatialCondition(
+                operator="within", geometry=SAMPLE_POLYGON
+            )
+
+    def test_geometry_required(self):
+        with pytest.raises(ValidationError):
+            InventoryGeometrySpatialCondition(source="geometry", operator="within")
+
+    def test_operator_required(self):
+        with pytest.raises(ValidationError):
+            InventoryGeometrySpatialCondition(
+                source="geometry", geometry=SAMPLE_POLYGON
+            )
+
+    def test_buffer_m_accepts_zero(self):
+        cond = InventoryGeometrySpatialCondition(
+            source="geometry",
+            operator="within",
+            geometry=SAMPLE_POLYGON,
+            buffer_m=0,
+        )
+        assert cond.buffer_m == 0
+
+    def test_buffer_m_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            InventoryGeometrySpatialCondition(
+                source="geometry",
+                operator="within",
+                geometry=SAMPLE_POLYGON,
+                buffer_m=-1.0,
+            )
+
+
+# =============================================================================
+# InventoryFeatureSpatialCondition Tests
+# =============================================================================
+
+
+class TestInventoryFeatureSpatialCondition:
+    def test_minimal_valid(self):
+        cond = InventoryFeatureSpatialCondition(
+            source="feature", operator="within", feature_id="feat_road_abc"
+        )
+        assert cond.source == "feature"
+        assert cond.operator == "within"
+        assert cond.feature_id == "feat_road_abc"
+        assert cond.buffer_m is None
+
+    def test_source_required(self):
+        with pytest.raises(ValidationError):
+            InventoryFeatureSpatialCondition(
+                operator="within", feature_id="feat_road_abc"
+            )
+
+    def test_feature_id_required(self):
+        with pytest.raises(ValidationError):
+            InventoryFeatureSpatialCondition(source="feature", operator="within")
+
+    def test_operator_required(self):
+        with pytest.raises(ValidationError):
+            InventoryFeatureSpatialCondition(
+                source="feature", feature_id="feat_road_abc"
+            )
+
+    def test_buffer_m_accepts_positive(self):
+        cond = InventoryFeatureSpatialCondition(
+            source="feature",
+            operator="within",
+            feature_id="feat_water_xyz",
+            buffer_m=5.0,
+        )
+        assert cond.buffer_m == 5.0
+
+    def test_buffer_m_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            InventoryFeatureSpatialCondition(
+                source="feature",
+                operator="within",
+                feature_id="feat_road_abc",
+                buffer_m=-2.5,
+            )
+
+    def test_no_target_field(self):
+        """Inventory spatial conditions have no `target` field since trees are
+        points."""
+        cond = InventoryFeatureSpatialCondition(
+            source="feature", operator="within", feature_id="feat_road_abc"
+        )
+        assert not hasattr(cond, "target")
+
+
+# =============================================================================
+# Spatial condition dispatch via InventoryModification
+# =============================================================================
+
+
+class TestInventorySpatialConditionDispatch:
+    def test_feature_variant_via_source(self):
+        mod = InventoryModification(
+            conditions=[
+                {
+                    "source": "feature",
+                    "operator": "within",
+                    "feature_id": "feat_water_xyz",
+                    "buffer_m": 5,
+                }
+            ],
+            actions=[{"modifier": "remove"}],
+        )
+        cond = mod.conditions[0]
+        assert isinstance(cond, InventoryFeatureSpatialCondition)
+        assert cond.feature_id == "feat_water_xyz"
+        assert cond.buffer_m == 5
+
+    def test_geometry_variant_via_source(self):
+        mod = InventoryModification(
+            conditions=[
+                {
+                    "source": "geometry",
+                    "operator": "within",
+                    "geometry": SAMPLE_POLYGON,
+                }
+            ],
+            actions=[{"modifier": "remove"}],
+        )
+        assert isinstance(mod.conditions[0], InventoryGeometrySpatialCondition)
+
+    def test_spatial_with_attribute_condition_compound(self):
+        """A spatial condition + an attribute condition can coexist in the
+        same modification (AND semantics)."""
+        mod = InventoryModification(
+            conditions=[
+                {
+                    "source": "feature",
+                    "operator": "within",
+                    "feature_id": "feat_road_abc",
+                    "buffer_m": 4,
+                },
+                {"attribute": "dbh", "operator": "gt", "value": 30},
+            ],
+            actions=[{"modifier": "remove"}],
+        )
+        assert len(mod.conditions) == 2
+        assert isinstance(mod.conditions[0], InventoryFeatureSpatialCondition)
+        assert isinstance(mod.conditions[1], InventoryModificationCondition)
+
+    def test_spatial_with_remove_action(self):
+        """RemoveAction can pair with a spatial condition."""
+        mod = InventoryModification(
+            conditions=[
+                {
+                    "source": "feature",
+                    "operator": "within",
+                    "feature_id": "feat_water_xyz",
+                    "buffer_m": 5,
+                }
+            ],
+            actions=[{"modifier": "remove"}],
+        )
+        assert isinstance(mod.actions[0], RemoveAction)
+
+    def test_round_trip_via_model_dump(self):
+        mod = InventoryModification(
+            conditions=[
+                {
+                    "source": "feature",
+                    "operator": "within",
+                    "feature_id": "feat_road_abc",
+                    "buffer_m": 3,
+                }
+            ],
+            actions=[{"modifier": "remove"}],
+        )
+        data = mod.model_dump()
+        assert data["conditions"][0]["source"] == "feature"
+        assert data["conditions"][0]["feature_id"] == "feat_road_abc"
+        reparsed = InventoryModification.model_validate(data)
+        assert isinstance(reparsed.conditions[0], InventoryFeatureSpatialCondition)

@@ -54,11 +54,13 @@ async def apply_modifications(
     completed inventory. The source inventory is not changed.
 
     Modifications filter trees by conditions and apply actions (remove,
-    multiply, divide, add, subtract, replace) to matching rows.
+    multiply, divide, add, subtract, replace) to matching rows. Conditions
+    within a single rule are ANDed together; multiple rules are evaluated
+    independently in order.
 
     ## Conditions
 
-    **Attribute conditions** compare a single attribute against a value:
+    **Attribute conditions** compare a single tree attribute against a value:
     - `attribute`: one of `dbh`, `height`, `crown_ratio`, `fia_species_code`
     - `operator`: `eq`, `ne`, `gt`, `lt`, `ge`, `le`
       (`fia_species_code` only supports `eq`/`ne`)
@@ -70,6 +72,31 @@ async def apply_modifications(
     - Only `dbh`, `height`, `crown_ratio` are allowed in expressions
     - Expressions always use native units (cm, m, 0-1 fraction)
 
+    **Spatial conditions** test each tree's location (a point) against a
+    geometry. Two variants discriminated by the required `source` field:
+
+    - `source: "geometry"` — supply GeoJSON directly via `geometry` (plus
+      optional `crs`; defaults to the domain CRS).
+    - `source: "feature"` — reference a persisted Feature resource by
+      `feature_id` (road, water, layerset). The Feature must belong to the
+      same domain as the source inventory; cross-domain references are
+      rejected.
+
+    Both spatial variants accept:
+    - `operator`: `within`, `outside`, or `intersects`
+    - `buffer_m`: (optional, meters) expands the geometry outward in the
+      domain's projected CRS before testing. Effectively required for
+      linestring features (e.g. roads) because a tree point almost never
+      intersects a bare linestring.
+
+    Spatial conditions have **no `target` field** — trees are points, so
+    the test is always point-in-(optionally-buffered)-geometry.
+
+    Spatial and attribute conditions can be combined in a single rule
+    (AND semantics). For example: `{conditions: [feature within road
+    buffer, dbh > 30], actions: [remove]}` removes only large trees that
+    fall inside the buffered road.
+
     ## Actions
 
     - `{"modifier": "remove"}` — remove matching trees (must be sole action)
@@ -78,7 +105,8 @@ async def apply_modifications(
 
     ## Response
 
-    Returns the new Inventory resource with status `"pending"`.
+    Returns the new Inventory resource with status `"pending"`. The original
+    inventory is unchanged.
     """
     owner_id = request.state.id
     domain_id = domain["id"]

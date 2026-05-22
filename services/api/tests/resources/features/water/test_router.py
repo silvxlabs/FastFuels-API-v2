@@ -47,8 +47,30 @@ class TestCreateOsmWaterFeature:
         assert data["description"] == ""
         assert data["tags"] == []
 
-        # Source is locked to OSM
+        # Source is locked to OSM with no buffer by default
         assert data["source"]["product"] == "osm"
+        assert data["source"]["extent_buffer_m"] == 0
+
+    def test_request_with_extent_buffer_m(self, client, domain_for_testing):
+        """extent_buffer_m is persisted into the source dict."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"type": "water", "extent_buffer_m": 25},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["source"]["extent_buffer_m"] == 25
+
+    def test_request_with_out_of_range_buffer_rejected(
+        self, client, domain_for_testing
+    ):
+        """extent_buffer_m above 100 is rejected by request validation."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"type": "water", "extent_buffer_m": 101},
+        )
+
+        assert response.status_code == 422
 
     def test_request_with_metadata(self, client, domain_for_testing):
         """Request accepts name, description, and tags."""

@@ -168,3 +168,36 @@ class TestHandleOsm:
         saved_gdf = mock_save.call_args[0][2]
         assert saved_gdf.empty
         assert saved_gdf.crs == sample_domain_gdf.crs
+
+    @patch("etcher.handlers.water.save_features")
+    @patch("etcher.handlers.water.ox.features_from_polygon")
+    def test_extent_buffer_widens_osm_query_and_georeference(
+        self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf, sample_osm_water
+    ):
+        """A non-zero extent_buffer_m enlarges the OSM bbox and the georeference."""
+        mock_osmnx.return_value = sample_osm_water
+        progress = MagicMock()
+
+        # First call: no buffer.
+        result_no_buf = handle_osm(mock_feature, {}, sample_domain_gdf, progress)
+        bbox_no_buf = mock_osmnx.call_args.kwargs["polygon"]
+        georef_no_buf = result_no_buf["georeference"]["bounds"]
+
+        # Second call: 50 m buffer.
+        result_buf = handle_osm(
+            mock_feature,
+            {"extent_buffer_m": 50},
+            sample_domain_gdf,
+            progress,
+        )
+        bbox_buf = mock_osmnx.call_args.kwargs["polygon"]
+        georef_buf = result_buf["georeference"]["bounds"]
+
+        # OSM bbox query should now cover a larger area.
+        assert bbox_buf.area > bbox_no_buf.area
+
+        # Georeference bounds should be strictly larger on every edge.
+        assert georef_buf[0] < georef_no_buf[0]
+        assert georef_buf[1] < georef_no_buf[1]
+        assert georef_buf[2] > georef_no_buf[2]
+        assert georef_buf[3] > georef_no_buf[3]

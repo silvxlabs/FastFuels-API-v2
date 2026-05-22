@@ -19,6 +19,14 @@ EXAMPLE_WATER_WITH_METADATA = {
     "tags": ["hydrology", "osm", "water"],
 }
 
+EXAMPLE_WATER_WITH_BUFFER = {
+    "type": "water",
+    "name": "OSM Water Features (with overhang)",
+    "description": "Water features clipped to the domain plus 50 m, so streams and rivers crossing the boundary continue past it.",
+    "tags": ["hydrology", "osm", "water"],
+    "extent_buffer_m": 50,
+}
+
 CREATE_WATER_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_WATER_MINIMAL,
@@ -36,9 +44,19 @@ CREATE_WATER_OPENAPI_EXAMPLES = {
             "Useful for distinguishing between different hydrology layers or scenarios."
         ),
     },
+    "with_buffer": {
+        "value": EXAMPLE_WATER_WITH_BUFFER,
+        "summary": "With clip-extent buffer",
+        "description": (
+            "Expands the clip extent by 50 m before clipping, so streams and "
+            "rivers that cross the domain boundary continue past it instead "
+            "of being cut at the edge."
+        ),
+    },
 }
 
 WATER_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_WATER_MINIMAL),
     ("with_metadata", EXAMPLE_WATER_WITH_METADATA),
+    ("with_buffer", EXAMPLE_WATER_WITH_BUFFER),
 ]

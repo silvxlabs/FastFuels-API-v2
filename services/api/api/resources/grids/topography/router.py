@@ -89,7 +89,7 @@ async def create_landfire_topography(
     source = LandfireTopographySource(
         version=body.version,
         bands=body.bands,
-        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+        extent_buffer_cells=body.extent_buffer_cells,
         alignment=body.alignment,
     )
     bands = build_topography_bands(body.bands)
@@ -177,7 +177,7 @@ async def create_3dep_topography(
     source = ThreeDepTopographySource(
         source_resolution=body.source_resolution,
         bands=body.bands,
-        extent_buffer_cells=body.resolved_extent_buffer_cells(0),
+        extent_buffer_cells=body.extent_buffer_cells,
         alignment=body.alignment,
     )
     bands = build_topography_bands(body.bands)

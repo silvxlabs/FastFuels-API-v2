@@ -144,8 +144,8 @@ class CreateSourceGridRequestBase(CreateGridRequestBase):
     an external raster (LANDFIRE, PIM, CHM, 3DEP).
     """
 
-    extent_buffer_cells: int | None = Field(
-        default=None,
+    extent_buffer_cells: int = Field(
+        0,
         ge=0,
         le=10,
         description=(
@@ -155,8 +155,7 @@ class CreateSourceGridRequestBase(CreateGridRequestBase):
             "means one cell in the returned grid rather than one source "
             "raster cell. Provides context for later operations (resample, "
             "reproject, focal filters, derivative calculations) that are "
-            "sensitive to edges. If omitted, no buffer is added. Maximum: "
-            "10 cells."
+            "sensitive to edges. Default 0 adds no buffer. Maximum: 10 cells."
         ),
     )
 
@@ -169,10 +168,6 @@ class CreateSourceGridRequestBase(CreateGridRequestBase):
             'pixel anchor. `target="grid"` aligns to an existing grid by id.'
         ),
     )
-
-    def resolved_extent_buffer_cells(self, default: int) -> int:
-        """Return the user-supplied buffer or the caller-supplied default."""
-        return default if self.extent_buffer_cells is None else self.extent_buffer_cells
 
 
 class UpdateGridRequestBody(BaseModel):

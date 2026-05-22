@@ -241,9 +241,9 @@ class TestCreateLandfireCanopyRequest:
         assert request.tags == ["canopy", "landfire"]
         assert request.bands == [LandfireCanopyFuelBand.chm, LandfireCanopyFuelBand.cbd]
 
-    def test_extent_buffer_cells_defaults_to_none(self):
+    def test_extent_buffer_cells_defaults_to_zero(self):
         request = CreateLandfireCanopyRequest()
-        assert request.extent_buffer_cells is None
+        assert request.extent_buffer_cells == 0
 
     def test_extent_buffer_cells_accepts_positive(self):
         request = CreateLandfireCanopyRequest(extent_buffer_cells=6)
@@ -260,11 +260,3 @@ class TestCreateLandfireCanopyRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateLandfireCanopyRequest(extent_buffer_cells=11)
-
-    def test_resolved_extent_buffer_cells_uses_default_when_omitted(self):
-        request = CreateLandfireCanopyRequest()
-        assert request.resolved_extent_buffer_cells(0) == 0
-
-    def test_resolved_extent_buffer_cells_preserves_zero(self):
-        request = CreateLandfireCanopyRequest(extent_buffer_cells=0)
-        assert request.resolved_extent_buffer_cells(0) == 0

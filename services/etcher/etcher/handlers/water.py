@@ -14,6 +14,7 @@ import pandas as pd
 from shapely.geometry import box
 
 from etcher.storage import save_features
+from lib.domain_utils import buffer_domain
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,9 @@ def handle_osm(
 
     # Store native CRS to project back at the end
     native_crs = domain_gdf.crs
+
+    # Expand the clip extent if the request asked for an overhang.
+    domain_gdf = buffer_domain(domain_gdf, source.get("extent_buffer_m", 0))
 
     # OSM requires EPSG:4326 for querying
     domain_gdf_4326 = domain_gdf.to_crs(epsg=4326)

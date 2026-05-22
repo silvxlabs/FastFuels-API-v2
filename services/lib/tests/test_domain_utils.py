@@ -11,10 +11,12 @@ import json
 
 import geopandas as gpd
 import pytest
+from shapely.geometry import Polygon
 
 from lib.domain_utils import (
     EmptyDomainError,
     InvalidGeometryError,
+    buffer_domain,
     parse_domain_gdf,
 )
 from lib.testing import SHARED_TEST_DOMAINS_DIR
@@ -315,3 +317,68 @@ class TestErrorHandling:
         }
         with pytest.raises(InvalidGeometryError):
             parse_domain_gdf(data)
+
+
+class TestBufferDomain:
+    """Tests for buffer_domain."""
+
+    @pytest.fixture
+    def projected_domain(self) -> gpd.GeoDataFrame:
+        # 1 km x 1 km square in UTM zone 10N
+        poly = Polygon(
+            [
+                (500000, 4500000),
+                (501000, 4500000),
+                (501000, 4501000),
+                (500000, 4501000),
+            ]
+        )
+        return gpd.GeoDataFrame({"geometry": [poly]}, crs="EPSG:32610")
+
+    @pytest.fixture
+    def geographic_domain(self) -> gpd.GeoDataFrame:
+        # ~1km square near Boulder, CO in WGS84
+        poly = Polygon(
+            [
+                (-105.27, 40.01),
+                (-105.26, 40.01),
+                (-105.26, 40.02),
+                (-105.27, 40.02),
+            ]
+        )
+        return gpd.GeoDataFrame({"geometry": [poly]}, crs="EPSG:4326")
+
+    def test_zero_buffer_returns_input_unchanged(self, projected_domain):
+        result = buffer_domain(projected_domain, 0)
+        assert result is projected_domain
+
+    def test_negative_buffer_returns_input_unchanged(self, projected_domain):
+        result = buffer_domain(projected_domain, -5)
+        assert result is projected_domain
+
+    def test_projected_crs_expands_bounds_by_buffer(self, projected_domain):
+        result = buffer_domain(projected_domain, 50)
+        orig = projected_domain.total_bounds
+        new = result.total_bounds
+        # Each side should grow by ~50 m (buffer is on perimeter)
+        assert new[0] == pytest.approx(orig[0] - 50, abs=1e-6)
+        assert new[1] == pytest.approx(orig[1] - 50, abs=1e-6)
+        assert new[2] == pytest.approx(orig[2] + 50, abs=1e-6)
+        assert new[3] == pytest.approx(orig[3] + 50, abs=1e-6)
+        assert result.crs == projected_domain.crs
+
+    def test_geographic_crs_buffer_is_metric(self, geographic_domain):
+        """Buffer in WGS84 should grow bounds by ~50 m, not ~50 degrees."""
+        result = buffer_domain(geographic_domain, 50)
+        orig = geographic_domain.total_bounds
+        new = result.total_bounds
+
+        # 50 m in degrees is ~5e-4. If the buffer accidentally applied 50
+        # degrees the assertion below would fail catastrophically.
+        lon_growth = (orig[0] - new[0] + new[2] - orig[2]) / 2  # mean of E/W growth
+        lat_growth = (orig[1] - new[1] + new[3] - orig[3]) / 2
+
+        assert 1e-4 < lon_growth < 1e-3
+        assert 1e-4 < lat_growth < 1e-3
+        # CRS is preserved on return
+        assert result.crs == geographic_domain.crs

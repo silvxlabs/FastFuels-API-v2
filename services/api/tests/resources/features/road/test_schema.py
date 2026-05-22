@@ -43,6 +43,24 @@ class TestOsmRoadSource:
         data = source.model_dump()
         assert data["product"] == "osm"
         assert data["description"] == "OpenStreetMap road network"
+        assert data["extent_buffer_m"] == 0
+
+    def test_extent_buffer_m_default(self):
+        """Buffer defaults to 0 (clip exactly to domain)."""
+        assert OsmRoadSource().extent_buffer_m == 0
+
+    def test_extent_buffer_m_accepts_valid_range(self):
+        """Buffer accepts 0, fractional values, and the upper bound 100."""
+        assert OsmRoadSource(extent_buffer_m=0).extent_buffer_m == 0
+        assert OsmRoadSource(extent_buffer_m=12.5).extent_buffer_m == 12.5
+        assert OsmRoadSource(extent_buffer_m=100).extent_buffer_m == 100
+
+    def test_extent_buffer_m_rejects_out_of_range(self):
+        """Buffer is bounded to [0, 100]."""
+        with pytest.raises(ValidationError):
+            OsmRoadSource(extent_buffer_m=-1)
+        with pytest.raises(ValidationError):
+            OsmRoadSource(extent_buffer_m=101)
 
 
 class TestCreateOsmRoadFeatureRequest:
@@ -55,6 +73,33 @@ class TestCreateOsmRoadFeatureRequest:
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
+        assert request.extent_buffer_m == 0
+
+    def test_extent_buffer_m_accepts_valid_range(self):
+        """Buffer accepts 0, fractional values, and the upper bound 100."""
+        assert (
+            CreateOsmRoadFeatureRequest(type="road", extent_buffer_m=0).extent_buffer_m
+            == 0
+        )
+        assert (
+            CreateOsmRoadFeatureRequest(
+                type="road", extent_buffer_m=12.5
+            ).extent_buffer_m
+            == 12.5
+        )
+        assert (
+            CreateOsmRoadFeatureRequest(
+                type="road", extent_buffer_m=100
+            ).extent_buffer_m
+            == 100
+        )
+
+    def test_extent_buffer_m_rejects_out_of_range(self):
+        """Buffer is bounded to [0, 100]."""
+        with pytest.raises(ValidationError):
+            CreateOsmRoadFeatureRequest(type="road", extent_buffer_m=-1)
+        with pytest.raises(ValidationError):
+            CreateOsmRoadFeatureRequest(type="road", extent_buffer_m=101)
 
     def test_type_must_be_road(self):
         """The type field cannot be set to any other feature type."""

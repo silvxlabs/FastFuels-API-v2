@@ -16,6 +16,7 @@ import functions_framework
 from flask import Request
 
 from griddle.dispatch import dispatch_handler
+from griddle.modifications import apply_modifications
 from griddle.storage import delete_zarr, save_zarr
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
@@ -275,10 +276,12 @@ def process_grid_request(request: Request):
         # Write back enriched source metadata (e.g., 3DEP tile provenance)
         update_document(GRIDS_COLLECTION, grid_id, {"source": grid["source"]})
 
-        # TODO: Apply modifications if present
-        # if grid.get("modifications"):
-        #     update_progress(grid_id, "Applying modifications...", 80)
-        #     result = apply_modifications(result, grid["modifications"])
+        # Apply modifications if present
+        if grid.get("modifications"):
+            update_progress(grid_id, "Applying modifications...", 80)
+            result = apply_modifications(
+                result, grid["modifications"], grid["domain_id"]
+            )
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)

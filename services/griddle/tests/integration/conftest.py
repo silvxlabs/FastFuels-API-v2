@@ -30,6 +30,7 @@ from lib.config import (
     DEPLOYMENT_ENV,
     DOMAINS_COLLECTION,
     FEATURES_BUCKET,
+    FEATURES_COLLECTION,
     GRIDS_BUCKET,
     GRIDS_COLLECTION,
 )
@@ -214,6 +215,7 @@ def griddle_runner():
     domain_ids = []
     grid_ids = []
     feature_blobs: list[str] = []
+    feature_doc_ids: list[str] = []
     datasets = []
 
     def _run(
@@ -223,6 +225,9 @@ def griddle_runner():
         source_overrides: dict | None = None,
         feature_file: str | None = None,
         feature_id: str | None = None,
+        feature_doc: bool = False,
+        feature_type: str = "road",
+        modifications: list[dict] | None = None,
     ) -> GriddleResult:
         # Create domain document
         domain_data = load_json(DOMAINS_DIR / domain_file)
@@ -261,11 +266,31 @@ def griddle_runner():
             source_overrides = dict(source_overrides or {})
             source_overrides.setdefault("layerset_id", feature_id)
 
+            # Modifications conditions with `source: "feature"` require a
+            # completed Feature Firestore doc (domain_id + status check).
+            # Layerset handlers ignore this — the layerset path reads the
+            # parquet directly and never touches the FEATURES_COLLECTION.
+            if feature_doc:
+                set_document(
+                    FEATURES_COLLECTION,
+                    feature_id,
+                    {
+                        "id": feature_id,
+                        "domain_id": domain_id,
+                        "type": feature_type,
+                        "status": "completed",
+                        "source": {"product": "test"},
+                    },
+                )
+                feature_doc_ids.append(feature_id)
+
         # Create grid document
         grid_data = load_json(GRIDS_DIR / grid_file)
         grid_data["domain_id"] = domain_id
         if source_overrides:
             grid_data["source"].update(source_overrides)
+        if modifications is not None:
+            grid_data["modifications"] = modifications
         grid_id = f"test-{uuid4().hex}"
         grid_data["id"] = grid_id
         set_document(GRIDS_COLLECTION, grid_id, grid_data)
@@ -316,6 +341,9 @@ def griddle_runner():
     for feature_blob in feature_blobs:
         if exists(feature_blob):
             delete_file(feature_blob)
+
+    for feature_doc_id in feature_doc_ids:
+        delete_document(FEATURES_COLLECTION, feature_doc_id)
 
     for domain_id in domain_ids:
         delete_document(DOMAINS_COLLECTION, domain_id)

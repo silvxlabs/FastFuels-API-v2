@@ -68,19 +68,24 @@ def parse_domain_gdf(domain_data: dict) -> gpd.GeoDataFrame:
     return gdf
 
 
-def buffer_domain(domain_gdf: gpd.GeoDataFrame, buffer_m: float) -> gpd.GeoDataFrame:
-    """Expand a domain outward by ``buffer_m`` meters in its native CRS.
+def buffer_gdf(gdf: gpd.GeoDataFrame, buffer_m: float) -> gpd.GeoDataFrame:
+    """Expand a GeoDataFrame's geometry outward by ``buffer_m`` meters.
 
     Buffering is performed in a projected CRS so the distance is metric. If
-    the domain CRS is geographic (e.g. EPSG:4326), it is reprojected to its
+    the input CRS is geographic (e.g. EPSG:4326), it is reprojected to its
     estimated UTM zone for the buffer and back. A buffer of 0 (or less)
     returns the input unchanged.
     """
     if buffer_m <= 0:
-        return domain_gdf
+        return gdf
 
-    native_crs = domain_gdf.crs
-    work_crs = native_crs if native_crs.is_projected else domain_gdf.estimate_utm_crs()
-    buffered = domain_gdf.to_crs(work_crs)
+    native_crs = gdf.crs
+    work_crs = native_crs if native_crs.is_projected else gdf.estimate_utm_crs()
+    buffered = gdf.to_crs(work_crs)
     buffered.geometry = buffered.geometry.buffer(buffer_m)
     return buffered.to_crs(native_crs)
+
+
+def buffer_domain(domain_gdf: gpd.GeoDataFrame, buffer_m: float) -> gpd.GeoDataFrame:
+    """Expand a domain outward by ``buffer_m`` meters in its native CRS."""
+    return buffer_gdf(domain_gdf, buffer_m)

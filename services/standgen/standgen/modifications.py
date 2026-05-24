@@ -8,11 +8,20 @@ attribute conditions, expression conditions, and actions with optional
 pint unit conversion.
 """
 
+import copy
 import logging
 import operator
 
+import geopandas as gpd
 import pandas as pd
 import pint
+import pyproj
+from shapely.geometry import shape
+
+from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
+from lib.domain_utils import buffer_gdf
+from lib.errors import ProcessingError
+from lib.firestore import DocumentNotFoundError, get_document
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +113,9 @@ def build_condition_mask(df: pd.DataFrame, conditions: list[dict]) -> pd.Series:
     mask = pd.Series(True, index=df.index)
 
     for cond in conditions:
-        if "expression" in cond:
+        if cond.get("source") in ("geometry", "feature"):
+            cond_mask = evaluate_spatial_condition(df, cond)
+        elif "expression" in cond:
             cond_mask = evaluate_expression(df, cond["expression"])
         else:
             cond_mask = evaluate_attribute_condition(df, cond)
@@ -140,6 +151,48 @@ def evaluate_expression(df: pd.DataFrame, expression: str) -> pd.Series:
     return df.eval(expression, engine="numexpr")
 
 
+def evaluate_spatial_condition(df: pd.DataFrame, cond: dict) -> pd.Series:
+    """Evaluate a spatial condition against each tree's (x, y) point.
+
+    Runs per-partition under ``map_partitions``. The geometry was resolved
+    once in the handler by ``resolve_spatial_conditions`` and injected under
+    ``"_resolved_geometry"`` — already in the domain CRS, which is the CRS of
+    the tree ``x``/``y`` columns, so no reprojection happens here.
+
+    Returns a boolean Series indexed by ``df.index`` so it ANDs cleanly with
+    the running condition mask.
+    """
+    geom = cond.get("_resolved_geometry")
+    if geom is None:
+        raise ProcessingError(
+            code="SPATIAL_CONDITION_UNRESOLVED",
+            message=(
+                "Spatial condition was not resolved before map_partitions "
+                "(missing '_resolved_geometry')."
+            ),
+            suggestion=(
+                "Call resolve_spatial_conditions() in the handler before "
+                "applying modifications."
+            ),
+        )
+
+    op_name = cond["operator"]
+    points = gpd.GeoSeries(gpd.points_from_xy(df["x"], df["y"]), index=df.index)
+
+    if op_name == "within":
+        return points.within(geom)
+    if op_name == "outside":
+        return ~points.within(geom)
+    if op_name == "intersects":
+        return points.intersects(geom)
+
+    raise ProcessingError(
+        code="INVALID_SPATIAL_OPERATOR",
+        message=f"Unknown spatial operator '{op_name}'.",
+        suggestion="Use 'within', 'outside', or 'intersects'.",
+    )
+
+
 def apply_action(df: pd.DataFrame, action: dict, mask: pd.Series) -> pd.DataFrame:
     """Apply a single action to masked rows, with optional unit conversion and clamping."""
     attribute = action["attribute"]
@@ -165,3 +218,157 @@ def apply_action(df: pd.DataFrame, action: dict, mask: pd.Series) -> pd.DataFram
             df.loc[mask, attribute] = df.loc[mask, attribute].clip(upper=hi)
 
     return df
+
+
+# Spatial-condition resolution.
+#
+# These functions run ONCE in the handler (before map_partitions), where
+# Firestore/GCS access and the domain CRS are available. Resolving feature
+# geometries here — rather than inside the per-partition apply_modifications —
+# keeps network I/O off the dask worker path and out of every partition.
+
+
+def _has_spatial_condition(modifications: list[dict]) -> bool:
+    """True if any modification has a spatial (geometry/feature) condition."""
+    return any(
+        cond.get("source") in ("geometry", "feature")
+        for mod in modifications
+        for cond in mod.get("conditions", [])
+    )
+
+
+def resolve_spatial_conditions(
+    modifications: list[dict],
+    domain_id: str,
+    target_crs,
+) -> list[dict]:
+    """Resolve every spatial condition's geometry into the domain CRS.
+
+    Deep-copies ``modifications`` (so we never write a non-serializable shapely
+    object back into the Firestore-sourced document) and injects the resolved
+    geometry under ``"_resolved_geometry"`` on each geometry/feature condition.
+    Feature geometries are cached by ``(feature_id, buffer_m)`` so a feature
+    referenced by multiple conditions is read from GCS only once.
+
+    Args:
+        modifications: List of InventoryModification dicts from Firestore.
+        domain_id: Inventory's parent domain. Feature references must resolve
+            to a Feature in this same domain.
+        target_crs: Domain CRS — the CRS of the tree x/y columns.
+
+    Returns:
+        A deep-copied modifications list with resolved geometries injected.
+    """
+    resolved = copy.deepcopy(modifications)
+    feature_cache: dict[tuple[str, float], object] = {}
+
+    for mod in resolved:
+        for cond in mod.get("conditions", []):
+            source = cond.get("source")
+            if source not in ("geometry", "feature"):
+                continue
+            buffer_m = float(cond.get("buffer_m") or 0)
+            if source == "feature":
+                cond["_resolved_geometry"] = _resolve_feature_geometry(
+                    domain_id,
+                    cond["feature_id"],
+                    buffer_m,
+                    feature_cache,
+                    target_crs,
+                )
+            else:
+                cond["_resolved_geometry"] = _resolve_inline_geometry(
+                    cond, buffer_m, target_crs
+                )
+
+    return resolved
+
+
+def _resolve_feature_geometry(
+    domain_id: str,
+    feature_id: str,
+    buffer_m: float,
+    cache: dict[tuple[str, float], object],
+    target_crs,
+) -> object:
+    """Load a Feature's geometry from GCS, reproject, buffer, and union.
+
+    Scoped to ``domain_id`` — cross-domain references are rejected. Results are
+    cached by ``(feature_id, buffer_m)``.
+    """
+    key = (feature_id, buffer_m)
+    if key in cache:
+        return cache[key]
+
+    try:
+        _, snapshot = get_document(FEATURES_COLLECTION, feature_id)
+    except DocumentNotFoundError:
+        raise ProcessingError(
+            code="FEATURE_NOT_FOUND",
+            message=f"Feature '{feature_id}' not found.",
+            suggestion="Ensure the feature exists in the same domain as the inventory.",
+        )
+    feature_doc = snapshot.to_dict()
+
+    if feature_doc.get("domain_id") != domain_id:
+        raise ProcessingError(
+            code="FEATURE_DOMAIN_MISMATCH",
+            message=(
+                f"Feature '{feature_id}' belongs to domain "
+                f"'{feature_doc.get('domain_id')}', not '{domain_id}'."
+            ),
+            suggestion=(
+                "Feature references must point to a feature in the same "
+                "domain as the inventory."
+            ),
+        )
+    if feature_doc.get("status") != "completed":
+        raise ProcessingError(
+            code="FEATURE_NOT_READY",
+            message=(
+                f"Feature '{feature_id}' has status "
+                f"'{feature_doc.get('status')}'; expected 'completed'."
+            ),
+            suggestion="Wait for the feature to finish processing.",
+        )
+
+    parquet_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+    gdf = gpd.read_parquet(parquet_path)
+    if gdf.empty:
+        raise ProcessingError(
+            code="FEATURE_EMPTY",
+            message=f"Feature '{feature_id}' has no geometry rows.",
+            suggestion="Re-create the feature so it contains geometries.",
+        )
+
+    # Reproject is a safety net — features are written in the domain CRS by
+    # construction, and trees are in the domain CRS too. When both agree,
+    # to_crs is a fast identity transform.
+    if pyproj.CRS(gdf.crs) != pyproj.CRS(target_crs):
+        gdf = gdf.to_crs(target_crs)
+
+    if buffer_m > 0:
+        gdf = buffer_gdf(gdf, buffer_m)
+
+    geom = gdf.geometry.union_all()
+    cache[key] = geom
+    return geom
+
+
+def _resolve_inline_geometry(cond: dict, buffer_m: float, target_crs) -> object:
+    """Parse an inline GeoJSON geometry, reproject to the domain CRS, buffer."""
+    geom = shape(cond["geometry"])
+
+    crs_field = cond.get("crs")
+    if crs_field is not None:
+        source_crs = crs_field["properties"]["name"]
+        if pyproj.CRS(source_crs) != pyproj.CRS(target_crs):
+            geom = gpd.GeoSeries([geom], crs=source_crs).to_crs(target_crs).iloc[0]
+
+    if buffer_m > 0:
+        buffered = buffer_gdf(
+            gpd.GeoDataFrame(geometry=[geom], crs=target_crs), buffer_m
+        )
+        geom = buffered.geometry.iloc[0]
+
+    return geom

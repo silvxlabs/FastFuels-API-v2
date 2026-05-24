@@ -5,9 +5,13 @@ Tests the modification processing logic: conditions, actions,
 unit conversion, clamping, and the full apply_modifications pipeline.
 """
 
+import geopandas as gpd
 import pandas as pd
 import pytest
+from shapely.geometry import box, mapping
 from standgen.modifications import (
+    _resolve_feature_geometry,
+    _resolve_inline_geometry,
     apply_action,
     apply_modifications,
     apply_single_modification,
@@ -15,7 +19,11 @@ from standgen.modifications import (
     convert_value,
     evaluate_attribute_condition,
     evaluate_expression,
+    evaluate_spatial_condition,
+    resolve_spatial_conditions,
 )
+
+from lib.errors import ProcessingError
 
 
 @pytest.fixture
@@ -303,3 +311,243 @@ class TestApplyModifications:
         result = apply_modifications(sample_df.copy(), mods)
         # 1 inch = 2.54 cm, removes dbh < 2.54 → rows with dbh 2.0 and 1.0
         assert len(result) == 3
+
+
+# Tree points in sample_df sit on the diagonal: (1,1), (2,2), (3,3), (4,4), (5,5).
+UTM_CRS = "EPSG:32611"
+
+
+class _FakeSnapshot:
+    """Stand-in for a Firestore snapshot returned by get_document."""
+
+    def __init__(self, doc: dict):
+        self._doc = doc
+
+    def to_dict(self) -> dict:
+        return self._doc
+
+
+class TestEvaluateSpatialCondition:
+    """Per-partition point-in-geometry tests against a pre-resolved geometry."""
+
+    def test_within(self, sample_df):
+        # Box covers the first three diagonal points.
+        cond = {
+            "source": "geometry",
+            "operator": "within",
+            "_resolved_geometry": box(0.5, 0.5, 3.5, 3.5),
+        }
+        mask = evaluate_spatial_condition(sample_df, cond)
+        assert mask.tolist() == [True, True, True, False, False]
+
+    def test_outside_is_complement_of_within(self, sample_df):
+        cond = {
+            "source": "geometry",
+            "operator": "outside",
+            "_resolved_geometry": box(0.5, 0.5, 3.5, 3.5),
+        }
+        mask = evaluate_spatial_condition(sample_df, cond)
+        assert mask.tolist() == [False, False, False, True, True]
+
+    def test_intersects_interior(self, sample_df):
+        cond = {
+            "source": "geometry",
+            "operator": "intersects",
+            "_resolved_geometry": box(0.5, 0.5, 3.5, 3.5),
+        }
+        mask = evaluate_spatial_condition(sample_df, cond)
+        assert mask.tolist() == [True, True, True, False, False]
+
+    def test_boundary_within_excludes_edge(self, sample_df):
+        # box(1,1,3,3): (1,1) and (3,3) sit on the boundary, (2,2) is interior.
+        cond = {
+            "source": "geometry",
+            "operator": "within",
+            "_resolved_geometry": box(1.0, 1.0, 3.0, 3.0),
+        }
+        mask = evaluate_spatial_condition(sample_df, cond)
+        # within excludes boundary points → only the interior (2,2).
+        assert mask.tolist() == [False, True, False, False, False]
+
+    def test_boundary_intersects_includes_edge(self, sample_df):
+        cond = {
+            "source": "geometry",
+            "operator": "intersects",
+            "_resolved_geometry": box(1.0, 1.0, 3.0, 3.0),
+        }
+        mask = evaluate_spatial_condition(sample_df, cond)
+        # intersects includes boundary points → (1,1), (2,2), (3,3).
+        assert mask.tolist() == [True, True, True, False, False]
+
+    def test_buffer_captures_more_points(self, sample_df):
+        # Unbuffered box contains only (2,2).
+        unbuffered = _resolve_inline_geometry(
+            {"geometry": mapping(box(1.5, 1.5, 2.5, 2.5))}, 0.0, UTM_CRS
+        )
+        unbuffered_cond = {
+            "source": "geometry",
+            "operator": "within",
+            "_resolved_geometry": unbuffered,
+        }
+        assert evaluate_spatial_condition(sample_df, unbuffered_cond).tolist() == [
+            False,
+            True,
+            False,
+            False,
+            False,
+        ]
+
+        # Buffering by 1 m pulls in the neighbouring (1,1) and (3,3) points.
+        buffered = _resolve_inline_geometry(
+            {"geometry": mapping(box(1.5, 1.5, 2.5, 2.5))}, 1.0, UTM_CRS
+        )
+        buffered_cond = {
+            "source": "geometry",
+            "operator": "within",
+            "_resolved_geometry": buffered,
+        }
+        assert evaluate_spatial_condition(sample_df, buffered_cond).tolist() == [
+            True,
+            True,
+            True,
+            False,
+            False,
+        ]
+
+    def test_unknown_operator_raises(self, sample_df):
+        cond = {
+            "source": "geometry",
+            "operator": "nearby",
+            "_resolved_geometry": box(0.5, 0.5, 3.5, 3.5),
+        }
+        with pytest.raises(ProcessingError) as exc:
+            evaluate_spatial_condition(sample_df, cond)
+        assert exc.value.code == "INVALID_SPATIAL_OPERATOR"
+
+    def test_unresolved_geometry_raises(self, sample_df):
+        cond = {"source": "feature", "operator": "within", "feature_id": "f1"}
+        with pytest.raises(ProcessingError) as exc:
+            evaluate_spatial_condition(sample_df, cond)
+        assert exc.value.code == "SPATIAL_CONDITION_UNRESOLVED"
+
+
+class TestBuildConditionMaskSpatial:
+    def test_spatial_and_attribute(self, sample_df):
+        conditions = [
+            {
+                "source": "geometry",
+                "operator": "within",
+                "_resolved_geometry": box(0.5, 0.5, 3.5, 3.5),
+            },
+            {"attribute": "dbh", "operator": "gt", "value": 5.0},
+        ]
+        mask = build_condition_mask(sample_df, conditions)
+        # within box: [T, T, T, F, F]; dbh > 5 ([2,10,5,1,30]): [F, T, F, F, T]
+        # AND: [F, T, F, F, F]
+        assert mask.tolist() == [False, True, False, False, False]
+
+
+class TestResolveSpatialConditions:
+    def test_geometry_variant_injects_and_deepcopies(self):
+        mods = [
+            {
+                "conditions": [
+                    {
+                        "source": "geometry",
+                        "operator": "within",
+                        "geometry": mapping(box(0.5, 0.5, 3.5, 3.5)),
+                    }
+                ],
+                "actions": [{"modifier": "remove"}],
+            }
+        ]
+        resolved = resolve_spatial_conditions(mods, "domain-1", UTM_CRS)
+
+        geom = resolved[0]["conditions"][0]["_resolved_geometry"]
+        assert geom.equals(box(0.5, 0.5, 3.5, 3.5))
+        # Deep copy: the caller's original dict is untouched.
+        assert "_resolved_geometry" not in mods[0]["conditions"][0]
+
+    def test_feature_variant_resolves_and_caches(self, monkeypatch):
+        doc = {"domain_id": "domain-1", "status": "completed"}
+        monkeypatch.setattr(
+            "standgen.modifications.get_document",
+            lambda collection, fid: (None, _FakeSnapshot(doc)),
+        )
+        read_calls = {"n": 0}
+
+        def fake_read_parquet(path):
+            read_calls["n"] += 1
+            return gpd.GeoDataFrame(geometry=[box(0.5, 0.5, 3.5, 3.5)], crs=UTM_CRS)
+
+        monkeypatch.setattr(
+            "standgen.modifications.gpd.read_parquet", fake_read_parquet
+        )
+
+        # Two conditions referencing the same (feature_id, buffer_m) pair.
+        mods = [
+            {
+                "conditions": [
+                    {"source": "feature", "operator": "within", "feature_id": "feat-1"}
+                ],
+                "actions": [{"modifier": "remove"}],
+            },
+            {
+                "conditions": [
+                    {"source": "feature", "operator": "outside", "feature_id": "feat-1"}
+                ],
+                "actions": [{"attribute": "dbh", "modifier": "multiply", "value": 0.5}],
+            },
+        ]
+        resolved = resolve_spatial_conditions(mods, "domain-1", UTM_CRS)
+
+        assert resolved[0]["conditions"][0]["_resolved_geometry"].equals(
+            box(0.5, 0.5, 3.5, 3.5)
+        )
+        # Cache hit on the second condition → parquet read exactly once.
+        assert read_calls["n"] == 1
+
+    def test_feature_not_found(self, monkeypatch):
+        from lib.firestore import DocumentNotFoundError
+
+        def raise_not_found(collection, fid):
+            raise DocumentNotFoundError(fid)
+
+        monkeypatch.setattr("standgen.modifications.get_document", raise_not_found)
+        with pytest.raises(ProcessingError) as exc:
+            _resolve_feature_geometry("domain-1", "feat-1", 0.0, {}, UTM_CRS)
+        assert exc.value.code == "FEATURE_NOT_FOUND"
+
+    def test_feature_domain_mismatch(self, monkeypatch):
+        doc = {"domain_id": "other-domain", "status": "completed"}
+        monkeypatch.setattr(
+            "standgen.modifications.get_document",
+            lambda collection, fid: (None, _FakeSnapshot(doc)),
+        )
+        with pytest.raises(ProcessingError) as exc:
+            _resolve_feature_geometry("domain-1", "feat-1", 0.0, {}, UTM_CRS)
+        assert exc.value.code == "FEATURE_DOMAIN_MISMATCH"
+
+    def test_feature_not_ready(self, monkeypatch):
+        doc = {"domain_id": "domain-1", "status": "running"}
+        monkeypatch.setattr(
+            "standgen.modifications.get_document",
+            lambda collection, fid: (None, _FakeSnapshot(doc)),
+        )
+        with pytest.raises(ProcessingError) as exc:
+            _resolve_feature_geometry("domain-1", "feat-1", 0.0, {}, UTM_CRS)
+        assert exc.value.code == "FEATURE_NOT_READY"
+
+    def test_feature_empty(self, monkeypatch):
+        doc = {"domain_id": "domain-1", "status": "completed"}
+        monkeypatch.setattr(
+            "standgen.modifications.get_document",
+            lambda collection, fid: (None, _FakeSnapshot(doc)),
+        )
+        monkeypatch.setattr(
+            "standgen.modifications.gpd.read_parquet",
+            lambda path: gpd.GeoDataFrame(geometry=[], crs=UTM_CRS),
+        )
+        with pytest.raises(ProcessingError) as exc:
+            _resolve_feature_geometry("domain-1", "feat-1", 0.0, {}, UTM_CRS)
+        assert exc.value.code == "FEATURE_EMPTY"

@@ -8,19 +8,26 @@ inventory referencing that shared source and verifies the output.
 These tests hit real GCS and Firestore and require valid credentials.
 """
 
+import os
+import tempfile
 from uuid import uuid4
 
 import dask.dataframe as dd
+import geopandas as gpd
 import pytest
+from shapely.geometry import box
 
 from lib.config import (
     DEPLOYMENT_ENV,
     DOMAINS_COLLECTION,
+    FEATURES_BUCKET,
+    FEATURES_COLLECTION,
     INVENTORIES_BUCKET,
     INVENTORIES_COLLECTION,
 )
+from lib.domain_utils import buffer_gdf
 from lib.firestore.documents import delete_document, get_document, set_document
-from lib.gcs.blobs import delete_directory, exists
+from lib.gcs.blobs import delete_directory, delete_file, exists, upload_file
 from lib.testing import SHARED_TEST_INVENTORIES_DIR
 
 from ..conftest import (
@@ -316,3 +323,152 @@ def test_final_progress_is_100(modifications_runner):
 
     assert mod_inventory["progress"]["percent"] == 100
     assert mod_inventory["progress"]["message"] == "Complete"
+
+
+@pytest.fixture
+def feature_modifications_runner(shared_pim_source):
+    """Run a feature-based spatial modification against the shared PIM source.
+
+    Uploads a Feature GeoParquet to the path the API would write
+    (``{domain_id}/{feature_id}.parquet``) plus a completed Feature Firestore
+    doc (the worker's domain/status check needs it), then runs a modifications
+    inventory whose conditions reference that feature_id. Cleans up the feature
+    blob, feature doc, and modifications inventory on teardown.
+
+    The caller passes a geometry GeoDataFrame (in the domain CRS) and the
+    modifications list; ``{feature_id}`` is substituted into the conditions.
+    """
+    pim_inventory, pim_id, domain_id = shared_pim_source
+    mod_ids = []
+    feature_blobs = []
+    feature_doc_ids = []
+
+    def _run(
+        feature_gdf: gpd.GeoDataFrame, modifications: list[dict]
+    ) -> tuple[dict, dict]:
+        from standgen.main import process_inventory_request
+
+        feature_id = f"test-{uuid4().hex}"
+        feature_gcs_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            feature_gdf.to_parquet(tmp_path, compression="zstd", row_group_size=1000)
+            upload_file(tmp_path, feature_gcs_path)
+        finally:
+            os.unlink(tmp_path)
+        feature_blobs.append(feature_gcs_path)
+
+        set_document(
+            FEATURES_COLLECTION,
+            feature_id,
+            {
+                "id": feature_id,
+                "domain_id": domain_id,
+                "type": "water",
+                "status": "completed",
+                "source": {"product": "test"},
+            },
+        )
+        feature_doc_ids.append(feature_id)
+
+        # Substitute the generated feature_id into every feature condition.
+        resolved_mods = []
+        for mod in modifications:
+            conditions = [
+                {**c, "feature_id": feature_id} if c.get("source") == "feature" else c
+                for c in mod["conditions"]
+            ]
+            resolved_mods.append({**mod, "conditions": conditions})
+
+        mod_id = f"test-{uuid4().hex}"
+        mod_data = {
+            "id": mod_id,
+            "domain_id": domain_id,
+            "name": "Spatially Modified Inventory",
+            "status": "pending",
+            "source": {
+                "name": "modifications",
+                "source_inventory_id": pim_id,
+                "modifications": resolved_mods,
+            },
+        }
+        set_document(INVENTORIES_COLLECTION, mod_id, mod_data)
+        mod_ids.append(mod_id)
+
+        request = MockRequest(data={"id": mod_id})
+        response, status_code = process_inventory_request(request)
+        assert status_code == 200, f"Modifications processing failed: {response}"
+
+        _, mod_snapshot = get_document(INVENTORIES_COLLECTION, mod_id)
+        mod_inventory = mod_snapshot.to_dict()
+        assert mod_inventory["status"] == "completed", (
+            f"Modifications inventory not completed: {mod_inventory.get('error')}"
+        )
+        return pim_inventory, mod_inventory
+
+    yield _run
+
+    for mod_id in mod_ids:
+        gcs_path = f"gs://{INVENTORIES_BUCKET}/{mod_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        delete_document(INVENTORIES_COLLECTION, mod_id)
+    for feature_blob in feature_blobs:
+        if exists(feature_blob):
+            delete_file(feature_blob)
+    for feature_doc_id in feature_doc_ids:
+        delete_document(FEATURES_COLLECTION, feature_doc_id)
+
+
+def _load_trees(inventory_id: str) -> "gpd.GeoDataFrame":
+    """Load an inventory's trees as a GeoDataFrame of (x, y) points."""
+    df = dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{inventory_id}").compute()
+    return gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df["x"], df["y"]))
+
+
+def test_feature_remove_drops_trees_inside_buffered_geometry(
+    feature_modifications_runner, shared_pim_source
+):
+    """RemoveAction with an InventoryFeatureSpatialCondition removes exactly the
+    trees inside the (5 m buffered) feature, leaving the rest untouched."""
+    pim_inventory, _, domain_id = shared_pim_source
+
+    crs = pim_inventory["georeference"]["crs"]
+    minx, miny, maxx, maxy = pim_inventory["georeference"]["bounds"]
+    midx = (minx + maxx) / 2.0
+    # Feature covers the western half of the domain working extent.
+    base_geom = box(minx, miny, midx, maxy)
+    feature_gdf = gpd.GeoDataFrame(geometry=[base_geom], crs=crs)
+
+    buffer_m = 5.0
+
+    # Reference geometry: exactly what the engine resolves (reproject is an
+    # identity here; buffer in the projected domain CRS via the shared helper).
+    resolved_geom = buffer_gdf(feature_gdf, buffer_m).geometry.union_all()
+
+    source_trees = _load_trees(pim_inventory["id"])
+    if len(source_trees) == 0:
+        pytest.skip("Source PIM produced 0 trees (sparse grid)")
+    inside = source_trees.within(resolved_geom)
+    if inside.sum() == 0 or (~inside).sum() == 0:
+        pytest.skip("Feature geometry does not split the tree set")
+
+    modifications = [
+        {
+            "conditions": [
+                {"source": "feature", "operator": "within", "buffer_m": buffer_m}
+            ],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+    _, mod_inventory = feature_modifications_runner(feature_gdf, modifications)
+
+    mod_trees = _load_trees(mod_inventory["id"])
+
+    # Every surviving tree is outside the buffered feature ...
+    assert not mod_trees.within(resolved_geom).any(), (
+        "found surviving trees inside the buffered feature"
+    )
+    # ... and the survivor count equals the originally-outside count.
+    assert len(mod_trees) == int((~inside).sum())

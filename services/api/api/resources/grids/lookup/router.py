@@ -21,7 +21,10 @@ from api.resources.grids.lookup.schema import (
     get_fbfm40_lookup_band,
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
-from api.resources.grids.utils import validate_grid_has_band
+from api.resources.grids.utils import (
+    validate_feature_modifications,
+    validate_grid_has_band,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -104,6 +107,8 @@ async def create_fbfm40_lookup(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     # Validate source grid: exists, owned, in this domain, and completed
     _, source_snapshot = await get_document_async(

@@ -22,7 +22,11 @@ from standgen.columns import (
     DROP_COLUMNS,
     RENAME_MAP,
 )
-from standgen.modifications import apply_modifications
+from standgen.modifications import (
+    _has_spatial_condition,
+    apply_modifications,
+    resolve_spatial_conditions,
+)
 from standgen.storage import load_grid, load_tree_table, save_parquet
 
 logger = logging.getLogger(__name__)
@@ -153,10 +157,15 @@ def handle_pim(
     # Select final column set
     ddf = ddf[BASE_COLUMNS]
 
-    # Apply modifications if present
+    # Apply modifications if present. Resolve spatial-condition geometries once
+    # here (off the per-partition path) when any are present.
     modifications = inventory.get("modifications", [])
     if modifications:
         progress("Applying modifications...", 77)
+        if _has_spatial_condition(modifications):
+            modifications = resolve_spatial_conditions(
+                modifications, inventory["domain_id"], domain_gdf.crs
+            )
         ddf = ddf.map_partitions(apply_modifications, modifications)
 
     # Write Parquet to GCS (lazy — each partition writes separately)

@@ -19,6 +19,7 @@ from api.resources.grids.uniform.schema import (
     UniformSource,
     build_uniform_bands,
 )
+from api.resources.grids.utils import validate_feature_modifications
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -78,6 +79,8 @@ async def create_uniform_grid(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

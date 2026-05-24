@@ -21,7 +21,10 @@ from api.resources.grids.rasterize.layerset.schema import (
     build_layerset_bands,
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
-from api.resources.grids.utils import validate_target_grid_alignment
+from api.resources.grids.utils import (
+    validate_feature_modifications,
+    validate_target_grid_alignment,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -83,6 +86,7 @@ async def create_layerset_rasterize(
 
     # Validate alignment target grid (if any) — raises 404/422 inline.
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
+    await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     # Validate the referenced layerset exists, is owned by the caller, and
     # belongs to this domain. get_document_async raises 404 on any mismatch

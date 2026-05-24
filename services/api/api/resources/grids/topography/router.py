@@ -27,7 +27,10 @@ from api.resources.grids.topography.schema import (
     ThreeDepTopographySource,
     build_topography_bands,
 )
-from api.resources.grids.utils import validate_target_grid_alignment
+from api.resources.grids.utils import (
+    validate_feature_modifications,
+    validate_target_grid_alignment,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -83,6 +86,7 @@ async def create_landfire_topography(
     domain_id = domain["id"]
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
+    await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -171,6 +175,7 @@ async def create_3dep_topography(
     domain_id = domain["id"]
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
+    await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

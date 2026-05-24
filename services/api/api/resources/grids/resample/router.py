@@ -19,6 +19,7 @@ from api.resources.grids.resample.schema import (
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
+    validate_feature_modifications,
     validate_grid_has_georeference,
     validate_target_grid_alignment,
 )
@@ -72,6 +73,8 @@ async def create_resample(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     alignment = body.alignment
 

@@ -8,13 +8,17 @@ from math import ceil
 
 from fastapi import HTTPException, status
 
-from api.db.documents import get_document_async
+from api.db.documents import firestore_client, get_document_async
 from api.resources.grids.alignment import (
     GridAlignmentGridTarget,
     GridAlignmentSpecification,
 )
+from api.resources.grids.modifications import (
+    GridFeatureSpatialCondition,
+    GridModification,
+)
 from api.resources.grids.schema import GridDataChunkMetadata
-from lib.config import GRIDS_COLLECTION
+from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 
 
 def validate_grid_has_band(
@@ -134,6 +138,73 @@ async def validate_target_grid_alignment(
         document_status="completed",
     )
     validate_grid_has_georeference(snapshot.to_dict(), alignment.grid_id)
+
+
+async def validate_feature_modifications(
+    modifications: list[GridModification],
+    owner_id: str,
+    domain_id: str,
+) -> None:
+    """Verify every ``GridFeatureSpatialCondition.feature_id`` references a
+    Feature that is owned by ``owner_id``, lives in ``domain_id``, and is in
+    ``completed`` status.
+
+    Looks up all distinct feature_ids in a single Firestore ``get_all`` call.
+
+    Raises:
+        HTTPException(422): If any referenced feature is missing, owned by
+            another user, in another domain, or not in ``completed`` status.
+            All four cases use 422 (per #279) — feature_id is a value the
+            client supplied in the request body, so a bad reference is a
+            validation error on the modification, not a path-level 404.
+    """
+    feature_ids: list[str] = []
+    seen: set[str] = set()
+    for modification in modifications:
+        for condition in modification.conditions:
+            if isinstance(condition, GridFeatureSpatialCondition):
+                if condition.feature_id not in seen:
+                    seen.add(condition.feature_id)
+                    feature_ids.append(condition.feature_id)
+
+    if not feature_ids:
+        return
+
+    refs = [
+        firestore_client.collection(FEATURES_COLLECTION).document(fid)
+        for fid in feature_ids
+    ]
+    snapshots = {snap.id: snap async for snap in firestore_client.get_all(refs)}
+
+    for fid in feature_ids:
+        snap = snapshots.get(fid)
+        if snap is None or not snap.exists:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Modification references feature_id {fid!r}, which does "
+                    f"not exist in this domain."
+                ),
+            )
+        data = snap.to_dict() or {}
+        if data.get("owner_id") != owner_id or data.get("domain_id") != domain_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Modification references feature_id {fid!r}, which does "
+                    f"not exist in this domain."
+                ),
+            )
+        feature_status = data.get("status")
+        if feature_status != "completed":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Modification references feature_id {fid!r} whose status "
+                    f"is {feature_status!r}, expected 'completed'. Wait for "
+                    f"the feature to finish before referencing it."
+                ),
+            )
 
 
 def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:

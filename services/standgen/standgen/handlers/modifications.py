@@ -9,7 +9,11 @@ import logging
 
 import geopandas as gpd
 
-from standgen.modifications import apply_modifications
+from standgen.modifications import (
+    _has_spatial_condition,
+    apply_modifications,
+    resolve_spatial_conditions,
+)
 from standgen.storage import load_inventory_parquet, save_parquet
 
 logger = logging.getLogger(__name__)
@@ -37,8 +41,13 @@ def handle_modifications(
     progress("Loading source inventory...", 10)
     ddf = load_inventory_parquet(source_inventory_id)
 
-    # Apply modifications
+    # Apply modifications. Resolve spatial-condition geometries once here (off
+    # the per-partition path) when any are present.
     progress("Applying modifications...", 30)
+    if _has_spatial_condition(modifications):
+        modifications = resolve_spatial_conditions(
+            modifications, inventory["domain_id"], domain_gdf.crs
+        )
     ddf = ddf.map_partitions(apply_modifications, modifications)
 
     # Save to new inventory path

@@ -23,6 +23,7 @@ from api.resources.inventories.modifications.schema import (
     ModificationsInventorySource,
 )
 from api.resources.inventories.schema import Inventory
+from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import INVENTORIES_COLLECTION, STANDGEN_QUEUE, STANDGEN_SERVICE
@@ -126,7 +127,9 @@ async def apply_modifications(
 
     source = ModificationsInventorySource(
         source_inventory_id=inventory_id,
-        modifications=[m.model_dump() for m in body.modifications],
+        modifications=stringify_modification_coordinates(
+            [m.model_dump() for m in body.modifications]
+        ),
     )
 
     inventory_data = {

@@ -6,10 +6,12 @@ Core schema models for the Inventory resource.
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from api.resources.inventories.modification_models import InventoryModification
+from api.resources.modifications import parse_modification_coordinates
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
 
@@ -116,6 +118,27 @@ class Inventory(BaseModel):
         description="Error details if status is 'failed'.",
     )
     tags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_modification_coordinates(cls, data: Any) -> Any:
+        """Decode stringified inline-geometry coordinates loaded from Firestore.
+
+        Inline-geometry modification conditions are stored with their
+        ``coordinates`` JSON-encoded (Firestore rejects nested arrays). Parse
+        both the top-level ``modifications`` and the ``source.modifications``
+        list (the modifications-source inventory nests them under ``source``,
+        which is an untyped dict). Idempotent on already-parsed data.
+        """
+        if isinstance(data, dict):
+            if isinstance(data.get("modifications"), list):
+                parse_modification_coordinates(data["modifications"])
+            source = data.get("source")
+            if isinstance(source, dict) and isinstance(
+                source.get("modifications"), list
+            ):
+                parse_modification_coordinates(source["modifications"])
+        return data
 
 
 class ListInventoriesResponse(PaginatedResponse):

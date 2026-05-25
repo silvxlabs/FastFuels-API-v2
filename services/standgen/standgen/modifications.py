@@ -9,6 +9,7 @@ pint unit conversion.
 """
 
 import copy
+import json
 import logging
 import operator
 
@@ -357,7 +358,13 @@ def _resolve_feature_geometry(
 
 def _resolve_inline_geometry(cond: dict, buffer_m: float, target_crs) -> object:
     """Parse an inline GeoJSON geometry, reproject to the domain CRS, buffer."""
-    geom = shape(cond["geometry"])
+    geometry = cond["geometry"]
+    # The API stringifies geometry coordinates before the Firestore write
+    # (Firestore rejects nested arrays). Decode them back to nested lists.
+    # Accept both shapes so the read is forward- and backward-compatible.
+    if isinstance(geometry.get("coordinates"), str):
+        geometry = {**geometry, "coordinates": json.loads(geometry["coordinates"])}
+    geom = shape(geometry)
 
     crs_field = cond.get("crs")
     if crs_field is not None:

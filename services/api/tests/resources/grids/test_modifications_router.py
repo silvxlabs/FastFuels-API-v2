@@ -218,6 +218,53 @@ def _body(spec: EndpointSpec, feature_id: str, helpers: dict) -> dict:
     }
 
 
+# Inline-geometry coordinates are a nested array, which Firestore cannot store.
+# This polygon exercises the write-side stringification + read-side parse.
+INLINE_POLYGON_COORDS = [
+    [
+        [-120.0, 38.0],
+        [-119.5, 38.0],
+        [-119.5, 38.5],
+        [-120.0, 38.5],
+        [-120.0, 38.0],
+    ]
+]
+
+
+def _geometry_modification() -> dict:
+    """Build an inline-geometry (source="geometry") modification with a
+    Polygon. No `crs` → defaults to the domain CRS; the create path does not
+    validate inline geometry against the domain, so an arbitrary polygon is
+    accepted at create time."""
+    return {
+        "conditions": [
+            {
+                "source": "geometry",
+                "operator": "within",
+                "geometry": {"type": "Polygon", "coordinates": INLINE_POLYGON_COORDS},
+            }
+        ],
+        "actions": [{"band": "fuel_load.1hr", "modifier": "replace", "value": 0}],
+    }
+
+
+def _geometry_body(spec: EndpointSpec, helpers: dict) -> dict:
+    return {
+        **spec.extra_body(helpers),
+        "modifications": [_geometry_modification()],
+    }
+
+
+def _first_geometry_coords(grid: dict):
+    """Return the coordinates of the first geometry-source condition in a grid
+    response, or fail if none is present."""
+    for modification in grid["modifications"]:
+        for condition in modification["conditions"]:
+            if condition.get("source") == "geometry":
+                return condition["geometry"]["coordinates"]
+    raise AssertionError("response had no geometry-source condition")
+
+
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -299,3 +346,37 @@ class TestFeatureModificationValidation:
         assert any(
             c["feature_id"] == completed_feature["id"] for c in feature_conditions
         )
+
+
+@pytest.mark.parametrize("spec", ENDPOINTS, ids=lambda s: s.name)
+class TestInlineGeometryModification:
+    """Inline-geometry (source="geometry") conditions carry nested coordinate
+    arrays. Every create router must JSON-encode those coordinates before the
+    Firestore write (Firestore rejects nested arrays) and the Grid read-back
+    must decode them again.
+
+    Running this across every endpoint is the guard against a new create
+    router forgetting the write-side stringification: without the fix the POST
+    is a prod-only 500 that feature-source tests never exercise (#280).
+    """
+
+    def test_inline_geometry_succeeds_and_round_trips(
+        self, client, domain_for_testing, endpoint_helpers, spec
+    ):
+        body = _geometry_body(spec, endpoint_helpers)
+        response = client.post(spec.url(domain_for_testing["id"]), json=body)
+
+        # No Firestore 500 — the nested coordinates were stringified on write.
+        assert response.status_code == 201, response.json()
+
+        # POST response decodes the stored string back to nested-list GeoJSON.
+        created = response.json()
+        assert _first_geometry_coords(created) == INLINE_POLYGON_COORDS
+
+        # And a fresh GET round-trips through real Firestore: coordinates come
+        # back as a nested list, not the JSON string they are stored as.
+        get_response = client.get(
+            f"/domains/{domain_for_testing['id']}/grids/{created['id']}"
+        )
+        assert get_response.status_code == 200, get_response.json()
+        assert _first_geometry_coords(get_response.json()) == INLINE_POLYGON_COORDS

@@ -5,6 +5,8 @@ Tests the modification processing logic: conditions, actions,
 unit conversion, clamping, and the full apply_modifications pipeline.
 """
 
+import json
+
 import geopandas as gpd
 import pandas as pd
 import pytest
@@ -467,6 +469,19 @@ class TestResolveSpatialConditions:
         assert geom.equals(box(0.5, 0.5, 3.5, 3.5))
         # Deep copy: the caller's original dict is untouched.
         assert "_resolved_geometry" not in mods[0]["conditions"][0]
+
+    def test_inline_geometry_accepts_stringified_coordinates(self):
+        """Coordinates arrive JSON-stringified (Firestore storage form).
+
+        The API stringifies inline-geometry coordinates before the Firestore
+        write because Firestore rejects nested arrays. Standgen reads the
+        modification dict back with ``coordinates`` as a JSON string and must
+        deserialize it before handing the geometry to shapely.
+        """
+        geometry = dict(mapping(box(0.5, 0.5, 3.5, 3.5)))
+        geometry["coordinates"] = json.dumps(geometry["coordinates"])
+        geom = _resolve_inline_geometry({"geometry": geometry}, 0.0, UTM_CRS)
+        assert geom.equals(box(0.5, 0.5, 3.5, 3.5))
 
     def test_feature_variant_resolves_and_caches(self, monkeypatch):
         doc = {"domain_id": "domain-1", "status": "completed"}

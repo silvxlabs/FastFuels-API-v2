@@ -17,6 +17,7 @@
   },
   "source": {
     "description": "OpenStreetMap road network",
+    "extent_buffer_m": 0.0,
     "product": "osm"
   },
   "status": "completed",

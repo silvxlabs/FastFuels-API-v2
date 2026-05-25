@@ -28,6 +28,7 @@ from api.resources.grids.topography.schema import (
     build_topography_bands,
 )
 from api.resources.grids.utils import (
+    dump_modifications_for_firestore,
     validate_feature_modifications,
     validate_target_grid_alignment,
 )
@@ -107,7 +108,7 @@ async def create_landfire_topography(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": dump_modifications_for_firestore(body.modifications),
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
@@ -196,7 +197,7 @@ async def create_3dep_topography(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": dump_modifications_for_firestore(body.modifications),
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,

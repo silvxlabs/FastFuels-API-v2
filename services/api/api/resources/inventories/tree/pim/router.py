@@ -18,6 +18,7 @@ from api.resources.inventories.tree.pim.schema import (
     CreatePimInventoryRequest,
     PimInventorySource,
 )
+from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -152,7 +153,9 @@ async def create_pim_inventory(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": stringify_modification_coordinates(
+            [m.model_dump() for m in body.modifications]
+        ),
         "columns": [c.model_dump() for c in BASE_INVENTORY_COLUMNS],
         "georeference": None,
         "error": None,

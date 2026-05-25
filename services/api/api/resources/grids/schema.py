@@ -2,15 +2,16 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
     GridAlignmentSpecification,
 )
 from api.resources.grids.modifications import GridModification
+from api.resources.modifications import parse_modification_coordinates
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
 CHUNK_SHAPE = [512, 512]
@@ -248,6 +249,21 @@ class Grid(BaseModel):
 
     # User organization
     tags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_modification_coordinates(cls, data: Any) -> Any:
+        """Decode stringified inline-geometry coordinates loaded from Firestore.
+
+        Inline-geometry modification conditions are stored with their
+        ``coordinates`` JSON-encoded (Firestore rejects nested arrays). This
+        runs before validation so GET / list / create responses return proper
+        nested-list GeoJSON. Idempotent: API-request data (already nested
+        lists) passes through unchanged.
+        """
+        if isinstance(data, dict) and isinstance(data.get("modifications"), list):
+            parse_modification_coordinates(data["modifications"])
+        return data
 
 
 class ListGridsResponse(PaginatedResponse):

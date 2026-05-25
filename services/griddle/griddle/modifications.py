@@ -13,6 +13,7 @@ place via ``arr[mask] = ...``-style writes so we never allocate a second
 band-sized array.
 """
 
+import json
 import operator
 from collections.abc import Callable
 
@@ -267,7 +268,13 @@ def _resolve_feature_geometry(
 
 
 def _resolve_inline_geometry(cond: dict, buffer_m: float, target_crs) -> object:
-    geom = shape(cond["geometry"])
+    geometry = cond["geometry"]
+    # The API stringifies geometry coordinates before the Firestore write
+    # (Firestore rejects nested arrays). Decode them back to nested lists.
+    # Accept both shapes so the read is forward- and backward-compatible.
+    if isinstance(geometry.get("coordinates"), str):
+        geometry = {**geometry, "coordinates": json.loads(geometry["coordinates"])}
+    geom = shape(geometry)
 
     crs_field = cond.get("crs")
     if crs_field is not None:

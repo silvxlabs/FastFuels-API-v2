@@ -19,6 +19,7 @@ from api.resources.grids.resample.schema import (
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
+    dump_modifications_for_firestore,
     validate_feature_modifications,
     validate_grid_has_georeference,
     validate_target_grid_alignment,
@@ -145,7 +146,7 @@ async def create_resample(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": dump_modifications_for_firestore(body.modifications),
         "bands": bands,
         "georeference": None,
         "tags": body.tags,

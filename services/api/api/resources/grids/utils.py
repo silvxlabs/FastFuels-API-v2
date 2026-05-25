@@ -18,7 +18,21 @@ from api.resources.grids.modifications import (
     GridModification,
 )
 from api.resources.grids.schema import GridDataChunkMetadata
+from api.resources.modifications import stringify_modification_coordinates
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+
+
+def dump_modifications_for_firestore(
+    modifications: list[GridModification],
+) -> list[dict]:
+    """Serialize request modifications to Firestore-ready dicts.
+
+    Inline-geometry spatial conditions carry nested coordinate arrays, which
+    Firestore cannot store, so their coordinates are JSON-encoded on the way
+    out (see ``stringify_modification_coordinates``). Mirrors the domains
+    pattern; the read-back validator on ``Grid`` decodes them again.
+    """
+    return stringify_modification_coordinates([m.model_dump() for m in modifications])
 
 
 def validate_grid_has_band(

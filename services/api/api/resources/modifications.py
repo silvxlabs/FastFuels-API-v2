@@ -8,9 +8,69 @@ modifications (e.g., grids) should extend these base classes with
 constrained attribute names and value types.
 """
 
+import json
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
+
+
+def stringify_modification_coordinates(modifications: list[dict]) -> list[dict]:
+    """JSON-encode inline-geometry coordinates for Firestore storage.
+
+    Firestore does not support nested arrays natively. Inline-geometry spatial
+    conditions (``source == "geometry"``) carry a GeoJSON Polygon/MultiPolygon
+    whose ``coordinates`` field is a deeply nested array. This walks each
+    modification's conditions and JSON-encodes the coordinates of every
+    geometry-source condition in place, mirroring the domains pattern
+    (``api.resources.domains.schema._stringify_coordinates``).
+
+    Feature-source conditions (which store only a ``feature_id``) and
+    attribute-based conditions are left untouched. Idempotent: already
+    stringified coordinates are skipped.
+
+    Args:
+        modifications: A list of modification dicts (as produced by
+            ``model_dump()``), each shaped ``{"conditions": [...], ...}``.
+
+    Returns:
+        The same list, mutated in place, ready for the Firestore write.
+    """
+    for modification in modifications:
+        for condition in modification.get("conditions", []):
+            if condition.get("source") == "geometry":
+                geometry = condition.get("geometry")
+                if isinstance(geometry, dict) and not isinstance(
+                    geometry.get("coordinates"), str
+                ):
+                    geometry["coordinates"] = json.dumps(geometry["coordinates"])
+    return modifications
+
+
+def parse_modification_coordinates(modifications: list[dict]) -> list[dict]:
+    """Decode stringified inline-geometry coordinates back to nested lists.
+
+    Inverse of :func:`stringify_modification_coordinates`. Detects when a
+    geometry-source condition's ``coordinates`` field is a JSON string (from
+    Firestore) and parses it back into the nested list structure expected by
+    GeoJSON consumers. Idempotent: already-parsed (list) coordinates pass
+    through unchanged.
+
+    Args:
+        modifications: A list of modification dicts loaded from Firestore.
+
+    Returns:
+        The same list, mutated in place, with geometry coordinates as proper
+        nested lists.
+    """
+    for modification in modifications:
+        for condition in modification.get("conditions", []):
+            if condition.get("source") == "geometry":
+                geometry = condition.get("geometry")
+                if isinstance(geometry, dict) and isinstance(
+                    geometry.get("coordinates"), str
+                ):
+                    geometry["coordinates"] = json.loads(geometry["coordinates"])
+    return modifications
 
 
 class Operator(StrEnum):

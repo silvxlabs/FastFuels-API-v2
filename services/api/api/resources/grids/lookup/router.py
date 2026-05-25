@@ -22,6 +22,7 @@ from api.resources.grids.lookup.schema import (
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
+    dump_modifications_for_firestore,
     validate_feature_modifications,
     validate_grid_has_band,
 )
@@ -143,7 +144,7 @@ async def create_fbfm40_lookup(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": dump_modifications_for_firestore(body.modifications),
         "bands": [b.model_dump() for b in bands],
         "georeference": source_grid_data.get("georeference"),
         "tags": body.tags,

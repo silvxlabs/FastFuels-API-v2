@@ -19,7 +19,10 @@ from api.resources.grids.uniform.schema import (
     UniformSource,
     build_uniform_bands,
 )
-from api.resources.grids.utils import validate_feature_modifications
+from api.resources.grids.utils import (
+    dump_modifications_for_firestore,
+    validate_feature_modifications,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -96,7 +99,7 @@ async def create_uniform_grid(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": dump_modifications_for_firestore(body.modifications),
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,

@@ -7,6 +7,7 @@ conditions, modifier semantics, the non-negative clamp, band resolution, and
 the per-invocation feature cache.
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
@@ -198,6 +199,37 @@ def test_centroid_within_polygon():
     inside = (ds["fuel_load.1hr"].values == 0.0).sum()
     # The polygon spans y∈[2,8], x∈[2,8]; cell centers at half-integers from 0.5
     # to 9.5 → centroids inside are (2.5..7.5) × 6 = 36
+    assert inside == 36
+
+
+def test_centroid_within_polygon_stringified_coordinates():
+    """Coordinates arrive JSON-stringified (Firestore storage form).
+
+    The API stringifies inline-geometry coordinates before the Firestore write
+    because Firestore rejects nested arrays. Griddle reads the modification dict
+    back with ``coordinates`` as a JSON string and must deserialize it before
+    handing the geometry to shapely. Same expectation as
+    ``test_centroid_within_polygon`` (36 cells masked).
+    """
+    ds = _flat_dataset(1.0)
+    poly = Polygon([(2, 2), (8, 2), (8, 8), (2, 8), (2, 2)])
+    geometry = dict(poly.__geo_interface__)
+    geometry["coordinates"] = json.dumps(geometry["coordinates"])
+    mods = [
+        {
+            "conditions": [
+                {
+                    "source": "geometry",
+                    "operator": "within",
+                    "target": "centroid",
+                    "geometry": geometry,
+                }
+            ],
+            "actions": [{"band": "fuel_load.1hr", "modifier": "replace", "value": 0.0}],
+        }
+    ]
+    apply_modifications(ds, mods, "d")
+    inside = (ds["fuel_load.1hr"].values == 0.0).sum()
     assert inside == 36
 
 

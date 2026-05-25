@@ -22,6 +22,7 @@ from api.resources.grids.fbfm40.schema import (
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
+    dump_modifications_for_firestore,
     validate_feature_modifications,
     validate_target_grid_alignment,
 )
@@ -95,7 +96,7 @@ async def create_landfire_fbfm40(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": dump_modifications_for_firestore(body.modifications),
         "bands": [FBFM40_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,

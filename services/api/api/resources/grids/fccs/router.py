@@ -21,7 +21,10 @@ from api.resources.grids.fccs.schema import (
     LandfireFccsSource,
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
-from api.resources.grids.utils import validate_feature_modifications
+from api.resources.grids.utils import (
+    dump_modifications_for_firestore,
+    validate_feature_modifications,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -91,7 +94,7 @@ async def create_landfire_fccs(
         "created_on": request_time,
         "modified_on": request_time,
         "source": source.model_dump(),
-        "modifications": [m.model_dump() for m in body.modifications],
+        "modifications": dump_modifications_for_firestore(body.modifications),
         "bands": [FCCS_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,

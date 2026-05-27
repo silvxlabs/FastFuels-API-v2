@@ -18,6 +18,7 @@ import xarray as xr
 from rioxarray.merge import merge_arrays
 
 from griddle.handlers.tiles import TileMetadata
+from griddle.utils import to_dataset
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import TABLES_BUCKET
 from lib.errors import ProcessingError
@@ -138,10 +139,9 @@ def _process_intersecting_tiles(
         chm_da = chm_da / np.float32(scale)
     chm_da = chm_da.rio.write_nodata(np.float32("nan"))
 
-    # Wrap in xr.Dataset with strict variable naming
-    ds = xr.Dataset({"chm": chm_da})
-    ds = ds.rio.write_crs(chm_da.rio.crs)
-    ds = ds.rio.write_transform(chm_da.rio.transform())
+    # Create dataset with CRS and transform
+    variables = {"chm": chm_da}
+    ds = to_dataset(variables)
 
     tile_metadata: TileMetadata = {
         "tiles": fetch_urls,

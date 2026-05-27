@@ -25,7 +25,7 @@ def test_treemap_tm_id(griddle_runner):
 
     # TM_ID values should be non-negative integers
     values = ds["tm_id"].values
-    assert values.dtype in (np.int16, np.int32, np.int64, np.float32, np.float64)
+    assert values.dtype in (np.uint16, np.uint32, np.int16, np.int32, np.int64)
 
 
 def test_treemap_both_bands(griddle_runner):
@@ -36,6 +36,7 @@ def test_treemap_both_bands(griddle_runner):
     for var_name in ["tm_id", "plt_cn"]:
         assert var_name in ds.data_vars, f"Missing variable: {var_name}"
         assert ds[var_name].dims == ("y", "x")
+        assert ds[var_name].rio.nodata is not None
 
     assert "32611" in str(ds.rio.crs)
 

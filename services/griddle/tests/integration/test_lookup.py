@@ -34,5 +34,6 @@ def test_fbfm40_lookup(griddle_runner, source_grid):
         assert ds[var].dtype == np.float32, (
             f"{var} should be float32, got {ds[var].dtype}"
         )
+        assert ds[var].rio.nodata is not None
 
     assert (ds["fuel_depth"].values >= 0).all()

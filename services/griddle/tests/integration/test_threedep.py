@@ -33,13 +33,9 @@ def _assert_valid_data(ds, band, min_valid_frac=0.95):
     values = ds[band].values.ravel()
 
     nodata = ds[band].rio.nodata
-    if nodata is None:
-        nodata = ds[band].encoding.get("_FillValue")
+    assert nodata is not None, f"{band}: nodata must be declared"
 
-    if nodata is not None:
-        valid_mask = ~np.isnan(values) & (values != nodata)
-    else:
-        valid_mask = ~np.isnan(values)
+    valid_mask = ~np.isnan(values) & (values != nodata)
 
     valid_count = valid_mask.sum()
     total_count = len(values)

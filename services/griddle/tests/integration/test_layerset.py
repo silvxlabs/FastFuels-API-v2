@@ -67,6 +67,7 @@ def test_blackfoot_example_layerset_native_rasterization(griddle_runner):
             f"{var_name} dims = {da.dims}, expected (band, y, x)"
         )
         assert da.dtype == np.float32, f"{var_name} dtype = {da.dtype}"
+        assert da.rio.nodata is not None
         assert list(da.coords["band"].values) == EXPECTED_BAND_COORD
 
     # Native alignment preserves the layerset's declared CRS.
@@ -123,6 +124,7 @@ def test_blackfoot_example_layerset_domain_alignment(griddle_runner):
         da = ds[var_name]
         assert da.dims == ("band", "y", "x")
         assert list(da.coords["band"].values) == EXPECTED_BAND_COORD
+        assert da.rio.nodata is not None
 
     # Horizontal extent matches the domain lattice (varies across variables
     # only in residual coord precision; size is identical per the

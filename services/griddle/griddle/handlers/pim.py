@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from griddle.utils import infer_nodata, to_dataset
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET, TABLES_BUCKET
 from lib.raster import RasterConnection, cog_env
@@ -77,6 +78,7 @@ def fetch_treemap(
             **dest,
         )
     tm_id_da = data.squeeze("band", drop=True)
+    tm_id_da = tm_id_da.rio.write_nodata(infer_nodata(tm_id_da.dtype, tm_id_da))
 
     variables = {}
 
@@ -106,14 +108,16 @@ def fetch_treemap(
         plt_cn_values = lookup[raw_clipped]
 
         # Zero out any values that were outside the mapping range
-        plt_cn_values[raw < 0] = 0
-        plt_cn_values[raw > max_tm_id] = 0
+        nodata_val = 0
+        plt_cn_values[raw < 0] = nodata_val
+        plt_cn_values[raw > max_tm_id] = nodata_val
 
         plt_cn_da = xr.DataArray(
             plt_cn_values,
             dims=tm_id_da.dims,
             coords=tm_id_da.coords,
         )
+        plt_cn_da = plt_cn_da.rio.write_nodata(nodata_val)
         plt_cn_da = plt_cn_da.rio.write_crs(tm_id_da.rio.crs)
         plt_cn_da = plt_cn_da.rio.write_transform(tm_id_da.rio.transform())
         variables["plt_cn"] = plt_cn_da
@@ -121,8 +125,6 @@ def fetch_treemap(
     if not variables:
         raise ValueError("No bands requested — at least one band is required.")
 
-    # Build dataset with CRS and transform
-    ds = xr.Dataset(variables)
-    ds = ds.rio.write_crs(tm_id_da.rio.crs)
-    ds = ds.rio.write_transform(tm_id_da.rio.transform())
+    # Return dataset with CRS and transform
+    ds = to_dataset(variables)
     return ds

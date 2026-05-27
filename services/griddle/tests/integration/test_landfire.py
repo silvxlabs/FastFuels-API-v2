@@ -18,6 +18,7 @@ def test_fbfm40(griddle_runner):
     assert "32611" in str(result.ds.rio.crs)
     assert result.ds.rio.height > 10
     assert result.ds.rio.width > 10
+    assert result.ds["fbfm"].rio.nodata is not None
 
 
 def test_topography(griddle_runner):
@@ -28,6 +29,7 @@ def test_topography(griddle_runner):
     for var_name in ["elevation", "slope", "aspect"]:
         assert var_name in ds.data_vars, f"Missing variable: {var_name}"
         assert ds[var_name].dims == ("y", "x")
+        assert ds[var_name].rio.nodata is not None
 
     assert "32611" in str(ds.rio.crs)
 
@@ -45,6 +47,7 @@ def test_canopy_landfire_all_bands(griddle_runner):
         assert var_name in ds.data_vars, f"Missing variable: {var_name}"
         assert ds[var_name].dims == ("y", "x")
         assert ds[var_name].dtype.kind == "f"  # post-scaling float
+        assert ds[var_name].rio.nodata is not None
 
     assert "32611" in str(ds.rio.crs)
     shapes = {(ds[v].sizes["y"], ds[v].sizes["x"]) for v in ds.data_vars}

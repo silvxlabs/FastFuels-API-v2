@@ -257,6 +257,7 @@ def _make_mock_source_ds(fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:326
     )
     da = da.rio.write_crs(crs)
     da = da.rio.write_transform()
+    da = da.rio.write_nodata(np.int16(32767))
     ds = da.to_dataset(name="FBFM")
     return ds
 
@@ -506,6 +507,19 @@ class TestFbfm40Lookup:
         np.testing.assert_array_equal(result.coords["x"].values, x)
 
     @patch("griddle.handlers.lookup.load_zarr")
+    def test_nodata_declared(self, mock_load_zarr):
+        """All output variables have nodata declared."""
+        codes = np.array([[101, 102], [103, 104]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": k} for k in BAND_KEY_TO_COLUMN]
+        result = fbfm40_lookup("test-grid-id", bands, progress)
+
+        for var in result.data_vars:
+            assert result[var].rio.nodata is not None
+
+    @patch("griddle.handlers.lookup.load_zarr")
     def test_progress_callbacks(self, mock_load_zarr):
         """Handler calls progress at expected stages."""
         codes = np.array([[101]])
@@ -592,6 +606,22 @@ class TestLookupZarrRoundTrip:
 
         assert loaded.rio.crs is not None
         assert loaded.rio.crs.to_epsg() == 32610
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_round_trip_nodata_declared(self, mock_load_zarr, tmp_path):
+        """Nodata survives save/load cycle."""
+        codes = np.array([[101, 102]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": k} for k in BAND_KEY_TO_COLUMN]
+        result = fbfm40_lookup("test-grid-id", bands, progress)
+
+        save_zarr(str(tmp_path / "lookup.zarr"), result, chunk_shape=(512, 512))
+        loaded = load_zarr(str(tmp_path / "lookup.zarr"))
+
+        for var in loaded.data_vars:
+            assert loaded[var].rio.nodata is not None
 
     @patch("griddle.handlers.lookup.load_zarr")
     def test_round_trip_to_raster_succeeds(self, mock_load_zarr, tmp_path):

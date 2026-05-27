@@ -142,6 +142,7 @@ class TestRealRasterizeLayerset:
             assert da.dims == ("band", "y", "x")
             assert da.dtype == np.dtype("float32")
             assert list(da.coords["band"].values) == expected_bands
+            assert da.rio.nodata is not None
 
         # CRS is honoured from the input gdf (UTM 12N)
         assert "32612" in str(ds.rio.crs)
@@ -227,6 +228,7 @@ class TestFetchLayerset:
         assert set(ds.data_vars) == {"shrub", "herb", "litter"}
         for name in ds.data_vars:
             assert ds[name].dims == ("band", "y", "x")
+            assert ds[name].rio.nodata is not None
 
     def test_domain_alignment_reprojects_to_destination(self, monkeypatch):
         """alignment.target='domain' triggers per-variable post-process reproject."""
@@ -253,6 +255,7 @@ class TestFetchLayerset:
             assert da.sizes["y"] == ny
             assert da.sizes["x"] == nx
             assert da.sizes["band"] == 5
+            assert da.rio.nodata is not None
 
         # CRS written through rio
         assert str(ds.rio.crs) == _KNOWN_DEST["destination_crs"]

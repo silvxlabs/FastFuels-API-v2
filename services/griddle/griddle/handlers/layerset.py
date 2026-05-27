@@ -26,6 +26,7 @@ import numpy as np
 import xarray as xr
 from fastfuels_core.layersets import rasterize_layerset
 
+from griddle.utils import infer_nodata, to_dataset
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import FEATURES_BUCKET
 from lib.errors import ProcessingError
@@ -146,8 +147,12 @@ def fetch_layerset(
         )
         ds = _reproject_dataset(ds, dest, alignment.get("method"))
 
+    variables = {
+        name: da.rio.write_nodata(infer_nodata(da.dtype, da))
+        for name, da in ds.data_vars.items()
+    }
     progress("Layerset rasterized.", 100)
-    return ds
+    return to_dataset(variables)
 
 
 def _needs_post_reproject(alignment: dict) -> bool:

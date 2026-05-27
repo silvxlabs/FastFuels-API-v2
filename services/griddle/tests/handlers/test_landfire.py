@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
+from affine import Affine
 from griddle.handlers.landfire import (
     _fetch_landfire_raster,
     _most_frequent,
@@ -152,6 +153,12 @@ class TestFetchFbfm40:
         result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result.rio.crs == roi.crs
 
+    def test_nodata_declared(self, roi):
+        """Nodata value is assigned."""
+        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
+        da = result["fbfm"]
+        assert da.rio.nodata is not None
+
     def test_fbfm_values_in_range(self, roi):
         """FBFM40 codes should be <= 204."""
         result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
@@ -185,6 +192,11 @@ class TestFetchFccs:
         """CRS is preserved via rioxarray."""
         result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
         assert result.rio.crs == roi.crs
+
+    def test_nodata_declared(self, roi):
+        """Nodata value is assigned."""
+        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        assert result["fccs"].rio.nodata is not None
 
     def test_fccs_valid_values_in_range(self, roi):
         """Mapped FCCS codes should be between 0 and 12990133."""
@@ -247,6 +259,7 @@ class TestFetchTopography:
         assert list(result.data_vars) == ["elevation", "slope", "aspect"]
         for var in result.data_vars:
             assert result[var].shape == test_domain.expected_shape
+            assert result[var].rio.nodata is not None
         assert result.rio.crs == roi.crs
 
     def test_fetch_single_band(self, test_domain, roi):
@@ -418,11 +431,15 @@ def _make_canopy_raster(
     values: np.ndarray, nodata: float | int | None = 32767
 ) -> xr.DataArray:
     """Build a 2D DataArray that mimics what _fetch_landfire_raster returns."""
-    arr = xr.DataArray(
-        values.astype(np.int16),
-        dims=("y", "x"),
-        coords={"y": np.arange(values.shape[0]), "x": np.arange(values.shape[1])},
-    ).rio.write_crs("EPSG:5070")
+    arr = (
+        xr.DataArray(
+            values.astype(np.int16),
+            dims=("y", "x"),
+            coords={"y": np.arange(values.shape[0]), "x": np.arange(values.shape[1])},
+        )
+        .rio.write_crs("EPSG:5070")
+        .rio.write_transform(Affine(10.0, 0.0, 0.0, 0.0, -10.0, 0.0))
+    )
     if nodata is not None:
         arr = arr.rio.write_nodata(nodata)
     return arr
@@ -600,3 +617,19 @@ class TestFetchCanopyLandfire:
         assert progress.call_count == 3
         for call, band in zip(progress.call_args_list, ["chm", "cbd", "cbh"]):
             assert band in call.args[0]
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_nodata_declared(self, mock_fetch, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        result = fetch_canopy_landfire(
+            roi=roi,
+            version="2024",
+            bands=["chm", "cbd", "cbh", "cc"],
+            progress=MagicMock(),
+        )
+        for var in result.data_vars:
+            assert result[var].rio.nodata is not None

@@ -13,6 +13,7 @@ import rioxarray  # noqa: F401
 import xarray as xr
 
 from griddle.storage import load_zarr
+from griddle.utils import infer_nodata, to_dataset
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.errors import ProcessingError
 
@@ -111,11 +112,9 @@ def resample_grid(
             resampled = da.rio.reproject(
                 dest.get("destination_crs", crs), resampling=resampling
             )
+        resampled = resampled.rio.write_nodata(infer_nodata(resampled.dtype, resampled))
         resampled_vars[var_name] = resampled
 
     progress("Resample complete.", 80)
 
-    ds = xr.Dataset(resampled_vars)
-    ds = ds.rio.write_crs(crs)
-    ds = ds.rio.write_transform()
-    return ds
+    return to_dataset(resampled_vars)

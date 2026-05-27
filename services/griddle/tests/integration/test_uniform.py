@@ -24,6 +24,7 @@ def test_uniform_fuel_moisture(griddle_runner):
         assert ds[var_name].dtype == np.float32, (
             f"{var_name} should be float32, got {ds[var_name].dtype}"
         )
+        assert ds[var_name].rio.nodata is not None
         np.testing.assert_allclose(
             ds[var_name].values,
             expected_value,

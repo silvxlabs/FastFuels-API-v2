@@ -25,6 +25,7 @@ def test_resample_topography(griddle_runner, source_grid):
     for var in ["elevation", "slope", "aspect"]:
         assert var in ds.data_vars, f"Missing variable: {var}"
         assert ds[var].dims == ("y", "x")
+        assert ds[var].rio.nodata is not None
 
     assert ds.rio.height > 0
     assert ds.rio.width > 0

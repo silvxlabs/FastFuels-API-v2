@@ -57,7 +57,7 @@
       "tile_count": 1,
       "tile_source": null,
       "tiles": [
-        "https://rangeland.ntsg.umt.edu/data/naip-chm/2023/11/m_4611416_nw_11_060_20231019_20240103_chm.tif"
+        "http://rangeland.ntsg.umt.edu/data/naip-chm/2023/11/m_4611416_nw_11_060_20231019_20240103_chm.tif"
       ]
     }
   },

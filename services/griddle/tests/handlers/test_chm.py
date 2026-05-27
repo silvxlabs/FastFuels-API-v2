@@ -46,6 +46,7 @@ def _make_mock_raster(chm_values, crs="EPSG:32611"):
     )
     da = da.rio.write_crs(crs)
     da = da.rio.write_transform(transform)
+    da = da.rio.write_nodata(np.iinfo(np.uint16).max)
 
     mock_raster = MagicMock()
     mock_raster.raster_resolution = 1
@@ -342,6 +343,21 @@ class TestFetchMetaChm:
         )
 
         assert ds.rio.crs == CRS.from_epsg(32611)
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_nodata_declared(self, mock_query, mock_raster_cls):
+        """Nodata is declared in the output dataset."""
+        chm_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
+        mock_raster_cls.return_value = _make_mock_raster(chm_values, crs="EPSG:32611")
+        mock_query.return_value = _make_meta_query_result()
+        progress = MagicMock()
+
+        ds, _ = fetch_meta_chm(
+            _make_roi(), "2", progress, alignment={"target": "native"}
+        )
+
+        assert ds["chm"].rio.nodata is not None
 
     @patch("griddle.handlers.chm.RasterConnection")
     @patch("griddle.handlers.chm._query_tile_index")

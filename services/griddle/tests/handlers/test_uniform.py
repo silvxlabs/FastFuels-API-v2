@@ -145,6 +145,15 @@ class TestCreateUniformGrid:
         assert abs(transform.a) == pytest.approx(10.0)
         assert abs(transform.e) == pytest.approx(10.0)
 
+    def test_nodata_declared(self, roi):
+        """Nodata value is written to the dataset via rioxarray."""
+        bands = [{"key": "fuel_moisture.1hr", "value": 6.0}]
+        progress = MagicMock()
+
+        result = create_uniform_grid(roi, bands, 10.0, progress)
+
+        assert result["fuel_moisture.1hr"].rio.nodata is not None
+
     def test_grid_shape_matches_resolution(self, projected_domain):
         """Grid dimensions match domain extent / resolution."""
         # Domain is 100m x 200m, resolution 10m -> 10 x 20

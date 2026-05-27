@@ -12,6 +12,7 @@ import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
 
+from griddle.utils import infer_nodata, to_dataset
 from lib.alignment import lattice_from_bounds
 
 
@@ -72,12 +73,10 @@ def create_uniform_grid(
             dims=["y", "x"],
             coords={"y": y_coords, "x": x_coords},
         )
+        da = da.rio.write_nodata(infer_nodata(da.dtype))
         variables[key] = da
 
     progress("Building dataset...", 80)
 
-    ds = xr.Dataset(variables)
-    ds = ds.rio.write_crs(crs)
-    ds = ds.rio.write_transform(transform)
-
-    return ds
+    # Return dataset with CRS and transform
+    return to_dataset(variables, crs, transform)

@@ -25,6 +25,7 @@ def _assert_valid_chm(ds, expected_crs_code):
     assert expected_crs_code in str(ds.rio.crs)
     assert ds.rio.height > 10
     assert ds.rio.width > 10
+    assert ds["chm"].rio.nodata is not None
 
     values = ds["chm"].values
     assert values.dtype == np.float32

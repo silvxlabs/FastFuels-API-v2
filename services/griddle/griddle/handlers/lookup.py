@@ -13,6 +13,7 @@ import pint
 import xarray as xr
 
 from griddle.storage import load_zarr
+from griddle.utils import infer_nodata, to_dataset
 from lib.errors import ProcessingError
 
 ureg = pint.UnitRegistry()
@@ -277,21 +278,16 @@ def fbfm40_lookup(
     # Build Dataset with each band as a named variable
     variables = {}
     for band_key, band_data in zip(band_keys, result_bands):
-        variables[band_key] = xr.DataArray(
-            data=band_data,
-            dims=("y", "x"),
-            coords={"y": y_coords, "x": x_coords},
+        da = xr.DataArray(
+            data=band_data, dims=("y", "x"), coords={"y": y_coords, "x": x_coords}
         )
-
-    result = xr.Dataset(variables)
-
-    # Copy spatial metadata from source
-    if hasattr(source_var, "rio") and source_var.rio.crs is not None:
-        result = result.rio.write_crs(source_var.rio.crs)
-        transform = source_var.rio.transform()
-        if transform is not None:
-            result = result.rio.write_transform(transform)
+        da = da.rio.write_nodata(infer_nodata(da.dtype))
+        variables[band_key] = da
 
     progress("Lookup complete.", 80)
 
-    return result
+    return to_dataset(
+        variables,
+        crs=source_var.rio.crs,
+        transform=source_var.rio.transform(),
+    )

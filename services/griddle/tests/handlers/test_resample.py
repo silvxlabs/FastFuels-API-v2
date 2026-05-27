@@ -63,6 +63,7 @@ def _make_mock_source_ds(
             dims=("y", "x"),
             coords={"y": y_coords, "x": x_coords},
         )
+        da = da.rio.write_nodata(np.float32("nan"))
         data_vars[name] = da
 
     ds = xr.Dataset(data_vars)
@@ -285,6 +286,26 @@ class TestResampleGrid:
         np.testing.assert_allclose(x_diff, 10.0, rtol=0.01)
 
     @patch("griddle.handlers.resample.load_zarr")
+    def test_nodata_declared(self, mock_load_zarr):
+        """Output nodata is declared."""
+        data = np.random.rand(10, 10)
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            {"elevation": data}, resolution=30.0
+        )
+        progress = MagicMock()
+
+        result = resample_grid(
+            source_grid_id="test-grid",
+            alignment=_native_alignment(10.0),
+            method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=None,
+            band_types=_band_types("elevation"),
+            progress=progress,
+        )
+        assert result["elevation"].rio.nodata is not None
+
+    @patch("griddle.handlers.resample.load_zarr")
     def test_source_grid_not_found_raises(self, mock_load_zarr):
         """Missing source grid raises ProcessingError."""
         mock_load_zarr.side_effect = FileNotFoundError("not found")
@@ -504,6 +525,7 @@ class TestResampleZarrRoundTrip:
         assert set(loaded.data_vars) == {"fuel_load.1hr", "fuel_depth", "savr.1hr"}
         for var_name in loaded.data_vars:
             assert loaded[var_name].dims == ("y", "x")
+            assert loaded[var_name].rio.nodata is not None
 
     @patch("griddle.handlers.resample.load_zarr")
     def test_round_trip_to_raster_succeeds(self, mock_load_zarr, tmp_path):

@@ -14,6 +14,7 @@ from numpy import ndarray
 from scipy.ndimage import generic_filter
 from xarray import DataArray
 
+from griddle.utils import infer_nodata, to_dataset
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET
 from lib.raster import RasterConnection, cog_env
@@ -99,24 +100,8 @@ def _fetch_landfire_raster(
             else None,
             **dest,
         )
-    return data.squeeze("band", drop=True)
-
-
-def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
-    """Build a Dataset from named DataArrays, propagating spatial metadata.
-
-    Args:
-        variables: Mapping of band name to DataArray (all must share the
-            same CRS and transform)
-
-    Returns:
-        Dataset with CRS and transform written via rioxarray
-    """
-    first = next(iter(variables.values()))
-    ds = xr.Dataset(variables)
-    ds = ds.rio.write_crs(first.rio.crs)
-    ds = ds.rio.write_transform(first.rio.transform())
-    return ds
+    result = data.squeeze("band", drop=True)
+    return result
 
 
 def fetch_fbfm40(
@@ -154,13 +139,15 @@ def fetch_fbfm40(
         target_grid_doc,
         is_categorical=True,
     )
+    data = data.rio.write_nodata(infer_nodata(data.dtype, data))
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
         filtered = _remove_non_burnable_blocks(data.values, non_burnable_keys)
         data = data.copy(data=filtered)
 
-    return _to_dataset({"fbfm": data})
+    # Return dataset with CRS and transform
+    return to_dataset({"fbfm": data})
 
 
 def fetch_fccs(
@@ -198,12 +185,14 @@ def fetch_fccs(
         target_grid_doc,
         is_categorical=True,
     )
+    data = data.rio.write_nodata(infer_nodata(data.dtype, data))
 
     if remove_bare_ground:
         filtered = _remove_non_burnable_blocks(data.values, [0])
         data = data.copy(data=filtered)
 
-    return _to_dataset({"fccs": data})
+    # Return dataset with CRS and transform
+    return to_dataset({"fccs": data})
 
 
 def _remove_non_burnable_blocks(grid: ndarray, non_burnable_keys: list[int]) -> ndarray:
@@ -304,7 +293,7 @@ def fetch_topography(
     for i, band in enumerate(bands):
         pct = 10 + int(70 * i / len(bands))
         progress(f"Fetching LANDFIRE {band}...", pct)
-        variables[band] = _fetch_landfire_raster(
+        da = _fetch_landfire_raster(
             roi,
             band,
             version,
@@ -313,8 +302,9 @@ def fetch_topography(
             target_grid_doc,
             is_categorical=False,
         )
+        variables[band] = da.rio.write_nodata(infer_nodata(da.dtype, da))
 
-    return _to_dataset(variables)
+    return to_dataset(variables)
 
 
 def fetch_canopy_landfire(
@@ -361,7 +351,8 @@ def fetch_canopy_landfire(
         )
         variables[band] = _scale_canopy_band(raw, LANDFIRE_CANOPY_SCALE_FACTORS[band])
 
-    return _to_dataset(variables)
+    # Return dataset with CRS and transform
+    return to_dataset(variables)
 
 
 def _scale_canopy_band(data: DataArray, scale: float) -> DataArray:
@@ -380,4 +371,4 @@ def _scale_canopy_band(data: DataArray, scale: float) -> DataArray:
     out = data.astype("float32").where(~sentinel_mask)
     if scale != 1.0:
         out = out / scale
-    return out.rio.write_nodata(np.nan, encoded=True)
+    return out.rio.write_nodata(infer_nodata(out.dtype, out))

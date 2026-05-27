@@ -92,10 +92,16 @@ def load_zarr(path: str) -> xr.Dataset:
     coordinate (not a data variable), which rioxarray requires for
     CRS/transform access via .rio accessors.
 
+    Uses mask_and_scale=False to load raw stored values without
+    applying any scale_factor, add_offset, or _FillValue transformations.
+    This prevents xarray from silently promoting dtypes or
+    injecting NaNs in place of nodata values.
+
     Args:
         path: Local or GCS path to the Zarr store
 
     Returns:
         Dataset with spatial metadata preserved
     """
-    return xr.open_zarr(path, decode_coords="all")
+    ds = xr.open_zarr(path, decode_coords="all", mask_and_scale=False)
+    return ds

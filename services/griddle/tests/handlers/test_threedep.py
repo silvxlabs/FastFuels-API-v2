@@ -58,6 +58,7 @@ def _make_mock_raster(
     )
     da = da.rio.write_crs(crs)
     da = da.rio.write_transform(transform)
+    da = da.rio.write_nodata(np.float32(-999999.0))
 
     mock_raster = MagicMock()
     mock_raster.raster_resolution = resolution
@@ -277,6 +278,23 @@ class TestFetchTopography:
 
         assert metadata["tile_count"] == 1
         assert "native_crs" in metadata
+
+    @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
+    @patch("griddle.handlers.threedep.discover_tiles_arc_second")
+    def test_nodata_declared(self, mock_discover, mock_fetch):
+        mock_discover.return_value = ["https://example.com/tile.tif"]
+        mock_fetch.return_value = _make_mock_dem()
+
+        ds, _ = fetch_topography(
+            _make_roi(),
+            10,
+            ["elevation", "slope", "aspect"],
+            MagicMock(),
+            extent_buffer_cells=4,
+        )
+
+        for var in ds.data_vars:
+            assert ds[var].rio.nodata is not None
 
     def test_invalid_resolution_raises(self):
         with pytest.raises(ProcessingError) as exc_info:

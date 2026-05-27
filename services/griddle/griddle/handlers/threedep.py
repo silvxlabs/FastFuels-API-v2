@@ -19,6 +19,7 @@ from rioxarray.merge import merge_arrays
 from xarray import DataArray
 
 from griddle.handlers.tiles import TileMetadata
+from griddle.utils import infer_nodata, to_dataset
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.errors import ProcessingError
 from lib.raster import RasterConnection, cog_env
@@ -122,6 +123,7 @@ def fetch_topography(
         alignment,
         target_grid_doc,
     )
+    dem_da = dem_da.rio.write_nodata(infer_nodata(dem_da.dtype, dem_da))
 
     # Validate that we got actual data, not just nodata fill
     _validate_dem_has_data(dem_da, resolution)
@@ -153,7 +155,7 @@ def fetch_topography(
             variables["aspect"] = aspect_da
 
     progress("Building dataset...", 90)
-    ds = _to_dataset(variables)
+    ds = to_dataset(variables)
     return ds, tile_metadata
 
 
@@ -338,12 +340,3 @@ def _trim_derivative_overhead(
         maxx=maxx + pad,
         maxy=maxy + pad,
     )
-
-
-def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
-    """Build a Dataset from named DataArrays, propagating spatial metadata."""
-    first = next(iter(variables.values()))
-    ds = xr.Dataset(variables)
-    ds = ds.rio.write_crs(first.rio.crs)
-    ds = ds.rio.write_transform(first.rio.transform())
-    return ds

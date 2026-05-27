@@ -41,8 +41,10 @@ All handlers **MUST** return `xr.Dataset` with named 2D `(y, x)` variables. Neve
 def fetch_topography(roi, version, bands, progress) -> xr.Dataset:
     variables = {}
     for band in bands:
-        variables[band] = _fetch_landfire_raster(roi, band, version)
-    return _to_dataset(variables)
+        da = _fetch_landfire_raster(roi, band, version)
+        da = da.rio.write_nodata(infer_nodata(da.dtype, da))
+        variables[band] = da
+    return to_dataset(variables)
 # Result: Dataset with variables "elevation", "slope", "aspect"
 # Each variable has dims (y, x)
 
@@ -55,18 +57,15 @@ data.name = "topography"
 # Result: ALL bands named "topography" in GeoTIFF exports
 ```
 
-Use the `_to_dataset()` helper to build a Dataset from named DataArrays. It propagates CRS and transform via rioxarray:
+Use `to_dataset()` from `griddle.utils` to build a Dataset from named DataArrays. It propagates CRS, transform, and nodata via rioxarray. CRS and transform are read from the first DataArray unless passed explicitly:
 
 ```python
-def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
-    first = next(iter(variables.values()))
-    ds = xr.Dataset(variables)
-    ds = ds.rio.write_crs(first.rio.crs)
-    ds = ds.rio.write_transform(first.rio.transform())
-    return ds
-```
+# Standard — CRS and transform on the DataArrays
+return to_dataset(variables)
 
-This helper currently lives in `handlers/landfire.py` but should be moved to a shared location (e.g., `griddle/utils.py`) as other handler modules are added.
+# Constructed arrays — pass CRS and transform explicitly
+return to_dataset(variables, crs=da.rio.crs, transform=da.rio.transform())
+```
 
 ### Testing Protocol
 
@@ -82,7 +81,22 @@ def test_round_trip_to_raster_succeeds(self, mock_load_zarr, tmp_path):
     assert (tmp_path / "multiband.tif").exists()
 ```
 
-### 3. rioxarray Everywhere
+### 3. Nodata Convention
+
+Every DataArray **MUST** have nodata declared before being passed to `to_dataset`.
+
+**Rules:**
+- Write nodata immediately after opening or constructing a DataArray
+- Use `infer_nodata` from `griddle.utils` to determine the nodata sentinel — it preserves an existing value if already set on the DataArray, or infers one from the dtype
+- To survive Zarr round-trip, nodata is stored in `da.attrs` and read back correctly by `lib.zarr_utils.load_zarr`. Use the default `encoded=False` when calling `rio.write_nodata`.
+
+```python
+# Source raster — preserve COG nodata if present, infer from dtype if not
+da = data.squeeze("band", drop=True)
+da = da.rio.write_nodata(infer_nodata(da.dtype, da))
+```
+
+### 4. rioxarray Everywhere
 
 All raster operations use rioxarray. No separate georeference models internally. rioxarray accessors work on both DataArray and Dataset.
 
@@ -106,7 +120,7 @@ rioxarray handles:
 - Clipping: `data.rio.clip()`
 - Writing: `data.rio.to_raster()` or `data.to_zarr()`
 
-### 4. Single reprojection per fetch
+### 5. Single reprojection per fetch
 
 Every external-source handler reprojects data exactly once per band. The
 fold happens inside `RasterConnection.extract_window`: pass an alignment
@@ -165,7 +179,7 @@ values, then performs a single end-of-pipeline `rio.reproject` to the
 alignment destination — two reprojections by design, justified by the
 gradient computation.
 
-### 5. Infrastructure in the Orchestrator
+### 6. Infrastructure in the Orchestrator
 
 All infrastructure concerns (Firestore, GCS, progress, status) live in `main.py`. Handlers never touch infrastructure.
 

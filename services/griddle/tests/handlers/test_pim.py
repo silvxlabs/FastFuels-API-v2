@@ -40,6 +40,7 @@ def _make_mock_raster(tm_id_values, crs="EPSG:32611"):
     )
     da = da.rio.write_crs(crs)
     da = da.rio.write_transform(transform)
+    da = da.rio.write_nodata(np.iinfo(da.dtype).max)
 
     mock_raster = MagicMock()
     mock_raster.raster_resolution = 30
@@ -133,6 +134,20 @@ class TestFetchTreemapTmIdOnly:
         )
 
         assert result.rio.crs == CRS.from_epsg(32611)
+
+    @patch("griddle.handlers.pim.RasterConnection")
+    def test_nodata_declared(self, mock_raster_cls):
+        """CRS is declared in the output dataset."""
+        tm_ids = np.array([[1, 2], [3, 4]], dtype=np.int16)
+        mock_raster_cls.return_value = _make_mock_raster(tm_ids, crs="EPSG:32611")
+        roi = MagicMock()
+        progress = MagicMock()
+
+        result = fetch_treemap(
+            roi, "2022", ["tm_id"], progress, alignment={"target": "native"}
+        )
+
+        assert result["tm_id"].rio.nodata is not None
 
     @patch("griddle.handlers.pim.RasterConnection")
     def test_raster_url_uses_version(self, mock_raster_cls):
@@ -320,6 +335,22 @@ class TestFetchTreemapPltCn:
         )
 
         assert result.rio.crs == CRS.from_epsg(32610)
+
+    @patch("griddle.handlers.pim.pd.read_parquet")
+    @patch("griddle.handlers.pim.RasterConnection")
+    def test_plt_cn_nodata_declared(self, mock_raster_cls, mock_read_parquet):
+        """PLT_CN nodata is declared as 0."""
+        tm_ids = np.array([[1, 2]], dtype=np.int16)
+        mock_raster_cls.return_value = _make_mock_raster(tm_ids)
+        mock_read_parquet.return_value = _make_tree_table([1, 2], [1001, 1002])
+        roi = MagicMock()
+        progress = MagicMock()
+
+        result = fetch_treemap(
+            roi, "2022", ["plt_cn"], progress, alignment={"target": "native"}
+        )
+
+        assert result["plt_cn"].rio.nodata == 0
 
     @patch("griddle.handlers.pim.pd.read_parquet")
     @patch("griddle.handlers.pim.RasterConnection")

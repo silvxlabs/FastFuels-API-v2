@@ -18,6 +18,7 @@ from api.resources.inventories.tree.pim.schema import (
     CreatePimInventoryRequest,
     PimInventorySource,
 )
+from api.resources.inventories.utils import validate_feature_modifications
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -95,6 +96,8 @@ async def create_pim_inventory(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     # Validate source PIM grid exists, is owned, in this domain, and completed
     _, source_snapshot = await get_document_async(

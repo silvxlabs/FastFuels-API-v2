@@ -6,6 +6,7 @@ Integration tests write to the real GCS bucket and read back.
 """
 
 import os
+import shutil
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -24,8 +25,14 @@ def make_test_dataset(
     bands: dict[str, np.ndarray] | None = None,
     crs: str = "EPSG:32611",
     shape: tuple[int, int] = (10, 10),
+    nodatas: dict[str, float | int | None] | None = None,
 ) -> xr.Dataset:
-    """2D Dataset analogous to test_geotiff.make_test_dataset."""
+    """2D Dataset analogous to test_geotiff.make_test_dataset.
+
+    Pass ``nodatas`` to tag a per-band nodata value (via ``rio.write_nodata``)
+    so tests can exercise the faithful-load behavior where grids carry a real
+    ``_FillValue``.
+    """
     ny, nx = shape
     if bands is None:
         bands = {
@@ -44,6 +51,9 @@ def make_test_dataset(
         )
     ds = ds.rio.write_crs(crs)
     ds = ds.rio.write_transform(transform)
+    if nodatas:
+        for name, nd in nodatas.items():
+            ds[name] = ds[name].rio.write_nodata(nd)
     return ds
 
 
@@ -325,6 +335,50 @@ class TestExportNetcdfUnit:
         assert "transform" not in ds.attrs
         assert "z_origin" not in ds.attrs
         assert "z_resolution" not in ds.attrs
+        ds.close()
+
+    @patch("exporter.handlers.netcdf._upload_file")
+    @patch("exporter.handlers.netcdf.get_document")
+    @patch("exporter.handlers.grid.load_grid_zarr")
+    def test_integer_grid_nodata_roundtrips_faithfully(
+        self, mock_load, mock_get_doc, mock_upload, tmp_path
+    ):
+        """An int grid carrying a nodata sentinel (the post-#290 faithful-load
+        shape, where _FillValue stays in attrs) exports without raising and is
+        stored faithfully — int dtype and the sentinel preserved, not silently
+        promoted to float/NaN. Reopened with mask_and_scale=False to inspect the
+        stored representation.
+        """
+        mock_load.return_value = make_test_dataset(
+            bands={"fbfm": np.array([[101, 102], [103, 32767]], dtype=np.int16)},
+            shape=(2, 2),
+            nodatas={"fbfm": 32767},
+        )
+        mock_get_doc.return_value = (
+            None,
+            fake_grid_snapshot(
+                [{"key": "fbfm", "type": "categorical", "unit": None, "index": 0}]
+            ),
+        )
+
+        captured = {}
+
+        def capture(local_path: str, gcs_path: str) -> None:
+            dest = tmp_path / "captured.nc"
+            shutil.copy(local_path, dest)
+            captured["path"] = str(dest)
+
+        mock_upload.side_effect = capture
+
+        export_netcdf(
+            {"id": "test-export"},
+            {"grid_id": "grid-abc", "name": "netcdf"},
+            noop_progress,
+        )
+
+        ds = xr.open_dataset(captured["path"], engine="h5netcdf", mask_and_scale=False)
+        assert ds["fbfm"].dtype == np.int16
+        assert ds["fbfm"].rio.nodata == 32767
         ds.close()
 
 

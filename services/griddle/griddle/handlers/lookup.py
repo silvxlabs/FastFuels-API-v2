@@ -227,9 +227,22 @@ def fbfm40_lookup(
     if fbfm_codes.ndim == 3 and fbfm_codes.shape[0] == 1:
         fbfm_codes = fbfm_codes[0]
 
-    # Validate all codes are known FBFM40 fuel models
-    fbfm_codes = fbfm_codes.astype(np.int32)
-    unique_codes = set(np.unique(fbfm_codes))
+    # Cells with no fuel model (the source nodata sentinel) are not looked up;
+    # they pass through as nodata (NaN) in every output band. Grids load raw
+    # (mask_and_scale=False), so nodata appears as the integer sentinel here.
+    nodata = source_ds[var_names[0]].rio.nodata
+    nodata_mask = (
+        np.zeros(fbfm_codes.shape, dtype=bool)
+        if nodata is None
+        else (fbfm_codes == nodata)
+    )
+
+    # Replace nodata cells with 0 (an in-range index) so they neither trip
+    # validation nor overflow the lookup table; their output is masked to NaN.
+    fbfm_codes = np.where(nodata_mask, 0, fbfm_codes).astype(np.int32)
+
+    # Validate the actual fuel-model codes (nodata cells excluded).
+    unique_codes = set(np.unique(fbfm_codes[~nodata_mask]))
     invalid_codes = unique_codes - VALID_FBFM40_KEYS
     if invalid_codes:
         raise ProcessingError(
@@ -262,8 +275,9 @@ def fbfm40_lookup(
         # Vectorized lookup: imperial values
         imperial_vals = _SB40_TABLE[column][fbfm_codes]
 
-        # Convert to metric
-        metric_vals = _convert_to_metric(imperial_vals, column)
+        # Convert to metric, then mask no-fuel-model cells back out to NaN.
+        metric_vals = _convert_to_metric(imperial_vals, column).astype(np.float32)
+        metric_vals[nodata_mask] = np.nan
 
         result_bands.append(metric_vals)
 
@@ -277,11 +291,12 @@ def fbfm40_lookup(
     # Build Dataset with each band as a named variable
     variables = {}
     for band_key, band_data in zip(band_keys, result_bands):
-        variables[band_key] = xr.DataArray(
+        da = xr.DataArray(
             data=band_data,
             dims=("y", "x"),
             coords={"y": y_coords, "x": x_coords},
         )
+        variables[band_key] = da.rio.write_nodata(np.nan)
 
     result = xr.Dataset(variables)
 

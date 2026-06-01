@@ -211,6 +211,73 @@ class TestMultiVariableChunking:
             )
 
 
+class TestFaithfulRoundTrip:
+    """load_zarr must return grids exactly as stored — dtype and nodata
+    sentinel preserved, not CF-masked to float/NaN. See issue #290."""
+
+    @staticmethod
+    def _make_band(data: np.ndarray, nodata, crs: str = "EPSG:5070") -> xr.Dataset:
+        ny, nx = data.shape
+        transform = from_bounds(0, 0, nx * 30, ny * 30, nx, ny)
+        da = xr.DataArray(
+            data, dims=("y", "x"), coords={"y": np.arange(ny), "x": np.arange(nx)}
+        )
+        da = da.rio.write_crs(crs).rio.write_transform(transform)
+        da = da.rio.write_nodata(nodata)
+        return xr.Dataset({"band": da})
+
+    def test_integer_grid_preserves_dtype_and_sentinel(self, tmp_path):
+        """An int grid with a nodata sentinel loads back as int with the
+        sentinel intact — not float32/NaN."""
+        data = np.array([[101, 102], [103, 32767]], dtype=np.int16)
+        ds = self._make_band(data, nodata=32767)
+        path = str(tmp_path / "int.zarr")
+
+        save_zarr(path, ds, chunk_shape=(2, 2))
+        loaded = load_zarr(path)
+
+        assert loaded["band"].dtype == np.int16
+        assert loaded["band"].rio.nodata == 32767
+        np.testing.assert_array_equal(loaded["band"].values, data)
+
+    def test_large_integer_ids_survive(self, tmp_path):
+        """FIA-CN-scale integer IDs (tm_id/plt_cn) round-trip without the
+        precision loss a float promotion would cause."""
+        data = np.array([[12345678901234, 0], [98765432109876, 0]], dtype=np.int64)
+        ds = self._make_band(data, nodata=0)
+        path = str(tmp_path / "ids.zarr")
+
+        save_zarr(path, ds, chunk_shape=(2, 2))
+        loaded = load_zarr(path)
+
+        assert loaded["band"].dtype == np.int64
+        np.testing.assert_array_equal(loaded["band"].values, data)
+
+    def test_float_grid_preserves_nan_nodata(self, tmp_path):
+        """A float grid keeps float dtype and NaN nodata."""
+        data = np.array([[1.0, 2.0], [3.0, np.nan]], dtype=np.float32)
+        ds = self._make_band(data, nodata=np.float32("nan"))
+        path = str(tmp_path / "float.zarr")
+
+        save_zarr(path, ds, chunk_shape=(2, 2))
+        loaded = load_zarr(path)
+
+        assert loaded["band"].dtype == np.float32
+        assert np.isnan(loaded["band"].rio.nodata)
+
+    def test_crs_preserved_under_faithful_load(self, tmp_path):
+        """CRS still survives the faithful (mask_and_scale=False) load."""
+        data = np.array([[101, 32767], [102, 103]], dtype=np.int16)
+        ds = self._make_band(data, nodata=32767, crs="EPSG:32611")
+        path = str(tmp_path / "crs.zarr")
+
+        save_zarr(path, ds, chunk_shape=(2, 2))
+        loaded = load_zarr(path)
+
+        assert loaded.rio.crs is not None
+        assert loaded.rio.crs.to_epsg() == 32611
+
+
 class TestChunkedToRaster:
     """Tests that chunked Zarr data can be written to GeoTIFF."""
 

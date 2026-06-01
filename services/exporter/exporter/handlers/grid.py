@@ -6,6 +6,7 @@ and writes the requested format to GCS.
 """
 
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -65,6 +66,38 @@ def _load_and_select_bands(
     return ds
 
 
+def _is_nan(value) -> bool:
+    """True if value is a NaN float; tolerant of non-float nodata (int, None)."""
+    try:
+        return math.isnan(value)
+    except (TypeError, ValueError):
+        return False
+
+
+def _nodata_is_uniform(ds: xr.Dataset) -> bool:
+    """True when every band shares one nodata value (NaN counts as a match).
+
+    A GeoTIFF carries a single file-level nodata, and rioxarray's
+    ``Dataset.to_raster`` only handles a uniform nodata across bands — it
+    raises on a heterogeneous list (e.g. distinct per-band integer sentinels,
+    now preserved because grids load raw). When bands disagree we fall back to
+    a stacked, uniform-dtype write instead.
+    """
+    nodatas = [ds[v].rio.nodata for v in ds.data_vars]
+    if len(nodatas) <= 1:
+        return True
+    first = nodatas[0]
+    for n in nodatas[1:]:
+        same = (n is None and first is None) or (
+            n is not None
+            and first is not None
+            and ((_is_nan(n) and _is_nan(first)) or n == first)
+        )
+        if not same:
+            return False
+    return True
+
+
 def export_geotiff(
     export: dict,
     source: dict,
@@ -88,7 +121,15 @@ def export_geotiff(
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
     try:
         with rasterio.Env(CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE="YES"):
-            ds.rio.to_raster(gcs_path, driver="GTiff")
+            if _nodata_is_uniform(ds):
+                ds.rio.to_raster(gcs_path, driver="GTiff")
+            else:
+                # Bands carry distinct nodata (e.g. tm_id sentinel + plt_cn 0).
+                # A GeoTIFF is one dtype with one file-level nodata, so stack the
+                # bands into a uniform-dtype array. Raw values (including per-band
+                # sentinels) are written; no single nodata tag is set since the
+                # bands disagree on one.
+                ds.to_array(dim="band").rio.to_raster(gcs_path, driver="GTiff")
     except Exception as e:
         raise ProcessingError(
             code="GEOTIFF_WRITE_ERROR",

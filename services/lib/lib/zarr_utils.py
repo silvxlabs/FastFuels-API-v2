@@ -92,10 +92,24 @@ def load_zarr(path: str) -> xr.Dataset:
     coordinate (not a data variable), which rioxarray requires for
     CRS/transform access via .rio accessors.
 
+    Uses mask_and_scale=False so grids load back exactly as they were
+    written, matching how the write side reads its sources
+    (``rioxarray.open_rasterio`` defaults to ``mask_and_scale=False``) and
+    following rioxarray's own NoData guidance. Without it, xarray's CF
+    decoding masks each band's ``_FillValue`` to NaN and promotes integer
+    grids (categorical FBFM/TreeMap codes) to float on load. Keeping it off
+    preserves dtype and the nodata sentinel so ``rio.nodata`` round-trips
+    faithfully; consumers that want gaps as NaN mask explicitly against
+    ``rio.nodata`` (e.g. ``da.where(da != da.rio.nodata)``). See issue #290.
+
+    griddle never relies on CF scale_factor/add_offset decoding — every
+    handler reads sources raw and applies any scaling eagerly — so disabling
+    mask_and_scale changes only the nodata-masking behavior, not values.
+
     Args:
         path: Local or GCS path to the Zarr store
 
     Returns:
         Dataset with spatial metadata preserved
     """
-    return xr.open_zarr(path, decode_coords="all")
+    return xr.open_zarr(path, decode_coords="all", mask_and_scale=False)

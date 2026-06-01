@@ -316,6 +316,22 @@ class TestFbfm40Lookup:
     """Tests for the fbfm40_lookup function."""
 
     @patch("griddle.handlers.lookup.load_zarr")
+    def test_nodata_cells_pass_through_as_nan(self, mock_load_zarr):
+        """A source grid with nodata pixels is looked up, not rejected; the
+        nodata cells become NaN in every output band (issue #290)."""
+        codes = np.array([[101, 102], [103, 32767]], dtype=np.int16)
+        ds = _make_mock_source_ds(codes)
+        ds["FBFM"] = ds["FBFM"].rio.write_nodata(32767)
+        mock_load_zarr.return_value = ds
+
+        result = fbfm40_lookup("g", [{"key": "fuel_load.1hr"}], MagicMock())
+
+        vals = result["fuel_load.1hr"].values
+        assert np.isnan(vals[1, 1])  # nodata cell -> NaN
+        assert not np.isnan(vals[0, 0])  # real fuel code -> looked up
+        assert np.isnan(result["fuel_load.1hr"].rio.nodata)
+
+    @patch("griddle.handlers.lookup.load_zarr")
     def test_returns_dataset(self, mock_load_zarr):
         """Returns a Dataset, not a DataArray."""
         codes = np.array([[101, 102]])

@@ -85,7 +85,8 @@ jobs:
               DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
               GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
               GCP_REGION=${{ env.REGION }},\
-              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }}" \
+              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
+              OSM_BUCKET=${{ secrets.OSM_BUCKET }}" \
             --quiet
 
   test:
@@ -119,6 +120,7 @@ jobs:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.REGION }}
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
+          OSM_BUCKET: ${{ secrets.OSM_BUCKET }}
         run: uv run pytest tests/ --ignore=tests/integration -v
 
       - name: Run integration tests
@@ -127,6 +129,7 @@ jobs:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.REGION }}
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
+          OSM_BUCKET: ${{ secrets.OSM_BUCKET }}
           DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
           INFRA_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
         run: uv run pytest tests/integration/ -n auto -v

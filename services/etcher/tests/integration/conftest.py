@@ -224,31 +224,6 @@ def features_runner():
 
 
 @pytest.fixture(autouse=True, scope="session")
-def _redirect_osmnx_cache(tmp_path_factory):
-    """Point osmnx's HTTP cache at a temp dir so tests don't accumulate
-    Overpass response blobs under ``services/etcher/cache/``.
-
-    Cache is still useful within a single test session (repeated OSM
-    queries hit the cache), but the directory lives outside the repo and
-    is removed on session teardown.
-    """
-    import osmnx as ox
-
-    cache_dir = tmp_path_factory.mktemp("osmnx_cache")
-    original_folder = ox.settings.cache_folder
-    ox.settings.cache_folder = str(cache_dir)
-    try:
-        yield
-    finally:
-        ox.settings.cache_folder = original_folder
-        # tmp_path_factory dirs are auto-cleaned by pytest at session end,
-        # but be explicit so the on-disk footprint goes away immediately.
-        import shutil
-
-        shutil.rmtree(cache_dir, ignore_errors=True)
-
-
-@pytest.fixture(autouse=True, scope="session")
 def _cleanup_gcsfs_sessions():
     """Cleanly shut down gcsfs sessions after all tests complete."""
     yield

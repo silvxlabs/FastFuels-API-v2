@@ -1,16 +1,16 @@
 """
 Road feature handlers for OSM data.
 
-Queries OpenStreetMap for road networks, dynamically buffers them based on
-classification, and saves the resulting polygons as GeoParquet.
+Reads road networks from the static per-state OSM FlatGeobuf source on GCS,
+dynamically buffers them based on classification, and saves the resulting
+polygons as GeoParquet.
 """
 
 import logging
 
 import geopandas as gpd
-import osmnx as ox
-from shapely.geometry import box
 
+from etcher.osm_source import read_osm_features
 from etcher.storage import save_features
 from lib.domain_utils import buffer_domain
 
@@ -61,23 +61,12 @@ def handle_osm(
     # Expand the clip extent if the request asked for an overhang.
     domain_gdf = buffer_domain(domain_gdf, source.get("extent_buffer_m", 0))
 
-    # OSM requires EPSG:4326 for querying
+    # The OSM FlatGeobuf source is stored in EPSG:4326.
     domain_gdf_4326 = domain_gdf.to_crs(epsg=4326)
-    minx, miny, maxx, maxy = domain_gdf_4326.total_bounds
-    query_polygon = box(minx, miny, maxx, maxy)
+    bbox = tuple(domain_gdf_4326.total_bounds)
 
-    tags = {"highway": True}
-
-    progress("Querying OpenStreetMap for roads...", 30)
-    try:
-        features_gdf = ox.features_from_polygon(
-            polygon=query_polygon,
-            tags=tags,
-        )
-    except Exception as e:
-        # osmnx can raise various errors if no data is found depending on the version
-        logger.warning(f"OSMnx query failed or returned no data: {e}")
-        features_gdf = gpd.GeoDataFrame(geometry=[], crs=4326)
+    progress("Reading OSM roads...", 30)
+    features_gdf = read_osm_features(bbox, "road")
 
     if features_gdf.empty:
         logger.info(

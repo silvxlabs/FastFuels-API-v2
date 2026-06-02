@@ -1,18 +1,18 @@
 """
 Water feature handlers for OSM data.
 
-Queries OpenStreetMap for water bodies and waterways. Leaves existing
-polygon features (lakes/reservoirs) intact, dynamically buffers linear
-features (rivers/streams) into polygons, and saves the result as GeoParquet.
+Reads water bodies and waterways from the static per-state OSM FlatGeobuf
+source on GCS. Leaves existing polygon features (lakes/reservoirs) intact,
+dynamically buffers linear features (rivers/streams) into polygons, and saves
+the result as GeoParquet.
 """
 
 import logging
 
 import geopandas as gpd
-import osmnx as ox
 import pandas as pd
-from shapely.geometry import box
 
+from etcher.osm_source import read_osm_features
 from etcher.storage import save_features
 from lib.domain_utils import buffer_domain
 
@@ -53,28 +53,15 @@ def handle_osm(
     # Expand the clip extent if the request asked for an overhang.
     domain_gdf = buffer_domain(domain_gdf, source.get("extent_buffer_m", 0))
 
-    # OSM requires EPSG:4326 for querying
+    # The OSM FlatGeobuf source is stored in EPSG:4326. The per-state water
+    # layer already includes natural=water and landuse reservoir/basin polygons
+    # plus waterway lines (folded in upstream at build time), so no tag query is
+    # needed here.
     domain_gdf_4326 = domain_gdf.to_crs(epsg=4326)
-    minx, miny, maxx, maxy = domain_gdf_4326.total_bounds
-    query_polygon = box(minx, miny, maxx, maxy)
+    bbox = tuple(domain_gdf_4326.total_bounds)
 
-    # Query both 'natural' (bodies), 'waterway' (rivers/streams),
-    # and 'landuse' (man-made bodies)
-    tags = {
-        "natural": ["water"],
-        "waterway": True,
-        "landuse": ["reservoir", "basin"],
-    }
-
-    progress("Querying OpenStreetMap for water features...", 30)
-    try:
-        features_gdf = ox.features_from_polygon(
-            polygon=query_polygon,
-            tags=tags,
-        )
-    except Exception as e:
-        logger.warning(f"OSMnx query failed or returned no data: {e}")
-        features_gdf = gpd.GeoDataFrame(geometry=[], crs=4326)
+    progress("Reading OSM water features...", 30)
+    features_gdf = read_osm_features(bbox, "water")
 
     if features_gdf.empty:
         logger.info(

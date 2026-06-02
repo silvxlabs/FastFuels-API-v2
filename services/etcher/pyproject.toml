@@ -8,7 +8,7 @@ dependencies = [
     "flask>=3.1.3",
     "functions-framework>=3.10.1",
     "geopandas>=1.1.3",
-    "osmnx>=2.1.0",
+    "pyogrio>=0.12.0",
     "pyarrow>=18.0.0",
     "lib[firestore,gcs]",
 ]
@@ -20,6 +20,12 @@ test = [
     "google-cloud-tasks>=2.14.0",
     "google-cloud-run>=0.10.0",
     "pytest-xdist>=3.5.0",
+]
+# Only for the manual live-Overpass parity test
+# (tests/integration/handlers/test_osm_parity.py). Not installed in the prod
+# image (uv sync --frozen) or the default CI test run. See README.md.
+parity = [
+    "osmnx>=2.1.0",
 ]
 
 [tool.uv.sources]

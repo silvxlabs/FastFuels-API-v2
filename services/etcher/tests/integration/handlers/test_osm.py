@@ -3,13 +3,14 @@ Integration tests for OSM feature generation.
 
 Tests the full feature pipeline: Firestore setup -> process_feature_request ->
 verify GCS Parquet output + Firestore georeference. Uses a standard test domain
-with live queries to OpenStreetMap via OSMnx.
+(western Montana) whose roads/water are read from the static per-state OSM
+FlatGeobuf source on GCS by bounding box.
 
-These tests hit real OSM APIs and write real Parquet to GCS/Firestore, so
-they require valid credentials and network access.
+These tests write real Parquet to GCS/Firestore and read the OSM source from
+GCS, so they require valid credentials and ``OSM_BUCKET`` configured.
 
 Most tests share a single pipeline run per feature type via module-scoped
-fixtures to avoid redundant processing and rate-limiting from OSM.
+fixtures to avoid redundant processing.
 """
 
 from uuid import uuid4
@@ -138,6 +139,16 @@ def test_road_pipeline_completes(shared_road_feature):
     assert shared_road_feature["georeference"] is not None
     assert "crs" in shared_road_feature["georeference"]
     assert "bounds" in shared_road_feature["georeference"]
+
+
+def test_road_features_present(shared_road_gdf):
+    """The known-populated Montana test domain must yield roads.
+
+    Unlike the other road tests (which skip on empty), this asserts non-empty so
+    a silent-empty regression — wrong state routing, a swallowed read error, an
+    unconfigured OSM_BUCKET — fails loudly instead of passing as a no-op.
+    """
+    assert len(shared_road_gdf) > 0
 
 
 def test_road_parquet_has_correct_columns(shared_road_gdf):

@@ -356,11 +356,14 @@ dependencies = [
     { name = "functions-framework" },
     { name = "geopandas" },
     { name = "lib", extra = ["firestore", "gcs"] },
-    { name = "osmnx" },
     { name = "pyarrow" },
+    { name = "pyogrio" },
 ]
 
 [package.optional-dependencies]
+parity = [
+    { name = "osmnx" },
+]
 test = [
     { name = "google-cloud-run" },
     { name = "google-cloud-tasks" },
@@ -377,13 +380,14 @@ requires-dist = [
     { name = "google-cloud-run", marker = "extra == 'test'", specifier = ">=0.10.0" },
     { name = "google-cloud-tasks", marker = "extra == 'test'", specifier = ">=2.14.0" },
     { name = "lib", extras = ["firestore", "gcs"], editable = "../lib" },
-    { name = "osmnx", specifier = ">=2.1.0" },
+    { name = "osmnx", marker = "extra == 'parity'", specifier = ">=2.1.0" },
     { name = "pyarrow", specifier = ">=18.0.0" },
+    { name = "pyogrio", specifier = ">=0.12.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
     { name = "pytest-mock", marker = "extra == 'test'" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.5.0" },
 ]
-provides-extras = ["test"]
+provides-extras = ["test", "parity"]
 
 [[package]]
 name = "execnet"

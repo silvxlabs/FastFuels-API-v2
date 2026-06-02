@@ -24,9 +24,10 @@ def sample_domain_gdf():
 
 @pytest.fixture
 def sample_osm_roads():
-    """Create a sample OSM response with lines in WGS84."""
+    """Create a sample OSM FlatGeobuf read result with lines in WGS84."""
     return gpd.GeoDataFrame(
         {
+            "osm_id": [1, 2, 3],
             "highway": ["motorway", "path", "invalid_type"],
             "name": ["Highway 1", "Local Trail", "Fake Road"],
             "geometry": [
@@ -89,18 +90,19 @@ class TestHandleOsm:
         return {"id": "feat-123", "domain_id": "dom-456", "type": "road"}
 
     @patch("etcher.handlers.road.save_features")
-    @patch("etcher.handlers.road.ox.features_from_polygon")
+    @patch("etcher.handlers.road.read_osm_features")
     def test_happy_path(
-        self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf, sample_osm_roads
+        self, mock_read, mock_save, mock_feature, sample_domain_gdf, sample_osm_roads
     ):
-        """Should fetch, buffer, format, and save the roads."""
-        mock_osmnx.return_value = sample_osm_roads
+        """Should read, buffer, format, and save the roads."""
+        mock_read.return_value = sample_osm_roads
         progress = MagicMock()
 
         result = handle_osm(mock_feature, {}, sample_domain_gdf, progress)
 
-        # Ensure OSMnx was called
-        mock_osmnx.assert_called_once()
+        # Ensure the OSM source was read for roads.
+        mock_read.assert_called_once()
+        assert mock_read.call_args.args[1] == "road"
 
         # Ensure save_features was called
         mock_save.assert_called_once()
@@ -121,13 +123,13 @@ class TestHandleOsm:
         assert result["georeference"]["crs"] == "EPSG:32610"
 
     @patch("etcher.handlers.road.save_features")
-    @patch("etcher.handlers.road.ox.features_from_polygon")
-    def test_empty_osmnx_response(
-        self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
+    @patch("etcher.handlers.road.read_osm_features")
+    def test_empty_reader_response(
+        self, mock_read, mock_save, mock_feature, sample_domain_gdf
     ):
-        """Should handle an empty response from OSMnx gracefully."""
+        """An empty read (no roads / absent layer) saves an empty Parquet."""
         # Return an empty GDF
-        mock_osmnx.return_value = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+        mock_read.return_value = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
         progress = MagicMock()
 
         handle_osm(mock_feature, {}, sample_domain_gdf, progress)
@@ -139,35 +141,33 @@ class TestHandleOsm:
         assert saved_gdf.crs == sample_domain_gdf.crs
 
     @patch("etcher.handlers.road.save_features")
-    @patch("etcher.handlers.road.ox.features_from_polygon")
-    def test_osmnx_raises_exception(
-        self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf
+    @patch("etcher.handlers.road.read_osm_features")
+    def test_reader_error_propagates(
+        self, mock_read, mock_save, mock_feature, sample_domain_gdf
     ):
-        """Should handle connection errors or internal OSMnx exceptions gracefully."""
-        # Simulate network error or No Data found exception from OSMnx
-        mock_osmnx.side_effect = Exception("OSM API is down")
+        """A real read error must propagate, not be saved as an empty result."""
+        # A genuine GCS/read failure (not an absent layer) raises from the reader.
+        mock_read.side_effect = RuntimeError("vsigs read failed")
         progress = MagicMock()
 
-        handle_osm(mock_feature, {}, sample_domain_gdf, progress)
+        with pytest.raises(RuntimeError):
+            handle_osm(mock_feature, {}, sample_domain_gdf, progress)
 
-        # Should swallow the exception and save an empty Parquet
-        mock_save.assert_called_once()
-        saved_gdf = mock_save.call_args[0][2]
-        assert saved_gdf.empty
-        assert saved_gdf.crs == sample_domain_gdf.crs
+        # Nothing should be written when the read fails.
+        mock_save.assert_not_called()
 
     @patch("etcher.handlers.road.save_features")
-    @patch("etcher.handlers.road.ox.features_from_polygon")
-    def test_extent_buffer_widens_osm_query_and_georeference(
-        self, mock_osmnx, mock_save, mock_feature, sample_domain_gdf, sample_osm_roads
+    @patch("etcher.handlers.road.read_osm_features")
+    def test_extent_buffer_widens_read_bbox_and_georeference(
+        self, mock_read, mock_save, mock_feature, sample_domain_gdf, sample_osm_roads
     ):
-        """A non-zero extent_buffer_m enlarges the OSM bbox and the georeference."""
-        mock_osmnx.return_value = sample_osm_roads
+        """A non-zero extent_buffer_m enlarges the read bbox and the georeference."""
+        mock_read.return_value = sample_osm_roads
         progress = MagicMock()
 
         # First call: no buffer.
         result_no_buf = handle_osm(mock_feature, {}, sample_domain_gdf, progress)
-        bbox_no_buf = mock_osmnx.call_args.kwargs["polygon"]
+        bbox_no_buf = mock_read.call_args.args[0]
         georef_no_buf = result_no_buf["georeference"]["bounds"]
 
         # Second call: 50 m buffer.
@@ -177,11 +177,14 @@ class TestHandleOsm:
             sample_domain_gdf,
             progress,
         )
-        bbox_buf = mock_osmnx.call_args.kwargs["polygon"]
+        bbox_buf = mock_read.call_args.args[0]
         georef_buf = result_buf["georeference"]["bounds"]
 
-        # OSM bbox query should now cover a larger area.
-        assert bbox_buf.area > bbox_no_buf.area
+        # The read bbox (minx, miny, maxx, maxy) should now be wider on every edge.
+        assert bbox_buf[0] < bbox_no_buf[0]
+        assert bbox_buf[1] < bbox_no_buf[1]
+        assert bbox_buf[2] > bbox_no_buf[2]
+        assert bbox_buf[3] > bbox_no_buf[3]
 
         # Georeference bounds should be strictly larger on every edge.
         assert georef_buf[0] < georef_no_buf[0]

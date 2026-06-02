@@ -19,8 +19,12 @@ from fastfuels_core.itd.local_maxima_filter import (
 from lib.config import GRIDS_COLLECTION
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
-from standgen.modifications import apply_modifications
-from standgen.storage import load_grid, save_parquet
+from standgen.modifications import (
+    _has_spatial_condition,
+    apply_modifications,
+    resolve_spatial_conditions,
+)
+from standgen.storage import count_inventory_rows, load_grid, save_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +94,11 @@ def handle_chm(
 
     elif alg_name == "vwf":
         try:
+            # VWF runs one bounded `da.unique(...).compute()` internally to discover
+            # the window sizes present in the CHM. That is an intentional one-time
+            # scan of a small derived array during graph construction — it is not the
+            # treetop graph, so it doesn't break the single-compute guarantee below.
+            # Don't precompute `unique_windows` to avoid it: that just moves the scan.
             ddf = variable_window_filter(
                 chm_da=chm_da,
                 min_height=algorithm_config.get("min_height", 2.0),
@@ -132,18 +141,32 @@ def handle_chm(
         )
 
     # --- 4. FORMATTING & STORAGE ---
-    tree_count = len(ddf)
-    logger.info(
-        f"Extracted {tree_count} trees from CHM", extra={"inventory_id": inventory_id}
-    )
-
+    # Apply modifications (lazily) before the single write. Resolve spatial-condition
+    # geometries once here, off the per-partition path, when any are present.
     modifications = inventory.get("modifications", [])
     if modifications:
         progress("Applying modifications...", 80)
+        if _has_spatial_condition(modifications):
+            modifications = resolve_spatial_conditions(
+                modifications, inventory["domain_id"], domain_gdf.crs
+            )
         ddf = ddf.map_partitions(apply_modifications, modifications)
 
+    # save_parquet is the single execution of the lazy ITD graph. Don't trigger a
+    # separate compute (e.g. `len(ddf)`) — with the chunked fastfuels-core filters
+    # that would run the entire local-maxima graph an extra time over the full CHM.
     progress("Writing inventory data...", 90)
     save_parquet(inventory_id, ddf)
+
+    # Read the tree count from the written Parquet footer (footer-only, no recompute).
+    # This reflects rows actually persisted (post-modification), which is the
+    # meaningful figure to report.
+    tree_count = count_inventory_rows(inventory_id)
+    if tree_count is not None:
+        logger.info(
+            f"Extracted {tree_count} trees from CHM",
+            extra={"inventory_id": inventory_id},
+        )
 
     progress("Computing georeference...", 95)
     bounds = domain_gdf.total_bounds

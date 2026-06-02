@@ -207,18 +207,15 @@ _EXAMPLE_GEOJSON = {
 }
 
 
-EXAMPLE_LAYERSET_MINIMAL = {
-    "type": "layerset",
-    "geojson": _EXAMPLE_GEOJSON,
-    # "description": "TO BE PAIRED WITH BLACKFOOT EXAMPLE DOMAIN",
-}
+# The request body IS the FeatureCollection (see _EXAMPLE_GEOJSON), mirroring
+# POST /domains. Optional resource metadata (name/description/tags) are
+# top-level fields; name doubles as the FeatureCollection's GeoJSON name member.
+EXAMPLE_LAYERSET_MINIMAL = _EXAMPLE_GEOJSON
 
 EXAMPLE_LAYERSET_WITH_METADATA = {
-    "type": "layerset",
+    **_EXAMPLE_GEOJSON,
     "name": "Custom Surface Fuels",
-    # "description": "TO BE PAIRED WITH BLACKFOOT EXAMPLE DOMAIN",
     "tags": ["surface-fuels", "custom", "shrub"],
-    "geojson": _EXAMPLE_GEOJSON,
 }
 
 CREATE_LAYERSET_OPENAPI_EXAMPLES = {

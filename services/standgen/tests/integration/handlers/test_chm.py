@@ -113,6 +113,17 @@ def test_parquet_has_correct_columns(shared_chm_df):
     assert sorted(shared_chm_df.columns.tolist()) == sorted(["x", "y", "height"])
 
 
+def test_parquet_is_multipartition(shared_chm_inventory):
+    """The chunked/parallel ITD path produces a multi-partition parquet end-to-end.
+
+    The static CHM grid is chunked on disk (512x512 over ~1761x1629 px), so the
+    chunked fastfuels-core filters yield one partition per CHM chunk. A single
+    partition would mean the streaming path collapsed back to a whole-array compute.
+    """
+    path = f"gs://{INVENTORIES_BUCKET}/{shared_chm_inventory['id']}"
+    assert dd.read_parquet(path).npartitions > 1
+
+
 def test_parquet_values_are_valid(shared_chm_df):
     """CHM logic populates height and coordinates with valid values."""
     df = shared_chm_df

@@ -3,7 +3,9 @@
 import logging
 
 import dask.dataframe as dd
+import gcsfs
 import pandas as pd
+import pyarrow.parquet as pq
 import xarray as xr
 
 from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
@@ -43,6 +45,30 @@ def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     ddf.to_parquet(path, write_metadata_file=True)
     logger.info(f"Saved inventory data to {path}")
     return path
+
+
+def count_inventory_rows(inventory_id: str) -> int | None:
+    """Total row count from an inventory Parquet's ``_metadata`` footer.
+
+    Reads only the Parquet footer (no data scan, no dask compute), so this is a
+    cheap alternative to materializing the DataFrame just to count rows. The
+    ``_metadata`` file written by :func:`save_parquet` aggregates the row-group
+    metadata across every part file, so ``num_rows`` is the total across all
+    partitions.
+
+    Returns None if the footer is missing, so a successful write is never turned
+    into a job failure at the logging step.
+    """
+    path = f"{INVENTORIES_BUCKET}/{inventory_id}/_metadata"
+    fs = gcsfs.GCSFileSystem()
+    try:
+        with fs.open(path, "rb") as f:
+            return pq.read_metadata(f).num_rows
+    except FileNotFoundError:
+        logger.warning(
+            f"No Parquet _metadata for inventory {inventory_id}; skipping row count"
+        )
+        return None
 
 
 def delete_parquet(inventory_id: str) -> None:

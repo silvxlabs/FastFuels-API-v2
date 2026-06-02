@@ -23,7 +23,10 @@ from api.resources.exports.schema import (
     GridExportSource,
 )
 from api.resources.grids.exports.examples import CREATE_GRID_EXPORT_OPENAPI_EXAMPLES
-from api.resources.grids.utils import validate_grid_has_band
+from api.resources.grids.utils import (
+    validate_format_supports_grid,
+    validate_grid_has_band,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -55,6 +58,8 @@ async def create_grid_export(
     """Export a grid to the specified format.
 
     Supported formats: `geotiff`, `zarr` (zipped), `netcdf` (CF-1.13).
+    `geotiff` supports 2D grids only; use `netcdf` or `zarr` for 3D voxel
+    grids.
 
     The grid must belong to this domain and have status `completed`.
     If `bands` is specified, only those bands are included; otherwise
@@ -76,6 +81,9 @@ async def create_grid_export(
         document_status="completed",
     )
     grid_data = grid_snapshot.to_dict()
+
+    # GeoTIFF is 2D-only; reject 3D voxel grids up front (#243)
+    validate_format_supports_grid(grid_data, grid_id, format)
 
     # Validate band subset if provided
     if body.bands:

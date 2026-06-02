@@ -116,6 +116,17 @@ def export_geotiff(
     export_id = export["id"]
     ds = _load_and_select_bands(source, progress)
 
+    # GeoTIFF is a 2D raster format; a 3D voxel grid (z, y, x) can't be written.
+    # The API rejects this at request time (#243); this guards the case where a
+    # 3D grid reaches the exporter another way, with a clear message instead of
+    # the catch-all GEOTIFF_WRITE_ERROR below.
+    if "z" in ds.dims:
+        raise ProcessingError(
+            code="GEOTIFF_UNSUPPORTED_DIMENSIONALITY",
+            message="GeoTIFF is a 2D raster format and cannot represent a 3D voxel grid.",
+            suggestion="Use the `netcdf` or `zarr` export format for 3D fuel grids.",
+        )
+
     progress("Writing GeoTIFF...", 70)
     filename = sanitize_filename(export.get("name", ""), ".tif")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"

@@ -13,7 +13,6 @@ from api.resources.features.layerset.schema import (
     LayersetFeatureCollection,
     LayersetSource,
 )
-from api.resources.features.schema import FeatureType
 from pydantic import ValidationError
 
 
@@ -65,52 +64,49 @@ _MINIMAL_FEATURE = {
 
 
 class TestCreateLayersetRequestBody:
-    """Tests for CreateLayersetRequestBody model."""
+    """Tests for CreateLayersetRequestBody model.
+
+    The body **is** the GeoJSON FeatureCollection (no ``geojson:`` wrapper, no
+    ``type: "layerset"`` discriminator), mirroring ``CreateDomainRequestBody``.
+    """
 
     def test_minimal_valid_request(self):
-        """Minimal request requires type='layerset' and a non-empty FeatureCollection."""
+        """Minimal request is a non-empty FeatureCollection; metadata defaults."""
         request = CreateLayersetRequestBody(
-            type="layerset",
-            geojson={"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
+            type="FeatureCollection", features=[_MINIMAL_FEATURE]
         )
-        assert request.type == FeatureType.layerset
+        assert request.type == "FeatureCollection"
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
-        assert len(request.geojson.features) == 1
+        assert len(request.features) == 1
 
-    def test_geojson_is_required(self):
-        """The geojson field cannot be omitted."""
+    def test_features_is_required(self):
+        """The features field cannot be omitted."""
         with pytest.raises(ValidationError):
-            CreateLayersetRequestBody(type="layerset")
+            CreateLayersetRequestBody(type="FeatureCollection")
 
-    def test_type_must_be_layerset(self):
-        """The type field cannot be set to any other feature type."""
+    def test_type_must_be_feature_collection(self):
+        """The GeoJSON type must be 'FeatureCollection'."""
         with pytest.raises(ValidationError):
-            CreateLayersetRequestBody(
-                type="road",
-                geojson={"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
-            )
+            CreateLayersetRequestBody(type="road", features=[_MINIMAL_FEATURE])
 
     def test_empty_feature_collection_rejected(self):
         """An empty FeatureCollection is rejected at schema validation time."""
         with pytest.raises(ValidationError) as exc_info:
-            CreateLayersetRequestBody(
-                type="layerset",
-                geojson={"type": "FeatureCollection", "features": []},
-            )
+            CreateLayersetRequestBody(type="FeatureCollection", features=[])
         assert "at least one Feature" in str(exc_info.value)
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional metadata fields."""
         request = CreateLayersetRequestBody(
-            type="layerset",
+            type="FeatureCollection",
             name="Test Layerset",
             description="A test custom layerset.",
             tags=["custom", "test"],
-            geojson={"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
+            features=[_MINIMAL_FEATURE],
         )
-        assert request.type == FeatureType.layerset
+        assert request.type == "FeatureCollection"
         assert request.name == "Test Layerset"
         assert request.description == "A test custom layerset."
         assert request.tags == ["custom", "test"]
@@ -123,11 +119,11 @@ class TestLayersetFeatureCollection:
         """The example payload from examples.py parses into the model."""
         request = CreateLayersetRequestBody(**EXAMPLE_LAYERSET_MINIMAL)
 
-        assert isinstance(request.geojson, LayersetFeatureCollection)
-        assert len(request.geojson.features) == 7
+        assert isinstance(request, LayersetFeatureCollection)
+        assert len(request.features) == 7
 
         # Every feature has the rasterizer's required columns on properties
-        for feature in request.geojson.features:
+        for feature in request.features:
             assert feature.properties.fuel_type
             assert feature.properties.distribution.value in {
                 "homogeneous",
@@ -136,19 +132,19 @@ class TestLayersetFeatureCollection:
             }
 
         # fuel_type values are a small canonical set on the example
-        fuel_types = {f.properties.fuel_type for f in request.geojson.features}
+        fuel_types = {f.properties.fuel_type for f in request.features}
         assert fuel_types == {"shrub", "herb", "litter"}
 
         # The team's per-fuelbed traceability identifier is preserved
-        strata_fbs = {f.properties.strata_fb for f in request.geojson.features}
+        strata_fbs = {f.properties.strata_fb for f in request.features}
         assert "Shrub1_52" in strata_fbs
         assert "LitterLichenMoss_53" in strata_fbs
 
     def test_top_level_crs_block_is_preserved(self):
         """The optional crs block on the FeatureCollection round-trips."""
         request = CreateLayersetRequestBody(**EXAMPLE_LAYERSET_MINIMAL)
-        assert request.geojson.crs is not None
-        assert request.geojson.crs.properties["name"] == "urn:ogc:def:crs:EPSG::32612"
+        assert request.crs is not None
+        assert request.crs.properties["name"] == "urn:ogc:def:crs:EPSG::32612"
 
     def test_polygon_geometry_is_accepted(self):
         """A Feature with a plain Polygon geometry is accepted alongside MultiPolygon.
@@ -157,10 +153,39 @@ class TestLayersetFeatureCollection:
         features; rejecting them would force users to wrap exports.
         """
         request = CreateLayersetRequestBody(
-            type="layerset",
-            geojson={
-                "type": "FeatureCollection",
-                "features": [
+            type="FeatureCollection",
+            features=[
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "fuel_type": "shrub",
+                        "fuel_loading": 1.0,
+                        "fuel_height": 1.0,
+                        "percent_cover": 50,
+                        "distribution": "homogeneous",
+                    },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [0.0, 0.0],
+                                [1.0, 0.0],
+                                [1.0, 1.0],
+                                [0.0, 0.0],
+                            ]
+                        ],
+                    },
+                }
+            ],
+        )
+        assert request.features[0].geometry.type == "Polygon"
+
+    def test_random_clusters_requires_patch_size(self):
+        """A random_clusters feature without patch_size is rejected at validation."""
+        with pytest.raises(ValidationError) as exc_info:
+            CreateLayersetRequestBody(
+                type="FeatureCollection",
+                features=[
                     {
                         "type": "Feature",
                         "properties": {
@@ -168,51 +193,14 @@ class TestLayersetFeatureCollection:
                             "fuel_loading": 1.0,
                             "fuel_height": 1.0,
                             "percent_cover": 50,
-                            "distribution": "homogeneous",
+                            "distribution": "random_clusters",
+                            # patch_size deliberately omitted
                         },
                         "geometry": {
-                            "type": "Polygon",
-                            "coordinates": [
-                                [
-                                    [0.0, 0.0],
-                                    [1.0, 0.0],
-                                    [1.0, 1.0],
-                                    [0.0, 0.0],
-                                ]
-                            ],
+                            "type": "MultiPolygon",
+                            "coordinates": [],
                         },
                     }
                 ],
-            },
-        )
-        assert request.geojson.features[0].geometry.type == "Polygon"
-
-    def test_random_clusters_requires_patch_size(self):
-        """A random_clusters feature without patch_size is rejected at validation."""
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError) as exc_info:
-            CreateLayersetRequestBody(
-                type="layerset",
-                geojson={
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "properties": {
-                                "fuel_type": "shrub",
-                                "fuel_loading": 1.0,
-                                "fuel_height": 1.0,
-                                "percent_cover": 50,
-                                "distribution": "random_clusters",
-                                # patch_size deliberately omitted
-                            },
-                            "geometry": {
-                                "type": "MultiPolygon",
-                                "coordinates": [],
-                            },
-                        }
-                    ],
-                },
             )
         assert "patch_size" in str(exc_info.value)

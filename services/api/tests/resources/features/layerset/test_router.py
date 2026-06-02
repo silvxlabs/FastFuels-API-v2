@@ -49,12 +49,9 @@ _MINIMAL_FEATURE = {
     },
 }
 _MINIMAL_PAYLOAD = {
-    "type": "layerset",
-    "geojson": {
-        "type": "FeatureCollection",
-        "crs": _PROJECTED_CRS_BLOCK,
-        "features": [_MINIMAL_FEATURE],
-    },
+    "type": "FeatureCollection",
+    "crs": _PROJECTED_CRS_BLOCK,
+    "features": [_MINIMAL_FEATURE],
 }
 
 
@@ -162,12 +159,9 @@ class TestCreateLayerset:
     def test_empty_feature_collection_returns_422(self, client, domain_for_testing):
         """An empty FeatureCollection is rejected at schema validation."""
         payload = {
-            "type": "layerset",
-            "geojson": {
-                "type": "FeatureCollection",
-                "crs": _PROJECTED_CRS_BLOCK,
-                "features": [],
-            },
+            "type": "FeatureCollection",
+            "crs": _PROJECTED_CRS_BLOCK,
+            "features": [],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=payload)
         assert response.status_code == 422
@@ -177,10 +171,7 @@ class TestCreateLayerset:
         per the GeoJSON spec, which the rasterizer rejects. Surface this at
         upload time so the user gets a 422 instead of a deferred worker crash.
         """
-        payload = {
-            "type": "layerset",
-            "geojson": {"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]},
-        }
+        payload = {"type": "FeatureCollection", "features": [_MINIMAL_FEATURE]}
         response = client.post(self.route(domain_for_testing["id"]), json=payload)
         assert response.status_code == 422
         assert "projected" in response.json()["detail"].lower()
@@ -188,15 +179,12 @@ class TestCreateLayerset:
     def test_geographic_crs_block_returns_422(self, client, domain_for_testing):
         """An explicit geographic CRS (e.g. EPSG:4326) is rejected."""
         payload = {
-            "type": "layerset",
-            "geojson": {
-                "type": "FeatureCollection",
-                "crs": {
-                    "type": "name",
-                    "properties": {"name": "urn:ogc:def:crs:EPSG::4326"},
-                },
-                "features": [_MINIMAL_FEATURE],
+            "type": "FeatureCollection",
+            "crs": {
+                "type": "name",
+                "properties": {"name": "urn:ogc:def:crs:EPSG::4326"},
             },
+            "features": [_MINIMAL_FEATURE],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=payload)
         assert response.status_code == 422
@@ -205,15 +193,12 @@ class TestCreateLayerset:
     def test_unparseable_crs_returns_422(self, client, domain_for_testing):
         """A CRS string that pyproj can't parse returns 422 with a clear message."""
         payload = {
-            "type": "layerset",
-            "geojson": {
-                "type": "FeatureCollection",
-                "crs": {
-                    "type": "name",
-                    "properties": {"name": "not-a-real-crs"},
-                },
-                "features": [_MINIMAL_FEATURE],
+            "type": "FeatureCollection",
+            "crs": {
+                "type": "name",
+                "properties": {"name": "not-a-real-crs"},
             },
+            "features": [_MINIMAL_FEATURE],
         }
         response = client.post(self.route(domain_for_testing["id"]), json=payload)
         assert response.status_code == 422

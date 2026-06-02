@@ -19,13 +19,11 @@ See ``fastfuels_core.layersets`` for the rasterizer's column documentation.
 """
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
 from geojson_pydantic import Feature, FeatureCollection
 from geojson_pydantic.geometries import MultiPolygon, Polygon
 from pydantic import BaseModel, Field, model_validator
-
-from api.resources.features.schema import CreateFeatureRequestBase, FeatureType
 
 
 class LayersetSource(BaseModel):
@@ -146,11 +144,20 @@ class LayersetFeatureCollection(FeatureCollection[LayersetFeature]):
 # --- Request Body ------------------------------------------------------------
 
 
-class CreateLayersetRequestBody(CreateFeatureRequestBase):
-    """Request body for uploading a flat GeoJSON layerset."""
+class CreateLayersetRequestBody(LayersetFeatureCollection):
+    """Request body for uploading a flat GeoJSON layerset.
 
-    type: Literal[FeatureType.layerset] = FeatureType.layerset
-    geojson: LayersetFeatureCollection = Field(
-        ...,
-        description="A flat GeoJSON FeatureCollection of fuelbed polygons.",
-    )
+    The body **is** the GeoJSON FeatureCollection (matching ``POST /domains``,
+    whose body is a ``FeatureCollection`` directly), extended with the
+    resource-metadata fields. No ``type`` discriminator: the URL
+    ``/features/layerset/geojson`` already discriminates layersets from
+    road/water uploads.
+
+    ``name`` overrides the optional GeoJSON ``name`` member inherited from
+    ``LayersetFeatureCollection`` — the FeatureCollection's name doubles as the
+    resource name, exactly as ``CreateDomainRequestBody`` treats it.
+    """
+
+    name: str = Field("", max_length=255)
+    description: str = Field("", max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=50)

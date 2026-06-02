@@ -159,6 +159,7 @@ class TestBand:
             "type": "continuous",
             "unit": "kg/m**2",
             "index": 1,
+            "nodata": None,
         }
 
     def test_dot_notation_keys_preserved(self):

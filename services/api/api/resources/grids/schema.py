@@ -71,6 +71,16 @@ class Band(BaseModel):
         examples=["kg/m**3", "1/m", "%", "m"],
     )
     index: int
+    nodata: int | float | None = Field(
+        None,
+        description=(
+            "Value marking missing pixels in this band; pixels equal to it "
+            "carry no data and should be excluded from analysis. `null` when "
+            "the band has no missing pixels, or when they are represented as "
+            "floating-point NaN."
+        ),
+        examples=[32767, -9999, None],
+    )
 
 
 class Georeference(BaseModel):

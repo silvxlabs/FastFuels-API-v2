@@ -8,6 +8,7 @@ Handlers are pure functions that just transform data.
 
 import json
 import logging
+import math
 import sys
 import traceback
 from datetime import UTC, datetime
@@ -195,6 +196,27 @@ def _load_domain(domain_id: str):
         )
 
 
+def _band_nodata(result, key: str):
+    """Resolve a band's nodata value from the produced Dataset for the resource.
+
+    Reads the value the data actually carries (the source raster's nodata tag,
+    or the fill a constructed band uses) — it is not invented. Layerset band
+    keys are ``<var>.<band>`` while nodata lives on the variable, so fall back
+    to the pre-dot variable name. Returns ``None`` when the band has no nodata,
+    or when the sentinel is NaN (which has no JSON representation).
+    """
+    var = key if key in result.data_vars else key.rsplit(".", 1)[0]
+    if var not in result.data_vars:
+        return None
+    nodata = result[var].rio.nodata
+    if nodata is None:
+        return None
+    value = nodata.item() if hasattr(nodata, "item") else nodata
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
+
+
 @functions_framework.http
 def process_grid_request(request: Request):
     """Main entry point for grid processing.
@@ -282,6 +304,16 @@ def process_grid_request(request: Request):
             result = apply_modifications(
                 result, grid["modifications"], grid["domain_id"]
             )
+
+        # Propagate each band's nodata value from the produced data onto the
+        # grid resource so consumers see it without opening the Zarr (NaN
+        # floats surface as null). Read after modifications so it reflects the
+        # final stored data.
+        bands = grid.get("bands")
+        if bands:
+            for band in bands:
+                band["nodata"] = _band_nodata(result, band["key"])
+            update_document(GRIDS_COLLECTION, grid_id, {"bands": bands})
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)

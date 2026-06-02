@@ -9,6 +9,7 @@ from math import ceil
 from fastapi import HTTPException, status
 
 from api.db.documents import firestore_client, get_document_async
+from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.alignment import (
     GridAlignmentGridTarget,
     GridAlignmentSpecification,
@@ -121,6 +122,40 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(f"Grid {grid_id} is {rank}D, expected {expected}D for this role."),
+        )
+
+
+# Export formats that cannot represent a volumetric (3D) voxel grid.
+_2D_ONLY_EXPORT_FORMATS = {GridExportFormat.geotiff}
+
+
+def validate_format_supports_grid(
+    grid_data: dict, grid_id: str, format: GridExportFormat
+) -> None:
+    """Reject export formats that can't represent the grid's dimensionality.
+
+    GeoTIFF is a 2D raster format and cannot encode a 3D voxel grid (z, y, x).
+    Catch this at request time as a 422 rather than letting the export job fail
+    asynchronously in the exporter.
+
+    Args:
+        grid_data: Grid document data from Firestore.
+        grid_id: Grid ID (for error messages).
+        format: Requested export format.
+
+    Raises:
+        HTTPException(422): If `format` is 2D-only and the grid is 3D.
+    """
+    if format not in _2D_ONLY_EXPORT_FORMATS:
+        return
+    shape = (grid_data.get("georeference") or {}).get("shape", [])
+    if len(shape) == 3:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"The {format.value} format does not support 3D grids. "
+                f"Use `netcdf` or `zarr` for 3D fuel grids."
+            ),
         )
 
 

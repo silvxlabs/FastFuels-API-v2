@@ -58,6 +58,35 @@ def pending_grid(firestore_client, domain_for_testing):
     doc_ref.delete()
 
 
+@pytest.fixture(scope="session")
+def completed_3d_grid(firestore_client, domain_for_testing):
+    """A completed 3D voxel grid (georeference shape has 3 elements)."""
+    grid_data = make_grid_data(
+        domain_id=domain_for_testing["id"],
+        name="Completed 3D grid for export",
+        status="completed",
+        bands=[
+            {
+                "key": "bulk_density",
+                "type": "continuous",
+                "unit": "kg/m**3",
+                "index": 0,
+            },
+        ],
+        georeference={
+            "crs": "EPSG:32611",
+            "transform": (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0),
+            "shape": (5, 34, 34),
+            "z_resolution": 1.0,
+            "z_origin": 0.0,
+        },
+    )
+    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
+    doc_ref.set(grid_data)
+    yield grid_data
+    doc_ref.delete()
+
+
 def grid_export_route(domain_id, grid_id, fmt="geotiff"):
     """Per-grid: POST /domains/{domain_id}/grids/{grid_id}/exports/{format}"""
     return f"/domains/{domain_id}/grids/{grid_id}/exports/{fmt}"
@@ -312,3 +341,48 @@ class TestCreateGridExportNetcdf:
         assert data["source"]["grid_id"] == completed_grid["id"]
 
         cleanup_export(firestore_client, data["id"])
+
+
+class TestCreateGridExport3D:
+    """3D voxel grids: geotiff is rejected at request time; zarr/netcdf succeed."""
+
+    def test_geotiff_3d_returns_422(
+        self, client, domain_for_testing, completed_3d_grid
+    ):
+        """Exporting a 3D grid to geotiff returns 422 with a helpful message."""
+        response = client.post(
+            grid_export_route(
+                domain_for_testing["id"], completed_3d_grid["id"], fmt="geotiff"
+            ),
+            json={},
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "geotiff" in detail
+        assert "netcdf" in detail and "zarr" in detail
+
+    def test_zarr_3d_returns_201(
+        self, client, firestore_client, domain_for_testing, completed_3d_grid
+    ):
+        """zarr supports 3D, so a 3D grid export is accepted."""
+        response = client.post(
+            grid_export_route(
+                domain_for_testing["id"], completed_3d_grid["id"], fmt="zarr"
+            ),
+            json={},
+        )
+        assert response.status_code == 201
+        cleanup_export(firestore_client, response.json()["id"])
+
+    def test_netcdf_3d_returns_201(
+        self, client, firestore_client, domain_for_testing, completed_3d_grid
+    ):
+        """netcdf supports 3D, so a 3D grid export is accepted."""
+        response = client.post(
+            grid_export_route(
+                domain_for_testing["id"], completed_3d_grid["id"], fmt="netcdf"
+            ),
+            json={},
+        )
+        assert response.status_code == 201
+        cleanup_export(firestore_client, response.json()["id"])

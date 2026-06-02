@@ -4,9 +4,52 @@ Tests for Griddle main module.
 
 from unittest.mock import MagicMock, patch
 
-from griddle.main import process_grid_request
+import numpy as np
+import rioxarray  # noqa: F401
+import xarray as xr
+from affine import Affine
+from griddle.main import _band_nodata, process_grid_request
 
 from lib.config import GRIDS_COLLECTION
+
+
+def _ds_with_band(name, data, nodata):
+    """Build a single-variable Dataset with optional nodata for _band_nodata."""
+    da = xr.DataArray(data, dims=("y", "x"), coords={"y": [1.0, 0.0], "x": [0.0, 1.0]})
+    da = da.rio.write_crs("EPSG:5070").rio.write_transform(Affine(10, 0, 0, 0, -10, 0))
+    if nodata is not None:
+        da = da.rio.write_nodata(nodata)
+    return xr.Dataset({name: da})
+
+
+class TestBandNodata:
+    """_band_nodata reads a band's nodata for propagation onto the resource."""
+
+    def test_integer_sentinel_returned_as_int(self):
+        ds = _ds_with_band(
+            "fbfm", np.array([[101, 102], [103, 32767]], np.int16), 32767
+        )
+        result = _band_nodata(ds, "fbfm")
+        assert result == 32767
+        assert isinstance(result, int)
+
+    def test_nan_nodata_returns_none(self):
+        ds = _ds_with_band(
+            "elev", np.array([[1.0, 2.0], [3.0, np.nan]], np.float32), np.float32("nan")
+        )
+        assert _band_nodata(ds, "elev") is None
+
+    def test_no_nodata_returns_none(self):
+        ds = _ds_with_band("cc", np.array([[1.0, 2.0], [3.0, 4.0]], np.float32), None)
+        assert _band_nodata(ds, "cc") is None
+
+    def test_dotted_layerset_key_resolves_to_variable(self):
+        ds = _ds_with_band("loading", np.array([[1, 32767], [3, 4]], np.int16), 32767)
+        assert _band_nodata(ds, "loading.litter") == 32767
+
+    def test_missing_variable_returns_none(self):
+        ds = _ds_with_band("fbfm", np.array([[1, 2], [3, 4]], np.int16), 32767)
+        assert _band_nodata(ds, "nonexistent") is None
 
 
 class MockRequest:

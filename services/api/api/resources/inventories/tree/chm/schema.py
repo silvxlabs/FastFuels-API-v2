@@ -6,7 +6,7 @@ Schema models for CHM extraction inventory creation.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
@@ -88,5 +88,22 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
     )
     treatments: list[InventoryTreatment] = Field(
         default_factory=list,
-        description="Silvicultural treatments to apply after modifications.",
+        description=(
+            "Silvicultural treatments thin against tree diameter, so they "
+            "require a diameter (`dbh`) column. CHM stem isolation produces only "
+            "height and position (`x`, `y`, `height`), so treatments are not "
+            "supported here and this must be empty."
+        ),
     )
+
+    @model_validator(mode="after")
+    def reject_treatments(self):
+        """Treatments thin against diameter; CHM extraction produces none."""
+        if self.treatments:
+            raise ValueError(
+                "Silvicultural treatments require a tree diameter (`dbh`) to thin "
+                "against. CHM stem isolation produces only height and position "
+                "(`x`, `y`, `height`), so treatments cannot be applied to a "
+                "CHM-derived inventory."
+            )
+        return self

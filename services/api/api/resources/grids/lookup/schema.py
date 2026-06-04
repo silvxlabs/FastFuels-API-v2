@@ -90,25 +90,94 @@ class CreateFbfm40LookupRequest(BaseModel):
         return validate_no_duplicates(v)
 
 
-FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupBand, tuple[BandType, str | None]] = {
-    Fbfm40LookupBand.fuel_load_1hr: (BandType.continuous, "kg/m**2"),
-    Fbfm40LookupBand.fuel_load_10hr: (BandType.continuous, "kg/m**2"),
-    Fbfm40LookupBand.fuel_load_100hr: (BandType.continuous, "kg/m**2"),
-    Fbfm40LookupBand.fuel_load_live_herb: (BandType.continuous, "kg/m**2"),
-    Fbfm40LookupBand.fuel_load_live_woody: (BandType.continuous, "kg/m**2"),
-    Fbfm40LookupBand.savr_1hr: (BandType.continuous, "1/m"),
-    Fbfm40LookupBand.savr_10hr: (BandType.continuous, "1/m"),
-    Fbfm40LookupBand.savr_100hr: (BandType.continuous, "1/m"),
-    Fbfm40LookupBand.savr_live_herb: (BandType.continuous, "1/m"),
-    Fbfm40LookupBand.savr_live_woody: (BandType.continuous, "1/m"),
-    Fbfm40LookupBand.fuel_depth: (BandType.continuous, "m"),
-    Fbfm40LookupBand.moisture_of_extinction: (BandType.continuous, "%"),
-    Fbfm40LookupBand.heat_content: (BandType.continuous, "kJ/kg"),
-    Fbfm40LookupBand.is_dynamic: (BandType.categorical, None),
+FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupBand, dict] = {
+    Fbfm40LookupBand.fuel_load_1hr: {
+        "name": "1-hour Fuel Load",
+        "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels.",
+        "type": BandType.continuous,
+        "unit": "kg/m**2",
+    },
+    Fbfm40LookupBand.fuel_load_10hr: {
+        "name": "10-hour Fuel Load",
+        "description": "Oven-dry mass per unit area of 10-hour timelag dead fuels.",
+        "type": BandType.continuous,
+        "unit": "kg/m**2",
+    },
+    Fbfm40LookupBand.fuel_load_100hr: {
+        "name": "100-hour Fuel Load",
+        "description": "Oven-dry mass per unit area of 100-hour timelag dead fuels.",
+        "type": BandType.continuous,
+        "unit": "kg/m**2",
+    },
+    Fbfm40LookupBand.fuel_load_live_herb: {
+        "name": "Live Herbaceous Fuel Load",
+        "description": "Oven-dry mass per unit area of live herbaceous fuels.",
+        "type": BandType.continuous,
+        "unit": "kg/m**2",
+    },
+    Fbfm40LookupBand.fuel_load_live_woody: {
+        "name": "Live Woody Fuel Load",
+        "description": "Oven-dry mass per unit area of live woody fuels.",
+        "type": BandType.continuous,
+        "unit": "kg/m**2",
+    },
+    Fbfm40LookupBand.savr_1hr: {
+        "name": "1-hour Surface-Area-to-Volume Ratio",
+        "description": "Surface-area-to-volume ratio of 1-hour timelag dead fuels.",
+        "type": BandType.continuous,
+        "unit": "1/m",
+    },
+    Fbfm40LookupBand.savr_10hr: {
+        "name": "10-hour Surface-Area-to-Volume Ratio",
+        "description": "Surface-area-to-volume ratio of 10-hour timelag dead fuels.",
+        "type": BandType.continuous,
+        "unit": "1/m",
+    },
+    Fbfm40LookupBand.savr_100hr: {
+        "name": "100-hour Surface-Area-to-Volume Ratio",
+        "description": "Surface-area-to-volume ratio of 100-hour timelag dead fuels.",
+        "type": BandType.continuous,
+        "unit": "1/m",
+    },
+    Fbfm40LookupBand.savr_live_herb: {
+        "name": "Live Herbaceous Surface-Area-to-Volume Ratio",
+        "description": "Surface-area-to-volume ratio of live herbaceous fuels.",
+        "type": BandType.continuous,
+        "unit": "1/m",
+    },
+    Fbfm40LookupBand.savr_live_woody: {
+        "name": "Live Woody Surface-Area-to-Volume Ratio",
+        "description": "Surface-area-to-volume ratio of live woody fuels.",
+        "type": BandType.continuous,
+        "unit": "1/m",
+    },
+    Fbfm40LookupBand.fuel_depth: {
+        "name": "Fuel Bed Depth",
+        "description": "Vertical depth of the surface fuel bed.",
+        "type": BandType.continuous,
+        "unit": "m",
+    },
+    Fbfm40LookupBand.moisture_of_extinction: {
+        "name": "Moisture of Extinction",
+        "description": "Dead fuel moisture content above which the fuel will not sustain fire spread (%).",
+        "type": BandType.continuous,
+        "unit": "%",
+    },
+    Fbfm40LookupBand.heat_content: {
+        "name": "Heat Content",
+        "description": "Heat released per unit mass of fuel consumed.",
+        "type": BandType.continuous,
+        "unit": "kJ/kg",
+    },
+    Fbfm40LookupBand.is_dynamic: {
+        "name": "Dynamic Fuel Model Flag",
+        "description": "Whether the fuel model uses dynamic live herbaceous load transfer (1) or is static (0).",
+        "type": BandType.categorical,
+        "unit": None,
+    },
 }
 
 
 def get_fbfm40_lookup_band(band: Fbfm40LookupBand, index: int) -> Band:
     """Return Band metadata for an FBFM40 lookup band."""
-    band_type, unit = FBFM40_LOOKUP_BAND_METADATA[band]
-    return Band(key=band.value, type=band_type, unit=unit, index=index)
+    return Band(key=band.value, index=index, **FBFM40_LOOKUP_BAND_METADATA[band])

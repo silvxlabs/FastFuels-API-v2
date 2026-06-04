@@ -117,6 +117,8 @@ class TestBand:
         assert band.type == BandType.categorical
         assert band.index == 0
         assert band.unit is None
+        assert band.name is None
+        assert band.description is None
 
     def test_band_with_unit(self):
         """Band with unit specified."""
@@ -156,11 +158,34 @@ class TestBand:
         data = band.model_dump()
         assert data == {
             "key": "fuel_load.1hr",
+            "name": None,
+            "description": None,
             "type": "continuous",
             "unit": "kg/m**2",
             "index": 1,
             "nodata": None,
         }
+
+    def test_band_with_name_and_description(self):
+        """Band carries human-readable name and description when provided."""
+        band = Band(
+            key="fuel_load.1hr",
+            name="1-hour Fuel Load",
+            description="Oven-dry mass per unit area of 1-hour timelag dead fuels.",
+            type=BandType.continuous,
+            unit="kg/m**2",
+            index=1,
+        )
+        assert band.name == "1-hour Fuel Load"
+        assert (
+            band.description
+            == "Oven-dry mass per unit area of 1-hour timelag dead fuels."
+        )
+        data = band.model_dump()
+        assert data["name"] == "1-hour Fuel Load"
+        assert data["description"] == (
+            "Oven-dry mass per unit area of 1-hour timelag dead fuels."
+        )
 
     def test_dot_notation_keys_preserved(self):
         """Dot notation in keys is preserved."""

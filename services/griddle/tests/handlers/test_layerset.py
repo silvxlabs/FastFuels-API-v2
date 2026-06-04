@@ -19,7 +19,7 @@ import pytest
 from affine import Affine
 from fastfuels_core.layersets import rasterize_layerset
 from griddle.handlers.layerset import (
-    _LAYERSET_BAND_UNITS,
+    _LAYERSET_BAND_DEFS,
     OVERLAP_METHODS,
     build_layerset_bands,
     fetch_layerset,
@@ -154,18 +154,23 @@ class TestRealRasterizeLayerset:
 
 
 class TestLayersetBandUnits:
-    """Drift guard for ``_LAYERSET_BAND_UNITS``.
+    """Drift guard for ``_LAYERSET_BAND_DEFS``.
 
     Mirrors the convention in `uniform/test_schema.py`,
-    `topography/test_schema.py`, etc.: each hardcoded band-unit dict in
-    the codebase carries a test that re-validates every value through
+    `topography/test_schema.py`, etc.: each hardcoded band-metadata dict in
+    the codebase carries a test that re-validates every unit through
     `lib.units.validate_unit`, so a typo or non-canonical form is caught
     in CI rather than at runtime.
     """
 
     def test_all_units_are_canonical(self):
-        for unit in _LAYERSET_BAND_UNITS.values():
-            validate_unit(unit)
+        for defn in _LAYERSET_BAND_DEFS.values():
+            validate_unit(defn["unit"])
+
+    def test_all_defs_have_name_and_description(self):
+        for defn in _LAYERSET_BAND_DEFS.values():
+            assert defn["name"]
+            assert defn["description"]
 
 
 class TestBuildLayersetBands:
@@ -198,6 +203,16 @@ class TestBuildLayersetBands:
         assert unit_for["shrub.height"] == "m"
         assert unit_for["shrub.live_fuel_moisture"] == "%"
         assert unit_for["shrub.heat_of_combustion"] == "kJ/kg"
+
+        # Names/descriptions are populated and prefixed with the fuel type
+        name_for = {b["key"]: b["name"] for b in bands}
+        assert name_for["shrub.loading"] == "Shrub Fuel Loading"
+        assert name_for["litter.heat_of_combustion"] == "Litter Heat of Combustion"
+        assert all(b["name"] for b in bands)
+        assert all(b["description"] for b in bands)
+        # Descriptions carry the fuel-type context
+        desc_for = {b["key"]: b["description"] for b in bands}
+        assert "fuel type: shrub" in desc_for["shrub.loading"]
 
 
 class TestFetchLayerset:

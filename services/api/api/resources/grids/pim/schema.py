@@ -41,11 +41,15 @@ class TreeMapBand(StrEnum):
 TREEMAP_BAND_DEFS = {
     TreeMapBand.tm_id: {
         "key": "tm_id",
+        "name": "TreeMap ID",
+        "description": "TreeMap raster pixel value identifying the matched FIA plot (small integer, ~1-70k).",
         "type": BandType.categorical,
         "unit": None,
     },
     TreeMapBand.plt_cn: {
         "key": "plt_cn",
+        "name": "FIA Plot Condition Number",
+        "description": "FIA plot condition number (CN), derived from the tree table (large integer).",
         "type": BandType.categorical,
         "unit": None,
     },

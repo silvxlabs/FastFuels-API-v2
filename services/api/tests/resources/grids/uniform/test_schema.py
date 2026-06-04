@@ -318,9 +318,18 @@ class TestBuildUniformBands:
 
         assert len(bands) == 1
         assert bands[0].key == "fuel_moisture.1hr"
+        assert bands[0].name == "1-hour Fuel Moisture"
+        assert bands[0].description
         assert bands[0].type == BandType.continuous
         assert bands[0].unit == "%"
         assert bands[0].index == 0
+
+    def test_all_bands_have_name_and_description(self):
+        """Every uniform band carries a human-readable name and description."""
+        for b in UniformBand:
+            bands = build_uniform_bands([UniformBandInput(key=b, value=1.0)])
+            assert bands[0].name
+            assert bands[0].description
 
     def test_multiple_bands(self):
         """Multiple band inputs get sequential indices."""

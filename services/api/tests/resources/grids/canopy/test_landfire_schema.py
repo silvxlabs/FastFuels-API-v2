@@ -100,6 +100,8 @@ class TestBuildLandfireCanopyFuelBands:
         bands = build_landfire_canopy_bands([LandfireCanopyFuelBand.cbd])
         assert len(bands) == 1
         assert bands[0].key == "cbd"
+        assert bands[0].name == "Canopy Bulk Density"
+        assert bands[0].description
         assert bands[0].index == 0
         assert bands[0].unit == "kg/m**3"
 

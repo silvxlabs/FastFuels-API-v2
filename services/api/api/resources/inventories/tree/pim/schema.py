@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase, PointProcess
+from api.resources.inventories.treatment_models import InventoryTreatment
 
 
 def _generate_random_seed() -> int:
@@ -47,4 +48,8 @@ class CreatePimInventoryRequest(CreateInventoryRequestBase):
     modifications: list[InventoryModification] = Field(
         default_factory=list,
         description="Modifications to apply after point process expansion.",
+    )
+    treatments: list[InventoryTreatment] = Field(
+        default_factory=list,
+        description="Silvicultural treatments to apply after modifications.",
     )

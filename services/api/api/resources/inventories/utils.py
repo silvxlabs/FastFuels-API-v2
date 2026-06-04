@@ -9,13 +9,12 @@ from fastapi import HTTPException, status
 from api.db.documents import firestore_client
 from api.resources.inventories.modification_models import (
     InventoryFeatureSpatialCondition,
-    InventoryModification,
 )
 from lib.config import FEATURES_COLLECTION
 
 
-async def validate_feature_modifications(
-    modifications: list[InventoryModification],
+async def validate_feature_conditions(
+    items: list,
     owner_id: str,
     domain_id: str,
 ) -> None:
@@ -23,21 +22,22 @@ async def validate_feature_modifications(
     Feature that is owned by ``owner_id``, lives in ``domain_id``, and is in
     ``completed`` status.
 
-    Looks up all distinct feature_ids in a single Firestore ``get_all`` call.
-    The inventory-side mirror of ``grids.utils.validate_feature_modifications``
-    (issue #282 / #279).
+    ``items`` is any list of objects exposing a ``.conditions`` list — both
+    inventory modifications and treatments qualify. Looks up all distinct
+    feature_ids in a single Firestore ``get_all`` call. The inventory-side
+    mirror of ``grids.utils.validate_feature_modifications`` (issue #282 / #279).
 
     Raises:
         HTTPException(422): If any referenced feature is missing, owned by
             another user, in another domain, or not in ``completed`` status.
             All four cases use 422 — feature_id is a value the client supplied
             in the request body, so a bad reference is a validation error on
-            the modification, not a path-level 404.
+            the condition, not a path-level 404.
     """
     feature_ids: list[str] = []
     seen: set[str] = set()
-    for modification in modifications:
-        for condition in modification.conditions:
+    for item in items:
+        for condition in item.conditions:
             if isinstance(condition, InventoryFeatureSpatialCondition):
                 if condition.feature_id not in seen:
                     seen.add(condition.feature_id)
@@ -76,7 +76,7 @@ async def validate_feature_modifications(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
-                    f"Modification references feature_id {fid!r} whose status "
+                    f"Condition references feature_id {fid!r} whose status "
                     f"is {feature_status!r}, expected 'completed'. Wait for "
                     f"the feature to finish before referencing it."
                 ),

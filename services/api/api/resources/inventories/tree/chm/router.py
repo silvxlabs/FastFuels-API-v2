@@ -18,7 +18,7 @@ from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
     CreateChmInventoryRequest,
 )
-from api.resources.inventories.utils import validate_feature_modifications
+from api.resources.inventories.utils import validate_feature_conditions
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -76,7 +76,9 @@ async def create_chm_inventory(
     owner_id = request.state.id
     domain_id = domain["id"]
 
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    await validate_feature_conditions(
+        [*body.modifications, *body.treatments], owner_id, domain_id
+    )
 
     # Validate source CHM grid exists, is owned, in this domain, and completed
     _, source_snapshot = await get_document_async(
@@ -134,6 +136,9 @@ async def create_chm_inventory(
         "source": source.model_dump(),
         "modifications": stringify_modification_coordinates(
             [m.model_dump() for m in body.modifications]
+        ),
+        "treatments": stringify_modification_coordinates(
+            [t.model_dump() for t in body.treatments]
         ),
         "columns": [c.model_dump() for c in BASE_INVENTORY_COLUMNS],
         "georeference": None,  # Will be set by standgen

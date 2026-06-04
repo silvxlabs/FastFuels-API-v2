@@ -42,6 +42,21 @@ EXAMPLE_PIM_WITH_MODIFICATIONS = {
     ],
 }
 
+# Treatment: thin from below to a residual basal area (m**2/ha). Richer
+# treatments (diameter limits, spatial treatment units, alternate units) are
+# documented on the dedicated treatments endpoint.
+EXAMPLE_PIM_WITH_TREATMENT = {
+    "source_pim_grid_id": "PLACEHOLDER_GRID_ID",
+    "name": "Thin to 25 m2/ha",
+    "treatments": [
+        {
+            "metric": "basal_area",
+            "method": "from_below",
+            "value": 25.0,
+        }
+    ],
+}
+
 CREATE_PIM_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_PIM_MINIMAL,
@@ -68,10 +83,22 @@ CREATE_PIM_OPENAPI_EXAMPLES = {
             "fix for unrealistic microplot tree densities."
         ),
     },
+    "with_treatment": {
+        "value": EXAMPLE_PIM_WITH_TREATMENT,
+        "summary": "With a treatment (thin to a basal area)",
+        "description": (
+            "Creates an inventory from a PIM grid and thins it from below to "
+            "a residual basal area of 25 m**2/ha (smallest trees removed "
+            "first). Treatments support other methods (`from_above`, "
+            "`proportional`), diameter limits, spatial treatment units, and "
+            "alternate units — see the treatments endpoint."
+        ),
+    },
 }
 
 ALL_PIM_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_PIM_MINIMAL),
     ("full", EXAMPLE_PIM_FULL),
     ("with_modifications", EXAMPLE_PIM_WITH_MODIFICATIONS),
+    ("with_treatment", EXAMPLE_PIM_WITH_TREATMENT),
 ]

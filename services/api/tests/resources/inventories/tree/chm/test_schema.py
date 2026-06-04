@@ -141,3 +141,18 @@ class TestCreateChmInventoryRequest:
         """Missing required source_chm_grid_id raises ValidationError."""
         with pytest.raises(ValidationError):
             CreateChmInventoryRequest(name="Failing request")
+
+    def test_treatments_default_empty(self):
+        """Treatments default to an empty list and are accepted."""
+        request = CreateChmInventoryRequest(source_chm_grid_id="grid123")
+        assert request.treatments == []
+
+    def test_treatments_rejected(self):
+        """A non-empty treatments list is rejected — CHM has no diameter."""
+        with pytest.raises(ValidationError, match="diameter"):
+            CreateChmInventoryRequest(
+                source_chm_grid_id="grid123",
+                treatments=[
+                    {"metric": "diameter", "method": "from_below", "value": 30.0}
+                ],
+            )

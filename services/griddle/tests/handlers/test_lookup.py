@@ -109,7 +109,7 @@ class TestSb40TableLoading:
                 )
 
     def test_gr1_values_match_sb40(self):
-        """GR1 (key=101) values match Scott-Burgan 40 reference for all 14 columns."""
+        """GR1 (key=101) values match Scott-Burgan 40 reference for all 11 columns."""
         table = _load_sb40_table()
         assert table["fuel_load_1hr"][101] == pytest.approx(0.10)
         assert table["fuel_load_10hr"][101] == pytest.approx(0.0)
@@ -122,14 +122,6 @@ class TestSb40TableLoading:
         assert table["savr_live_herb"][101] == pytest.approx(2000)
         assert table["savr_live_woody"][101] == pytest.approx(9999)
         assert table["fuel_depth"][101] == pytest.approx(0.4)
-        assert table["moisture_of_extinction"][101] == pytest.approx(15)
-        assert table["heat_content"][101] == pytest.approx(8000)
-        assert table["is_dynamic"][101] == pytest.approx(1.0)
-
-    def test_gr6_heat_content_is_9000(self):
-        """GR6 (key=106) has heat content of 9000 BTU/lb (only exception)."""
-        table = _load_sb40_table()
-        assert table["heat_content"][106] == pytest.approx(9000)
 
     def test_savr_10hr_constant_109(self):
         """All burnable models have savr_10hr = 109 1/ft."""
@@ -163,40 +155,6 @@ class TestSb40TableLoading:
                 f"Model {key} savr_100hr should be 30, got {table['savr_100hr'][key]}"
             )
 
-    def test_dynamic_models(self):
-        """Dynamic models are correctly flagged."""
-        table = _load_sb40_table()
-        # All GR models are dynamic
-        for key in range(101, 110):
-            assert table["is_dynamic"][key] == 1.0, f"GR model {key} should be dynamic"
-        # All GS models are dynamic
-        for key in range(121, 125):
-            assert table["is_dynamic"][key] == 1.0, f"GS model {key} should be dynamic"
-        # SH1 and SH9 are dynamic
-        assert table["is_dynamic"][141] == 1.0  # SH1
-        assert table["is_dynamic"][149] == 1.0  # SH9
-        # SH2-SH8 are NOT dynamic
-        for key in range(142, 149):
-            assert table["is_dynamic"][key] == 0.0, (
-                f"SH model {key} should not be dynamic"
-            )
-        # TU1, TU3 are dynamic; TU2, TU4, TU5 are NOT
-        assert table["is_dynamic"][161] == 1.0  # TU1
-        assert table["is_dynamic"][162] == 0.0  # TU2
-        assert table["is_dynamic"][163] == 1.0  # TU3
-        assert table["is_dynamic"][164] == 0.0  # TU4
-        assert table["is_dynamic"][165] == 0.0  # TU5
-        # TL models are NOT dynamic
-        for key in range(181, 190):
-            assert table["is_dynamic"][key] == 0.0, (
-                f"TL model {key} should not be dynamic"
-            )
-        # SB models are NOT dynamic
-        for key in range(201, 205):
-            assert table["is_dynamic"][key] == 0.0, (
-                f"SB model {key} should not be dynamic"
-            )
-
 
 class TestUnitConversion:
     """Tests for imperial-to-metric unit conversion."""
@@ -222,25 +180,6 @@ class TestUnitConversion:
         metric = _convert_to_metric(imperial, "fuel_depth")
         expected = Q_(0.4, "ft").to("m").magnitude
         assert metric[0] == pytest.approx(expected, rel=1e-6)
-
-    def test_heat_content_conversion(self):
-        """Heat content: BTU/lb → kJ/kg."""
-        imperial = np.array([8000.0])
-        metric = _convert_to_metric(imperial, "heat_content")
-        expected = Q_(8000.0, "BTU / lb").to("kJ / kg").magnitude
-        assert metric[0] == pytest.approx(expected, rel=1e-4)
-
-    def test_moisture_of_extinction_no_conversion(self):
-        """Moisture of extinction: no conversion (unitless percentage)."""
-        values = np.array([15.0, 30.0, 40.0])
-        result = _convert_to_metric(values, "moisture_of_extinction")
-        np.testing.assert_array_equal(result, values)
-
-    def test_is_dynamic_no_conversion(self):
-        """is_dynamic: no conversion (boolean 0/1)."""
-        values = np.array([0.0, 1.0, 1.0])
-        result = _convert_to_metric(values, "is_dynamic")
-        np.testing.assert_array_equal(result, values)
 
 
 def _make_mock_source_ds(fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:32610"):
@@ -361,7 +300,7 @@ class TestFbfm40Lookup:
     def test_all_codes_all_bands(self, mock_load_zarr):
         """Every FBFM40 code produces the correct metric value for every band.
 
-        Feeds all 46 codes through the full pipeline requesting all 14
+        Feeds all 46 codes through the full pipeline requesting all 11
         bands, then independently computes the expected metric value
         from the raw SB40 table + pint conversion and compares every cell.
         """
@@ -429,8 +368,6 @@ class TestFbfm40Lookup:
             {"key": "fuel_load.1hr"},
             {"key": "savr.1hr"},
             {"key": "fuel_depth"},
-            {"key": "heat_content"},
-            {"key": "is_dynamic"},
         ]
         result = fbfm40_lookup("test-grid-id", bands, progress)
 
@@ -438,8 +375,6 @@ class TestFbfm40Lookup:
             "fuel_load.1hr",
             "savr.1hr",
             "fuel_depth",
-            "heat_content",
-            "is_dynamic",
         }
         for var in result.data_vars:
             assert result[var].shape == (2, 2)

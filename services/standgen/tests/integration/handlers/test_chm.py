@@ -32,6 +32,7 @@ from lib.gcs.blobs import delete_directory, exists
 from ..conftest import (
     DOMAINS_DIR,
     INVENTORIES_DIR,
+    MockRequest,
     _poll_for_completion,
     _run_standgen,
     _stringify_coordinates,
@@ -327,3 +328,55 @@ def test_higher_crown_ratio_reduces_tree_count(standgen_runner, module_chm_grid)
         f"A larger crown ratio ({count_wide} trees) did not reduce the total count compared "
         f"to baseline VWF ({count_base} trees)."
     )
+
+
+# --- Treatment Rejection ---
+
+
+def test_treatment_bearing_chm_inventory_fails(module_chm_grid):
+    """A CHM inventory carrying treatments fails fast (no diameter to thin against).
+
+    The API rejects this at create time; this verifies standgen's defensive guard
+    in case such a document still reaches the worker. The guard fires before the
+    grid is loaded, so the grid contents are irrelevant.
+    """
+    domain_data = load_json(DOMAINS_DIR / "blackfoot.json")
+    domain_id = f"test-{uuid4().hex}"
+    data = _stringify_coordinates(domain_data)
+    data["id"] = domain_id
+    set_document(DOMAINS_COLLECTION, domain_id, data)
+
+    inv_id = f"test-{uuid4().hex}"
+    inv_data = {
+        "id": inv_id,
+        "domain_id": domain_id,
+        "name": "CHM with treatments",
+        "status": "pending",
+        "source": {
+            "name": "chm",
+            "source_chm_grid_id": module_chm_grid,
+            "algorithm": {"name": "lmf"},
+        },
+        "treatments": [{"metric": "diameter", "method": "from_below", "value": 10.0}],
+    }
+    set_document(INVENTORIES_COLLECTION, inv_id, inv_data)
+
+    try:
+        process_inventory_request_local(inv_id)
+        _, snapshot = get_document(INVENTORIES_COLLECTION, inv_id)
+        inventory = snapshot.to_dict()
+        assert inventory["status"] == "failed"
+        assert inventory["error"]["code"] == "TREATMENTS_NOT_SUPPORTED_FOR_CHM"
+    finally:
+        gcs_path = f"gs://{INVENTORIES_BUCKET}/{inv_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        delete_document(INVENTORIES_COLLECTION, inv_id)
+        delete_document(DOMAINS_COLLECTION, domain_id)
+
+
+def process_inventory_request_local(inventory_id: str) -> None:
+    """Invoke standgen's request handler directly (status surfaced on the doc)."""
+    from standgen.main import process_inventory_request
+
+    process_inventory_request(MockRequest(data={"id": inventory_id}))

@@ -44,6 +44,22 @@ def handle_chm(
         Dict with 'georeference' key
     """
     inventory_id = inventory["id"]
+
+    # Treatments thin against tree diameter; CHM stem isolation produces only
+    # height and position (x, y, height). The API rejects this at create time —
+    # this is a defensive guard in case a treatment-bearing CHM document reaches
+    # standgen.
+    if inventory.get("treatments"):
+        raise ProcessingError(
+            code="TREATMENTS_NOT_SUPPORTED_FOR_CHM",
+            message=(
+                "Silvicultural treatments require a tree diameter (dbh) to thin "
+                "against, which CHM extraction does not produce (only height and "
+                "position)."
+            ),
+            suggestion="Remove 'treatments' from this CHM inventory.",
+        )
+
     source_chm_grid_id = source["source_chm_grid_id"]
     algorithm_config = source.get("algorithm", {})
 

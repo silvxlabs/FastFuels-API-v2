@@ -28,6 +28,7 @@ from standgen.modifications import (
     resolve_spatial_conditions,
 )
 from standgen.storage import load_grid, load_tree_table, save_parquet
+from standgen.treatments import apply_treatments
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,20 @@ def handle_pim(
                 modifications, inventory["domain_id"], domain_gdf.crs
             )
         ddf = ddf.map_partitions(apply_modifications, modifications)
+
+    # Apply treatments if present. apply_treatments keeps diameter treatments
+    # lazy (row-local, streamed per-partition) and materializes only the treated
+    # region for basal-area treatments (a global stand reduction, bounded by an
+    # area limit). It returns a lazy dask DataFrame, so the partitioned write
+    # below is unchanged.
+    treatments = inventory.get("treatments", [])
+    if treatments:
+        progress("Applying treatments...", 78)
+        if _has_spatial_condition(treatments):
+            treatments = resolve_spatial_conditions(
+                treatments, inventory["domain_id"], domain_gdf.crs
+            )
+        ddf = apply_treatments(ddf, treatments, domain_gdf, seed=seed)
 
     # Write Parquet to GCS (lazy — each partition writes separately)
     progress("Writing inventory data...", 80)

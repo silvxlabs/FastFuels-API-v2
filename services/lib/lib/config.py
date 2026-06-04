@@ -56,3 +56,6 @@ STANDGEN_SERVICE = os.getenv("STANDGEN_SERVICE", f"standgen-v2-{INFRA_ENV}")
 FEATURES_SERVICE = os.getenv("FEATURES_SERVICE", f"etcher-v2-{INFRA_ENV}")
 TREEVOX_SERVICE = os.getenv("TREEVOX_SERVICE", f"treevox-v2-{INFRA_ENV}")
 UPLOADER_SERVICE = os.getenv("UPLOADER_SERVICE", f"uploader-v2-{INFRA_ENV}")
+
+# Support contact surfaced in user-facing error messages.
+SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support.fastfuels@silvxlabs.com")

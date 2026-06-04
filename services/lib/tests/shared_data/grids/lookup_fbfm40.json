@@ -17,12 +17,6 @@
       "key": "fuel_depth",
       "type": "continuous",
       "unit": "m"
-    },
-    {
-      "index": 3,
-      "key": "moisture_of_extinction",
-      "type": "continuous",
-      "unit": "%"
     }
   ],
   "chunks": {

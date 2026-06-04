@@ -191,8 +191,6 @@ class TestCreateFbfm40Lookup:
             "fuel_load.1hr",
             "savr.1hr",
             "fuel_depth",
-            "moisture_of_extinction",
-            "heat_content",
         ]
         request_body = {
             "source_grid_id": complete_fbfm40_grid["id"],
@@ -204,7 +202,7 @@ class TestCreateFbfm40Lookup:
         assert response.status_code == 201
 
         data = response.json()
-        assert len(data["bands"]) == 5
+        assert len(data["bands"]) == 3
         for i, band_key in enumerate(bands):
             assert data["bands"][i]["key"] == band_key
             assert data["bands"][i]["index"] == i

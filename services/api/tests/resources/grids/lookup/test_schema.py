@@ -115,9 +115,9 @@ class TestFbfm40LookupSource:
 class TestFbfm40LookupBand:
     """Tests for Fbfm40LookupBand enum."""
 
-    def test_has_14_members(self):
-        """There are exactly 14 predefined bands."""
-        assert len(Fbfm40LookupBand) == 14
+    def test_has_11_members(self):
+        """There are exactly 11 predefined bands."""
+        assert len(Fbfm40LookupBand) == 11
 
     def test_fuel_load_1hr(self):
         assert Fbfm40LookupBand.fuel_load_1hr == "fuel_load.1hr"
@@ -151,15 +151,6 @@ class TestFbfm40LookupBand:
 
     def test_fuel_depth(self):
         assert Fbfm40LookupBand.fuel_depth == "fuel_depth"
-
-    def test_moisture_of_extinction(self):
-        assert Fbfm40LookupBand.moisture_of_extinction == "moisture_of_extinction"
-
-    def test_heat_content(self):
-        assert Fbfm40LookupBand.heat_content == "heat_content"
-
-    def test_is_dynamic(self):
-        assert Fbfm40LookupBand.is_dynamic == "is_dynamic"
 
     def test_created_from_string(self):
         """Bands can be created from their string value."""
@@ -289,24 +280,6 @@ class TestFbfm40LookupBandMetadata:
         meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.fuel_depth]
         assert meta["type"] == BandType.continuous
         assert meta["unit"] == "m"
-
-    def test_moisture_of_extinction_unit_is_percent(self):
-        """Moisture of extinction uses % unit."""
-        meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.moisture_of_extinction]
-        assert meta["type"] == BandType.continuous
-        assert meta["unit"] == "%"
-
-    def test_heat_content_unit_is_kj_per_kg(self):
-        """Heat content uses kJ/kg unit."""
-        meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.heat_content]
-        assert meta["type"] == BandType.continuous
-        assert meta["unit"] == "kJ/kg"
-
-    def test_is_dynamic_is_categorical(self):
-        """is_dynamic is categorical with no unit."""
-        meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.is_dynamic]
-        assert meta["type"] == BandType.categorical
-        assert meta["unit"] is None
 
     def test_all_units_are_canonical(self):
         for meta in FBFM40_LOOKUP_BAND_METADATA.values():

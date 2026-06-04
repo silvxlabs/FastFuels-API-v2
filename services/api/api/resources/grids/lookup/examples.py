@@ -32,8 +32,6 @@ EXAMPLE_FBFM40_LOOKUP_ALL_BANDS = {
         "savr.live_herb",
         "savr.live_woody",
         "fuel_depth",
-        "moisture_of_extinction",
-        "heat_content",
     ],
 }
 
@@ -52,8 +50,7 @@ CREATE_FBFM40_LOOKUP_OPENAPI_EXAMPLES = {
         "summary": "All fuel bands",
         "description": (
             "Looks up all available SB40 fuel parameters: fuel loads (5 size "
-            "classes), SAV ratios (5 size classes), fuel depth, moisture of "
-            "extinction, and heat content."
+            "classes), SAV ratios (5 size classes), and fuel depth."
         ),
     },
 }

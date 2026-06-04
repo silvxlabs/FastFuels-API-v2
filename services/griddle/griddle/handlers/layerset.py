@@ -40,17 +40,40 @@ OVERLAP_METHODS: dict[str, Callable] = {
     "min": np.min,
 }
 
-# Per-band units reported by fastfuels_core.layersets.rasterize_layerset.
-# Keep keys in sync with the published 5-band output coord. Values must be
-# in canonical ASCII UDUNITS-2 form (see docs/units.md). The drift guard
-# is in tests/handlers/test_layerset.py::TestLayersetBandUnits — matches
-# the repo-wide pattern used by uniform/topography/lookup/canopy/voxelize.
-_LAYERSET_BAND_UNITS: dict[str, str] = {
-    "loading": "kg/m**2",
-    "height": "m",
-    "live_fuel_moisture": "%",
-    "dead_fuel_moisture": "%",
-    "heat_of_combustion": "kJ/kg",
+# Per-sub-band metadata for the 5-band output of
+# fastfuels_core.layersets.rasterize_layerset. Keep keys in sync with the
+# published band coord. ``unit`` values must be in canonical ASCII UDUNITS-2
+# form (see docs/units.md); the drift guard is in
+# tests/handlers/test_layerset.py::TestLayersetBandUnits. ``name`` and
+# ``description`` give the webapp human-readable labels (parallels the
+# *_BAND_DEFS tables in the API's uniform/topography/lookup/canopy/voxelize
+# schemas). The per-fuel-type prefix is added in build_layerset_bands.
+_LAYERSET_BAND_DEFS: dict[str, dict] = {
+    "loading": {
+        "unit": "kg/m**2",
+        "name": "Fuel Loading",
+        "description": "Oven-dry fuel mass per unit area.",
+    },
+    "height": {
+        "unit": "m",
+        "name": "Fuel Height",
+        "description": "Height of the fuel bed above the surface.",
+    },
+    "live_fuel_moisture": {
+        "unit": "%",
+        "name": "Live Fuel Moisture",
+        "description": "Moisture content of live fuels (% of oven-dry weight).",
+    },
+    "dead_fuel_moisture": {
+        "unit": "%",
+        "name": "Dead Fuel Moisture",
+        "description": "Moisture content of dead fuels (% of oven-dry weight).",
+    },
+    "heat_of_combustion": {
+        "unit": "kJ/kg",
+        "name": "Heat of Combustion",
+        "description": "Energy released per unit mass of fuel consumed.",
+    },
 }
 
 # Default reprojection method when caller does not override; all layerset
@@ -207,6 +230,8 @@ def build_layerset_bands(ds: xr.Dataset) -> list[dict]:
     the API↔griddle package boundary.
 
     Each layerset band carries continuous physical units (kg/m**2, m, %, kJ/kg).
+    ``name``/``description`` are prefixed with the fuel type (the variable
+    name) so the webapp can show which fuel type a band belongs to.
     """
     bands: list[dict] = []
     idx = 0
@@ -214,12 +239,19 @@ def build_layerset_bands(ds: xr.Dataset) -> list[dict]:
         band_coord = ds[var_name].coords.get("band")
         if band_coord is None:
             continue
+        fuel_label = str(var_name).replace("_", " ").title()
         for band_name in band_coord.values:
+            sub = _LAYERSET_BAND_DEFS.get(str(band_name), {})
+            base_desc = sub.get("description")
             bands.append(
                 {
                     "key": f"{var_name}.{band_name}",
+                    "name": f"{fuel_label} {sub.get('name', band_name)}",
+                    "description": (
+                        f"{base_desc} (fuel type: {var_name})" if base_desc else None
+                    ),
                     "type": "continuous",
-                    "unit": _LAYERSET_BAND_UNITS.get(str(band_name)),
+                    "unit": sub.get("unit"),
                     "index": idx,
                 }
             )

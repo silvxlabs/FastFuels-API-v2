@@ -87,6 +87,12 @@ def test_blackfoot_example_layerset_native_rasterization(griddle_runner):
     assert unit_for["litter.live_fuel_moisture"] == "%"
     assert unit_for["shrub.heat_of_combustion"] == "kJ/kg"
 
+    # Worker-derived bands carry human-readable name/description for the webapp.
+    assert all(b.get("name") for b in bands)
+    assert all(b.get("description") for b in bands)
+    name_for = {b["key"]: b["name"] for b in bands}
+    assert name_for["shrub.loading"] == "Shrub Fuel Loading"
+
 
 def test_blackfoot_example_layerset_domain_alignment(griddle_runner):
     """Domain alignment reprojects the rasterized output to the domain's CRS.

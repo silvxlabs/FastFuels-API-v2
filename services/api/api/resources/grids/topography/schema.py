@@ -40,16 +40,22 @@ class TopographyBand(StrEnum):
 TOPOGRAPHY_BAND_DEFS = {
     TopographyBand.elevation: {
         "key": "elevation",
+        "name": "Elevation",
+        "description": "Height above sea level.",
         "type": BandType.continuous,
         "unit": "m",
     },
     TopographyBand.slope: {
         "key": "slope",
+        "name": "Slope",
+        "description": "Terrain slope (0-90 degrees).",
         "type": BandType.continuous,
         "unit": "deg",
     },
     TopographyBand.aspect: {
         "key": "aspect",
+        "name": "Aspect",
+        "description": "Downslope compass direction, degrees clockwise from north (0-360).",
         "type": BandType.continuous,
         "unit": "deg",
     },

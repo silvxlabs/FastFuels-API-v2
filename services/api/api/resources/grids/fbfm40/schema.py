@@ -78,4 +78,14 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
         return v
 
 
-FBFM40_BAND = Band(key="fbfm", type=BandType.categorical, unit=None, index=0)
+FBFM40_BAND = Band(
+    key="fbfm",
+    name="Scott & Burgan 40 Fuel Model",
+    description=(
+        "Scott & Burgan 40 fire behavior fuel model code (e.g. GR1, TL3, SH5). "
+        "Convert to fuel parameters via /grids/lookup/fbfm40."
+    ),
+    type=BandType.categorical,
+    unit=None,
+    index=0,
+)

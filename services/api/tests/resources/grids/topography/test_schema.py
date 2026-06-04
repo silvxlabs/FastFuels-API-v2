@@ -236,6 +236,8 @@ class TestBuildTopographyBands:
         bands = build_topography_bands([TopographyBand.slope])
         assert len(bands) == 1
         assert bands[0].key == "slope"
+        assert bands[0].name == "Slope"
+        assert bands[0].description
         assert bands[0].index == 0
         assert bands[0].unit == "deg"
 

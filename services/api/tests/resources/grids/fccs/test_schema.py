@@ -117,6 +117,11 @@ class TestFccsBand:
         """Band index is 0."""
         assert FCCS_BAND.index == 0
 
+    def test_has_name_and_description(self):
+        """Band carries a human-readable name and description."""
+        assert FCCS_BAND.name == "FCCS Fuelbed ID"
+        assert FCCS_BAND.description
+
 
 class TestRemoveBareGround:
     """Tests for remove_bare_ground on request and source models."""

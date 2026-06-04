@@ -200,6 +200,11 @@ class TestFbfm40Band:
         """Band index is 0."""
         assert FBFM40_BAND.index == 0
 
+    def test_has_name_and_description(self):
+        """Band carries a human-readable name and description."""
+        assert FBFM40_BAND.name == "Scott & Burgan 40 Fuel Model"
+        assert FBFM40_BAND.description
+
 
 class TestNonBurnableFuelModel:
     """Tests for NonBurnableFuelModel enum."""

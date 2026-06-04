@@ -44,20 +44,32 @@ class LandfireCanopyFuelBand(StrEnum):
 LANDFIRE_CANOPY_BAND_DEFS = {
     LandfireCanopyFuelBand.chm: {
         "key": "chm",
+        "name": "Canopy Height",
+        "description": "Height of the canopy top above ground.",
         "type": BandType.continuous,
         "unit": "m",
     },
     LandfireCanopyFuelBand.cbd: {
         "key": "cbd",
+        "name": "Canopy Bulk Density",
+        "description": "Mass of available canopy fuel per unit canopy volume.",
         "type": BandType.continuous,
         "unit": "kg/m**3",
     },
     LandfireCanopyFuelBand.cbh: {
         "key": "cbh",
+        "name": "Canopy Base Height",
+        "description": "Height above ground of the base of the live crown.",
         "type": BandType.continuous,
         "unit": "m",
     },
-    LandfireCanopyFuelBand.cc: {"key": "cc", "type": BandType.continuous, "unit": "%"},
+    LandfireCanopyFuelBand.cc: {
+        "key": "cc",
+        "name": "Canopy Cover",
+        "description": "Fraction of ground covered by tree canopy (%).",
+        "type": BandType.continuous,
+        "unit": "%",
+    },
 }
 
 
@@ -71,7 +83,14 @@ def build_landfire_canopy_bands(
     ]
 
 
-CHM_BAND = Band(key="chm", type=BandType.continuous, unit="m", index=0)
+CHM_BAND = Band(
+    key="chm",
+    name="Canopy Height",
+    description="Height of the canopy top above ground.",
+    type=BandType.continuous,
+    unit="m",
+    index=0,
+)
 
 
 class MetaCHMVersion(StrEnum):

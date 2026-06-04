@@ -222,6 +222,8 @@ class TestTreeMapBands:
         bands = build_treemap_bands([TreeMapBand.tm_id])
         assert len(bands) == 1
         assert bands[0].key == "tm_id"
+        assert bands[0].name == "TreeMap ID"
+        assert bands[0].description
         assert bands[0].type == BandType.categorical
         assert bands[0].unit is None
         assert bands[0].index == 0

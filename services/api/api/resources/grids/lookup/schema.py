@@ -58,9 +58,6 @@ class Fbfm40LookupBand(StrEnum):
     savr_live_herb = "savr.live_herb"
     savr_live_woody = "savr.live_woody"
     fuel_depth = "fuel_depth"
-    moisture_of_extinction = "moisture_of_extinction"
-    heat_content = "heat_content"
-    is_dynamic = "is_dynamic"
 
 
 class CreateFbfm40LookupRequest(BaseModel):
@@ -156,24 +153,6 @@ FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupBand, dict] = {
         "description": "Vertical depth of the surface fuel bed.",
         "type": BandType.continuous,
         "unit": "m",
-    },
-    Fbfm40LookupBand.moisture_of_extinction: {
-        "name": "Moisture of Extinction",
-        "description": "Dead fuel moisture content above which the fuel will not sustain fire spread (%).",
-        "type": BandType.continuous,
-        "unit": "%",
-    },
-    Fbfm40LookupBand.heat_content: {
-        "name": "Heat Content",
-        "description": "Heat released per unit mass of fuel consumed.",
-        "type": BandType.continuous,
-        "unit": "kJ/kg",
-    },
-    Fbfm40LookupBand.is_dynamic: {
-        "name": "Dynamic Fuel Model Flag",
-        "description": "Whether the fuel model uses dynamic live herbaceous load transfer (1) or is static (0).",
-        "type": BandType.categorical,
-        "unit": None,
     },
 }
 

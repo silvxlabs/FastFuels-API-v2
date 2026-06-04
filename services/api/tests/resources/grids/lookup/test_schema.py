@@ -267,9 +267,9 @@ class TestFbfm40LookupBandMetadata:
             Fbfm40LookupBand.fuel_load_live_herb,
             Fbfm40LookupBand.fuel_load_live_woody,
         ]:
-            band_type, unit = FBFM40_LOOKUP_BAND_METADATA[b]
-            assert band_type == BandType.continuous
-            assert unit == "kg/m**2"
+            meta = FBFM40_LOOKUP_BAND_METADATA[b]
+            assert meta["type"] == BandType.continuous
+            assert meta["unit"] == "kg/m**2"
 
     def test_savr_units_are_inverse_meters(self):
         """SAVR bands use 1/m unit."""
@@ -280,39 +280,44 @@ class TestFbfm40LookupBandMetadata:
             Fbfm40LookupBand.savr_live_herb,
             Fbfm40LookupBand.savr_live_woody,
         ]:
-            band_type, unit = FBFM40_LOOKUP_BAND_METADATA[b]
-            assert band_type == BandType.continuous
-            assert unit == "1/m"
+            meta = FBFM40_LOOKUP_BAND_METADATA[b]
+            assert meta["type"] == BandType.continuous
+            assert meta["unit"] == "1/m"
 
     def test_fuel_depth_unit_is_meters(self):
         """Fuel depth uses m unit."""
-        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.fuel_depth]
-        assert band_type == BandType.continuous
-        assert unit == "m"
+        meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.fuel_depth]
+        assert meta["type"] == BandType.continuous
+        assert meta["unit"] == "m"
 
     def test_moisture_of_extinction_unit_is_percent(self):
         """Moisture of extinction uses % unit."""
-        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[
-            Fbfm40LookupBand.moisture_of_extinction
-        ]
-        assert band_type == BandType.continuous
-        assert unit == "%"
+        meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.moisture_of_extinction]
+        assert meta["type"] == BandType.continuous
+        assert meta["unit"] == "%"
 
     def test_heat_content_unit_is_kj_per_kg(self):
         """Heat content uses kJ/kg unit."""
-        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.heat_content]
-        assert band_type == BandType.continuous
-        assert unit == "kJ/kg"
+        meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.heat_content]
+        assert meta["type"] == BandType.continuous
+        assert meta["unit"] == "kJ/kg"
 
     def test_is_dynamic_is_categorical(self):
         """is_dynamic is categorical with no unit."""
-        band_type, unit = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.is_dynamic]
-        assert band_type == BandType.categorical
-        assert unit is None
+        meta = FBFM40_LOOKUP_BAND_METADATA[Fbfm40LookupBand.is_dynamic]
+        assert meta["type"] == BandType.categorical
+        assert meta["unit"] is None
 
     def test_all_units_are_canonical(self):
-        for _band_type, unit in FBFM40_LOOKUP_BAND_METADATA.values():
-            validate_unit(unit)
+        for meta in FBFM40_LOOKUP_BAND_METADATA.values():
+            validate_unit(meta["unit"])
+
+    def test_all_bands_have_name_and_description(self):
+        """Every lookup band carries a human-readable name and description."""
+        for b in Fbfm40LookupBand:
+            meta = FBFM40_LOOKUP_BAND_METADATA[b]
+            assert meta["name"]
+            assert meta["description"]
 
 
 class TestGetFbfm40LookupBand:
@@ -329,6 +334,8 @@ class TestGetFbfm40LookupBand:
             result = get_fbfm40_lookup_band(b, i)
             assert result.key == b.value
             assert result.index == i
-            expected_type, expected_unit = FBFM40_LOOKUP_BAND_METADATA[b]
-            assert result.type == expected_type
-            assert result.unit == expected_unit
+            meta = FBFM40_LOOKUP_BAND_METADATA[b]
+            assert result.type == meta["type"]
+            assert result.unit == meta["unit"]
+            assert result.name == meta["name"]
+            assert result.description == meta["description"]

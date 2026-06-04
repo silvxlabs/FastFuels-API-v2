@@ -60,6 +60,18 @@ class Band(BaseModel):
     """A single band in a grid."""
 
     key: str = Field(..., description="Dot-notation key (e.g., 'fuel_load.1hr')")
+    name: str | None = Field(
+        None,
+        description="Human-readable display name for the band (e.g. 'TreeMap ID', '1-hour Fuel Load').",
+        examples=["TreeMap ID", "1-hour Fuel Load", "Canopy Bulk Density"],
+    )
+    description: str | None = Field(
+        None,
+        description=(
+            "Longer-form description of what the band represents and how to "
+            "interpret its values."
+        ),
+    )
     type: BandType
     unit: str | None = Field(
         None,

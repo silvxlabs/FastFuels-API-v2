@@ -91,9 +91,17 @@ class TestBuildTreeBands:
         bands = build_tree_bands([TreeBand.bulk_density_foliage_live])
         assert len(bands) == 1
         assert bands[0].key == "bulk_density.foliage.live"
+        assert bands[0].name == "Live Foliage Bulk Density"
+        assert bands[0].description
         assert bands[0].type == BandType.continuous
         assert bands[0].unit == "kg/m**3"
         assert bands[0].index == 0
+
+    def test_all_bands_have_name_and_description(self):
+        bands = build_tree_bands(list(TreeBand))
+        for band in bands:
+            assert band.name
+            assert band.description
 
     def test_indices_match_request_order(self):
         requested = [

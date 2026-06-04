@@ -232,6 +232,12 @@ class TestChmBands:
         bands = build_chm_bands()
         assert bands[0].index == 0
 
+    def test_band_has_name_and_description(self):
+        """The CHM band carries a human-readable name and description."""
+        bands = build_chm_bands()
+        assert bands[0].name == "Canopy Height"
+        assert bands[0].description
+
 
 class TestNaipChmSource:
     """Tests for NaipChmSource model."""

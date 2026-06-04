@@ -44,4 +44,14 @@ class CreateLandfireFccsRequest(CreateGridRequestBase):
     remove_bare_ground: bool = False
 
 
-FCCS_BAND = Band(key="fccs", type=BandType.categorical, unit=None, index=0)
+FCCS_BAND = Band(
+    key="fccs",
+    name="FCCS Fuelbed ID",
+    description=(
+        "Fuel Characteristic Classification System (FCCS) fuelbed identifier. "
+        "Convert to fuel parameters via /grids/lookup/fccs."
+    ),
+    type=BandType.categorical,
+    unit=None,
+    index=0,
+)

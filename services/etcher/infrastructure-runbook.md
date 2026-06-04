@@ -1,5 +1,14 @@
 # Infrastructure Runbook: VPC Egress & Cloud NAT
 
+> **Status: DECOMMISSIONED (2026-06-02).** etcher no longer uses Direct VPC
+> Egress or the shared Cloud NAT. The whole stack below (`fastfuels-run-subnet`,
+> `fastfuels-router`, `fastfuels-nat`, the static NAT IP) was torn down once
+> etcher cut over to reading OSM from the GCS FlatGeobuf snapshot
+> (`etcher/osm_source.py`) instead of the Overpass API. No Cloud Run service
+> currently routes through a VPC subnet. The provisioning steps are retained
+> for historical reference / if egress is ever needed again; the teardown that
+> was actually run is recorded in the **Decommissioning** section at the bottom.
+
 This runbook documents the manual `gcloud` commands used to provision the static IP routing for our FastFuels Cloud Run backend jobs.
 
 **Prerequisites**
@@ -74,18 +83,19 @@ gcloud tasks queues create etcher-v2-queue --location=us-west1
     --role="roles/run.invoker"
 ```
 
-## Decommissioning VPC Egress & NAT (post-Overpass migration)
+## Decommissioning VPC Egress & NAT (post-Overpass migration) — DONE 2026-06-02
 
 The Direct VPC Egress / static-NAT setup above existed **only** to route etcher's
 Overpass traffic through a non-blocked IP. etcher no longer calls Overpass — it
 reads a static OSM FlatGeobuf snapshot from GCS (see `etcher/osm_source.py`), and
-GCS/Firestore are reachable without VPC egress. Once the FlatGeobuf cutover is
-confirmed in prod, the egress and the shared NAT infra can be removed.
+GCS/Firestore are reachable without VPC egress. The cutover landed in prod via PR
+#298, and the egress + shared NAT infra were removed on 2026-06-02. The steps
+below are what was run, kept for the record.
 
 The CI deploy (`.github/workflows/etcher.yml`) only sets `--update-env-vars`, so it
-neither adds nor removes egress — this is a manual action.
+neither adds nor removes egress — this was a manual action.
 
-**1. Clear Direct VPC Egress from the etcher service.**
+**1. Cleared Direct VPC Egress from the etcher service.**
 
 ```bash
 # Confirm the current networking config first
@@ -95,14 +105,15 @@ gcloud run services describe etcher-v2-prod --region=us-west1 \
 gcloud run services update etcher-v2-prod --region=us-west1 --clear-network
 ```
 
-Re-run a smoke feature job afterward to confirm etcher still reads OSM and writes
-features without egress.
+This produced network-less revision `etcher-v2-prod-00021-6px`. A post-clear smoke
+run (`DEPLOYMENT_ENV=prod uv run pytest tests/integration/handlers/test_osm.py`)
+confirmed etcher still reads OSM and writes non-empty road/water parquet without
+egress.
 
-**2. Tear down the shared NAT infra — only after confirming no other service uses it.**
+**2. Tore down the shared NAT infra — after confirming no other service used it.**
 
-The subnet/router/NAT/IP were shared. Before deleting, verify no sibling service
-(`exporter-v2-prod`, `standgen-v2-prod`, `treevox-v2-prod`, `griddle-v2-prod`, …)
-still routes through `fastfuels-run-subnet`:
+The subnet/router/NAT/IP were shared. We first verified no Cloud Run service in any
+region still routed through `fastfuels-run-subnet` (etcher was the last one):
 
 ```bash
 for s in etcher exporter standgen treevox griddle; do
@@ -113,11 +124,14 @@ for s in etcher exporter standgen treevox griddle; do
 done
 ```
 
-Only if all are clear:
+All clear, so the stack was deleted (note the in-use NAT IP was `fastfuels-nat-ip-2`
+after an earlier rotation, not `fastfuels-nat-ip`). The idle Direct-VPC-egress
+internal address (`serverless-ipv4-*`, 10.10.0.16) auto-released after step 1, so it
+did not block the subnet delete:
 
 ```bash
 gcloud compute routers nats delete fastfuels-nat --router=fastfuels-router --region=us-west1
 gcloud compute routers delete fastfuels-router --region=us-west1
-gcloud compute addresses delete fastfuels-nat-ip --region=us-west1
+gcloud compute addresses delete fastfuels-nat-ip-2 --region=us-west1
 gcloud compute networks subnets delete fastfuels-run-subnet --region=us-west1
 ```

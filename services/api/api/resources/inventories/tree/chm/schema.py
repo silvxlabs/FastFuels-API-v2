@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
+from api.resources.inventories.treatment_models import InventoryTreatment
 
 
 class StemIsolationLmf(BaseModel):
@@ -84,4 +85,8 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
     modifications: list[InventoryModification] = Field(
         default_factory=list,
         description="Modifications to apply after stem extraction.",
+    )
+    treatments: list[InventoryTreatment] = Field(
+        default_factory=list,
+        description="Silvicultural treatments to apply after modifications.",
     )

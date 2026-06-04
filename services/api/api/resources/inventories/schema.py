@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from api.resources.inventories.modification_models import InventoryModification
+from api.resources.inventories.treatment_models import InventoryTreatment
 from api.resources.modifications import parse_modification_coordinates
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
@@ -108,6 +109,7 @@ class Inventory(BaseModel):
     modified_on: datetime | None = None
     source: dict
     modifications: list[InventoryModification] = Field(default_factory=list)
+    treatments: list[InventoryTreatment] = Field(default_factory=list)
     columns: list[Column] = Field(default_factory=list)
     georeference: InventoryGeoreference | None = Field(
         default=None,
@@ -124,15 +126,18 @@ class Inventory(BaseModel):
     def _parse_modification_coordinates(cls, data: Any) -> Any:
         """Decode stringified inline-geometry coordinates loaded from Firestore.
 
-        Inline-geometry modification conditions are stored with their
-        ``coordinates`` JSON-encoded (Firestore rejects nested arrays). Parse
-        both the top-level ``modifications`` and the ``source.modifications``
-        list (the modifications-source inventory nests them under ``source``,
-        which is an untyped dict). Idempotent on already-parsed data.
+        Inline-geometry modification/treatment conditions are stored with their
+        ``coordinates`` JSON-encoded (Firestore rejects nested arrays). Both
+        ``modifications`` and ``treatments`` are create-time fields carrying
+        spatial conditions, so decode the coordinates on each. Also decode
+        ``source.modifications`` for the (gated) modifications-source inventory.
+        Idempotent on already-parsed data.
         """
         if isinstance(data, dict):
             if isinstance(data.get("modifications"), list):
                 parse_modification_coordinates(data["modifications"])
+            if isinstance(data.get("treatments"), list):
+                parse_modification_coordinates(data["treatments"])
             source = data.get("source")
             if isinstance(source, dict) and isinstance(
                 source.get("modifications"), list

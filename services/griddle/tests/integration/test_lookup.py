@@ -27,7 +27,6 @@ def test_fbfm40_lookup(griddle_runner, source_grid):
         "fuel_load.1hr",
         "fuel_load.10hr",
         "fuel_depth",
-        "moisture_of_extinction",
     ]:
         assert var in ds.data_vars, f"Missing variable: {var}"
         assert ds[var].dims == ("y", "x")

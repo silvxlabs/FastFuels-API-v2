@@ -68,9 +68,6 @@ async def create_fbfm40_lookup(
       - `savr.1hr`, `savr.10hr`, `savr.100hr` - Dead fuel SAV ratios (1/m)
       - `savr.live_herb`, `savr.live_woody` - Live fuel SAV ratios (1/m)
       - `fuel_depth` - Fuel bed depth (m)
-      - `moisture_of_extinction` - Dead fuel moisture of extinction (%)
-      - `heat_content` - Fuel heat content (kJ/kg)
-      - `is_dynamic` - Whether the fuel model is dynamic (0 or 1)
     - **source_band**: (optional) Band in source grid containing FBFM codes. Defaults to `"fbfm"`.
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.

@@ -79,9 +79,6 @@ UNIT_CONVERSIONS = {
     "fuel_load": ("short_ton / acre", "kg / m**2"),
     "savr": ("1 / ft", "1 / m"),
     "fuel_depth": ("ft", "m"),
-    "moisture_of_extinction": (None, None),
-    "heat_content": ("BTU / lb", "kJ / kg"),
-    "is_dynamic": (None, None),
 }
 
 # All quantity columns in the CSV
@@ -97,9 +94,6 @@ QUANTITY_COLUMNS = [
     "savr_live_herb",
     "savr_live_woody",
     "fuel_depth",
-    "moisture_of_extinction",
-    "heat_content",
-    "is_dynamic",
 ]
 
 # Map from band key (dot-notation) to CSV column name
@@ -115,9 +109,6 @@ BAND_KEY_TO_COLUMN = {
     "savr.live_herb": "savr_live_herb",
     "savr.live_woody": "savr_live_woody",
     "fuel_depth": "fuel_depth",
-    "moisture_of_extinction": "moisture_of_extinction",
-    "heat_content": "heat_content",
-    "is_dynamic": "is_dynamic",
 }
 
 
@@ -150,12 +141,7 @@ def _load_sb40_table() -> dict[str, np.ndarray]:
             if key > MAX_FBFM40_KEY:
                 continue
             for col in QUANTITY_COLUMNS:
-                if col == "is_dynamic":
-                    arrays[col][key] = (
-                        1.0 if row[col].strip().lower() == "true" else 0.0
-                    )
-                else:
-                    arrays[col][key] = float(row[col])
+                arrays[col][key] = float(row[col])
 
     return arrays
 

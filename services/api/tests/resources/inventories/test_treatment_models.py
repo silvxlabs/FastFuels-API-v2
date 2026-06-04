@@ -1,20 +1,23 @@
 """
 Unit tests for inventory silvicultural treatment schemas.
 
-Tests InventoryTreatmentMethod, InventoryTreatmentTarget, InventoryTreatment,
-and that treatments are accepted as a create-time field on the PIM create
-request.
+Tests the InventoryTreatment discriminated union (InventoryDiameterTreatment /
+InventoryBasalAreaTreatment) and that treatments are accepted as a create-time
+field on the PIM create request.
 """
 
 import pytest
 from api.resources.inventories.treatment_models import (
+    InventoryBasalAreaTreatment,
+    InventoryDiameterTreatment,
     InventoryTreatment,
     InventoryTreatmentMethod,
-    InventoryTreatmentTarget,
 )
 from api.resources.inventories.tree.pim.examples import EXAMPLE_PIM_WITH_TREATMENT
 from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
+
+TREATMENT_ADAPTER = TypeAdapter(InventoryTreatment)
 
 GEOMETRY_CONDITION = {
     "source": "geometry",
@@ -45,105 +48,74 @@ class TestInventoryTreatmentMethod:
         }
 
 
-class TestInventoryTreatmentTarget:
-    def test_diameter_only(self):
-        target = InventoryTreatmentTarget(diameter=30.0)
-        assert target.diameter == 30.0
-        assert target.basal_area is None
+class TestInventoryDiameterTreatment:
+    @pytest.mark.parametrize("method", ["from_below", "from_above"])
+    def test_valid_directional(self, method):
+        t = InventoryDiameterTreatment(method=method, value=30.0)
+        assert t.metric == "diameter"
+        assert t.conditions == []
 
-    def test_basal_area_only(self):
-        target = InventoryTreatmentTarget(basal_area=25.0)
-        assert target.basal_area == 25.0
-        assert target.diameter is None
-
-    def test_both_metrics_rejected(self):
+    def test_proportional_rejected(self):
+        # proportional is not a member of the diameter variant's method Literal.
         with pytest.raises(ValidationError):
-            InventoryTreatmentTarget(diameter=30.0, basal_area=25.0)
+            InventoryDiameterTreatment(method="proportional", value=30.0)
 
-    def test_no_metric_rejected(self):
+    def test_non_positive_value_rejected(self):
         with pytest.raises(ValidationError):
-            InventoryTreatmentTarget()
+            InventoryDiameterTreatment(method="from_below", value=0)
 
-    @pytest.mark.parametrize("field", ["diameter", "basal_area"])
-    def test_non_positive_rejected(self, field):
+    def test_inches_unit(self):
+        t = InventoryDiameterTreatment(method="from_below", value=12.0, unit="in")
+        assert t.unit == "in"
+
+    def test_incompatible_unit_rejected(self):
         with pytest.raises(ValidationError):
-            InventoryTreatmentTarget(**{field: 0})
-        with pytest.raises(ValidationError):
-            InventoryTreatmentTarget(**{field: -1.0})
-
-    def test_diameter_inches_unit(self):
-        target = InventoryTreatmentTarget(diameter=12.0, unit="in")
-        assert target.unit == "in"
-
-    def test_basal_area_imperial_unit(self):
-        target = InventoryTreatmentTarget(basal_area=80.0, unit="ft**2/acre")
-        assert target.unit == "ft**2/acre"
+            InventoryDiameterTreatment(method="from_below", value=30.0, unit="kg")
 
     def test_non_canonical_unit_rejected(self):
         with pytest.raises(ValidationError):
-            InventoryTreatmentTarget(basal_area=80.0, unit="ft^2/acre")
+            InventoryDiameterTreatment(method="from_below", value=30.0, unit="ft^2")
 
-    def test_diameter_incompatible_unit_rejected(self):
-        with pytest.raises(ValidationError):
-            InventoryTreatmentTarget(diameter=30.0, unit="kg")
 
-    def test_basal_area_incompatible_unit_rejected(self):
+class TestInventoryBasalAreaTreatment:
+    @pytest.mark.parametrize("method", ["from_below", "from_above", "proportional"])
+    def test_valid_methods(self, method):
+        t = InventoryBasalAreaTreatment(method=method, value=25.0)
+        assert t.metric == "basal_area"
+
+    def test_non_positive_value_rejected(self):
         with pytest.raises(ValidationError):
-            InventoryTreatmentTarget(basal_area=25.0, unit="m")
+            InventoryBasalAreaTreatment(method="proportional", value=-1.0)
+
+    def test_imperial_unit(self):
+        t = InventoryBasalAreaTreatment(
+            method="from_above", value=80.0, unit="ft**2/acre"
+        )
+        assert t.unit == "ft**2/acre"
+
+    def test_incompatible_unit_rejected(self):
+        with pytest.raises(ValidationError):
+            InventoryBasalAreaTreatment(method="from_below", value=25.0, unit="m")
 
     def test_unknown_unit_rejected(self):
         with pytest.raises(ValidationError):
-            InventoryTreatmentTarget(basal_area=25.0, unit="bogus")
-
-
-class TestInventoryTreatment:
-    def test_from_below_diameter(self):
-        t = InventoryTreatment(method="from_below", target={"diameter": 30.0})
-        assert t.method == InventoryTreatmentMethod.from_below
-        assert t.conditions == []
-
-    def test_from_above_basal_area(self):
-        t = InventoryTreatment(method="from_above", target={"basal_area": 20.0})
-        assert t.method == InventoryTreatmentMethod.from_above
-
-    def test_proportional_basal_area(self):
-        t = InventoryTreatment(method="proportional", target={"basal_area": 15.0})
-        assert t.method == InventoryTreatmentMethod.proportional
-
-    def test_proportional_diameter_rejected(self):
-        # No proportional-to-diameter operation exists.
-        with pytest.raises(ValidationError):
-            InventoryTreatment(method="proportional", target={"diameter": 30.0})
-
-    def test_unknown_method_rejected(self):
-        with pytest.raises(ValidationError):
-            InventoryTreatment(method="random", target={"basal_area": 15.0})
-
-    def test_missing_target_rejected(self):
-        with pytest.raises(ValidationError):
-            InventoryTreatment(method="from_below")
+            InventoryBasalAreaTreatment(method="from_below", value=25.0, unit="bogus")
 
     def test_with_geometry_condition(self):
-        t = InventoryTreatment(
-            method="from_below",
-            target={"basal_area": 18.0},
-            conditions=[GEOMETRY_CONDITION],
+        t = InventoryBasalAreaTreatment(
+            method="from_below", value=18.0, conditions=[GEOMETRY_CONDITION]
         )
         assert len(t.conditions) == 1
 
     def test_with_feature_condition(self):
-        t = InventoryTreatment(
-            method="from_above",
-            target={"basal_area": 20.0},
-            conditions=[FEATURE_CONDITION],
+        t = InventoryBasalAreaTreatment(
+            method="from_above", value=20.0, conditions=[FEATURE_CONDITION]
         )
         assert t.conditions[0].feature_id == "feat_abc"
 
     def test_single_condition_converted_to_list(self):
-        t = InventoryTreatment(
-            method="from_below",
-            target={"basal_area": 18.0},
-            conditions=GEOMETRY_CONDITION,
+        t = InventoryBasalAreaTreatment(
+            method="from_below", value=18.0, conditions=GEOMETRY_CONDITION
         )
         assert isinstance(t.conditions, list)
         assert len(t.conditions) == 1
@@ -151,10 +123,40 @@ class TestInventoryTreatment:
     def test_attribute_condition_rejected(self):
         # Treatments accept spatial conditions only.
         with pytest.raises(ValidationError):
-            InventoryTreatment(
+            InventoryBasalAreaTreatment(
                 method="from_below",
-                target={"basal_area": 18.0},
+                value=18.0,
                 conditions=[{"attribute": "dbh", "operator": "lt", "value": 5.0}],
+            )
+
+
+class TestInventoryTreatmentDiscrimination:
+    def test_diameter_variant(self):
+        t = TREATMENT_ADAPTER.validate_python(
+            {"metric": "diameter", "method": "from_below", "value": 30.0}
+        )
+        assert isinstance(t, InventoryDiameterTreatment)
+
+    def test_basal_area_variant(self):
+        t = TREATMENT_ADAPTER.validate_python(
+            {"metric": "basal_area", "method": "proportional", "value": 25.0}
+        )
+        assert isinstance(t, InventoryBasalAreaTreatment)
+
+    def test_proportional_diameter_rejected_through_union(self):
+        with pytest.raises(ValidationError):
+            TREATMENT_ADAPTER.validate_python(
+                {"metric": "diameter", "method": "proportional", "value": 30.0}
+            )
+
+    def test_missing_metric_rejected(self):
+        with pytest.raises(ValidationError):
+            TREATMENT_ADAPTER.validate_python({"method": "from_below", "value": 30.0})
+
+    def test_unknown_metric_rejected(self):
+        with pytest.raises(ValidationError):
+            TREATMENT_ADAPTER.validate_python(
+                {"metric": "trees_per_hectare", "method": "from_below", "value": 200}
             )
 
 
@@ -167,10 +169,11 @@ class TestCreateRequestAcceptsTreatments:
         req = CreatePimInventoryRequest(
             source_pim_grid_id="grid_1",
             seed=42,
-            treatments=[{"method": "from_below", "target": {"diameter": 30.0}}],
+            treatments=[{"metric": "diameter", "method": "from_below", "value": 30.0}],
         )
         assert len(req.treatments) == 1
-        assert req.treatments[0].target.diameter == 30.0
+        assert isinstance(req.treatments[0], InventoryDiameterTreatment)
+        assert req.treatments[0].value == 30.0
 
     def test_openapi_example_round_trips(self):
         req = CreatePimInventoryRequest(**EXAMPLE_PIM_WITH_TREATMENT)

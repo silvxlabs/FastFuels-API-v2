@@ -50,8 +50,9 @@ EXAMPLE_PIM_WITH_TREATMENT = {
     "name": "Thin to 25 m2/ha",
     "treatments": [
         {
+            "metric": "basal_area",
             "method": "from_below",
-            "target": {"basal_area": 25.0},
+            "value": 25.0,
         }
     ],
 }

@@ -127,6 +127,7 @@ async def create_tree_inventory_grid(
 
     source = TreeInventoryVoxelizationSource(
         source_inventory_id=body.source_inventory_id,
+        source_inventory_checksum=inventory_data.get("checksum"),
         resolution=body.resolution,
         bands=body.bands,
         crown_profile_model=body.crown_profile_model,
@@ -139,6 +140,7 @@ async def create_tree_inventory_grid(
 
     grid_data = {
         "id": grid_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "name": body.name,
         "description": body.description,

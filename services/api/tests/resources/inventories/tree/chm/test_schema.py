@@ -118,6 +118,24 @@ class TestChmInventorySource:
         with pytest.raises(ValidationError):
             ChmInventorySource(source_chm_grid_id="grid123")
 
+    def test_source_chm_grid_checksum_defaults_to_none(self):
+        """source_chm_grid_checksum defaults to None when not captured."""
+        source = ChmInventorySource(
+            source_chm_grid_id="grid123",
+            algorithm=StemIsolationLmf(),
+        )
+        assert source.source_chm_grid_checksum is None
+
+    def test_source_chm_grid_checksum_round_trips(self):
+        """source_chm_grid_checksum is carried through serialization."""
+        source = ChmInventorySource(
+            source_chm_grid_id="grid123",
+            source_chm_grid_checksum="sum123",
+            algorithm=StemIsolationLmf(),
+        )
+        assert source.source_chm_grid_checksum == "sum123"
+        assert source.model_dump()["source_chm_grid_checksum"] == "sum123"
+
 
 class TestCreateChmInventoryRequest:
     """Tests for CreateChmInventoryRequest model."""

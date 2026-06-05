@@ -111,6 +111,19 @@ class TestFbfm40LookupSource:
         assert data["source_grid_id"] == "grid-123"
         assert data["source_band"] == "fbfm"
 
+    def test_source_grid_checksum_defaults_to_none(self):
+        """source_grid_checksum defaults to None when not captured."""
+        source = Fbfm40LookupSource(source_grid_id="grid-123")
+        assert source.source_grid_checksum is None
+
+    def test_source_grid_checksum_round_trips(self):
+        """source_grid_checksum is carried through serialization."""
+        source = Fbfm40LookupSource(
+            source_grid_id="grid-123", source_grid_checksum="sum123"
+        )
+        assert source.source_grid_checksum == "sum123"
+        assert source.model_dump()["source_grid_checksum"] == "sum123"
+
 
 class TestFbfm40LookupBand:
     """Tests for Fbfm40LookupBand enum."""

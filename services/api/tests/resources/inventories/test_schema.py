@@ -146,6 +146,17 @@ class TestInventory:
         assert inv.tags == []
         assert inv.progress is None
 
+    def test_checksum_defaults_to_none(self):
+        """checksum defaults to None when absent (e.g. legacy documents)."""
+        inv = self._make_inventory()
+        assert inv.checksum is None
+
+    def test_checksum_round_trips(self):
+        """checksum is carried through the model and serialization."""
+        inv = self._make_inventory(checksum="cafe" * 8)
+        assert inv.checksum == "cafe" * 8
+        assert inv.model_dump()["checksum"] == "cafe" * 8
+
     def test_inventory_with_georeference(self):
         geo = {
             "crs": "EPSG:32611",
@@ -222,6 +233,24 @@ class TestPimInventorySource:
         assert data["source_pim_grid_id"] == "grid123"
         assert data["point_process"] == "inhomogeneous_poisson"
         assert data["seed"] == 42
+
+    def test_source_pim_grid_checksum_defaults_to_none(self):
+        source = PimInventorySource(
+            source_pim_grid_id="grid123",
+            point_process="inhomogeneous_poisson",
+            seed=42,
+        )
+        assert source.source_pim_grid_checksum is None
+
+    def test_source_pim_grid_checksum_round_trips(self):
+        source = PimInventorySource(
+            source_pim_grid_id="grid123",
+            source_pim_grid_checksum="sum123",
+            point_process="inhomogeneous_poisson",
+            seed=42,
+        )
+        assert source.source_pim_grid_checksum == "sum123"
+        assert source.model_dump()["source_pim_grid_checksum"] == "sum123"
 
 
 class TestCreatePimInventoryRequest:

@@ -326,6 +326,24 @@ class TestModificationsInventorySource:
                 modifications=[],
             )
 
+    def test_source_inventory_checksum_defaults_to_none(self):
+        """source_inventory_checksum defaults to None when not captured."""
+        source = ModificationsInventorySource(
+            source_inventory_id="inv123",
+            modifications=[{"conditions": [], "actions": []}],
+        )
+        assert source.source_inventory_checksum is None
+
+    def test_source_inventory_checksum_round_trips(self):
+        """source_inventory_checksum is carried through serialization."""
+        source = ModificationsInventorySource(
+            source_inventory_id="inv123",
+            source_inventory_checksum="sum123",
+            modifications=[{"conditions": [], "actions": []}],
+        )
+        assert source.source_inventory_checksum == "sum123"
+        assert source.model_dump()["source_inventory_checksum"] == "sum123"
+
 
 class TestApplyModificationsRequest:
     def test_basic_request(self):

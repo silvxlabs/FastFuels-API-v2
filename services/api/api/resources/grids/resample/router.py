@@ -134,11 +134,13 @@ async def create_resample(
     request_time = datetime.now()
     source = ResampleSource(
         source_grid_id=body.source_grid_id,
+        source_grid_checksum=source_grid_data.get("checksum"),
         alignment=alignment,
         method_overrides=body.method_overrides,
     )
     grid_data = {
         "id": grid_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "name": body.name,
         "description": body.description,

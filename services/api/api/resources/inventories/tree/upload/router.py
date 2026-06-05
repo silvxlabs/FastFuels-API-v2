@@ -90,6 +90,7 @@ async def create_inventory_upload(
 
     inventory_data = {
         "id": inventory_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "type": "tree",
         "name": body.name,

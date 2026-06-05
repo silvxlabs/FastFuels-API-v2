@@ -27,6 +27,14 @@ class PimInventorySource(BaseModel):
 
     name: Literal["pim"] = "pim"
     source_pim_grid_id: str
+    source_pim_grid_checksum: str | None = Field(
+        default=None,
+        description=(
+            "The source PIM grid's `checksum` at the time this inventory was "
+            "created from it. Compare it against the source grid's current "
+            "`checksum` to tell whether the source has changed since."
+        ),
+    )
     point_process: PointProcess
     seed: int
 

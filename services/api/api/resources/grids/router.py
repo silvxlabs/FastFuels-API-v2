@@ -376,6 +376,8 @@ async def update_grid(
 
     - **id**, **domain_id**, **source**, **modifications**, **bands**, **georeference**
     - **created_on** (creation timestamp is permanent)
+    - **checksum** (changes only when the grid's content is rebuilt, never via
+      metadata updates)
 
     The **modified_on** field is automatically updated.
 

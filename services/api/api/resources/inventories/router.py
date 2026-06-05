@@ -325,6 +325,8 @@ async def update_inventory(
 
     - **id**, **domain_id**, **type**, **source**, **modifications**, **georeference**
     - **created_on** (creation timestamp is permanent)
+    - **checksum** (changes only when the inventory's content is rebuilt, never
+      via metadata updates)
 
     The **modified_on** field is automatically updated.
 

@@ -107,6 +107,17 @@ class Inventory(BaseModel):
     )
     created_on: datetime | None = None
     modified_on: datetime | None = None
+    checksum: str | None = Field(
+        default=None,
+        description=(
+            "Version marker for this inventory's content. It changes each time the "
+            "inventory is rebuilt and is unaffected by metadata-only edits (name, "
+            "description, tags). A resource derived from this inventory stores the "
+            "checksum it was built from; comparing that stored value against this "
+            "field reveals whether this inventory has changed since. May be null "
+            "for inventories created before checksums were introduced."
+        ),
+    )
     source: dict
     modifications: list[InventoryModification] = Field(default_factory=list)
     treatments: list[InventoryTreatment] = Field(default_factory=list)

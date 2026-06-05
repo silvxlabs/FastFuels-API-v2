@@ -120,11 +120,13 @@ async def create_chm_inventory(
 
     source = ChmInventorySource(
         source_chm_grid_id=body.source_chm_grid_id,
+        source_chm_grid_checksum=source_grid_data.get("checksum"),
         algorithm=body.algorithm,
     )
 
     inventory_data = {
         "id": inventory_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "type": body.type.value,
         "name": body.name,

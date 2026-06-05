@@ -21,6 +21,7 @@ from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from standgen.dispatch import dispatch_handler
 from standgen.handlers.modifications import apply_in_place_modifications
+from standgen.handlers.treatments import apply_in_place_treatments
 from standgen.storage import delete_parquet
 
 
@@ -189,14 +190,18 @@ def process_inventory_request(request: Request):
     try:
         domain_gdf = _load_domain(inventory["domain_id"])
         progress_callback = make_progress_callback(inventory_id)
-        # An in-place modification queues only the new delta in
-        # pending_modifications; apply it to the inventory's own data rather
-        # than re-deriving from the root source.
+        # An in-place modification or treatment queues only the new delta in
+        # pending_modifications / pending_treatments; apply it to the inventory's
+        # own data rather than re-deriving from the root source. The two are
+        # mutually exclusive per request — each endpoint sets only its own queue.
         if inventory.get("pending_modifications"):
             result = apply_in_place_modifications(
                 inventory, domain_gdf, progress_callback
             )
             completion_extra = {"pending_modifications": []}
+        elif inventory.get("pending_treatments"):
+            result = apply_in_place_treatments(inventory, domain_gdf, progress_callback)
+            completion_extra = {"pending_treatments": []}
         else:
             result = dispatch_handler(inventory, domain_gdf, progress_callback)
             completion_extra = None

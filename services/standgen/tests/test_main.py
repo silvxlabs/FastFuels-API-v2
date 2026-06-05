@@ -51,6 +51,7 @@ def test_happy_path(
         "test-inventory-123",
         "completed",
         georeference={"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
+        extra=None,
     )
 
 

@@ -21,6 +21,7 @@ from fastapi import (
     Response,
     status,
 )
+from google.api_core.exceptions import NotFound
 
 from api.db.blobs import copy_directory, delete_directory_safe
 from api.db.documents import (
@@ -33,6 +34,9 @@ from api.db.documents import (
 from api.dependencies import VerifiedDomain
 from api.resources.inventories.cache import get_inventory_metadata, read_partition
 from api.resources.inventories.exports.router import router as exports_router
+from api.resources.inventories.modifications.router import (
+    router as modifications_router,
+)
 from api.resources.inventories.schema import (
     DuplicateInventoryRequest,
     Inventory,
@@ -418,20 +422,28 @@ async def _copy_inventory_data(source_id: str, new_id: str) -> None:
         )
     except Exception:
         logger.exception("Failed to copy inventory data %s -> %s", source_id, new_id)
-        await update_document_async(
-            COLLECTION,
-            new_id,
-            {
-                "status": JobStatus.failed.value,
-                "modified_on": datetime.now(),
-                "error": {
-                    "code": "INVENTORY_DUPLICATE_COPY_FAILED",
-                    "message": "Failed to copy inventory data during duplication.",
-                    "suggestion": "Retry the duplicate request.",
-                    "traceback": traceback.format_exc(),
+        try:
+            await update_document_async(
+                COLLECTION,
+                new_id,
+                {
+                    "status": JobStatus.failed.value,
+                    "modified_on": datetime.now(),
+                    "error": {
+                        "code": "INVENTORY_DUPLICATE_COPY_FAILED",
+                        "message": "Failed to copy inventory data during duplication.",
+                        "suggestion": "Retry the duplicate request.",
+                        "traceback": traceback.format_exc(),
+                    },
                 },
-            },
-        )
+            )
+        except NotFound:
+            # The new inventory was deleted (e.g. cancelled) before the copy
+            # finished — there is no document left to mark failed.
+            logger.info(
+                "Duplicate target %s no longer exists; skipping failure update",
+                new_id,
+            )
 
 
 @router.post(
@@ -732,11 +744,11 @@ async def get_inventory_data(
 
 
 router.include_router(tree_router, prefix="/tree")
-# router.include_router(
-#     modifications_router,
-#     prefix="/{inventory_id}/modifications",
-#     tags=["Inventories - Modifications"],
-# )
+router.include_router(
+    modifications_router,
+    prefix="/{inventory_id}/modifications",
+    tags=["Inventories - Modifications"],
+)
 router.include_router(
     exports_router,
     prefix="/{inventory_id}/exports",

@@ -50,6 +50,9 @@ from api.resources.inventories.schema import (
     ListInventoriesResponse,
     UpdateInventoryRequestBody,
 )
+from api.resources.inventories.treatments.router import (
+    router as treatments_router,
+)
 from api.resources.inventories.tree.router import router as tree_router
 from api.schema import JobStatus, SortOrder
 from lib.config import INVENTORIES_BUCKET, INVENTORIES_COLLECTION
@@ -750,6 +753,11 @@ router.include_router(
     modifications_router,
     prefix="/{inventory_id}/modifications",
     tags=["Inventories - Modifications"],
+)
+router.include_router(
+    treatments_router,
+    prefix="/{inventory_id}/treatments",
+    tags=["Inventories - Treatments"],
 )
 router.include_router(
     exports_router,

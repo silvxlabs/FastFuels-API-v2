@@ -6,6 +6,9 @@ Algorithm-specific creation endpoints are in their respective subdirectories.
 """
 
 import io
+import logging
+import traceback
+import uuid
 from datetime import datetime
 
 from fastapi import (
@@ -19,17 +22,19 @@ from fastapi import (
     status,
 )
 
-from api.db.blobs import delete_directory_safe
+from api.db.blobs import copy_directory, delete_directory_safe
 from api.db.documents import (
     delete_document_async,
     get_document_async,
     list_documents_async,
+    set_document_async,
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
 from api.resources.inventories.cache import get_inventory_metadata, read_partition
 from api.resources.inventories.exports.router import router as exports_router
 from api.resources.inventories.schema import (
+    DuplicateInventoryRequest,
     Inventory,
     InventoryDataFormat,
     InventoryDataMetadata,
@@ -42,8 +47,10 @@ from api.resources.inventories.schema import (
     UpdateInventoryRequestBody,
 )
 from api.resources.inventories.tree.router import router as tree_router
-from api.schema import SortOrder
+from api.schema import JobStatus, SortOrder
 from lib.config import INVENTORIES_BUCKET, INVENTORIES_COLLECTION
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 wildcard_router = APIRouter()
@@ -393,6 +400,142 @@ async def delete_inventory(
     )
 
     background_tasks.add_task(delete_directory_safe, INVENTORIES_BUCKET, inventory_id)
+
+
+async def _copy_inventory_data(source_id: str, new_id: str) -> None:
+    """Background task: server-side copy the parquet artifact from the source
+    inventory to the new one, then flip the new inventory to ``completed``.
+
+    On any failure the new inventory is marked ``failed`` with a structured
+    error so the dangling ``pending`` document never lingers.
+    """
+    try:
+        await copy_directory(INVENTORIES_BUCKET, source_id, new_id)
+        await update_document_async(
+            COLLECTION,
+            new_id,
+            {"status": JobStatus.completed.value, "modified_on": datetime.now()},
+        )
+    except Exception:
+        logger.exception("Failed to copy inventory data %s -> %s", source_id, new_id)
+        await update_document_async(
+            COLLECTION,
+            new_id,
+            {
+                "status": JobStatus.failed.value,
+                "modified_on": datetime.now(),
+                "error": {
+                    "code": "INVENTORY_DUPLICATE_COPY_FAILED",
+                    "message": "Failed to copy inventory data during duplication.",
+                    "suggestion": "Retry the duplicate request.",
+                    "traceback": traceback.format_exc(),
+                },
+            },
+        )
+
+
+@router.post(
+    "/{inventory_id}/duplicate",
+    response_model=Inventory,
+    status_code=status.HTTP_201_CREATED,
+    summary="Duplicate an inventory",
+)
+async def duplicate_inventory(
+    request: Request,
+    domain: VerifiedDomain,
+    inventory_id: str,
+    background_tasks: BackgroundTasks,
+    body: DuplicateInventoryRequest | None = None,
+):
+    """
+    # Duplicate an Inventory
+
+    Creates an independent **copy** of a completed inventory under a new ID.
+    Use this to branch a scenario: duplicate, then edit the copy in place while
+    the original stays untouched.
+
+    This is a true clone, not a re-derivation. The finished data is byte-copied;
+    no regeneration is performed. The copy carries over the source's `source`,
+    `modifications`, `treatments`, `columns`, `georeference`, and `checksum`
+    verbatim — only its `id` and timestamps differ.
+
+    ## Request Body (optional)
+
+    All fields are optional. Any field omitted is carried over from the source.
+
+    - **name**: Name for the copy.
+    - **description**: Description for the copy.
+    - **tags**: Tags for the copy.
+
+    Send no body at all to copy the metadata unchanged.
+
+    ## Response
+
+    Returns the new Inventory with status `"pending"`. The data is copied in the
+    background; the status transitions to `"completed"` once the copy finishes
+    (or `"failed"` if it does not). Data endpoints (`/data`) become available
+    only after the copy completes. The source inventory is unchanged.
+
+    ## Error Responses
+
+    - **404 Not Found**: The source inventory does not exist, is not owned by the
+      caller, or is not in this domain.
+    - **422 Unprocessable Content**: The source inventory exists but is not yet
+      `completed`, so there is no finished artifact to copy.
+    """
+    owner_id = request.state.id
+    domain_id = domain["id"]
+
+    # Source must exist, be owned, in this domain, and completed.
+    _, source_snapshot = await get_document_async(
+        COLLECTION,
+        inventory_id,
+        owner_id=owner_id,
+        domain_id=domain_id,
+        document_status="completed",
+    )
+    source_data = source_snapshot.to_dict()
+
+    overrides = body or DuplicateInventoryRequest()
+    new_inventory_id = uuid.uuid4().hex
+    request_time = datetime.now()
+
+    inventory_data = {
+        # Carry over source, checksum, modifications, treatments, columns,
+        # georeference, and type verbatim; override identity, timestamps,
+        # transient status fields, and any supplied metadata.
+        **source_data,
+        "id": new_inventory_id,
+        "owner_id": owner_id,
+        "created_on": request_time,
+        "modified_on": request_time,
+        "status": JobStatus.pending.value,
+        "progress": None,
+        "error": None,
+        "name": (
+            overrides.name
+            if overrides.name is not None
+            else source_data.get("name", "")
+        ),
+        "description": (
+            overrides.description
+            if overrides.description is not None
+            else source_data.get("description", "")
+        ),
+        "tags": (
+            overrides.tags
+            if overrides.tags is not None
+            else source_data.get("tags", [])
+        ),
+    }
+
+    # Write the document before constructing the response model: the Inventory
+    # before-validator decodes stringified modification/treatment coordinates in
+    # place, so building it first would corrupt the values written to Firestore.
+    await set_document_async(COLLECTION, new_inventory_id, inventory_data)
+    background_tasks.add_task(_copy_inventory_data, inventory_id, new_inventory_id)
+
+    return Inventory(**inventory_data)
 
 
 @router.get(

@@ -95,7 +95,9 @@ class Column(BaseModel):
     unit: str | None = None
 
 
-# Base columns always present in a tree inventory
+# Full column set of a PIM-expanded tree inventory. Other sources carry a
+# subset: CHM produces CHM_INVENTORY_COLUMNS; uploads carry whichever optional
+# columns the file contains (the uploader records the actual set on completion).
 BASE_INVENTORY_COLUMNS = [
     Column(key="x", type=ColumnType.continuous, unit="m"),
     Column(key="y", type=ColumnType.continuous, unit="m"),
@@ -104,6 +106,15 @@ BASE_INVENTORY_COLUMNS = [
     Column(key="dbh", type=ColumnType.continuous, unit="cm"),
     Column(key="height", type=ColumnType.continuous, unit="m"),
     Column(key="crown_ratio", type=ColumnType.continuous),
+]
+
+# Columns produced by CHM stem isolation: height and position only — no dbh,
+# species, or crown ratio. Treatments thin against dbh, so they cannot be
+# applied to a CHM-derived inventory.
+CHM_INVENTORY_COLUMNS = [
+    Column(key="x", type=ColumnType.continuous, unit="m"),
+    Column(key="y", type=ColumnType.continuous, unit="m"),
+    Column(key="height", type=ColumnType.continuous, unit="m"),
 ]
 
 

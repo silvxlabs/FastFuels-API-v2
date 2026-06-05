@@ -13,6 +13,7 @@ HTTP requests and interact with Firestore.
 import uuid
 
 import pytest
+from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS
 from api.resources.inventories.treatments.examples import (
     ALL_TREATMENTS_EXAMPLE_VALUES,
 )
@@ -21,13 +22,10 @@ from api.resources.inventories.treatments.schema import ApplyTreatmentsRequest
 from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION, INVENTORIES_COLLECTION
 from tests.fixtures import make_domain_data, make_feature_data, make_inventory_data
 
-# Columns produced by a CHM stem-isolation inventory: height and position only,
-# no dbh. Treatments thin against diameter, so they cannot be applied here.
-CHM_COLUMNS = [
-    {"key": "x", "type": "continuous", "unit": "m"},
-    {"key": "y", "type": "continuous", "unit": "m"},
-    {"key": "height", "type": "continuous", "unit": "m"},
-]
+# Columns the CHM create endpoint stores: height and position only, no dbh.
+# Shared with the router so the fixture cannot drift from what production
+# documents actually contain.
+CHM_COLUMNS = [c.model_dump() for c in CHM_INVENTORY_COLUMNS]
 
 
 @pytest.fixture

@@ -16,6 +16,8 @@ import pytest
 from shapely.geometry import box
 from standgen.handlers.treatments import apply_in_place_treatments
 
+from lib.errors import ProcessingError
+
 
 @pytest.fixture
 def sample_ddf():
@@ -176,3 +178,27 @@ class TestApplyInPlaceTreatments:
         assert (result_df["dbh"] >= 5.0).all()
         assert (result_df["dbh"] <= 45.0).all()
         assert len(result_df) < len(sample_ddf.compute())
+
+    @patch("standgen.handlers.treatments.save_parquet_replace")
+    @patch("standgen.handlers.treatments.load_inventory_parquet")
+    def test_data_without_dbh_raises_actionable_error(
+        self, mock_load, mock_save, base_inventory, domain_gdf
+    ):
+        """Data with no dbh column (e.g. a CHM-derived inventory whose document
+        metadata predates the column fix) fails with an actionable
+        ProcessingError before any compute or write — not a KeyError."""
+        df = pd.DataFrame(
+            {
+                "x": [500000.0, 500500.0],
+                "y": [5200000.0, 5200500.0],
+                "height": [12.0, 18.0],
+            }
+        )
+        mock_load.return_value = dd.from_pandas(df, npartitions=1)
+        progress = MagicMock()
+
+        with pytest.raises(ProcessingError) as exc_info:
+            apply_in_place_treatments(base_inventory, domain_gdf, progress)
+
+        assert exc_info.value.code == "TREATMENTS_REQUIRE_DBH"
+        mock_save.assert_not_called()

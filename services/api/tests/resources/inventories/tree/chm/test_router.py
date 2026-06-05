@@ -107,6 +107,10 @@ class TestCreateChmInventory:
         assert data["source"]["algorithm"]["min_height"] == 2.0
         assert data["source"]["algorithm"]["footprint_size"] == 3
 
+        # CHM stem isolation produces height and position only — the document
+        # must not claim a dbh column (the treatments endpoint keys on it).
+        assert [c["key"] for c in data["columns"]] == ["x", "y", "height"]
+
     def test_request_with_metadata(
         self, client, domain_for_testing, chm_grid_for_inventory
     ):

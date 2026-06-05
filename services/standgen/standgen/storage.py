@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 import xarray as xr
 
 from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
+from lib.errors import ProcessingError
 from lib.gcs import delete_directory, exists, gcsfs_client
 from lib.zarr_utils import load_zarr
 
@@ -72,8 +73,32 @@ def save_parquet_replace(inventory_id: str, ddf: dd.DataFrame) -> str:
 
     ddf.to_parquet(staging_uri, write_metadata_file=True)
 
+    # dask wrote staging through its own gcsfs instance, and the exists() probe
+    # above cached this client's listing of the (then-absent) staging dir. Drop
+    # the stale cache so the copy and the count check below list staging fresh.
+    gcsfs_client.invalidate_cache()
+    staged_files = gcsfs_client.find(staging_rel)
+
     delete_directory(f"gs://{live_rel}")
+    # Recursive copy keeps fsspec's default on_error="ignore". gcsfs's
+    # expand_path includes a synthetic directory-marker entry for the staging
+    # prefix that 404s on rewrite; "ignore" skips it (only FileNotFoundError is
+    # swallowed, so transient errors still raise). That same leniency would also
+    # skip a genuinely missing part file, so verify completeness by file count
+    # before deleting staging — never mark an incomplete dataset completed.
     gcsfs_client.copy(staging_rel, live_rel, recursive=True)
+    gcsfs_client.invalidate_cache()
+    live_files = gcsfs_client.find(live_rel)
+    if len(live_files) != len(staged_files):
+        raise ProcessingError(
+            code="INVENTORY_REWRITE_INCOMPLETE",
+            message=(
+                f"In-place rewrite of inventory {inventory_id} copied "
+                f"{len(live_files)} of {len(staged_files)} files; staging "
+                f"({staging_rel}) is preserved for recovery."
+            ),
+            suggestion="Retry the modification.",
+        )
     delete_directory(staging_uri)
 
     logger.info(f"Replaced inventory data at gs://{live_rel}")

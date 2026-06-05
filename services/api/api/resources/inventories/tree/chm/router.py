@@ -12,7 +12,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
+from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.chm.examples import CREATE_CHM_OPENAPI_EXAMPLES
 from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
@@ -142,7 +142,7 @@ async def create_chm_inventory(
         "treatments": stringify_modification_coordinates(
             [t.model_dump() for t in body.treatments]
         ),
-        "columns": [c.model_dump() for c in BASE_INVENTORY_COLUMNS],
+        "columns": [c.model_dump() for c in CHM_INVENTORY_COLUMNS],
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,

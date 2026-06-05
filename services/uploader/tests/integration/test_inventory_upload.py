@@ -169,6 +169,11 @@ class TestCsvUpload:
             assert len(result["georeference"]["bounds"]) == 4
             assert result["progress"]["percent"] == 100
 
+            # The document records the columns actually present in the file —
+            # x/y/height only here, no dbh (the API's treatments endpoint
+            # relies on this to reject dbh-less inventories).
+            assert [c["key"] for c in result["columns"]] == ["x", "y", "height"]
+
             assert exists(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
@@ -182,6 +187,38 @@ class TestCsvUpload:
             assert list(parquet_df["y"]) == SAMPLE_Y
             assert list(parquet_df["height"]) == SAMPLE_HEIGHT
 
+        finally:
+            gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+            if exists(gcs_path):
+                delete_directory(gcs_path)
+            delete_document(INVENTORIES_COLLECTION, inventory_id)
+            delete_document(DOMAINS_COLLECTION, domain_id)
+
+    def test_csv_with_dbh_records_dbh_column(self):
+        """A CSV carrying optional columns (dbh) records them on the document."""
+        inventory_id = f"test-{uuid4().hex}"
+        domain_id = f"test-{uuid4().hex}"
+
+        domain_doc = _load_domain_doc(domain_id)
+        set_document(DOMAINS_COLLECTION, domain_id, domain_doc)
+
+        object_name = _upload_csv(
+            inventory_id,
+            SAMPLE_X,
+            SAMPLE_Y,
+            SAMPLE_HEIGHT,
+            extra={"dbh": [10.0, 20.0, 30.0]},
+        )
+        inv_doc = _make_inventory_doc(inventory_id, domain_id, "csv")
+        inv_doc["source"]["object_name"] = object_name
+        set_document(INVENTORIES_COLLECTION, inventory_id, inv_doc)
+
+        try:
+            handle_inventory(inventory_id, UPLOADS_BUCKET, object_name, inv_doc)
+            _, snap = get_document(INVENTORIES_COLLECTION, inventory_id)
+            result = snap.to_dict()
+            assert result["status"] == "completed"
+            assert [c["key"] for c in result["columns"]] == ["x", "y", "dbh", "height"]
         finally:
             gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
             if exists(gcs_path):

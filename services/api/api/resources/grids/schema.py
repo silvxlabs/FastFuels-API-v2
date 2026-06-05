@@ -242,6 +242,17 @@ class Grid(BaseModel):
     )
     created_on: datetime | None = None
     modified_on: datetime | None = None
+    checksum: str | None = Field(
+        default=None,
+        description=(
+            "Version marker for this grid's content. It changes each time the "
+            "grid is rebuilt and is unaffected by metadata-only edits (name, "
+            "description, tags). A resource derived from this grid stores the "
+            "checksum it was built from; comparing that stored value against "
+            "this field reveals whether this grid has changed since. May be null "
+            "for grids created before checksums were introduced."
+        ),
+    )
 
     # Source and lineage (validated by source-specific routers)
     source: dict

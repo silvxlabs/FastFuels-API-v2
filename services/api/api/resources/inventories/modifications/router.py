@@ -130,6 +130,7 @@ async def apply_modifications(
 
     source = ModificationsInventorySource(
         source_inventory_id=inventory_id,
+        source_inventory_checksum=source_data.get("checksum"),
         modifications=stringify_modification_coordinates(
             [m.model_dump() for m in body.modifications]
         ),
@@ -137,6 +138,7 @@ async def apply_modifications(
 
     inventory_data = {
         "id": new_inventory_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "type": source_data["type"],
         "name": body.name,

@@ -28,6 +28,14 @@ class LookupSource(BaseModel):
     name: Literal["lookup"] = "lookup"
     table: str = Field(..., description="Lookup table identifier")
     source_grid_id: str = Field(..., description="Grid containing codes to look up")
+    source_grid_checksum: str | None = Field(
+        default=None,
+        description=(
+            "The source grid's `checksum` at the time this grid was created from "
+            "it. Compare it against the source grid's current `checksum` to tell "
+            "whether the source has changed since."
+        ),
+    )
     source_band: str = Field(..., description="Band in source grid containing codes")
 
 

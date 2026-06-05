@@ -664,6 +664,31 @@ class TestTreeInventoryVoxelizationSource:
         assert source.input == "inventory"
         assert source.entity == "tree"
 
+    def test_source_inventory_checksum_defaults_to_none(self):
+        source = TreeInventoryVoxelizationSource(
+            source_inventory_id="inv123",
+            resolution={"horizontal": 2.0, "vertical": 1.0},
+            bands=[TreeBand.bulk_density_foliage_live],
+            crown_profile_model=CrownProfileModel.purves,
+            biomass_source=AllometryBiomassSource(),
+            seed=42,
+        )
+        assert source.source_inventory_checksum is None
+
+    def test_source_inventory_checksum_round_trips(self):
+        source = TreeInventoryVoxelizationSource(
+            source_inventory_id="inv123",
+            source_inventory_checksum="sum123",
+            resolution={"horizontal": 2.0, "vertical": 1.0},
+            bands=[TreeBand.bulk_density_foliage_live],
+            crown_profile_model=CrownProfileModel.purves,
+            biomass_source=AllometryBiomassSource(),
+            seed=42,
+        )
+        assert source.source_inventory_checksum == "sum123"
+        data = source.model_dump(mode="json")
+        assert data["source_inventory_checksum"] == "sum123"
+
     def test_max_crown_radius_source_persists_inventory_column(self):
         source = TreeInventoryVoxelizationSource(
             source_inventory_id="inv123",

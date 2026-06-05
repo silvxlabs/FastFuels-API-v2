@@ -69,6 +69,14 @@ class ChmInventorySource(BaseModel):
 
     name: Literal["chm"] = "chm"
     source_chm_grid_id: str
+    source_chm_grid_checksum: str | None = Field(
+        default=None,
+        description=(
+            "The source CHM grid's `checksum` at the time this inventory was "
+            "created from it. Compare it against the source grid's current "
+            "`checksum` to tell whether the source has changed since."
+        ),
+    )
     algorithm: StemIsolationAlgorithm
 
 

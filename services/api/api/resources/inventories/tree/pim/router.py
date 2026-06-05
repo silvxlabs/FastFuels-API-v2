@@ -147,12 +147,14 @@ async def create_pim_inventory(
     request_time = datetime.now()
     source = PimInventorySource(
         source_pim_grid_id=body.source_pim_grid_id,
+        source_pim_grid_checksum=source_grid_data.get("checksum"),
         point_process=body.point_process,
         seed=body.seed,
     )
 
     inventory_data = {
         "id": inventory_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "type": body.type.value,
         "name": body.name,

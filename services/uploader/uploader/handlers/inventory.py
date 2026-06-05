@@ -30,6 +30,21 @@ _V2_COLUMNS = {
     "crown_ratio",
 }
 
+# Doc metadata (type, unit) per v2 column, in canonical order. Only x, y, and
+# height are required in an upload, so the inventory document's `columns` field
+# is written from the columns the file actually provided (before _validate pads
+# the optional ones with nulls) — the API's treatments endpoint relies on it to
+# tell whether an inventory has a `dbh` column to thin against.
+_COLUMN_METADATA = {
+    "x": ("continuous", "m"),
+    "y": ("continuous", "m"),
+    "fia_species_code": ("categorical", None),
+    "fia_status_code": ("categorical", None),
+    "dbh": ("continuous", "cm"),
+    "height": ("continuous", "m"),
+    "crown_ratio": ("continuous", None),
+}
+
 
 class _InventorySchema(pa.DataFrameModel):
     x: Series[float]
@@ -63,6 +78,9 @@ def handle_inventory(
         domain_crs_str = _extract_crs_string(domain_data)
 
         df = _parse(fmt, local_path, col_map, domain_crs_str)
+        # Record which columns the file actually provided before _validate pads
+        # the missing optional ones with all-null placeholders.
+        provided_columns = [c for c in _COLUMN_METADATA if c in df.columns]
         df = _validate(df)
 
         xmin, ymin, xmax, ymax = domain_gdf.total_bounds
@@ -98,6 +116,15 @@ def handle_inventory(
                 float(df["y"].max()),
             ],
         }
+        # Record the columns the file actually provided. The create endpoint
+        # wrote a provisional full column list, and _validate pads the Parquet
+        # with all-null optional columns for schema compatibility — but an
+        # all-null dbh is not a column treatments can thin against.
+        columns = [
+            {"key": key, "type": col_type, "unit": unit}
+            for key, (col_type, unit) in _COLUMN_METADATA.items()
+            if key in provided_columns
+        ]
         update_document(
             INVENTORIES_COLLECTION,
             resource_id,
@@ -105,6 +132,7 @@ def handle_inventory(
                 "status": "completed",
                 "modified_on": datetime.now(UTC),
                 "georeference": georeference,
+                "columns": columns,
                 "progress": {"message": "Complete", "percent": 100},
             },
         )

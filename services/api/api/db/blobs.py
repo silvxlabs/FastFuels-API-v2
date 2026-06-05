@@ -31,6 +31,16 @@ async def delete_directory(bucket_name: str, directory_path: str) -> None:
         await gcsfs_client._rm(full_path, recursive=True)
 
 
+async def copy_directory(bucket_name: str, source_path: str, dest_path: str) -> None:
+    """Copy a directory and all its contents within GCS.
+
+    For same-bucket copies this is a server-side rewrite (no egress).
+    """
+    source = f"{bucket_name}/{source_path}"
+    dest = f"{bucket_name}/{dest_path}"
+    await gcsfs_client._copy(source, dest, recursive=True)
+
+
 async def delete_file(bucket_name: str, file_path: str) -> None:
     """Delete a single file from GCS."""
     full_path = f"{bucket_name}/{file_path}"

@@ -53,6 +53,33 @@ class UpdateInventoryRequestBody(BaseModel):
     tags: list[str] | None = Field(None, max_length=50)
 
 
+class DuplicateInventoryRequest(BaseModel):
+    """Optional metadata overrides for a duplicated inventory.
+
+    Every field is optional. Any field omitted is carried over verbatim from
+    the source inventory.
+    """
+
+    name: str | None = Field(
+        None,
+        max_length=255,
+        description="Name for the copy. Omit to reuse the source inventory's name.",
+    )
+    description: str | None = Field(
+        None,
+        max_length=2000,
+        description=(
+            "Description for the copy. Omit to reuse the source inventory's "
+            "description."
+        ),
+    )
+    tags: list[str] | None = Field(
+        None,
+        max_length=50,
+        description="Tags for the copy. Omit to reuse the source inventory's tags.",
+    )
+
+
 class ColumnType(StrEnum):
     """Type of column data."""
 

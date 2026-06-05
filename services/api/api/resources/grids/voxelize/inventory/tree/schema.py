@@ -452,6 +452,14 @@ class TreeInventoryVoxelizationSource(BaseModel):
     entity: Literal["tree"] = "tree"
 
     source_inventory_id: str
+    source_inventory_checksum: str | None = Field(
+        default=None,
+        description=(
+            "The source inventory's `checksum` at the time this grid was created "
+            "from it. Compare it against the source inventory's current `checksum` "
+            "to tell whether the source has changed since."
+        ),
+    )
     resolution: Resolution3D = Field(
         description="Voxel resolution (horizontal x/y, vertical z) in meters.",
     )

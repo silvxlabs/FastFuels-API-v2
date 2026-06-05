@@ -129,11 +129,13 @@ async def create_fbfm40_lookup(
     request_time = datetime.now()
     source = Fbfm40LookupSource(
         source_grid_id=body.source_grid_id,
+        source_grid_checksum=source_grid_data.get("checksum"),
         source_band=body.source_band,
     )
 
     grid_data = {
         "id": grid_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "name": body.name,
         "description": body.description,

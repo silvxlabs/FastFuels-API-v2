@@ -115,6 +115,22 @@ class TestResampleSource:
         assert data["alignment"]["method"] == "bilinear"
         assert data["method_overrides"] == {"fbfm": "nearest"}
 
+    def test_source_grid_checksum_defaults_to_none(self):
+        source = ResampleSource(
+            source_grid_id="abc123",
+            alignment=GridAlignmentDomainTarget(resolution=2.0),
+        )
+        assert source.source_grid_checksum is None
+
+    def test_source_grid_checksum_round_trips(self):
+        source = ResampleSource(
+            source_grid_id="abc123",
+            source_grid_checksum="sum123",
+            alignment=GridAlignmentDomainTarget(resolution=2.0),
+        )
+        assert source.source_grid_checksum == "sum123"
+        assert source.model_dump()["source_grid_checksum"] == "sum123"
+
 
 class TestCreateResampleRequest:
     """Tests for CreateResampleRequest model."""

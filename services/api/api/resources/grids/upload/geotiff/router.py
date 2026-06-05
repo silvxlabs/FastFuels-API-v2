@@ -92,6 +92,7 @@ async def create_geotiff_upload(
 
     grid_data = {
         "id": grid_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "name": body.name,
         "description": body.description,

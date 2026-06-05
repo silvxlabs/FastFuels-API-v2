@@ -25,6 +25,14 @@ class ResampleSource(BaseModel):
 
     name: Literal["resample"] = "resample"
     source_grid_id: str = Field(..., description="Grid to resample")
+    source_grid_checksum: str | None = Field(
+        default=None,
+        description=(
+            "The source grid's `checksum` at the time this grid was created from "
+            "it. Compare it against the source grid's current `checksum` to tell "
+            "whether the source has changed since."
+        ),
+    )
     alignment: GridAlignmentSpecification = Field(
         ...,
         description="Output alignment target.",

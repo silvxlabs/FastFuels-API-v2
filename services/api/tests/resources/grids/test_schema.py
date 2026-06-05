@@ -444,6 +444,18 @@ class TestGrid:
         assert grid.modifications == []
         assert grid.georeference is None
 
+    def test_checksum_defaults_to_none(self, minimal_grid_data):
+        """checksum defaults to None when absent (e.g. legacy documents)."""
+        grid = Grid(**minimal_grid_data)
+        assert grid.checksum is None
+
+    def test_checksum_round_trips(self, minimal_grid_data):
+        """checksum is carried through the model and serialization."""
+        minimal_grid_data["checksum"] = "deadbeef" * 4
+        grid = Grid(**minimal_grid_data)
+        assert grid.checksum == "deadbeef" * 4
+        assert grid.model_dump()["checksum"] == "deadbeef" * 4
+
     def test_id_is_required(self, minimal_grid_data):
         """id field is required."""
         del minimal_grid_data["id"]

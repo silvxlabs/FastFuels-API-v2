@@ -93,6 +93,7 @@ async def create_meta_chm(
 
     grid_data = {
         "id": grid_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "name": body.name,
         "description": body.description,
@@ -162,6 +163,7 @@ async def create_naip_chm(
 
     grid_data = {
         "id": grid_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "name": body.name,
         "description": body.description,
@@ -245,6 +247,7 @@ async def create_landfire_canopy(
 
     grid_data = {
         "id": grid_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "name": body.name,
         "description": body.description,

@@ -587,16 +587,17 @@ async def get_inventory_data_metadata(
     - **422 Unprocessable Entity**: Inventory is not completed, or metadata
       file is not available.
     """
-    await get_document_async(
+    _, snapshot = await get_document_async(
         COLLECTION,
         inventory_id,
         owner_id=request.state.id,
         domain_id=domain["id"],
         document_status="completed",
     )
+    checksum = (snapshot.to_dict() or {}).get("checksum")
 
     try:
-        meta = await get_inventory_metadata(inventory_id)
+        meta = await get_inventory_metadata(inventory_id, checksum)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -672,16 +673,17 @@ async def get_inventory_data(
     - **422 Unprocessable Entity**: Inventory not completed, partition index
       out of range, invalid column names, or metadata not available.
     """
-    await get_document_async(
+    _, snapshot = await get_document_async(
         COLLECTION,
         inventory_id,
         owner_id=request.state.id,
         domain_id=domain["id"],
         document_status="completed",
     )
+    checksum = (snapshot.to_dict() or {}).get("checksum")
 
     try:
-        meta = await get_inventory_metadata(inventory_id)
+        meta = await get_inventory_metadata(inventory_id, checksum)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

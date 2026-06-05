@@ -57,7 +57,19 @@ def _read_metadata_sync(inventory_id: str) -> InventoryMeta:
 
 
 @lru(maxsize=128, force_asyncio=True)
-async def get_inventory_metadata(inventory_id: str) -> InventoryMeta:
+async def get_inventory_metadata(
+    inventory_id: str, checksum: str | None
+) -> InventoryMeta:
+    """Read an inventory's partitioned-Parquet metadata, cached per content.
+
+    ``checksum`` participates only in the cache key (the body ignores it). An
+    in-place modification (POST .../modifications) rewrites the data under the
+    same ``inventory_id`` and re-assigns the inventory's ``checksum``, so a new
+    checksum bypasses the stale entry. Without it, this LRU would keep serving
+    pre-modification partition paths and row counts. ``None`` (legacy
+    inventories without a checksum) is a valid, stable key — such inventories
+    predate in-place edits, and any in-place edit assigns a fresh checksum.
+    """
     return await asyncio.to_thread(_read_metadata_sync, inventory_id)
 
 

@@ -1,8 +1,9 @@
 """
-Handler for inventory modifications source type.
+In-place inventory modifications for standgen.
 
-Loads an existing inventory's parquet data, applies modifications,
-and saves as a new inventory.
+Applies the modification delta queued by the most recent
+``POST .../{inventory_id}/modifications`` call to the inventory's own current
+Parquet data, writing the result back under the same inventory ID.
 """
 
 import logging
@@ -14,52 +15,51 @@ from standgen.modifications import (
     apply_modifications,
     resolve_spatial_conditions,
 )
-from standgen.storage import load_inventory_parquet, save_parquet
+from standgen.storage import load_inventory_parquet, save_parquet_replace
 
 logger = logging.getLogger(__name__)
 
 
-def handle_modifications(
-    inventory: dict, source: dict, domain_gdf: gpd.GeoDataFrame, progress
+def apply_in_place_modifications(
+    inventory: dict, domain_gdf: gpd.GeoDataFrame, progress
 ) -> dict:
-    """Process a modifications inventory request.
+    """Apply the inventory's pending modification delta to its own data, in place.
+
+    The API appends new rules to the cumulative ``modifications`` ledger and
+    queues only that delta in ``pending_modifications``. This loads the
+    inventory's current Parquet, applies only the delta, and writes it back
+    under the same ID. The ``modifications`` ledger and ``georeference`` are
+    unchanged — modifications filter/transform rows but never move the grid
+    footprint.
 
     Args:
-        inventory: Full inventory document from Firestore
-        source: Source dict with modifications-specific fields
-        domain_gdf: Domain geometry as GeoDataFrame
-        progress: Callback for progress reporting
+        inventory: Full inventory document from Firestore.
+        domain_gdf: Domain geometry as GeoDataFrame.
+        progress: Callback for progress reporting.
 
     Returns:
-        Dict with 'georeference' key
+        Dict with 'georeference' key (the inventory's existing georeference).
     """
     inventory_id = inventory["id"]
-    source_inventory_id = source["source_inventory_id"]
-    modifications = source["modifications"]
+    modifications = inventory.get("pending_modifications", [])
 
-    # Load source inventory parquet as dask DataFrame
-    progress("Loading source inventory...", 10)
-    ddf = load_inventory_parquet(source_inventory_id)
+    # Load the inventory's own current data as a dask DataFrame.
+    progress("Loading inventory...", 10)
+    ddf = load_inventory_parquet(inventory_id)
 
-    # Apply modifications. Resolve spatial-condition geometries once here (off
-    # the per-partition path) when any are present.
-    progress("Applying modifications...", 30)
+    # Apply only the new delta. Resolve spatial-condition geometries once here
+    # (off the per-partition path) when any are present.
+    progress("Applying modifications...", 40)
     if _has_spatial_condition(modifications):
         modifications = resolve_spatial_conditions(
             modifications, inventory["domain_id"], domain_gdf.crs
         )
     ddf = ddf.map_partitions(apply_modifications, modifications)
 
-    # Save to new inventory path
+    # Replace the inventory's Parquet in place (staging swap — see storage.py).
     progress("Writing modified inventory...", 70)
-    save_parquet(inventory_id, ddf)
-
-    # Copy georeference from source inventory
-    progress("Computing georeference...", 95)
-    from standgen.handlers.pim import compute_georeference
-
-    georeference = compute_georeference(domain_gdf)
+    save_parquet_replace(inventory_id, ddf)
 
     progress("Complete", 100)
 
-    return {"georeference": georeference}
+    return {"georeference": inventory.get("georeference")}

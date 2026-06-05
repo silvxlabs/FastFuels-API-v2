@@ -20,6 +20,7 @@ from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domai
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from standgen.dispatch import dispatch_handler
+from standgen.handlers.modifications import apply_in_place_modifications
 from standgen.storage import delete_parquet
 
 
@@ -76,8 +77,12 @@ def update_progress(inventory_id, message, percent=None):
         raise CancelledException(f"Inventory {inventory_id} was cancelled")
 
 
-def update_status(inventory_id, status, georeference=None, error=None):
-    """Update inventory status."""
+def update_status(inventory_id, status, georeference=None, error=None, extra=None):
+    """Update inventory status.
+
+    ``extra`` merges additional fields into the update — used to clear the
+    ``pending_modifications`` work queue once an in-place modification completes.
+    """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
         data["progress"] = {"message": "Complete", "percent": 100}
@@ -87,6 +92,8 @@ def update_status(inventory_id, status, georeference=None, error=None):
         data["georeference"] = georeference
     if error is not None:
         data["error"] = error
+    if extra:
+        data.update(extra)
     try:
         update_document(INVENTORIES_COLLECTION, inventory_id, data)
     except DocumentNotFoundError:
@@ -182,11 +189,22 @@ def process_inventory_request(request: Request):
     try:
         domain_gdf = _load_domain(inventory["domain_id"])
         progress_callback = make_progress_callback(inventory_id)
-        result = dispatch_handler(inventory, domain_gdf, progress_callback)
+        # An in-place modification queues only the new delta in
+        # pending_modifications; apply it to the inventory's own data rather
+        # than re-deriving from the root source.
+        if inventory.get("pending_modifications"):
+            result = apply_in_place_modifications(
+                inventory, domain_gdf, progress_callback
+            )
+            completion_extra = {"pending_modifications": []}
+        else:
+            result = dispatch_handler(inventory, domain_gdf, progress_callback)
+            completion_extra = None
         update_status(
             inventory_id,
             "completed",
             georeference=result["georeference"],
+            extra=completion_extra,
         )
         logger.info("Processing complete", extra=ids)
         return "OK", 200

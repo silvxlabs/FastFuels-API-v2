@@ -17,10 +17,7 @@ from api.resources.inventories.modification_models import (
     InventoryModificationCondition,
     RemoveAction,
 )
-from api.resources.inventories.modifications.schema import (
-    ApplyModificationsRequest,
-    ModificationsInventorySource,
-)
+from api.resources.inventories.modifications.schema import ApplyModificationsRequest
 from pydantic import ValidationError
 
 
@@ -310,41 +307,6 @@ class TestInventoryModification:
         InventoryModification(**data)
 
 
-class TestModificationsInventorySource:
-    def test_name_is_modifications(self):
-        source = ModificationsInventorySource(
-            source_inventory_id="inv123",
-            modifications=[{"conditions": [], "actions": []}],
-        )
-        assert source.name == "modifications"
-
-    def test_name_cannot_be_overridden(self):
-        with pytest.raises(ValidationError):
-            ModificationsInventorySource(
-                name="other",
-                source_inventory_id="inv123",
-                modifications=[],
-            )
-
-    def test_source_inventory_checksum_defaults_to_none(self):
-        """source_inventory_checksum defaults to None when not captured."""
-        source = ModificationsInventorySource(
-            source_inventory_id="inv123",
-            modifications=[{"conditions": [], "actions": []}],
-        )
-        assert source.source_inventory_checksum is None
-
-    def test_source_inventory_checksum_round_trips(self):
-        """source_inventory_checksum is carried through serialization."""
-        source = ModificationsInventorySource(
-            source_inventory_id="inv123",
-            source_inventory_checksum="sum123",
-            modifications=[{"conditions": [], "actions": []}],
-        )
-        assert source.source_inventory_checksum == "sum123"
-        assert source.model_dump()["source_inventory_checksum"] == "sum123"
-
-
 class TestApplyModificationsRequest:
     def test_basic_request(self):
         req = ApplyModificationsRequest(
@@ -361,7 +323,9 @@ class TestApplyModificationsRequest:
         with pytest.raises(ValidationError):
             ApplyModificationsRequest(modifications=[])
 
-    def test_inherits_base_fields(self):
+    def test_metadata_fields_not_part_of_schema(self):
+        """The in-place request carries only modifications — metadata edits go
+        through PATCH, so name/description/tags are not request fields."""
         req = ApplyModificationsRequest(
             name="Modified trees",
             description="Removed small trees",
@@ -373,8 +337,8 @@ class TestApplyModificationsRequest:
                 }
             ],
         )
-        assert req.name == "Modified trees"
-        assert req.tags == ["modified"]
+        assert not hasattr(req, "name")
+        assert not hasattr(req, "tags")
 
 
 # =============================================================================

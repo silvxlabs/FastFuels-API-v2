@@ -1,9 +1,11 @@
 """
-Integration tests for the inventory modifications pipeline.
+Integration tests for the in-place inventory modifications pipeline.
 
-Tests the full standgen pipeline for modifications: a single PIM inventory is
-created once (module-scoped), then each test creates its own modifications
-inventory referencing that shared source and verifies the output.
+Tests the full standgen pipeline for in-place modifications: a single PIM
+inventory is created once (module-scoped), then each test copies that shared
+source to a fresh inventory ID, queues a modification delta in
+``pending_modifications``, runs standgen, and verifies the in-place result.
+Copying keeps the shared PIM source pristine across tests.
 
 These tests hit real GCS and Firestore and require valid credentials.
 """
@@ -27,7 +29,13 @@ from lib.config import (
 )
 from lib.domain_utils import buffer_gdf
 from lib.firestore.documents import delete_document, get_document, set_document
-from lib.gcs.blobs import delete_directory, delete_file, exists, upload_file
+from lib.gcs.blobs import (
+    delete_directory,
+    delete_file,
+    exists,
+    gcsfs_client,
+    upload_file,
+)
 from lib.testing import SHARED_TEST_INVENTORIES_DIR
 
 from ..conftest import (
@@ -104,16 +112,23 @@ def modifications_runner(shared_pim_source):
         from standgen.main import process_inventory_request
 
         mod_id = f"test-{uuid4().hex}"
+        # In-place modifications apply to the inventory's own data, so copy the
+        # shared PIM parquet to a fresh ID and modify the copy — the shared
+        # source stays pristine for other tests.
+        gcsfs_client.copy(
+            f"{INVENTORIES_BUCKET}/{pim_id}",
+            f"{INVENTORIES_BUCKET}/{mod_id}",
+            recursive=True,
+        )
         mod_data = {
             "id": mod_id,
             "domain_id": domain_id,
             "name": "Modified Inventory",
             "status": "pending",
-            "source": {
-                "name": "modifications",
-                "source_inventory_id": pim_id,
-                "modifications": modifications,
-            },
+            "source": pim_inventory["source"],
+            "georeference": pim_inventory["georeference"],
+            "modifications": modifications,
+            "pending_modifications": modifications,
         }
         set_document(INVENTORIES_COLLECTION, mod_id, mod_data)
         mod_ids.append(mod_id)
@@ -127,6 +142,8 @@ def modifications_runner(shared_pim_source):
         assert mod_inventory["status"] == "completed", (
             f"Modifications inventory not completed: {mod_inventory.get('error')}"
         )
+        # The delta is applied; the work queue is cleared on completion.
+        assert mod_inventory.get("pending_modifications") == []
 
         return pim_inventory, mod_inventory
 
@@ -382,16 +399,20 @@ def feature_modifications_runner(shared_pim_source):
             resolved_mods.append({**mod, "conditions": conditions})
 
         mod_id = f"test-{uuid4().hex}"
+        gcsfs_client.copy(
+            f"{INVENTORIES_BUCKET}/{pim_id}",
+            f"{INVENTORIES_BUCKET}/{mod_id}",
+            recursive=True,
+        )
         mod_data = {
             "id": mod_id,
             "domain_id": domain_id,
             "name": "Spatially Modified Inventory",
             "status": "pending",
-            "source": {
-                "name": "modifications",
-                "source_inventory_id": pim_id,
-                "modifications": resolved_mods,
-            },
+            "source": pim_inventory["source"],
+            "georeference": pim_inventory["georeference"],
+            "modifications": resolved_mods,
+            "pending_modifications": resolved_mods,
         }
         set_document(INVENTORIES_COLLECTION, mod_id, mod_data)
         mod_ids.append(mod_id)

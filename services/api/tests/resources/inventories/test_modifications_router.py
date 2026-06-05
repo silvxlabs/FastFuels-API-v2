@@ -1,49 +1,46 @@
 """
-Integration tests for the inventory modifications endpoint.
+Integration tests for the in-place inventory modifications endpoint.
 
 Tests POST /domains/{domain_id}/inventories/{inventory_id}/modifications
 
-These tests make real HTTP requests to the API and interact with Firestore.
-They verify that the endpoint creates a new inventory from modifications
-on an existing completed inventory.
+The endpoint mutates the inventory **in place** (same ID): it appends the
+submitted rules to the inventory's ``modifications`` ledger, queues that delta
+in ``pending_modifications``, re-assigns its ``checksum``, flips status to
+``pending``, and enqueues standgen to re-derive the data. These tests make real
+HTTP requests and interact with Firestore.
 """
 
+import uuid
+
 import pytest
+from api.resources.inventories.modifications.examples import (
+    ALL_MODIFICATIONS_EXAMPLE_VALUES,
+)
+from api.resources.inventories.modifications.schema import ApplyModificationsRequest
 
-from lib.config import GRIDS_COLLECTION, INVENTORIES_COLLECTION
-from tests.fixtures import make_grid_data, make_inventory_data
-
-pytest.skip("Not implemented yet", allow_module_level=True)
-
-
-@pytest.fixture(scope="session")
-def pim_grid_for_inventory(firestore_client, domain_for_testing):
-    """Create a completed PIM grid with tm_id band for PIM+modifications tests."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
-        name="PIM Grid for Modifications Tests",
-        status="completed",
-        source={
-            "name": "pim",
-            "product": "treemap",
-            "version": "2022",
-            "bands": ["tm_id"],
-            "description": "TreeMap plot imputation raster (FIA plot IDs at 30m)",
-        },
-        bands=[
-            {"key": "tm_id", "type": "categorical", "unit": None, "index": 0},
-        ],
-    )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
+from lib.config import FEATURES_COLLECTION, INVENTORIES_COLLECTION
+from tests.fixtures import make_feature_data, make_inventory_data
 
 
-@pytest.fixture(scope="session")
-def completed_inventory_for_modifications(firestore_client, domain_for_testing):
-    """A completed inventory to use as the source for modification tests."""
-    inv_data = make_inventory_data(
+@pytest.fixture
+def cleanup_inventories(firestore_client):
+    """Collect inventory IDs created during a test; delete their Firestore docs
+    on teardown."""
+    created: list[str] = []
+    yield created
+    for inv_id in created:
+        firestore_client.collection(INVENTORIES_COLLECTION).document(inv_id).delete()
+
+
+@pytest.fixture
+def source_inventory(firestore_client, domain_for_testing, cleanup_inventories):
+    """A fresh completed inventory to modify in place.
+
+    Function-scoped: the endpoint mutates this document (status -> pending), so
+    each test gets its own. Carries a checksum and one existing modification so
+    tests can assert the checksum changes and the ledger grows.
+    """
+    inv = make_inventory_data(
         domain_id=domain_for_testing["id"],
         name="Source Inventory for Modifications",
         status="completed",
@@ -52,17 +49,21 @@ def completed_inventory_for_modifications(firestore_client, domain_for_testing):
             "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
         },
     )
-    doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
-        inv_data["id"]
-    )
-    doc_ref.set(inv_data)
-    yield inv_data
-    doc_ref.delete()
+    inv["checksum"] = uuid.uuid4().hex
+    inv["modifications"] = [
+        {
+            "conditions": [{"attribute": "height", "operator": "gt", "value": 40.0}],
+            "actions": [{"attribute": "height", "modifier": "multiply", "value": 0.9}],
+        }
+    ]
+    firestore_client.collection(INVENTORIES_COLLECTION).document(inv["id"]).set(inv)
+    cleanup_inventories.append(inv["id"])
+    return inv
 
 
 @pytest.fixture(scope="session")
 def pending_inventory(firestore_client, domain_for_testing):
-    """A pending inventory (not completed) for status validation tests."""
+    """A pending (not completed) inventory for status validation tests."""
     inv_data = make_inventory_data(
         domain_id=domain_for_testing["id"],
         name="Pending Inventory",
@@ -97,9 +98,6 @@ def completed_inventory_different_owner(firestore_client, domain_with_different_
     doc_ref.delete()
 
 
-# POST /domains/{domain_id}/inventories/{inventory_id}/modifications Tests
-
-
 MINIMAL_MODIFICATIONS_BODY = {
     "modifications": [
         {
@@ -110,155 +108,172 @@ MINIMAL_MODIFICATIONS_BODY = {
 }
 
 
-class TestApplyModifications:
-    """Test POST /domains/{domain_id}/inventories/{inventory_id}/modifications."""
+class TestApplyModificationsInPlace:
+    """POST /domains/{domain_id}/inventories/{inventory_id}/modifications."""
 
     def route(self, domain_id, inventory_id):
         return f"/domains/{domain_id}/inventories/{inventory_id}/modifications"
 
-    def test_creates_new_inventory(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+    def test_applies_in_place_same_id(
+        self, client, domain_for_testing, source_inventory, firestore_client
     ):
-        """Creates a new inventory with pending status."""
-        source_id = completed_inventory_for_modifications["id"]
+        """Mutates the same inventory: same ID, status pending, ledger grows,
+        checksum changes, and the delta is queued in pending_modifications."""
+        source_id = source_inventory["id"]
         response = client.post(
             self.route(domain_for_testing["id"], source_id),
             json=MINIMAL_MODIFICATIONS_BODY,
         )
 
-        assert response.status_code == 201
-
+        assert response.status_code == 200, response.json()
         data = response.json()
-        assert "id" in data
-        assert len(data["id"]) == 32
-        # New inventory should have a different ID than source
-        assert data["id"] != source_id
+
+        # Same inventory — not a new resource.
+        assert data["id"] == source_id
         assert data["domain_id"] == domain_for_testing["id"]
-        assert data["type"] == "tree"
         assert data["status"] == "pending"
-        assert data["georeference"] is None
         assert data["error"] is None
 
-        # Source should be "modifications" with reference to original
-        assert data["source"]["name"] == "modifications"
-        assert data["source"]["source_inventory_id"] == source_id
-        assert len(data["source"]["modifications"]) == 1
+        # The submitted rule is appended to the existing ledger (1 + 1 = 2).
+        assert len(data["modifications"]) == 2
+        assert data["modifications"][-1]["conditions"][0]["attribute"] == "dbh"
 
-    def test_full_request_with_metadata(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+        # checksum is re-assigned so derivatives become detectably stale.
+        assert data["checksum"] != source_inventory["checksum"]
+
+        # The source is unchanged (still the root pim source, not "modifications").
+        assert data["source"]["name"] == source_inventory["source"]["name"]
+
+        # Firestore: only the new delta is queued for standgen to apply.
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_id)
+            .get()
+            .to_dict()
+        )
+        assert doc["status"] == "pending"
+        assert len(doc["pending_modifications"]) == 1
+        assert len(doc["modifications"]) == 2
+
+    def test_response_excludes_owner_id(
+        self, client, domain_for_testing, source_inventory
     ):
-        """Full request with name, description, tags."""
-        source_id = completed_inventory_for_modifications["id"]
+        """Response should not expose the owner_id field."""
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=MINIMAL_MODIFICATIONS_BODY,
+        )
+        assert response.status_code == 200
+        assert "owner_id" not in response.json()
+
+    def test_preserves_columns_and_georeference(
+        self, client, domain_for_testing, source_inventory
+    ):
+        """In-place edit keeps the inventory's columns and georeference."""
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=MINIMAL_MODIFICATIONS_BODY,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["columns"] == source_inventory["columns"]
+        assert data["georeference"] == source_inventory["georeference"]
+
+    def test_appends_multiple_modifications(
+        self, client, domain_for_testing, source_inventory
+    ):
+        """Multiple rules in one request all append to the ledger."""
         body = {
-            "name": "Modified inventory",
-            "description": "Removed small trees",
-            "tags": ["modified", "test"],
+            "modifications": [
+                {
+                    "conditions": {"attribute": "dbh", "operator": "lt", "value": 2.54},
+                    "actions": {"modifier": "remove"},
+                },
+                {
+                    "conditions": {
+                        "attribute": "height",
+                        "operator": "gt",
+                        "value": 50,
+                    },
+                    "actions": {
+                        "attribute": "height",
+                        "modifier": "multiply",
+                        "value": 0.9,
+                    },
+                },
+            ]
+        }
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=body,
+        )
+        assert response.status_code == 200
+        # 1 existing + 2 submitted.
+        assert len(response.json()["modifications"]) == 3
+
+    def test_unit_conversion_preserved(
+        self, client, domain_for_testing, source_inventory
+    ):
+        """A unit field on a condition round-trips into the ledger."""
+        body = {
             "modifications": [
                 {
                     "conditions": {
                         "attribute": "dbh",
                         "operator": "lt",
-                        "value": 2.54,
+                        "value": 1.0,
+                        "unit": "in",
                     },
                     "actions": {"modifier": "remove"},
                 }
-            ],
+            ]
         }
-
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
+            self.route(domain_for_testing["id"], source_inventory["id"]),
             json=body,
         )
+        assert response.status_code == 200
+        assert response.json()["modifications"][-1]["conditions"][0]["unit"] == "in"
 
-        assert response.status_code == 201
-        data = response.json()
-        assert data["name"] == "Modified inventory"
-        assert data["description"] == "Removed small trees"
-        assert data["tags"] == ["modified", "test"]
-
-    def test_response_excludes_owner_id(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+    def test_expression_condition_accepted(
+        self, client, domain_for_testing, source_inventory
     ):
-        """Response should not expose the owner_id field."""
-        source_id = completed_inventory_for_modifications["id"]
+        """Expression conditions are accepted."""
+        body = {
+            "modifications": [
+                {
+                    "conditions": {"expression": "height * crown_ratio < 1.0"},
+                    "actions": {"modifier": "remove"},
+                }
+            ]
+        }
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
-            json=MINIMAL_MODIFICATIONS_BODY,
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=body,
         )
-        assert response.status_code == 201
-        assert "owner_id" not in response.json()
+        assert response.status_code == 200
 
-    def test_preserves_source_columns(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
-    ):
-        """New inventory should have same columns as source."""
-        source_id = completed_inventory_for_modifications["id"]
-        response = client.post(
-            self.route(domain_for_testing["id"], source_id),
-            json=MINIMAL_MODIFICATIONS_BODY,
-        )
+    # Error cases
 
-        assert response.status_code == 201
-        data = response.json()
-        source_columns = completed_inventory_for_modifications["columns"]
-        assert data["columns"] == source_columns
-
-    def test_preserves_source_type(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
-    ):
-        """New inventory should inherit type from source."""
-        source_id = completed_inventory_for_modifications["id"]
-        response = client.post(
-            self.route(domain_for_testing["id"], source_id),
-            json=MINIMAL_MODIFICATIONS_BODY,
-        )
-
-        assert response.status_code == 201
-        assert response.json()["type"] == completed_inventory_for_modifications["type"]
-
-    def test_nonexistent_source_inventory_returns_404(self, client, domain_for_testing):
-        """Referencing a non-existent source inventory returns 404."""
+    def test_nonexistent_inventory_returns_404(self, client, domain_for_testing):
         response = client.post(
             self.route(domain_for_testing["id"], "00000000000000000000000000000000"),
             json=MINIMAL_MODIFICATIONS_BODY,
         )
         assert response.status_code == 404
 
-    def test_source_inventory_not_completed_returns_422(
-        self,
-        client,
-        domain_for_testing,
-        pending_inventory,
+    def test_inventory_not_completed_returns_422(
+        self, client, domain_for_testing, pending_inventory
     ):
-        """Source inventory that is still pending returns 422."""
         response = client.post(
             self.route(domain_for_testing["id"], pending_inventory["id"]),
             json=MINIMAL_MODIFICATIONS_BODY,
         )
         assert response.status_code == 422
 
-    def test_source_inventory_wrong_owner_returns_404(
-        self,
-        client,
-        domain_with_different_owner,
-        completed_inventory_different_owner,
+    def test_wrong_owner_returns_404(
+        self, client, domain_with_different_owner, completed_inventory_different_owner
     ):
-        """Source inventory owned by another user returns 404."""
         response = client.post(
             self.route(
                 domain_with_different_owner["id"],
@@ -268,46 +283,7 @@ class TestApplyModifications:
         )
         assert response.status_code == 404
 
-    def test_source_inventory_cross_domain_returns_404(
-        self,
-        client,
-        domain_for_testing,
-        firestore_client,
-    ):
-        """Source inventory in a different domain returns 404.
-
-        Even when both domain and inventory are owned by the same user,
-        the inventory must belong to the domain in the URL path.
-        """
-        # Create a completed inventory in the test domain
-        inv_data = make_inventory_data(
-            domain_id=domain_for_testing["id"],
-            name="Inventory in domain A",
-            status="completed",
-            georeference={
-                "crs": "EPSG:32611",
-                "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
-            },
-        )
-        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
-            inv_data["id"]
-        )
-        doc_ref.set(inv_data)
-
-        try:
-            # Try to use it from a different domain (using the test domain's ID
-            # but a URL with a non-matching domain will fail on domain validation)
-            response = client.post(
-                self.route("00000000000000000000000000000000", inv_data["id"]),
-                json=MINIMAL_MODIFICATIONS_BODY,
-            )
-            # Should fail because domain doesn't exist
-            assert response.status_code == 404
-        finally:
-            doc_ref.delete()
-
     def test_invalid_domain_returns_404(self, client):
-        """Non-existent domain_id returns 404."""
         response = client.post(
             self.route(
                 "00000000000000000000000000000000",
@@ -318,29 +294,19 @@ class TestApplyModifications:
         assert response.status_code == 404
 
     def test_empty_modifications_returns_422(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+        self, client, domain_for_testing, source_inventory
     ):
-        """Empty modifications list should return 422 (min_length=1)."""
-        source_id = completed_inventory_for_modifications["id"]
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
+            self.route(domain_for_testing["id"], source_inventory["id"]),
             json={"modifications": []},
         )
         assert response.status_code == 422
 
     def test_invalid_operator_for_species_returns_422(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+        self, client, domain_for_testing, source_inventory
     ):
-        """Using gt operator on fia_species_code should return 422."""
-        source_id = completed_inventory_for_modifications["id"]
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
+            self.route(domain_for_testing["id"], source_inventory["id"]),
             json={
                 "modifications": [
                     {
@@ -357,15 +323,10 @@ class TestApplyModifications:
         assert response.status_code == 422
 
     def test_incompatible_unit_returns_422(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+        self, client, domain_for_testing, source_inventory
     ):
-        """Providing incompatible unit (kg for dbh) should return 422."""
-        source_id = completed_inventory_for_modifications["id"]
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
+            self.route(domain_for_testing["id"], source_inventory["id"]),
             json={
                 "modifications": [
                     {
@@ -383,15 +344,10 @@ class TestApplyModifications:
         assert response.status_code == 422
 
     def test_invalid_expression_returns_422(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+        self, client, domain_for_testing, source_inventory
     ):
-        """Invalid expression (function call) should return 422."""
-        source_id = completed_inventory_for_modifications["id"]
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
+            self.route(domain_for_testing["id"], source_inventory["id"]),
             json={
                 "modifications": [
                     {
@@ -404,15 +360,10 @@ class TestApplyModifications:
         assert response.status_code == 422
 
     def test_divide_by_zero_returns_422(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+        self, client, domain_for_testing, source_inventory
     ):
-        """Dividing by zero should return 422."""
-        source_id = completed_inventory_for_modifications["id"]
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
+            self.route(domain_for_testing["id"], source_inventory["id"]),
             json={
                 "modifications": [
                     {
@@ -432,174 +383,115 @@ class TestApplyModifications:
         )
         assert response.status_code == 422
 
-    def test_multiple_modifications(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
-    ):
-        """Multiple modifications in one request."""
-        source_id = completed_inventory_for_modifications["id"]
-        body = {
+
+# Feature-based spatial conditions (issue #276 — end-to-end through the
+# in-place modifications endpoint).
+
+
+@pytest.fixture(scope="session")
+def completed_feature(firestore_client, domain_for_testing):
+    data = make_feature_data(domain_id=domain_for_testing["id"], status="completed")
+    ref = firestore_client.collection(FEATURES_COLLECTION).document(data["id"])
+    ref.set(data)
+    yield data
+    ref.delete()
+
+
+@pytest.fixture(scope="session")
+def pending_feature(firestore_client, domain_for_testing):
+    data = make_feature_data(domain_id=domain_for_testing["id"], status="pending")
+    ref = firestore_client.collection(FEATURES_COLLECTION).document(data["id"])
+    ref.set(data)
+    yield data
+    ref.delete()
+
+
+@pytest.fixture(scope="session")
+def feature_in_different_domain(firestore_client, second_domain):
+    data = make_feature_data(domain_id=second_domain["id"], status="completed")
+    ref = firestore_client.collection(FEATURES_COLLECTION).document(data["id"])
+    ref.set(data)
+    yield data
+    ref.delete()
+
+
+class TestFeatureConditions:
+    """Feature-source spatial conditions are validated at request time (#276/#282)."""
+
+    def route(self, domain_id, inventory_id):
+        return f"/domains/{domain_id}/inventories/{inventory_id}/modifications"
+
+    def _body(self, feature_id):
+        return {
             "modifications": [
                 {
-                    "conditions": {
-                        "attribute": "dbh",
-                        "operator": "lt",
-                        "value": 2.54,
-                    },
-                    "actions": {"modifier": "remove"},
-                },
-                {
-                    "conditions": {
-                        "attribute": "height",
-                        "operator": "gt",
-                        "value": 50,
-                    },
-                    "actions": {
-                        "attribute": "height",
-                        "modifier": "multiply",
-                        "value": 0.9,
-                    },
-                },
-            ]
-        }
-
-        response = client.post(
-            self.route(domain_for_testing["id"], source_id),
-            json=body,
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert len(data["source"]["modifications"]) == 2
-
-    def test_modifications_with_unit_conversion(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
-    ):
-        """Modifications with unit fields are accepted."""
-        source_id = completed_inventory_for_modifications["id"]
-        body = {
-            "modifications": [
-                {
-                    "conditions": {
-                        "attribute": "dbh",
-                        "operator": "lt",
-                        "value": 1.0,
-                        "unit": "in",
-                    },
-                    "actions": {"modifier": "remove"},
+                    "conditions": [
+                        {
+                            "source": "feature",
+                            "operator": "within",
+                            "feature_id": feature_id,
+                            "buffer_m": 3,
+                        }
+                    ],
+                    "actions": [{"modifier": "remove"}],
                 }
             ]
         }
 
-        response = client.post(
-            self.route(domain_for_testing["id"], source_id),
-            json=body,
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        cond = data["source"]["modifications"][0]["conditions"][0]
-        assert cond["unit"] == "in"
-
-    def test_expression_condition(
-        self,
-        client,
-        domain_for_testing,
-        completed_inventory_for_modifications,
+    def test_unknown_feature_id_returns_422(
+        self, client, domain_for_testing, source_inventory
     ):
-        """Expression conditions are accepted."""
-        source_id = completed_inventory_for_modifications["id"]
-        body = {
-            "modifications": [
-                {
-                    "conditions": {"expression": "height * crown_ratio < 1.0"},
-                    "actions": {"modifier": "remove"},
-                }
-            ]
-        }
-
+        unknown = "00000000000000000000000000000000"
         response = client.post(
-            self.route(domain_for_testing["id"], source_id),
-            json=body,
-        )
-
-        assert response.status_code == 201
-
-
-class TestPimWithModifications:
-    """Test that the PIM endpoint accepts the new modifications field."""
-
-    def route(self, domain_id):
-        return f"/domains/{domain_id}/inventories/tree/pim"
-
-    def test_pim_with_modifications(
-        self, client, domain_for_testing, pim_grid_for_inventory
-    ):
-        """PIM endpoint accepts modifications field."""
-        response = client.post(
-            self.route(domain_for_testing["id"]),
-            json={
-                "source_pim_grid_id": pim_grid_for_inventory["id"],
-                "seed": 42,
-                "modifications": [
-                    {
-                        "conditions": {
-                            "attribute": "dbh",
-                            "operator": "le",
-                            "value": 12.7,
-                        },
-                        "actions": {"modifier": "remove"},
-                    }
-                ],
-            },
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert len(data["modifications"]) == 1
-        assert data["modifications"][0]["conditions"][0]["attribute"] == "dbh"
-        assert data["modifications"][0]["actions"][0]["modifier"] == "remove"
-
-    def test_pim_without_modifications(
-        self, client, domain_for_testing, pim_grid_for_inventory
-    ):
-        """PIM endpoint works without modifications (backwards compatible)."""
-        response = client.post(
-            self.route(domain_for_testing["id"]),
-            json={
-                "source_pim_grid_id": pim_grid_for_inventory["id"],
-                "seed": 42,
-            },
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert data["modifications"] == []
-
-    def test_pim_invalid_modification_returns_422(
-        self, client, domain_for_testing, pim_grid_for_inventory
-    ):
-        """PIM endpoint rejects invalid modifications."""
-        response = client.post(
-            self.route(domain_for_testing["id"]),
-            json={
-                "source_pim_grid_id": pim_grid_for_inventory["id"],
-                "seed": 42,
-                "modifications": [
-                    {
-                        "conditions": {
-                            "attribute": "fia_species_code",
-                            "operator": "gt",  # Invalid for species
-                            "value": 100,
-                        },
-                        "actions": {"modifier": "remove"},
-                    }
-                ],
-            },
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=self._body(unknown),
         )
         assert response.status_code == 422
+        assert unknown in response.json()["detail"]
+
+    def test_feature_in_different_domain_returns_422(
+        self, client, domain_for_testing, source_inventory, feature_in_different_domain
+    ):
+        feature_id = feature_in_different_domain["id"]
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=self._body(feature_id),
+        )
+        assert response.status_code == 422
+        assert feature_id in response.json()["detail"]
+
+    def test_pending_feature_returns_422(
+        self, client, domain_for_testing, source_inventory, pending_feature
+    ):
+        feature_id = pending_feature["id"]
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=self._body(feature_id),
+        )
+        assert response.status_code == 422
+        assert feature_id in response.json()["detail"]
+
+    def test_completed_feature_succeeds(
+        self, client, domain_for_testing, source_inventory, completed_feature
+    ):
+        feature_id = completed_feature["id"]
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=self._body(feature_id),
+        )
+        assert response.status_code == 200, response.json()
+        condition = response.json()["modifications"][-1]["conditions"][0]
+        assert condition["feature_id"] == feature_id
+
+
+class TestOpenApiExamples:
+    """Every OpenAPI example body round-trips through ApplyModificationsRequest
+    (issue #276, item 2)."""
+
+    @pytest.mark.parametrize(
+        "example", ALL_MODIFICATIONS_EXAMPLE_VALUES, ids=lambda e: e[0]
+    )
+    def test_example_validates(self, example):
+        _name, value = example
+        request = ApplyModificationsRequest(**value)
+        assert len(request.modifications) >= 1

@@ -1,10 +1,10 @@
 """
 api/v2/resources/inventories/modifications/router.py
 
-Router for standalone inventory modifications endpoint.
+Router for the in-place inventory modifications endpoint.
 
 POST /domains/{domain_id}/inventories/{inventory_id}/modifications
-Creates a new inventory by applying modifications to an existing one.
+Applies modifications to the existing inventory in place (same ID), asynchronously.
 """
 
 import uuid
@@ -18,10 +18,7 @@ from api.dependencies import VerifiedDomain
 from api.resources.inventories.modifications.examples import (
     APPLY_MODIFICATIONS_OPENAPI_EXAMPLES,
 )
-from api.resources.inventories.modifications.schema import (
-    ApplyModificationsRequest,
-    ModificationsInventorySource,
-)
+from api.resources.inventories.modifications.schema import ApplyModificationsRequest
 from api.resources.inventories.schema import Inventory
 from api.resources.inventories.utils import validate_feature_conditions
 from api.resources.modifications import stringify_modification_coordinates
@@ -37,8 +34,8 @@ COLLECTION = INVENTORIES_COLLECTION
 @router.post(
     "",
     response_model=Inventory,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a modified inventory",
+    status_code=status.HTTP_200_OK,
+    summary="Apply modifications to an inventory in place",
 )
 async def apply_modifications(
     request: Request,
@@ -50,10 +47,13 @@ async def apply_modifications(
     ],
 ):
     """
-    # Apply Modifications to an Inventory
+    # Apply Modifications to an Inventory (in place)
 
-    Creates a **new** inventory by applying modifications to an existing
-    completed inventory. The source inventory is not changed.
+    Applies modifications to **this** inventory in place — the inventory keeps
+    its ID and the submitted rules are appended to its cumulative
+    `modifications` list, then the tree data is re-derived asynchronously. To
+    keep the original data instead, duplicate the inventory first
+    (`POST .../{inventory_id}/duplicate`) and modify the copy.
 
     Modifications filter trees by conditions and apply actions (remove,
     multiply, divide, add, subtract, replace) to matching rows. Conditions
@@ -81,8 +81,8 @@ async def apply_modifications(
       optional `crs`; defaults to the domain CRS).
     - `source: "feature"` — reference a persisted Feature resource by
       `feature_id` (road, water, layerset). The Feature must belong to the
-      same domain as the source inventory; cross-domain references are
-      rejected.
+      same domain as this inventory and be in `completed` status;
+      cross-domain, missing, or unfinished references are rejected with 422.
 
     Both spatial variants accept:
     - `operator`: `within`, `outside`, or `intersects`
@@ -107,56 +107,45 @@ async def apply_modifications(
 
     ## Response
 
-    Returns the new Inventory resource with status `"pending"`. The original
-    inventory is unchanged.
+    Returns this inventory (same ID) with status `"pending"` and the submitted
+    rules appended to `modifications`. Its `checksum` changes, so any resource
+    derived from it can detect that the source has changed. Poll the inventory
+    until status returns to `"completed"`.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
 
     await validate_feature_conditions(body.modifications, owner_id, domain_id)
 
-    # Validate source inventory exists, is owned, belongs to domain, is completed
-    _, source_snapshot = await get_document_async(
+    # Inventory must exist, be owned, in this domain, and completed.
+    _, snapshot = await get_document_async(
         COLLECTION,
         inventory_id,
         owner_id=owner_id,
         domain_id=domain_id,
         document_status="completed",
     )
-    source_data = source_snapshot.to_dict()
+    inventory_data = snapshot.to_dict()
 
-    new_inventory_id = uuid.uuid4().hex
-    request_time = datetime.now()
-
-    source = ModificationsInventorySource(
-        source_inventory_id=inventory_id,
-        source_inventory_checksum=source_data.get("checksum"),
-        modifications=stringify_modification_coordinates(
-            [m.model_dump() for m in body.modifications]
-        ),
+    new_modifications = stringify_modification_coordinates(
+        [m.model_dump() for m in body.modifications]
     )
 
-    inventory_data = {
-        "id": new_inventory_id,
-        "checksum": uuid.uuid4().hex,
-        "domain_id": domain_id,
-        "type": source_data["type"],
-        "name": body.name,
-        "description": body.description,
-        "status": JobStatus.pending.value,
-        "progress": None,
-        "created_on": request_time,
-        "modified_on": request_time,
-        "source": source.model_dump(),
-        "modifications": [],
-        "columns": source_data.get("columns", []),
-        "georeference": None,
-        "error": None,
-        "tags": body.tags,
-        "owner_id": owner_id,
-    }
+    # Append the new rules to the cumulative ledger, and queue only this delta
+    # for standgen to apply to the current data (pending_modifications). The
+    # checksum is re-assigned here so derivatives become detectably stale (#304).
+    existing = inventory_data.get("modifications", [])
+    inventory_data["modifications"] = existing + new_modifications
+    inventory_data["pending_modifications"] = new_modifications
+    inventory_data["checksum"] = uuid.uuid4().hex
+    inventory_data["status"] = JobStatus.pending.value
+    inventory_data["progress"] = None
+    inventory_data["error"] = None
+    inventory_data["modified_on"] = datetime.now()
 
-    await set_document_async(COLLECTION, new_inventory_id, inventory_data)
-    await create_http_task_async(STANDGEN_QUEUE, STANDGEN_SERVICE, new_inventory_id)
+    await set_document_async(COLLECTION, inventory_id, inventory_data)
+    await create_http_task_async(STANDGEN_QUEUE, STANDGEN_SERVICE, inventory_id)
 
+    # pending_modifications is an internal work-queue field, not part of the
+    # Inventory schema; Pydantic ignores it (and owner_id) on construction.
     return Inventory(**inventory_data)

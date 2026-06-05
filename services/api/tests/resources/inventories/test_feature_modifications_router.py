@@ -11,9 +11,8 @@ Both live inventory endpoints that accept user-supplied ``modifications`` —
 ``validate_feature_modifications`` helper, so the ``endpoint`` fixture runs the
 whole case sweep against each to prove both are wired in.
 
-(The standalone ``{inventory_id}/modifications`` endpoint gets the same
-validation in its router but is not registered on the app today, so it can't be
-exercised over HTTP here.)
+(The in-place ``{inventory_id}/modifications`` endpoint gets the same validation
+in its router; it is exercised over HTTP in ``test_modifications_router.py``.)
 """
 
 import pytest

@@ -174,8 +174,6 @@ EXAMPLE_REMOVE_TREES_IN_INLINE_POLYGON = {
 
 # Multiple modifications: remove small + reduce tall
 EXAMPLE_MULTIPLE_MODIFICATIONS = {
-    "name": "Modified inventory",
-    "description": "Remove small trees and reduce tall tree heights",
     "modifications": [
         {
             "conditions": {

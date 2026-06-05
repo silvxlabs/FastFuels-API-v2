@@ -212,6 +212,25 @@ def _register_dependencies(
     return registered
 
 
+def _overwrite_static_dir(fs: gcsfs.GCSFileSystem, src: str, dst: str) -> None:
+    """Overwrite a static GCS directory in place, without deleting it first.
+
+    Sibling pipelines (griddle, exporter, treevox) read static fixtures while
+    the e2e suite regenerates them, so the static path must never disappear.
+    A recursive delete before the copy leaves the path missing for the whole
+    rm+cp window (#311). Instead, copy each object over its existing
+    counterpart (GCS object copies overwrite atomically), then remove only
+    leftover objects that are not part of the new fixture.
+    """
+    src_files = sorted(fs.find(src))
+    assert src_files, f"no objects found under gs://{src}"
+    dst_files = [f"{dst}{f.removeprefix(src)}" for f in src_files]
+    stale = sorted(set(fs.find(dst)) - set(dst_files))
+    fs.cp(src_files, dst_files)
+    if stale:
+        fs.rm(stale)
+
+
 @pytest.fixture
 def create_static_fixture(firestore_client, test_owner_id):
     """Factory fixture that creates a static grid fixture in GCS.
@@ -260,12 +279,7 @@ def create_static_fixture(firestore_client, test_owner_id):
             fs = gcsfs.GCSFileSystem()
             src = f"{GRIDS_BUCKET}/{grid_id}"
             dst = f"{GRIDS_BUCKET}/{static_name}"
-
-            # Remove existing static data if present
-            if fs.exists(dst):
-                fs.rm(dst, recursive=True)
-
-            fs.cp(src, dst, recursive=True)
+            _overwrite_static_dir(fs, src, dst)
             logger.info(f"Copied zarr gs://{src} -> gs://{dst}")
 
             # Save JSON template
@@ -342,12 +356,7 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
             fs = gcsfs.GCSFileSystem()
             src = f"{INVENTORIES_BUCKET}/{inventory_id}"
             dst = f"{INVENTORIES_BUCKET}/{static_name}"
-
-            # Remove existing static data if present
-            if fs.exists(dst):
-                fs.rm(dst, recursive=True)
-
-            fs.cp(src, dst, recursive=True)
+            _overwrite_static_dir(fs, src, dst)
             logger.info(f"Copied parquet gs://{src} -> gs://{dst}")
 
             # Save JSON template
@@ -431,9 +440,8 @@ def create_static_feature_fixture(firestore_client, test_owner_id):
             src = f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
             dst = f"{FEATURES_BUCKET}/{static_name}.parquet"
 
-            if fs.exists(dst):
-                fs.rm(dst)
-
+            # No up-front delete: a GCS object copy overwrites atomically, so
+            # concurrent readers never see the blob missing (#311).
             fs.cp(src, dst)
             logger.info(f"Copied GeoParquet gs://{src} -> gs://{dst}")
 

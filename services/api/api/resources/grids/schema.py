@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -46,6 +46,29 @@ class BandType(StrEnum):
 
     continuous = "continuous"
     categorical = "categorical"
+
+
+class ContinuousBandSummary(BaseModel):
+    type: Literal["continuous"]
+    count: int  # non-nodata cells
+    nodata_count: int
+    min: float | None  # None when count == 0
+    max: float | None
+    mean: float | None
+    std: float | None
+
+
+class CategoricalBandSummary(BaseModel):
+    type: Literal["categorical"]
+    count: int
+    nodata_count: int
+    unique_count: int
+
+
+BandSummary = Annotated[
+    ContinuousBandSummary | CategoricalBandSummary,
+    Field(discriminator="type"),
+]
 
 
 class GridSortField(StrEnum):
@@ -93,6 +116,7 @@ class Band(BaseModel):
         ),
         examples=[32767, -9999, None],
     )
+    summary: BandSummary | None = None
 
 
 class Georeference(BaseModel):

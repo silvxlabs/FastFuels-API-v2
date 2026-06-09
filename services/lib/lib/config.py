@@ -31,6 +31,7 @@ OSM_BUCKET = os.getenv("OSM_BUCKET", "placeholder-bucket-name")
 TABLES_BUCKET = os.getenv("TABLES_BUCKET", "placeholder-bucket-name")
 TEST_BUCKET = os.getenv("TEST_BUCKET", "placeholder-bucket-name")
 UPLOADS_BUCKET = os.getenv("UPLOADS_BUCKET", "placeholder-bucket-name")
+POINT_CLOUDS_BUCKET = os.getenv("POINT_CLOUDS_BUCKET", "placeholder-bucket-name")
 
 # Collection names
 DOMAINS_COLLECTION = os.getenv("DOMAINS_COLLECTION", "domains-v2")
@@ -40,6 +41,7 @@ INVENTORIES_COLLECTION = os.getenv("INVENTORIES_COLLECTION", "inventories-v2")
 FEATURES_COLLECTION = os.getenv("FEATURES_COLLECTION", "features-v2")
 KEYS_COLLECTION = os.getenv("KEYS_COLLECTION", "keys-v2")
 APPLICATIONS_COLLECTION = os.getenv("APPLICATIONS_COLLECTION", "applications-v2")
+POINT_CLOUDS_COLLECTION = os.getenv("POINT_CLOUDS_COLLECTION", "pointclouds-v2")
 
 # Queue names
 GRIDDLE_QUEUE = os.getenv("GRIDDLE_QUEUE", "griddle-v2-queue")

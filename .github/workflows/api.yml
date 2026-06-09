@@ -94,7 +94,8 @@ jobs:
               RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }},\
               INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
               UPLOADS_BUCKET=${{ secrets.UPLOADS_BUCKET }},\
-              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }}" \
+              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
+              POINT_CLOUDS_BUCKET=${{ secrets.POINT_CLOUDS_BUCKET }}" \
             --quiet
 
       - name: Get service URL
@@ -156,6 +157,7 @@ jobs:
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
           UPLOADS_BUCKET: ${{ secrets.UPLOADS_BUCKET }}
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
+          POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
           TEST_API_URL: ${{ needs.deploy.outputs.service_url }}
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}

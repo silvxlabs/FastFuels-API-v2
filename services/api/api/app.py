@@ -15,6 +15,10 @@ from api.resources.inventories.router import (
     wildcard_router as inventories_wildcard_router,
 )
 from api.resources.keys.router import router as keys_router
+from api.resources.point_clouds.router import router as point_clouds_router
+from api.resources.point_clouds.router import (
+    wildcard_router as point_clouds_wildcard_router,
+)
 from lib.config import DEPLOYMENT_ENV
 
 CORS_ORIGINS = {
@@ -91,6 +95,10 @@ OPENAPI_TAGS = [
     {
         "name": "Exports",
         "description": "Packaged outputs generated from a domain's inventories and grids.",
+    },
+    {
+        "name": "Point Clouds",
+        "description": "Airborne (ALS) and terrestrial (TLS) laser-scan point clouds attached to a domain.",
     },
     {"name": "Keys", "description": "Manage API keys used to authenticate requests."},
     {
@@ -207,6 +215,16 @@ api_router.include_router(
     inventories_router,
     prefix="/domains/{domain_id}/inventories",
     tags=["Inventories"],
+)
+api_router.include_router(
+    point_clouds_wildcard_router,
+    prefix="/domains/-/pointclouds",
+    tags=["Point Clouds"],
+)
+api_router.include_router(
+    point_clouds_router,
+    prefix="/domains/{domain_id}/pointclouds",
+    tags=["Point Clouds"],
 )
 api_router.include_router(keys_router, prefix="/keys", tags=["Keys"])
 api_router.include_router(

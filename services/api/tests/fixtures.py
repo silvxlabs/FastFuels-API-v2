@@ -207,6 +207,38 @@ def make_inventory_data(
     }
 
 
+def make_point_cloud_data(
+    domain_id: str,
+    owner_id: str | None = None,
+    name: str = "Test Point Cloud",
+    description: str = "Test point cloud created by fixture",
+    status: str = "pending",
+    tags: list | None = None,
+    source: dict | None = None,
+    point_cloud_type: str = "als",
+    georeference: dict | None = None,
+    checksum: str | None = None,
+) -> dict:
+    """Factory function to create point cloud data as stored in Firestore."""
+    return {
+        "id": f"test-{uuid.uuid4().hex}",
+        "domain_id": domain_id,
+        "type": point_cloud_type,
+        "name": name,
+        "description": description,
+        "status": status,
+        "progress": None,
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
+        "owner_id": owner_id or DEFAULT_OWNER_ID,
+        "checksum": checksum or uuid.uuid4().hex,
+        "source": source or {"name": "3dep"},
+        "georeference": georeference,
+        "error": None,
+        "tags": tags or [],
+    }
+
+
 def make_feature_data(
     domain_id: str,
     owner_id: str | None = None,

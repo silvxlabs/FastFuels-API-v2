@@ -37,6 +37,7 @@ from fastfuels_core.treatments import (
 
 from lib.config import SUPPORT_EMAIL
 from lib.errors import ProcessingError
+from lib.inventory import DIAMETER
 from standgen.modifications import build_condition_mask
 
 logger = logging.getLogger(__name__)
@@ -44,8 +45,10 @@ logger = logging.getLogger(__name__)
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
-# v2 schema diameter column (fastfuels-core defaults to "DIA").
-DIA_COLUMN = "dbh"
+# v2 schema diameter column (fastfuels-core defaults to "DIA"). Sourced from the
+# shared canonical vocabulary so the API guard, treevox, and standgen agree on
+# what "diameter" is.
+DIA_COLUMN = DIAMETER
 
 # Native unit per metric — the unit `value` is stored/validated in at create time.
 NATIVE_UNITS = {

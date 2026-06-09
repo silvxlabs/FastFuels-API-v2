@@ -360,3 +360,30 @@ class InventoryModification(BaseModel):
         if has_remove and len(self.actions) > 1:
             raise ValueError("RemoveAction must be the sole action if present")
         return self
+
+
+def modification_referenced_columns(
+    modifications: list[InventoryModification],
+) -> set[str]:
+    """Return the inventory column names a list of modifications references.
+
+    Collects from both conditions and actions: attribute conditions/actions
+    contribute their ``attribute``; expression conditions contribute every name
+    used in the expression. Spatial conditions and ``RemoveAction`` reference no
+    measurement column (they test a tree's position or remove rows). Used to
+    reject a modification that references a column the target inventory lacks.
+    """
+    columns: set[str] = set()
+    for mod in modifications:
+        for condition in mod.conditions:
+            if isinstance(condition, InventoryModificationCondition):
+                columns.add(condition.attribute.value)
+            elif isinstance(condition, InventoryExpressionCondition):
+                tree = ast.parse(condition.expression, mode="eval")
+                columns.update(
+                    node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+                )
+        for action in mod.actions:
+            if isinstance(action, InventoryModificationAction):
+                columns.add(action.attribute.value)
+    return columns

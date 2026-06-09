@@ -54,6 +54,38 @@ def validate_inventory_wide_treatment_area(domain: dict, treatments: list) -> No
     )
 
 
+def require_inventory_columns(
+    available_keys: set[str],
+    required: set[str],
+    *,
+    detail: str,
+) -> None:
+    """Reject an operation whose required columns aren't all present in the
+    inventory.
+
+    ``available_keys`` is the set of column keys the inventory provides (from its
+    ``columns`` metadata — the source of truth recorded by the uploader and
+    source services). ``required`` is the set of columns an operation needs or
+    that a modification rule references. ``detail`` is the lead-in message; the
+    required (asked-for) and available columns are appended so the caller sees
+    exactly what was requested versus what the inventory provides.
+
+    Raises:
+        HTTPException(422): If any required column is absent. The columns the
+            client effectively asked for aren't in this inventory, so this is a
+            validation error on the request, not a path-level 404.
+    """
+    if required <= available_keys:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=(
+            f"{detail} Required column(s): {sorted(required)}. "
+            f"Available column(s): {sorted(available_keys)}."
+        ),
+    )
+
+
 async def validate_feature_conditions(
     items: list,
     owner_id: str,

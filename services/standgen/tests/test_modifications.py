@@ -22,6 +22,7 @@ from standgen.modifications import (
     evaluate_attribute_condition,
     evaluate_expression,
     evaluate_spatial_condition,
+    referenced_columns,
     resolve_spatial_conditions,
 )
 
@@ -132,6 +133,37 @@ class TestEvaluateExpression:
         mask = evaluate_expression(sample_df, "height * crown_ratio < 1.0")
         # 1.5*0.3=0.45, 15*0.6=9, 8*0.4=3.2, 0.5*0.2=0.1, 25*0.5=12.5
         assert mask.tolist() == [True, False, False, True, False]
+
+
+class TestReferencedColumns:
+    def test_attribute_condition_and_action(self):
+        mods = [
+            {
+                "conditions": [{"attribute": "dbh", "operator": "lt", "value": 5.0}],
+                "actions": [
+                    {"attribute": "height", "modifier": "multiply", "value": 0.9}
+                ],
+            }
+        ]
+        assert referenced_columns(mods) == {"dbh", "height"}
+
+    def test_expression_condition_collects_all_names(self):
+        mods = [
+            {
+                "conditions": [{"expression": "height * crown_ratio < 1.0"}],
+                "actions": [{"modifier": "remove"}],
+            }
+        ]
+        assert referenced_columns(mods) == {"height", "crown_ratio"}
+
+    def test_spatial_condition_and_remove_action_reference_nothing(self):
+        mods = [
+            {
+                "conditions": [{"source": "feature", "feature_id": "f1"}],
+                "actions": [{"modifier": "remove"}],
+            }
+        ]
+        assert referenced_columns(mods) == set()
 
 
 class TestBuildConditionMask:

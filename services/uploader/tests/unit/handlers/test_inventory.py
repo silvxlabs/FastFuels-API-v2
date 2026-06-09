@@ -263,12 +263,14 @@ class TestValidate:
             _validate(df)
         assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
 
-    def test_missing_optional_columns_added_as_null(self):
-        """Missing optional columns are added as NaN and do not cause errors."""
+    def test_missing_optional_columns_stay_absent(self):
+        """Missing optional columns are NOT padded with nulls — they stay absent
+        so downstream consumers can tell the data was never provided."""
         df = self._make_df()
         result = _validate(df)
-        assert "fia_species_code" in result.columns
-        assert result["fia_species_code"].isna().all()
+        for col in ("fia_species_code", "fia_status_code", "dbh", "crown_ratio"):
+            assert col not in result.columns
+        assert list(result.columns) == ["x", "y", "height"]
 
     def test_optional_columns_preserved_when_present(self):
         """Optional columns with valid values pass validation."""

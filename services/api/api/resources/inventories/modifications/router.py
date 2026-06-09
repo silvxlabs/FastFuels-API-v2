@@ -15,12 +15,18 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.resources.inventories.modification_models import (
+    modification_referenced_columns,
+)
 from api.resources.inventories.modifications.examples import (
     APPLY_MODIFICATIONS_OPENAPI_EXAMPLES,
 )
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
 from api.resources.inventories.schema import Inventory
-from api.resources.inventories.utils import validate_feature_conditions
+from api.resources.inventories.utils import (
+    require_inventory_columns,
+    validate_feature_conditions,
+)
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -126,6 +132,15 @@ async def apply_modifications(
         document_status="completed",
     )
     inventory_data = snapshot.to_dict()
+
+    # Reject rules that reference a column this inventory doesn't have (e.g.
+    # `dbh > 30` on an upload or CHM inventory with no dbh). Absence is loud now
+    # that the uploader no longer pads missing columns with nulls.
+    require_inventory_columns(
+        {column["key"] for column in inventory_data.get("columns", [])},
+        modification_referenced_columns(body.modifications),
+        detail="A modification references column(s) this inventory doesn't have.",
+    )
 
     new_modifications = stringify_modification_coordinates(
         [m.model_dump() for m in body.modifications]

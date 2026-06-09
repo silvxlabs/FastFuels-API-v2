@@ -10,6 +10,7 @@ import pytest
 from api.resources.grids.voxelize.inventory.tree.examples import (
     ALL_TREE_INVENTORY_EXAMPLE_VALUES,
 )
+from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS
 
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_COLLECTION
 from tests.fixtures import make_domain_data, make_inventory_data
@@ -43,6 +44,25 @@ def second_domain_for_tree_voxelization(firestore_client):
     )
     doc_ref.set(domain_data)
     yield domain_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def height_only_inventory(firestore_client, domain_for_testing):
+    """A completed tree inventory carrying only position and height (e.g. CHM/ITD
+    extraction) — it lacks the per-tree measurements voxelization needs."""
+    inventory_data = make_inventory_data(
+        domain_id=domain_for_testing["id"],
+        name="Height-only inventory for voxelization guard",
+        status="completed",
+        inventory_type="tree",
+    )
+    inventory_data["columns"] = [c.model_dump() for c in CHM_INVENTORY_COLUMNS]
+    doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+        inventory_data["id"]
+    )
+    doc_ref.set(inventory_data)
+    yield inventory_data
     doc_ref.delete()
 
 
@@ -281,6 +301,25 @@ class TestCreateTreeInventoryGrid:
             assert response.status_code == 422
         finally:
             doc_ref.delete()
+
+    def test_height_only_inventory_returns_422(
+        self, client, domain_for_testing, height_only_inventory
+    ):
+        """A position-and-height-only inventory can't be voxelized — it's missing
+        diameter, species, crown ratio, and status. The error names what's
+        required versus what the inventory provides."""
+        body = {"source_inventory_id": height_only_inventory["id"]}
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "Required column(s)" in detail
+        assert "Available column(s)" in detail
+        # dbh is named as required but is not among the available columns —
+        # proving the guard reported the actually-missing column, not just that
+        # the word "dbh" appears somewhere in the (always-listed) required set.
+        required_part, available_part = detail.split("Available column(s)")
+        assert "dbh" in required_part
+        assert "dbh" not in available_part
 
     # --- Request body validation ---
 

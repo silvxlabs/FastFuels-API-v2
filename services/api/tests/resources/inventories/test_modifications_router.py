@@ -17,6 +17,7 @@ from api.resources.inventories.modifications.examples import (
     ALL_MODIFICATIONS_EXAMPLE_VALUES,
 )
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
+from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS
 
 from lib.config import FEATURES_COLLECTION, INVENTORIES_COLLECTION
 from tests.fixtures import make_feature_data, make_inventory_data
@@ -96,6 +97,32 @@ def completed_inventory_different_owner(firestore_client, domain_with_different_
     doc_ref.set(inv_data)
     yield inv_data
     doc_ref.delete()
+
+
+@pytest.fixture
+def no_dbh_inventory(firestore_client, domain_for_testing, cleanup_inventories):
+    """A completed CHM-derived inventory: position and height only, no dbh.
+
+    Function-scoped because the success-path test mutates it (status -> pending).
+    """
+    inv = make_inventory_data(
+        domain_id=domain_for_testing["id"],
+        name="CHM Inventory (no dbh) for modifications guard",
+        status="completed",
+        source={
+            "name": "chm",
+            "source_chm_grid_id": f"test-{uuid.uuid4().hex}",
+            "algorithm": {"name": "lmf"},
+        },
+        georeference={
+            "crs": "EPSG:32611",
+            "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
+        },
+    )
+    inv["columns"] = [c.model_dump() for c in CHM_INVENTORY_COLUMNS]
+    firestore_client.collection(INVENTORIES_COLLECTION).document(inv["id"]).set(inv)
+    cleanup_inventories.append(inv["id"])
+    return inv
 
 
 MINIMAL_MODIFICATIONS_BODY = {
@@ -382,6 +409,62 @@ class TestApplyModificationsInPlace:
             },
         )
         assert response.status_code == 422
+
+    def test_modification_referencing_missing_column_returns_422(
+        self, client, domain_for_testing, no_dbh_inventory
+    ):
+        """A rule that filters on dbh can't apply to a CHM inventory with no dbh.
+        The error names what was required versus what the inventory provides."""
+        response = client.post(
+            self.route(domain_for_testing["id"], no_dbh_inventory["id"]),
+            json={
+                "modifications": [
+                    {
+                        "conditions": {
+                            "attribute": "dbh",
+                            "operator": "lt",
+                            "value": 5.0,
+                        },
+                        "actions": {"modifier": "remove"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "Required column(s)" in detail
+        assert "Available column(s)" in detail
+        # dbh is the referenced-but-missing column: present in the required
+        # portion of the message but absent from the inventory's available set.
+        required_part, available_part = detail.split("Available column(s)")
+        assert "dbh" in required_part
+        assert "dbh" not in available_part
+
+    def test_modification_referencing_present_column_succeeds(
+        self, client, domain_for_testing, no_dbh_inventory
+    ):
+        """The guard doesn't over-reject: a rule that only references height
+        applies fine to a position-and-height-only inventory."""
+        response = client.post(
+            self.route(domain_for_testing["id"], no_dbh_inventory["id"]),
+            json={
+                "modifications": [
+                    {
+                        "conditions": {
+                            "attribute": "height",
+                            "operator": "gt",
+                            "value": 40.0,
+                        },
+                        "actions": {
+                            "attribute": "height",
+                            "modifier": "multiply",
+                            "value": 0.9,
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.json()
 
 
 # Feature-based spatial conditions (issue #276 — end-to-end through the

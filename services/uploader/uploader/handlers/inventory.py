@@ -32,9 +32,9 @@ _V2_COLUMNS = {
 
 # Doc metadata (type, unit) per v2 column, in canonical order. Only x, y, and
 # height are required in an upload, so the inventory document's `columns` field
-# is written from the columns the file actually provided (before _validate pads
-# the optional ones with nulls) — the API's treatments endpoint relies on it to
-# tell whether an inventory has a `dbh` column to thin against.
+# is written from the columns the file actually provided — the API's treatments
+# and voxelize endpoints rely on it to tell whether an inventory carries the
+# columns an operation needs (e.g. a `dbh` column to thin against).
 _COLUMN_METADATA = {
     "x": ("continuous", "m"),
     "y": ("continuous", "m"),
@@ -78,8 +78,9 @@ def handle_inventory(
         domain_crs_str = _extract_crs_string(domain_data)
 
         df = _parse(fmt, local_path, col_map, domain_crs_str)
-        # Record which columns the file actually provided before _validate pads
-        # the missing optional ones with all-null placeholders.
+        # Record which columns the file actually provided. _validate no longer
+        # pads missing optionals, so the set is stable across validation — but
+        # capture it here so the intent (file-provided columns only) is explicit.
         provided_columns = [c for c in _COLUMN_METADATA if c in df.columns]
         df = _validate(df)
 
@@ -117,9 +118,9 @@ def handle_inventory(
             ],
         }
         # Record the columns the file actually provided. The create endpoint
-        # wrote a provisional full column list, and _validate pads the Parquet
-        # with all-null optional columns for schema compatibility — but an
-        # all-null dbh is not a column treatments can thin against.
+        # wrote a provisional full column list; overwrite it with the real set
+        # so the metadata matches the Parquet, which now carries exactly these
+        # columns (no all-null padding).
         columns = [
             {"key": key, "type": col_type, "unit": unit}
             for key, (col_type, unit) in _COLUMN_METADATA.items()
@@ -199,11 +200,16 @@ def _parse(
 
 
 def _validate(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate the parsed DataFrame against the inventory schema."""
-    for col in _V2_COLUMNS - {"x", "y", "height"}:
-        if col not in df.columns:
-            df[col] = None
+    """Validate the parsed DataFrame against the inventory schema.
 
+    Only the columns the file actually provided are written to the Parquet.
+    Missing optional columns stay absent rather than being padded with all-null
+    placeholders: absence is loud and checkable downstream (the document's
+    `columns` metadata records it, and consumers reject operations that need a
+    column the inventory doesn't have), whereas a present-but-null column is
+    silently wrong everywhere. Pandera passes a bare x/y/height frame because the
+    optional fields are `Series[...] | None`.
+    """
     try:
         return _InventorySchema.validate(df, lazy=True)
     except pa.errors.SchemaErrors as e:

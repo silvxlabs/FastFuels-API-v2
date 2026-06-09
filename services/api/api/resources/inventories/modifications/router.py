@@ -24,6 +24,7 @@ from api.resources.inventories.modifications.examples import (
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
 from api.resources.inventories.schema import Inventory
 from api.resources.inventories.utils import (
+    inventory_column_keys,
     require_inventory_columns,
     validate_feature_conditions,
 )
@@ -137,7 +138,7 @@ async def apply_modifications(
     # `dbh > 30` on an upload or CHM inventory with no dbh). Absence is loud now
     # that the uploader no longer pads missing columns with nulls.
     require_inventory_columns(
-        {column["key"] for column in inventory_data.get("columns", [])},
+        inventory_column_keys(inventory_data),
         modification_referenced_columns(body.modifications),
         detail="A modification references column(s) this inventory doesn't have.",
     )

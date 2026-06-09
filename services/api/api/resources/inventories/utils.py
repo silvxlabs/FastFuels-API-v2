@@ -54,6 +54,20 @@ def validate_inventory_wide_treatment_area(domain: dict, treatments: list) -> No
     )
 
 
+def inventory_column_keys(inventory_data: dict) -> set[str]:
+    """Return the column keys an inventory provides, from its ``columns`` metadata.
+
+    Skips any malformed/legacy entry missing a ``key`` so a downstream guard
+    degrades to a clean 422 (the column is treated as absent) rather than a 500
+    (``KeyError`` on a bad entry).
+    """
+    return {
+        key
+        for column in inventory_data.get("columns", [])
+        if (key := column.get("key")) is not None
+    }
+
+
 def require_inventory_columns(
     available_keys: set[str],
     required: set[str],

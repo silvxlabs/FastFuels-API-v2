@@ -14,6 +14,7 @@ from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.treatment_models import InventoryTreatment
 from api.resources.modifications import parse_modification_coordinates
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
+from lib.inventory import CROWN_RATIO, DIAMETER, HEIGHT, SPECIES, STATUS, X, Y
 
 
 class InventoryType(StrEnum):
@@ -99,22 +100,22 @@ class Column(BaseModel):
 # subset: CHM produces CHM_INVENTORY_COLUMNS; uploads carry whichever optional
 # columns the file contains (the uploader records the actual set on completion).
 BASE_INVENTORY_COLUMNS = [
-    Column(key="x", type=ColumnType.continuous, unit="m"),
-    Column(key="y", type=ColumnType.continuous, unit="m"),
-    Column(key="fia_species_code", type=ColumnType.categorical),
-    Column(key="fia_status_code", type=ColumnType.categorical),
-    Column(key="dbh", type=ColumnType.continuous, unit="cm"),
-    Column(key="height", type=ColumnType.continuous, unit="m"),
-    Column(key="crown_ratio", type=ColumnType.continuous),
+    Column(key=X, type=ColumnType.continuous, unit="m"),
+    Column(key=Y, type=ColumnType.continuous, unit="m"),
+    Column(key=SPECIES, type=ColumnType.categorical),
+    Column(key=STATUS, type=ColumnType.categorical),
+    Column(key=DIAMETER, type=ColumnType.continuous, unit="cm"),
+    Column(key=HEIGHT, type=ColumnType.continuous, unit="m"),
+    Column(key=CROWN_RATIO, type=ColumnType.continuous),
 ]
 
 # Columns produced by CHM stem isolation: height and position only — no dbh,
 # species, or crown ratio. Treatments thin against dbh, so they cannot be
 # applied to a CHM-derived inventory.
 CHM_INVENTORY_COLUMNS = [
-    Column(key="x", type=ColumnType.continuous, unit="m"),
-    Column(key="y", type=ColumnType.continuous, unit="m"),
-    Column(key="height", type=ColumnType.continuous, unit="m"),
+    Column(key=X, type=ColumnType.continuous, unit="m"),
+    Column(key=Y, type=ColumnType.continuous, unit="m"),
+    Column(key=HEIGHT, type=ColumnType.continuous, unit="m"),
 ]
 
 

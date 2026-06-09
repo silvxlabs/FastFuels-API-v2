@@ -24,7 +24,10 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
-from api.resources.inventories.utils import require_inventory_columns
+from api.resources.inventories.utils import (
+    inventory_column_keys,
+    require_inventory_columns,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -130,7 +133,7 @@ async def create_tree_inventory_grid(
     # voxelized until those exist. Biomass / max-crown-radius inventory-column
     # references are validated by treevox at read time.
     require_inventory_columns(
-        {column["key"] for column in inventory_data.get("columns", [])},
+        inventory_column_keys(inventory_data),
         VOXELIZE_REQUIRED_COLUMNS,
         detail=(
             "This inventory lacks the per-tree measurements voxelization needs "

@@ -1,24 +1,4 @@
 {
-  "bands": [
-    {
-      "index": 0,
-      "key": "elevation",
-      "type": "continuous",
-      "unit": "m"
-    },
-    {
-      "index": 1,
-      "key": "slope",
-      "type": "continuous",
-      "unit": "deg"
-    },
-    {
-      "index": 2,
-      "key": "aspect",
-      "type": "continuous",
-      "unit": "deg"
-    }
-  ],
   "chunks": {
     "count": null,
     "count_by_axis": null,

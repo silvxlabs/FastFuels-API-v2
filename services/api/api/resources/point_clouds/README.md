@@ -72,9 +72,11 @@ See `schema.py` for the authoritative definition. Notable fields:
   `[min_x, min_y, min_z, max_x, max_y, max_z]`. `null` until the worker finishes ingesting. The
   bbox is a single-level array, so it needs **no** coordinate stringification (unlike domains'
   nested GeoJSON coordinates — Firestore rejects nested arrays).
-- **Per-cloud statistics** (point count, ASPRS classes present, density) are **deferred** to the
-  issue that first computes them (#329/#330), so the schema commits a contract only for fields a
-  worker actually populates.
+- **`summary: PointCloudSummary | None`** — per-cloud statistics (`point_count`, `point_classes` =
+  ASPRS classes present, `density` = points/m²). `null` until the worker finishes ingesting. Nested in
+  a `summary` sub-model mirroring the planned grid/inventory `summary` pattern (#257/#258). First
+  populated by the **#328 upload handler** (the first worker that reads a cloud's bytes); #329/#330
+  populate it the same way.
 
 ## Checksum & staleness
 

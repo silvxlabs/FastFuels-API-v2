@@ -35,6 +35,7 @@ from api.resources.point_clouds.schema import (
     PointCloudType,
     UpdatePointCloudRequestBody,
 )
+from api.resources.point_clouds.upload.router import router as upload_router
 from api.schema import JobStatus, SortOrder
 from lib.config import POINT_CLOUDS_BUCKET, POINT_CLOUDS_COLLECTION
 
@@ -44,6 +45,10 @@ router = APIRouter()
 wildcard_router = APIRouter()
 
 COLLECTION = POINT_CLOUDS_COLLECTION
+
+# Source-specific creation sub-routers. The upload source creates a point cloud
+# from a user-supplied file (#328); the 3dep source (#329) attaches similarly.
+router.include_router(upload_router, prefix="/upload", tags=["Point Clouds - Upload"])
 
 
 @wildcard_router.get(

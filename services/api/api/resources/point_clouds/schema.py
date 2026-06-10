@@ -76,6 +76,38 @@ class PointCloudGeoreference(BaseModel):
     )
 
 
+class PointCloudSummary(BaseModel):
+    """Summary statistics describing the contents of a point cloud.
+
+    Populated by the backend after the cloud is ingested and inspected; it is
+    ``null`` while the point cloud is still ``pending`` or ``running``. Use it to
+    gauge a cloud's size, density, and composition without downloading it.
+    """
+
+    point_count: int = Field(
+        ...,
+        description="Total number of points in the cloud.",
+        examples=[12873402],
+    )
+    point_classes: list[int] = Field(
+        ...,
+        description=(
+            "ASPRS standard classification codes present in the cloud, sorted "
+            "ascending. Common codes include `1` (unclassified), `2` (ground), "
+            "and `3`, `4`, `5` (low, medium, high vegetation)."
+        ),
+        examples=[[1, 2, 3, 4, 5]],
+    )
+    density: float = Field(
+        ...,
+        description=(
+            "Average point density over the cloud's horizontal extent, in points "
+            "per square meter."
+        ),
+        examples=[18.7],
+    )
+
+
 class PointCloud(BaseModel):
     """A laser-scanned point cloud scoped to a single domain.
 
@@ -165,6 +197,14 @@ class PointCloud(BaseModel):
             "until the backend finishes ingesting the cloud."
         ),
     )
+    summary: PointCloudSummary | None = Field(
+        default=None,
+        description=(
+            "Summary statistics — point count, classification codes present, and "
+            "density — describing the cloud's contents. Null until the backend "
+            "finishes ingesting the cloud."
+        ),
+    )
     error: JobError | None = Field(
         default=None,
         description=(
@@ -205,6 +245,11 @@ class PointCloud(BaseModel):
                             1980.0,
                         ],
                     },
+                    "summary": {
+                        "point_count": 12873402,
+                        "point_classes": [1, 2, 3, 4, 5],
+                        "density": 18.7,
+                    },
                     "error": None,
                     "tags": ["bridger", "als"],
                 },
@@ -223,6 +268,7 @@ class PointCloud(BaseModel):
                     "checksum": "feedface00feedface00feedface0011",
                     "source": {"name": "upload"},
                     "georeference": None,
+                    "summary": None,
                     "error": None,
                     "tags": ["plot-14"],
                 },

@@ -19,11 +19,14 @@ from flask import Request
 from griddle.dispatch import dispatch_handler
 from griddle.modifications import apply_modifications
 from griddle.storage import delete_zarr, save_zarr
+from griddle.summarize import summarize_dataset
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from lib.grids import compute_chunks_doc
+
+CHUNK_SHAPE = (512, 512)
 
 
 class StructuredLogHandler(logging.Handler):
@@ -233,9 +236,10 @@ def process_grid_request(request: Request):
     3. Load grid document from Firestore
     4. Update status to "running"
     5. Dispatch to appropriate handler
-    6. Save result to Zarr
-    7. Update status to "completed" with georeference
-    8. On error, update status to "failed" with error details
+    6. Compute band summaries and write back to Firestore
+    7. Save result to Zarr
+    8. Update status to "completed" with georeference
+    9. On error, update status to "failed" with error details
 
     Returns:
         Tuple of (response_body, status_code)
@@ -298,6 +302,13 @@ def process_grid_request(request: Request):
         # Write back enriched source metadata (e.g., 3DEP tile provenance)
         update_document(GRIDS_COLLECTION, grid_id, {"source": grid["source"]})
 
+        # Compute band summaries, propagate nodata, and write back to Firestore
+        chunk_shape = tuple((grid.get("chunks") or {}).get("shape") or CHUNK_SHAPE)
+        summaries = summarize_dataset(result, grid["bands"], chunk_shape)
+        bands_with_summaries = [
+            {**band, "summary": summaries.get(band["key"])} for band in grid["bands"]
+        ]
+
         # Apply modifications if present
         if grid.get("modifications"):
             update_progress(grid_id, "Applying modifications...", 80)
@@ -309,15 +320,12 @@ def process_grid_request(request: Request):
         # grid resource so consumers see it without opening the Zarr (NaN
         # floats surface as null). Read after modifications so it reflects the
         # final stored data.
-        bands = grid.get("bands")
-        if bands:
-            for band in bands:
-                band["nodata"] = _band_nodata(result, band["key"])
-            update_document(GRIDS_COLLECTION, grid_id, {"bands": bands})
+        for band in bands_with_summaries:
+            band["nodata"] = _band_nodata(result, band["key"])
+        update_document(GRIDS_COLLECTION, grid_id, {"bands": bands_with_summaries})
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)
-        chunk_shape = tuple((grid.get("chunks") or {}).get("shape") or (512, 512))
         save_zarr(grid_id, result, chunk_shape=chunk_shape)
 
         # Update status to completed with georeference and chunks layout

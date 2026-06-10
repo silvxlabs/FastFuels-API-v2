@@ -138,9 +138,6 @@ def test_cross_source_compose_at_2m(griddle_runner):
     assert fbfm.ds["fbfm"].shape == topo.ds["elevation"].shape
 
 
-@pytest.mark.skip(
-    reason="resample bands should be derived from source grid, not request body — see issue #323"
-)
 def test_grid_target_exact_match(griddle_runner):
     """target='grid' with no resolution should produce a lattice
     byte-equal to the target grid's georeference."""
@@ -169,9 +166,6 @@ def test_grid_target_exact_match(griddle_runner):
     assert aligned.ds["fbfm"].shape == target_shape
 
 
-@pytest.mark.skip(
-    reason="resample bands should be derived from source grid, not request body — see issue #323"
-)
 def test_grid_target_new_resolution_preserves_origin(griddle_runner):
     """target='grid' with explicit resolution should preserve the target's
     CRS and origin (transform[2], transform[5]) but recompute shape at the
@@ -210,9 +204,6 @@ def test_grid_target_new_resolution_preserves_origin(griddle_runner):
     assert aligned.ds["fbfm"].shape[1] == target.ds["fbfm"].shape[1] * 3
 
 
-@pytest.mark.skip(
-    reason="resample bands should be derived from source grid, not request body — see issue #323"
-)
 def test_resample_domain_target(griddle_runner):
     """Resample with target='domain' should land on the domain-origin lattice
     independent of the source grid's anchor."""

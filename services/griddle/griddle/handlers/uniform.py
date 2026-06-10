@@ -64,14 +64,17 @@ def create_uniform_grid(
 
         if isinstance(value, int):
             data = np.full((height, width), value, dtype=np.int32)
+            nodata_value = np.iinfo(np.int32).max
         else:
             data = np.full((height, width), value, dtype=np.float32)
+            nodata_value = np.nan
 
         da = xr.DataArray(
             data,
             dims=["y", "x"],
             coords={"y": y_coords, "x": x_coords},
         )
+        da = da.rio.write_nodata(nodata_value)
         variables[key] = da
 
     progress("Building dataset...", 80)

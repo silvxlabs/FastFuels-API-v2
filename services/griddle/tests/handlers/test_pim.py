@@ -250,48 +250,8 @@ class TestFetchTreemapPltCn:
 
     @patch("griddle.handlers.pim.pd.read_parquet")
     @patch("griddle.handlers.pim.RasterConnection")
-    def test_unmapped_tm_id_gets_zero(self, mock_raster_cls, mock_read_parquet):
-        """TM_ID values not in the tree table map to 0."""
-        # Raster has TM_ID=99 but tree table only has 1,2
-        tm_ids = np.array([[1, 99], [2, 99]], dtype=np.int16)
-        mock_raster_cls.return_value = _make_mock_raster(tm_ids)
-        mock_read_parquet.return_value = _make_tree_table([1, 2], [1001, 1002])
-        roi = MagicMock()
-        progress = MagicMock()
-
-        result = fetch_treemap(
-            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
-        )
-
-        # TM_ID=99 is within lookup range (max TM_ID=2) -> out of range -> 0
-        # Actually 99 > max(1,2)=2, so it gets clipped and then zeroed
-        assert result["plt_cn"].values[0, 0] == 1001  # TM_ID=1
-        assert result["plt_cn"].values[1, 0] == 1002  # TM_ID=2
-        assert result["plt_cn"].values[0, 1] == 0  # TM_ID=99 -> 0
-        assert result["plt_cn"].values[1, 1] == 0  # TM_ID=99 -> 0
-
-    @patch("griddle.handlers.pim.pd.read_parquet")
-    @patch("griddle.handlers.pim.RasterConnection")
-    def test_negative_tm_id_gets_zero(self, mock_raster_cls, mock_read_parquet):
-        """Negative TM_ID values (nodata) map to 0."""
-        tm_ids = np.array([[1, -1], [2, 0]], dtype=np.int16)
-        mock_raster_cls.return_value = _make_mock_raster(tm_ids)
-        mock_read_parquet.return_value = _make_tree_table([1, 2], [1001, 1002])
-        roi = MagicMock()
-        progress = MagicMock()
-
-        result = fetch_treemap(
-            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
-        )
-
-        assert result["plt_cn"].values[0, 1] == 0  # TM_ID=-1 -> 0
-        # TM_ID=0 -> lookup[0] which is 0 (initialized to zero)
-        assert result["plt_cn"].values[1, 1] == 0
-
-    @patch("griddle.handlers.pim.pd.read_parquet")
-    @patch("griddle.handlers.pim.RasterConnection")
-    def test_plt_cn_only_without_tm_id(self, mock_raster_cls, mock_read_parquet):
-        """Requesting only plt_cn (without tm_id) works."""
+    def test_plt_cn_nodata_written(self, mock_raster_cls, mock_read_parquet):
+        """plt_cn DataArray has nodata written."""
         tm_ids = np.array([[1, 2]], dtype=np.int16)
         mock_raster_cls.return_value = _make_mock_raster(tm_ids)
         mock_read_parquet.return_value = _make_tree_table([1, 2], [1001, 1002])
@@ -302,8 +262,31 @@ class TestFetchTreemapPltCn:
             roi, "2022", ["plt_cn"], progress, alignment={"target": "native"}
         )
 
-        assert "plt_cn" in result.data_vars
-        assert "tm_id" not in result.data_vars
+        assert result["plt_cn"].rio.nodata is not None
+
+    @patch("griddle.handlers.pim.pd.read_parquet")
+    @patch("griddle.handlers.pim.RasterConnection")
+    def test_out_of_range_tm_id_gets_nodata(self, mock_raster_cls, mock_read_parquet):
+        """TM_ID values outside valid range, below 1, or unmapped all get nodata."""
+        tm_ids = np.array([[1, 99], [2, 3], [0, -1]], dtype=np.int16)
+        mock_raster_cls.return_value = _make_mock_raster(tm_ids)
+        mock_read_parquet.return_value = _make_tree_table([1, 2], [1001, 1002])
+        roi = MagicMock()
+        progress = MagicMock()
+
+        result = fetch_treemap(
+            roi, "2022", ["tm_id", "plt_cn"], progress, alignment={"target": "native"}
+        )
+
+        nodata = result["plt_cn"].rio.nodata
+        assert result["plt_cn"].values[0, 0] == 1001  # TM_ID=1 -> valid
+        assert result["plt_cn"].values[1, 0] == 1002  # TM_ID=2 -> valid
+        assert result["plt_cn"].values[0, 1] == nodata  # TM_ID=99 > max -> nodata
+        assert (
+            result["plt_cn"].values[1, 1] == nodata
+        )  # TM_ID=3, in range but unmapped -> nodata
+        assert result["plt_cn"].values[2, 0] == nodata  # TM_ID=0 -> nodata
+        assert result["plt_cn"].values[2, 1] == nodata  # TM_ID=-1 -> nodata
 
     @patch("griddle.handlers.pim.pd.read_parquet")
     @patch("griddle.handlers.pim.RasterConnection")

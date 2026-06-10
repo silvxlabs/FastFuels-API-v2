@@ -1,0 +1,45 @@
+handler,variable(s),band type,dtype,rio.nodata,nodata convention,desired nodata,notes
+fetch_fbfm40,fbfm,categorical,int16,32767,integer sentinel,32767,
+fetch_fccs,fccs,categorical,int32,2147483647,integer sentinel,2147483647,
+fetch_topography (landfire),"elevation, slope, aspect",continuous,int16,32767,integer sentinel,32767,
+fetch_canopy_landfire,"chm, cbd, cbh, cc",continuous,float32,nan,NaN,nan,
+fetch_treemap,tm_id,categorical,uint32,4294967295,integer sentinel,4294967295,
+fetch_treemap,plt_cn,categorical,int64,None,none declared,0,0 used as fill but not declared
+fetch_topography (3dep),"elevation, slope, aspect",continuous,float32,-999999.0,float sentinel,-999999.0,
+fetch_meta_chm,chm,continuous,float32,nan,NaN,nan,
+fetch_naip_chm,chm,continuous,float32,nan,NaN,nan,
+fetch_layerset,"herb, litter, shrub, ...",continuous,float32,nan,NaN,nan,
+create_uniform_grid,any (float),continuous,float32,None,none declared,nan,no nodata by design
+create_uniform_grid,any (int),continuous,int32,None,none declared,2147483647,no nodata by design
+fbfm40_lookup,is_dynamic,categorical,float32,None,none declared,nan,0.0 = not dynamic; 1.0 = dynamic
+fbfm40_lookup,all other bands,continuous,float32,None,none declared,nan,all cells valid by design
+resample_grid,any,—,—,—,inherits source,—,rio.reproject preserves rio.nodata from source
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

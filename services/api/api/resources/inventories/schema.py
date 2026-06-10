@@ -6,7 +6,7 @@ Core schema models for the Inventory resource.
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -87,12 +87,36 @@ class ColumnType(StrEnum):
     categorical = "categorical"
 
 
+class ContinuousColumnSummary(BaseModel):
+    type: Literal["continuous"]
+    count: int
+    null_count: int
+    min: float | None
+    max: float | None
+    mean: float | None
+    std: float | None
+
+
+class CategoricalColumnSummary(BaseModel):
+    type: Literal["categorical"]
+    count: int
+    null_count: int
+    unique_count: int
+
+
+ColumnSummary = Annotated[
+    ContinuousColumnSummary | CategoricalColumnSummary,
+    Field(discriminator="type"),
+]
+
+
 class Column(BaseModel):
     """A single column in an inventory."""
 
     key: str = Field(..., description="Column name (e.g., 'dbh', 'fia_species_code')")
     type: ColumnType
     unit: str | None = None
+    summary: ColumnSummary | None = None
 
 
 # Full column set of a PIM-expanded tree inventory. Other sources carry a

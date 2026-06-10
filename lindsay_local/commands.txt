@@ -1,0 +1,76 @@
+----------------------------------------------------------------
+  GENERAL
+----------------------------------------------------------------
+
+  - Run API: uv run python -m api.main
+
+  - Sync dependencies:  uv sync
+    - with test extras:  --extra test
+    - with dev group:    --group dev
+
+  - Activate env:  .venv\Scripts\activate
+
+  - Pre-commit:  pre-commit run --all-files
+
+----------------------------------------------------------------
+  TESTS
+----------------------------------------------------------------
+
+  - Run all tests:  uv run pytest tests/
+
+  - Run specific
+     - file:      uv run pytest tests/path/to/test_file.py
+     - function:  uv run pytest tests/path/to/test_file.py::test_function_name
+     - class:     uv run pytest tests/path/to/test_file.py::TestClassName
+
+  - Common flags:
+     -x           Stop after first failure
+     -v           Verbose output (show each test name)
+     -k "name"    Run tests matching a name/expression
+                    e.g. -k "login or auth"
+
+----------------------------------------------------------------
+  GIT
+----------------------------------------------------------------
+
+   [ Backup Locally ]
+
+     - add all files:           git add . && git add --force lindsay_local/
+     - commit backup:           git commit -m "backup message"
+     - push to google drive:    git push backup <branch-name>
+
+                                
+   [ Push Changes to Remote ]
+
+     - collapse commit history: git reset --soft origin/<branch-name>
+     - run pre-commit:          pre-commit run --all-files
+     - add tracked files:       git add -u
+     - commit:                  git commit -m "message"
+     - first push of branch:    git push -u origin <branch-name>
+
+   [ New Branch ]
+
+     - switch to main:          git checkout main
+     - bring main up to date:   git pull origin main
+     - create and switch:       git checkout <new-branch-name>
+
+
+   [ Updating ]
+
+     - fetch all remotes:       git fetch
+     - fetch + remove stale:    git fetch --prune
+     - delete local branch:     git branch -d <branch-name>
+     - fetch + merge:           git pull origin main
+     - update backup:           git push backup main
+
+   [ Undo / Fix ]
+
+     - unstage a file (keep changes in working dir):
+                                git restore --staged <file>
+     - discard local changes:   git restore <file>
+     - amend last commit msg:   git commit --amend -m "corrected message"
+     - update to other branch:  git rebase <branch-name>
+
+   [ Diff ]
+
+     - write diff to file:  git diff main > lindsay_local/diff.md

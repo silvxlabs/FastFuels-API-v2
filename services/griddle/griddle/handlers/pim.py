@@ -96,8 +96,10 @@ def fetch_treemap(
         plt_cns = mapping_df[cn_col].values
 
         # Vectorized lookup via index array
+        nodata_value = np.iinfo(np.int64).max
         max_tm_id = int(tm_ids.max())
-        lookup = np.zeros(max_tm_id + 1, dtype=np.int64)
+        lookup = np.full(max_tm_id + 1, nodata_value, dtype=np.int64)
+        # lookup = np.zeros(max_tm_id + 1, dtype=np.int64)
         lookup[tm_ids] = plt_cns
 
         # Clip raster values to valid range for lookup
@@ -105,9 +107,9 @@ def fetch_treemap(
         raw_clipped = np.clip(raw, 0, max_tm_id)
         plt_cn_values = lookup[raw_clipped]
 
-        # Zero out any values that were outside the mapping range
-        plt_cn_values[raw < 0] = 0
-        plt_cn_values[raw > max_tm_id] = 0
+        # Mask out of range values
+        plt_cn_values[raw < 1] = nodata_value
+        plt_cn_values[raw > max_tm_id] = nodata_value
 
         plt_cn_da = xr.DataArray(
             plt_cn_values,
@@ -116,6 +118,7 @@ def fetch_treemap(
         )
         plt_cn_da = plt_cn_da.rio.write_crs(tm_id_da.rio.crs)
         plt_cn_da = plt_cn_da.rio.write_transform(tm_id_da.rio.transform())
+        plt_cn_da = plt_cn_da.rio.write_nodata(nodata_value)
         variables["plt_cn"] = plt_cn_da
 
     if not variables:

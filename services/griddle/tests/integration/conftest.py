@@ -22,7 +22,6 @@ from uuid import uuid4
 
 import gcsfs
 import geopandas as gpd
-import numpy as np
 import pytest
 import xarray as xr
 
@@ -46,6 +45,7 @@ from lib.testing import (
     SHARED_TEST_FEATURES_DIR,
     SHARED_TEST_GRIDS_DIR,
 )
+from lib.zarr_utils import load_zarr
 
 
 class GriddleResult(NamedTuple):
@@ -316,13 +316,7 @@ def griddle_runner():
         assert all(s > 0 for s in geo["shape"])
 
         # Open zarr and return the dataset for test-specific assertions
-        ds = xr.open_zarr(
-            f"gs://{GRIDS_BUCKET}/{grid_id}",
-            decode_coords="all",
-        )
-        for var in ds.data_vars:
-            if ds[var].dtype == np.float64:
-                ds[var] = ds[var].astype(np.float32)
+        ds = load_zarr(f"gs://{GRIDS_BUCKET}/{grid_id}")
         datasets.append(ds)
         return GriddleResult(ds=ds, grid_id=grid_id)
 

@@ -114,6 +114,13 @@ class TestCreateUniformGrid:
 
         assert result["fuel_moisture.1hr"].dtype == np.int32
 
+    def test_int_nodata_written(self, roi):
+        """Integer bands have nodata set to an integer sentinel."""
+        bands = [{"key": "fuel_moisture.1hr", "value": 6}]
+        result = create_uniform_grid(roi, bands, 10.0, MagicMock())
+
+        assert result["fuel_moisture.1hr"].rio.nodata == np.iinfo(np.int32).max
+
     def test_float_value_dtype(self, roi):
         """Float values produce float64 arrays."""
         bands = [{"key": "fuel_load.1hr", "value": 0.15}]
@@ -122,6 +129,13 @@ class TestCreateUniformGrid:
         result = create_uniform_grid(roi, bands, 10.0, progress)
 
         assert result["fuel_load.1hr"].dtype == np.float32
+
+    def test_float_nodata_written(self, roi):
+        """Float bands have nodata set to nan."""
+        bands = [{"key": "fuel_load.1hr", "value": 0.15}]
+        result = create_uniform_grid(roi, bands, 10.0, MagicMock())
+
+        assert np.isnan(result["fuel_load.1hr"].rio.nodata)
 
     def test_crs_set_correctly(self, roi):
         """CRS is written to the dataset via rioxarray."""

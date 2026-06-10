@@ -99,7 +99,6 @@ def fetch_treemap(
         nodata_value = np.iinfo(np.int64).max
         max_tm_id = int(tm_ids.max())
         lookup = np.full(max_tm_id + 1, nodata_value, dtype=np.int64)
-        # lookup = np.zeros(max_tm_id + 1, dtype=np.int64)
         lookup[tm_ids] = plt_cns
 
         # Clip raster values to valid range for lookup

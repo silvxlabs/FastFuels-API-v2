@@ -78,12 +78,17 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud beta run deploy ${{ env.SERVICE_NAME }}-${{ needs.determine-environment.outputs.deploy_env }} \
+          # The /scratch ephemeral-disk volume (for the point-cloud COPC build)
+          # is attached out-of-band per environment — like the GCS buckets and
+          # Firestore indexes — and `gcloud run deploy` preserves it across
+          # routine image rolls, so it is not declared here. A new environment
+          # needs a one-time:
+          #   gcloud beta run services update <svc> --region <region> \
+          #     --add-volume=name=scratch,type=ephemeral-disk,size=10Gi \
+          #     --add-volume-mount=volume=scratch,mount-path=/scratch
+          gcloud run deploy ${{ env.SERVICE_NAME }}-${{ needs.determine-environment.outputs.deploy_env }} \
             --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ needs.determine-environment.outputs.deploy_env }} \
             --region ${{ env.REGION }} \
-            --execution-environment=gen2 \
-            --add-volume=name=scratch,type=ephemeral-disk,size=10Gi \
-            --add-volume-mount=volume=scratch,mount-path=/scratch \
             --update-env-vars="\
               DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
               GCP_PROJECT=${{ secrets.GCP_PROJECT }},\

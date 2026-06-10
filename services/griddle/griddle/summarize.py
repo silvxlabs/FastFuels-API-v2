@@ -13,21 +13,22 @@ import math
 import numpy as np
 import xarray as xr
 
-CHUNK_SHAPE = (512, 512)
-
 
 def summarize_dataset(
     ds: xr.Dataset,
     bands: list[dict],
+    chunk_shape: tuple[int, int],
 ) -> dict[str, dict]:
     """Return a summary dict for every band in *bands*.
 
     Args:
-        ds:    Dataset returned by a griddle handler.  Variable names must
-               match the ``key`` field of each band dict.
-        bands: Band dicts from the Firestore grid document.  Each must have
-               at least ``key`` (str) and ``type`` ("continuous" |
-               "categorical").
+        ds:          Dataset returned by a griddle handler.  Variable names must
+                     match the ``key`` field of each band dict.
+        bands:       Band dicts from the Firestore grid document.  Each must have
+                     at least ``key`` (str) and ``type`` ("continuous" |
+                     "categorical").
+        chunk_shape: Shape used to iterate the data in memory-safe chunks.
+                     Pass the grid's configured chunk shape from main.py.
 
     Returns:
         Mapping of band key -> summary dict, ready to merge into Firestore.
@@ -48,9 +49,9 @@ def summarize_dataset(
             raise KeyError(f"Band key '{key}' not found in dataset")
 
         if band_type == "continuous":
-            result[key] = _summarize_continuous(da)
+            result[key] = _summarize_continuous(da, chunk_shape)
         elif band_type == "categorical":
-            result[key] = _summarize_categorical(da)
+            result[key] = _summarize_categorical(da, chunk_shape)
         else:
             raise ValueError(f"Unknown band type '{band_type}' for key '{key}'")
     return result
@@ -73,7 +74,7 @@ def _nodata_mask(arr: np.ndarray, nodata) -> np.ndarray:
     return arr == nodata
 
 
-def _summarize_continuous(da: xr.DataArray) -> dict:
+def _summarize_continuous(da: xr.DataArray, chunk_shape) -> dict:
     """Single-pass accumulation of continuous stats over all chunks."""
     nodata = da.rio.nodata
 
@@ -84,7 +85,7 @@ def _summarize_continuous(da: xr.DataArray) -> dict:
     running_sum = 0.0
     running_sum_sq = 0.0
 
-    for chunk in _iter_chunks(da):
+    for chunk in _iter_chunks(da, chunk_shape):
         arr = np.asarray(chunk, dtype=np.float64)
         mask = _nodata_mask(arr, nodata)
         valid = arr[~mask]
@@ -127,7 +128,7 @@ def _summarize_continuous(da: xr.DataArray) -> dict:
     }
 
 
-def _summarize_categorical(da: xr.DataArray) -> dict:
+def _summarize_categorical(da: xr.DataArray, chunk_shape) -> dict:
     """Single-pass accumulation of categorical stats over all chunks."""
     nodata = da.rio.nodata
 
@@ -135,7 +136,7 @@ def _summarize_categorical(da: xr.DataArray) -> dict:
     nodata_count = 0
     unique_values: set = set()
 
-    for chunk in _iter_chunks(da):
+    for chunk in _iter_chunks(da, chunk_shape):
         arr = np.asarray(chunk)
         mask = _nodata_mask(arr, nodata)
         valid = arr[~mask]
@@ -152,7 +153,7 @@ def _summarize_categorical(da: xr.DataArray) -> dict:
     }
 
 
-def _iter_chunks(da: xr.DataArray):
+def _iter_chunks(da: xr.DataArray, chunk_shape):
     """Yield numpy arrays one chunk at a time.
 
     If the DataArray is Dask-backed, iterate Dask blocks directly so we
@@ -171,7 +172,7 @@ def _iter_chunks(da: xr.DataArray):
 
     arr = np.asarray(da)
     h, w = arr.shape[-2], arr.shape[-1]
-    ch, cw = CHUNK_SHAPE
+    ch, cw = chunk_shape
     for row in range(0, h, ch):
         for col in range(0, w, cw):
             yield arr[..., row : row + ch, col : col + cw]

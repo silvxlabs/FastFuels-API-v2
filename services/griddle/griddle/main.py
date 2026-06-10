@@ -26,6 +26,8 @@ from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from lib.grids import compute_chunks_doc
 
+CHUNK_SHAPE = (512, 512)
+
 
 class StructuredLogHandler(logging.Handler):
     """Log handler that outputs JSON for Cloud Logging.
@@ -301,7 +303,8 @@ def process_grid_request(request: Request):
         update_document(GRIDS_COLLECTION, grid_id, {"source": grid["source"]})
 
         # Compute band summaries, propagate nodata, and write back to Firestore
-        summaries = summarize_dataset(result, grid["bands"])
+        chunk_shape = tuple((grid.get("chunks") or {}).get("shape") or CHUNK_SHAPE)
+        summaries = summarize_dataset(result, grid["bands"], chunk_shape)
         bands_with_summaries = [
             {**band, "summary": summaries.get(band["key"])} for band in grid["bands"]
         ]
@@ -323,7 +326,6 @@ def process_grid_request(request: Request):
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)
-        chunk_shape = tuple((grid.get("chunks") or {}).get("shape") or (512, 512))
         save_zarr(grid_id, result, chunk_shape=chunk_shape)
 
         # Update status to completed with georeference and chunks layout

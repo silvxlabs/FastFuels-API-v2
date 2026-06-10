@@ -499,7 +499,9 @@ class TestDispatchHandlerResample:
 
         result = dispatch_handler(grid, mock_gdf, progress)
 
-        mock_handle_resample.assert_called_once_with(grid, mock_gdf, grid["source"], progress)
+        mock_handle_resample.assert_called_once_with(
+            grid, mock_gdf, grid["source"], progress
+        )
         assert result == mock_result
 
 
@@ -509,7 +511,9 @@ class TestHandleResample:
     @patch("griddle.dispatch.update_document")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
-    def test_routes_to_resample_handler(self, mock_resample_grid, mock_get_doc, mock_update_doc):
+    def test_routes_to_resample_handler(
+        self, mock_resample_grid, mock_get_doc, mock_update_doc
+    ):
         """handle_resample calls resample.resample_grid with correct params."""
         mock_result = MagicMock()
         mock_resample_grid.return_value = mock_result
@@ -544,7 +548,9 @@ class TestHandleResample:
     @patch("griddle.dispatch.update_document")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
-    def test_calls_progress_callback(self, mock_resample_grid, mock_get_doc, mock_update_doc):
+    def test_calls_progress_callback(
+        self, mock_resample_grid, mock_get_doc, mock_update_doc
+    ):
         """handle_resample reports progress."""
         progress = MagicMock()
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)

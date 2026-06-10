@@ -88,7 +88,7 @@ class TestSummarizeContinuous:
     def test_basic_stats(self):
         data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
         da = _make_da(data)
-        result = _summarize_continuous(da)
+        result = _summarize_continuous(da, chunk_shape=(512, 512))
 
         assert result["type"] == "continuous"
         assert result["count"] == 4
@@ -101,7 +101,7 @@ class TestSummarizeContinuous:
     def test_nan_nodata_excluded(self):
         data = np.array([[1.0, np.nan], [3.0, np.nan]], dtype=np.float32)
         da = _make_da(data, nodata=np.float32("nan"))
-        result = _summarize_continuous(da)
+        result = _summarize_continuous(da, chunk_shape=(512, 512))
 
         assert result["count"] == 2
         assert result["nodata_count"] == 2
@@ -111,7 +111,7 @@ class TestSummarizeContinuous:
     def test_integer_sentinel_excluded(self):
         data = np.array([[100, 200], [300, 32767]], dtype=np.int16)
         da = _make_da(data, nodata=32767)
-        result = _summarize_continuous(da)
+        result = _summarize_continuous(da, chunk_shape=(512, 512))
 
         assert result["count"] == 3
         assert result["nodata_count"] == 1
@@ -120,7 +120,7 @@ class TestSummarizeContinuous:
     def test_float_sentinel_excluded(self):
         data = np.array([[100.0, -999999.0], [300.0, 400.0]], dtype=np.float32)
         da = _make_da(data, nodata=-999999.0)
-        result = _summarize_continuous(da)
+        result = _summarize_continuous(da, chunk_shape=(512, 512))
 
         assert result["count"] == 3
         assert result["nodata_count"] == 1
@@ -129,7 +129,7 @@ class TestSummarizeContinuous:
     def test_all_nodata_returns_none_scalars(self):
         data = np.array([[np.nan, np.nan], [np.nan, np.nan]], dtype=np.float32)
         da = _make_da(data, nodata=np.float32("nan"))
-        result = _summarize_continuous(da)
+        result = _summarize_continuous(da, chunk_shape=(512, 512))
 
         assert result["count"] == 0
         assert result["nodata_count"] == 4
@@ -141,7 +141,7 @@ class TestSummarizeContinuous:
     def test_std_is_zero_for_constant_array(self):
         data = np.full((4, 4), 5.0, dtype=np.float32)
         da = _make_da(data)
-        result = _summarize_continuous(da)
+        result = _summarize_continuous(da, chunk_shape=(512, 512))
 
         assert math.isclose(result["std"], 0.0, abs_tol=1e-6)
 
@@ -149,7 +149,7 @@ class TestSummarizeContinuous:
         rng = np.random.default_rng(42)
         data = rng.uniform(0, 100, (10, 10)).astype(np.float32)
         da = _make_da(data)
-        result = _summarize_continuous(da)
+        result = _summarize_continuous(da, chunk_shape=(512, 512))
 
         assert math.isclose(result["mean"], float(data.mean()), rel_tol=1e-5)
 
@@ -165,7 +165,7 @@ class TestSummarizeCategorical:
     def test_basic_stats(self):
         data = np.array([[101, 102], [103, 101]], dtype=np.int16)
         da = _make_da(data)
-        result = _summarize_categorical(da)
+        result = _summarize_categorical(da, chunk_shape=(512, 512))
 
         assert result["type"] == "categorical"
         assert result["count"] == 4
@@ -175,7 +175,7 @@ class TestSummarizeCategorical:
     def test_integer_sentinel_excluded(self):
         data = np.array([[101, 32767], [103, 32767]], dtype=np.int16)
         da = _make_da(data, nodata=32767)
-        result = _summarize_categorical(da)
+        result = _summarize_categorical(da, chunk_shape=(512, 512))
 
         assert result["count"] == 2
         assert result["nodata_count"] == 2
@@ -184,7 +184,7 @@ class TestSummarizeCategorical:
     def test_zero_sentinel_excluded(self):
         data = np.array([[1, 0], [2, 0]], dtype=np.int64)
         da = _make_da(data, nodata=0)
-        result = _summarize_categorical(da)
+        result = _summarize_categorical(da, chunk_shape=(512, 512))
 
         assert result["count"] == 2
         assert result["nodata_count"] == 2
@@ -193,7 +193,7 @@ class TestSummarizeCategorical:
     def test_no_nodata_counts_all_cells(self):
         data = np.array([[1, 2], [3, 4]], dtype=np.int16)
         da = _make_da(data)
-        result = _summarize_categorical(da)
+        result = _summarize_categorical(da, chunk_shape=(512, 512))
 
         assert result["count"] == 4
         assert result["nodata_count"] == 0
@@ -201,7 +201,7 @@ class TestSummarizeCategorical:
     def test_all_nodata_returns_zero_counts(self):
         data = np.full((3, 3), 32767, dtype=np.int16)
         da = _make_da(data, nodata=32767)
-        result = _summarize_categorical(da)
+        result = _summarize_categorical(da, chunk_shape=(512, 512))
 
         assert result["count"] == 0
         assert result["nodata_count"] == 9
@@ -220,7 +220,9 @@ class TestSummarizeDataset:
         data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
         da = _make_da(data)
         ds = _make_ds({"elevation": da})
-        result = summarize_dataset(ds, [{"key": "elevation", "type": "continuous"}])
+        result = summarize_dataset(
+            ds, [{"key": "elevation", "type": "continuous"}], chunk_shape=(512, 512)
+        )
 
         assert "elevation" in result
         assert result["elevation"]["type"] == "continuous"
@@ -230,7 +232,9 @@ class TestSummarizeDataset:
         data = np.array([[101, 102], [103, 101]], dtype=np.int16)
         da = _make_da(data, nodata=32767)
         ds = _make_ds({"fbfm": da})
-        result = summarize_dataset(ds, [{"key": "fbfm", "type": "categorical"}])
+        result = summarize_dataset(
+            ds, [{"key": "fbfm", "type": "categorical"}], chunk_shape=(512, 512)
+        )
 
         assert "fbfm" in result
         assert result["fbfm"]["type"] == "categorical"
@@ -244,7 +248,7 @@ class TestSummarizeDataset:
             {"key": "elevation", "type": "continuous"},
             {"key": "fbfm", "type": "categorical"},
         ]
-        result = summarize_dataset(ds, bands)
+        result = summarize_dataset(ds, bands, chunk_shape=(512, 512))
 
         assert set(result.keys()) == {"elevation", "fbfm"}
 
@@ -252,7 +256,9 @@ class TestSummarizeDataset:
         da = _make_da(np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
         ds = _make_ds({"elevation": da})
         with pytest.raises(ValueError, match="Unknown band type"):
-            summarize_dataset(ds, [{"key": "elevation", "type": "unknown"}])
+            summarize_dataset(
+                ds, [{"key": "elevation", "type": "unknown"}], chunk_shape=(512, 512)
+            )
 
     def test_layerset_dot_notation_key(self):
         """Band keys with dot notation resolve to variable.sel(band=...)."""
@@ -275,7 +281,7 @@ class TestSummarizeDataset:
             {"key": "herb.loading", "type": "continuous"},
             {"key": "herb.height", "type": "continuous"},
         ]
-        result = summarize_dataset(ds, bands)
+        result = summarize_dataset(ds, bands, chunk_shape=(512, 512))
 
         assert "herb.loading" in result
         assert "herb.height" in result

@@ -14,7 +14,6 @@ grids/. One function per supported input format:
 
 from datetime import UTC, datetime
 
-import gcsfs
 import numpy as np
 import rioxarray  # noqa: F401 — registers .rio accessor on xarray objects
 import xarray as xr
@@ -24,6 +23,7 @@ from lib.config import DOMAINS_COLLECTION, GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
+from lib.gcs import get_gcsfs_client
 from lib.grids import compute_chunks_doc
 from lib.units import validate_unit
 from lib.zarr_utils import save_zarr
@@ -219,7 +219,7 @@ def handle_grid_netcdf(
     # gcsfs file-like read avoids /tmp staging (Cloud Run has no local
     # disk). The dataset is dask-backed by this file handle, so everything
     # that touches it must run inside the with-block.
-    fs = gcsfs.GCSFileSystem()
+    fs = get_gcsfs_client()
     with fs.open(gcs_path, "rb") as f:
         dataset = _build_netcdf_dataset(f, domain_crs_str, domain_gdf, num_buffer_cells)
 

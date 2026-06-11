@@ -22,7 +22,6 @@ from uuid import uuid4
 
 import gcsfs
 import geopandas as gpd
-import numpy as np
 import pytest
 import xarray as xr
 
@@ -46,6 +45,7 @@ from lib.testing import (
     SHARED_TEST_FEATURES_DIR,
     SHARED_TEST_GRIDS_DIR,
 )
+from lib.zarr_utils import load_zarr
 
 
 class GriddleResult(NamedTuple):
@@ -198,6 +198,27 @@ def _stringify_coordinates(domain_data: dict) -> dict:
     return data
 
 
+def _assert_band_summaries(grid: dict) -> None:
+    """Assert that every band has a valid summary after completion."""
+    for band in grid["bands"]:
+        summary = band.get("summary")
+        assert summary is not None, f"Band '{band['key']}' has no summary"
+        assert summary["type"] in ("continuous", "categorical")
+        assert summary["count"] >= 0
+        assert summary["nodata_count"] >= 0
+        if summary["type"] == "continuous":
+            if summary["count"] > 0:
+                assert summary["min"] is not None
+                assert summary["max"] is not None
+                assert summary["mean"] is not None
+                assert summary["std"] is not None
+                assert summary["min"] <= summary["mean"] <= summary["max"]
+            else:
+                assert summary["min"] is None
+        elif summary["type"] == "categorical":
+            assert summary["unique_count"] >= 0
+
+
 @pytest.fixture
 def griddle_runner():
     """Run griddle for a (domain, grid) pair and return the output dataset.
@@ -314,15 +335,10 @@ def griddle_runner():
         assert len(geo["transform"]) == 6
         assert len(geo["shape"]) == 2
         assert all(s > 0 for s in geo["shape"])
+        _assert_band_summaries(grid)
 
         # Open zarr and return the dataset for test-specific assertions
-        ds = xr.open_zarr(
-            f"gs://{GRIDS_BUCKET}/{grid_id}",
-            decode_coords="all",
-        )
-        for var in ds.data_vars:
-            if ds[var].dtype == np.float64:
-                ds[var] = ds[var].astype(np.float32)
+        ds = load_zarr(f"gs://{GRIDS_BUCKET}/{grid_id}")
         datasets.append(ds)
         return GriddleResult(ds=ds, grid_id=grid_id)
 

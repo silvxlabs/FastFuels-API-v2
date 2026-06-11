@@ -36,7 +36,7 @@ from lib.gcs.blobs import (
     delete_directory,
     delete_file,
     exists,
-    gcsfs_client,
+    get_gcsfs_client,
     upload_file,
 )
 from lib.testing import SHARED_TEST_INVENTORIES_DIR
@@ -114,7 +114,7 @@ def treatments_runner(shared_pim_source):
         from standgen.main import process_inventory_request
 
         treated_id = f"test-{uuid4().hex}"
-        gcsfs_client.copy(
+        get_gcsfs_client().copy(
             f"{INVENTORIES_BUCKET}/{pim_id}",
             f"{INVENTORIES_BUCKET}/{treated_id}",
             recursive=True,
@@ -314,7 +314,7 @@ def feature_treatments_runner(shared_pim_source):
             resolved.append({**treatment, "conditions": conditions})
 
         treated_id = f"test-{uuid4().hex}"
-        gcsfs_client.copy(
+        get_gcsfs_client().copy(
             f"{INVENTORIES_BUCKET}/{pim_id}",
             f"{INVENTORIES_BUCKET}/{treated_id}",
             recursive=True,

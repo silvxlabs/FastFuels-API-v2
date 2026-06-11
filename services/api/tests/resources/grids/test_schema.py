@@ -12,7 +12,9 @@ from api.resources.grids.schema import (
     CHUNK_SHAPE,
     Band,
     BandType,
+    CategoricalBandSummary,
     Chunks,
+    ContinuousBandSummary,
     CreateGridRequestBase,
     Georeference,
     Georeference3D,
@@ -164,6 +166,7 @@ class TestBand:
             "unit": "kg/m**2",
             "index": 1,
             "nodata": None,
+            "summary": None,
         }
 
     def test_band_with_name_and_description(self):
@@ -191,6 +194,122 @@ class TestBand:
         """Dot notation in keys is preserved."""
         band = Band(key="savr.live_herb", type=BandType.continuous, unit="1/m", index=5)
         assert band.key == "savr.live_herb"
+
+
+class TestContinuousBandSummary:
+    """Tests for ContinuousBandSummary model."""
+
+    def test_valid_with_all_fields(self):
+        summary = ContinuousBandSummary(
+            type="continuous",
+            count=100,
+            nodata_count=5,
+            min=0.0,
+            max=10.0,
+            mean=5.0,
+            std=2.0,
+        )
+        assert summary.type == "continuous"
+        assert summary.count == 100
+
+    def test_none_scalars_when_all_nodata(self):
+        summary = ContinuousBandSummary(
+            type="continuous",
+            count=0,
+            nodata_count=100,
+            min=None,
+            max=None,
+            mean=None,
+            std=None,
+        )
+        assert summary.min is None
+        assert summary.mean is None
+
+    def test_round_trip(self):
+        data = {
+            "type": "continuous",
+            "count": 10,
+            "nodata_count": 2,
+            "min": 1.0,
+            "max": 9.0,
+            "mean": 5.0,
+            "std": 2.5,
+        }
+        summary = ContinuousBandSummary(**data)
+        assert summary.model_dump() == data
+
+
+class TestCategoricalBandSummary:
+    """Tests for CategoricalBandSummary model."""
+
+    def test_valid(self):
+        summary = CategoricalBandSummary(
+            type="categorical", count=100, nodata_count=5, unique_count=11
+        )
+        assert summary.unique_count == 11
+
+    def test_round_trip(self):
+        data = {
+            "type": "categorical",
+            "count": 100,
+            "nodata_count": 5,
+            "unique_count": 11,
+        }
+        summary = CategoricalBandSummary(**data)
+        assert summary.model_dump() == data
+
+
+class TestBandWithSummary:
+    """Tests for summary field on Band."""
+
+    def test_summary_defaults_to_none(self):
+        band = Band(key="fbfm", type=BandType.categorical, unit=None, index=0)
+        assert band.summary is None
+
+    def test_continuous_summary_on_band(self):
+        band = Band(
+            key="elevation",
+            type=BandType.continuous,
+            unit="m",
+            index=0,
+            summary={
+                "type": "continuous",
+                "count": 100,
+                "nodata_count": 0,
+                "min": 900.0,
+                "max": 1200.0,
+                "mean": 1050.0,
+                "std": 50.0,
+            },
+        )
+        assert band.summary.type == "continuous"
+        assert band.summary.min == 900.0
+
+    def test_categorical_summary_on_band(self):
+        band = Band(
+            key="fbfm",
+            type=BandType.categorical,
+            unit=None,
+            index=0,
+            summary={
+                "type": "categorical",
+                "count": 2806,
+                "nodata_count": 0,
+                "unique_count": 11,
+            },
+        )
+        assert band.summary.type == "categorical"
+        assert band.summary.unique_count == 11
+
+    def test_wrong_discriminator_raises(self):
+        with pytest.raises(ValidationError):
+            Band(
+                key="fbfm",
+                type=BandType.categorical,
+                unit=None,
+                index=0,
+                summary={"type": "unknown", "count": 10, "nodata_count": 0},
+            )
 
 
 class TestGeoreference:

@@ -35,6 +35,16 @@ def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:
     return dd.read_parquet(path)
 
 
+def _write_parquet(ddf: dd.DataFrame, path: str) -> None:
+    """Write ``ddf`` as partitioned Parquet with an aggregated ``_metadata`` file.
+
+    ``write_index=False`` keeps dask from materializing the meaningless
+    RangeIndex as a synthetic ``__null_dask_index__`` column in the file
+    schema, which leaked into the API's data/metadata ``columns`` (#335).
+    """
+    ddf.to_parquet(path, write_metadata_file=True, write_index=False)
+
+
 def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     """Write a dask DataFrame to GCS as partitioned Parquet.
 
@@ -42,7 +52,7 @@ def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     The full DataFrame is never materialized in memory.
     """
     path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-    ddf.to_parquet(path, write_metadata_file=True)
+    _write_parquet(ddf, path)
     logger.info(f"Saved inventory data to {path}")
     return path
 
@@ -70,7 +80,7 @@ def save_parquet_replace(inventory_id: str, ddf: dd.DataFrame) -> str:
     if exists(staging_uri):
         delete_directory(staging_uri)
 
-    ddf.to_parquet(staging_uri, write_metadata_file=True)
+    _write_parquet(ddf, staging_uri)
 
     fs = get_gcsfs_client()
 

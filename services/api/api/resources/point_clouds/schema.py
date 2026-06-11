@@ -58,8 +58,8 @@ class PointCloudGeoreference(BaseModel):
         ...,
         description=(
             "Coordinate reference system the points are stored in, as an "
-            "authority code (e.g. `EPSG:32613`). Horizontal and vertical "
-            "coordinates share this CRS."
+            "authority code (e.g. `EPSG:32613`). This is always the domain's "
+            "CRS: uploads in a different CRS are reprojected during ingestion."
         ),
         examples=["EPSG:32613", "EPSG:5070"],
     )

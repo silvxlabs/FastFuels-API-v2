@@ -31,11 +31,11 @@ _CONTENT_TYPE = "application/octet-stream"
 _FORMAT_EXTENSIONS = {
     "las": "las",
     "laz": "laz",
-    "copc": "copc.laz",
 }
-# Caps the signed upload. Point clouds are large; this bounds the staged upload
-# (and, downstream, the worker's transcode scratch). Tunable.
-MAX_POINT_CLOUD_SIZE_BYTES = 5_368_709_120  # 5 GiB
+# Caps the signed upload. The worker streams the file with bounded chunk
+# memory, but a rewritten (reprojected/recompressed) cloud is built in an
+# in-memory buffer, so this cap also bounds the worker's peak RAM. Tunable.
+MAX_POINT_CLOUD_SIZE_BYTES = 1_073_741_824  # 1 GiB
 
 
 @router.post(
@@ -74,11 +74,16 @@ async def create_point_cloud_upload(
     ## Supported formats
 
     - **las** — uncompressed LAS.
-    - **laz** — compressed LAZ.
-    - **copc** — Cloud Optimized Point Cloud (`.copc.laz`).
+    - **laz** — compressed LAZ (including Cloud Optimized Point Clouds, which
+      are valid LAZ).
+
+    ## Coordinate reference system
 
     The file must carry a coordinate reference system; uploads without one are
-    rejected during ingestion.
+    rejected during ingestion. A cloud in a different CRS than its domain is
+    automatically reprojected to the domain CRS (horizontal coordinates only —
+    elevations are preserved as-is), so the stored cloud is always in the
+    domain CRS.
     """
     owner_id = request.state.id
     domain_id = domain["id"]

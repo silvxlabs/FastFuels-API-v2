@@ -1,27 +1,35 @@
 """
 Point cloud upload handler for the Uploader service.
 
-Ingests an uploaded point cloud (LAS / LAZ / COPC), validates it is a readable
-cloud whose CRS matches the domain CRS, extracts metadata, and stores a Cloud
-Optimized Point Cloud (COPC) in POINT_CLOUDS_BUCKET. As in the grid upload
-handler, the file must already be in the domain's CRS — every resource in a
-domain shares one CRS — so a mismatch is rejected rather than reprojected.
+Ingests an uploaded point cloud (LAS or LAZ), validates that it is a readable
+cloud with a coordinate reference system, reprojects it to the domain CRS when
+necessary, and stores it as LAZ in POINT_CLOUDS_BUCKET. Unlike raster grids —
+where reprojection means resampling and is therefore rejected on a CRS
+mismatch — point reprojection is an exact per-point coordinate transform, so
+mismatched uploads are transformed rather than refused. The stored cloud is
+always in the domain CRS.
 
-Reads the staged file directly from GCS over GDAL's ``/vsigs`` (no full
-download). LAS/LAZ inputs are transcoded to COPC in a single PDAL pass; the COPC
-writer needs a seekable local file, so it writes to an ephemeral-disk scratch
-mount (real disk, off the instance memory budget — Cloud Run's ``/tmp`` is
-RAM-backed) before the result is uploaded to GCS. A file already in COPC form is
-copied through server-side without a rebuild.
+Everything streams: the staged upload is read from GCS in bounded chunks
+(laspy + gcsfs), and rewritten output is built in an in-memory buffer (LAZ
+writers need a seekable target, which GCS is not). No local disk is used —
+on Cloud Run the filesystem is RAM-backed, and per-instance memory is the
+budget this handler is designed around. Peak usage is bounded by the upload
+size cap, not the point count.
+
+A compressed upload already in the domain CRS is copied server-side without
+rewriting. Stored format is LAZ, not COPC: every maintained COPC writer needs
+the native PDAL stack plus scratch space ~8x the compressed input, which is
+RAM on Cloud Run. COPC is planned as a lossless LAZ -> COPC batch upgrade once
+that build can run on real disk (see the service README).
 """
 
-import json
-import os
+import io
 from datetime import UTC, datetime
 
-import pdal
+import laspy
+import numpy as np
 from pyproj import CRS as PyprojCRS
-from pyproj.exceptions import CRSError
+from pyproj import Transformer
 
 from lib.config import (
     DOMAINS_COLLECTION,
@@ -30,20 +38,17 @@ from lib.config import (
 )
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
-from lib.gcs import delete_file, gcsfs_client, upload_file
+from lib.gcs import delete_file, get_gcsfs_client
 
-# Ephemeral-disk scratch mount configured on the uploader Cloud Run service.
-# Overridable for local/CI runs that lack the mount. Must NOT default to /tmp:
-# /tmp is RAM-backed and would put the COPC build back on the memory budget.
-_SCRATCH_DIR = os.environ.get("POINT_CLOUD_SCRATCH_DIR", "/scratch")
-
-_OUTPUT_FILENAME = "cloud.copc.laz"
+_OUTPUT_FILENAME = "cloud.laz"
+# ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
+_CHUNK_POINTS = 2_000_000
 
 
 def handle_point_cloud(
     resource_id: str, bucket: str, object_name: str, doc: dict
 ) -> None:
-    """Ingest an uploaded point cloud and store it as COPC.
+    """Ingest an uploaded point cloud and store it as LAZ in the domain CRS.
 
     Args:
         resource_id: Point cloud document ID in Firestore.
@@ -51,31 +56,38 @@ def handle_point_cloud(
         object_name: Full GCS object path, e.g. "pointclouds/{id}/upload.laz".
         doc: Point cloud document loaded from Firestore.
     """
-    fmt = (doc.get("source") or {}).get("format")
-    input_path = f"/vsigs/{bucket}/{object_name}"
-    dest = f"gs://{POINT_CLOUDS_BUCKET}/{resource_id}/{_OUTPUT_FILENAME}"
+    src = f"{bucket}/{object_name}"
+    dest = f"{POINT_CLOUDS_BUCKET}/{resource_id}/{_OUTPUT_FILENAME}"
 
-    scratch_path = None
     try:
-        domain_crs = _domain_crs(doc["domain_id"])
-        if fmt == "copc":
-            # Already cloud-optimized: inspect metadata, then (after the CRS
-            # check) copy the bytes through server-side — no rebuild, no scratch.
-            stats = _inspect_and_transcode(input_path, None)
-            _require_crs_match(stats["crs"], domain_crs)
-            gcsfs_client.copy(
-                f"{bucket}/{object_name}",
-                f"{POINT_CLOUDS_BUCKET}/{resource_id}/{_OUTPUT_FILENAME}",
-            )
+        domain_crs_name = _domain_crs_name(doc["domain_id"])
+        domain_crs = PyprojCRS.from_user_input(domain_crs_name)
+
+        with get_gcsfs_client().open(src, "rb") as stream:
+            with _open_cloud(stream) as reader:
+                src_crs = _require_crs(reader.header)
+                if src_crs.equals(domain_crs, ignore_axis_order=True):
+                    if reader.header.are_points_compressed:
+                        # Already LAZ in the domain CRS: census the points,
+                        # then copy the bytes server-side — no rewrite.
+                        stats = _census(reader)
+                        bounds = [*reader.header.mins, *reader.header.maxs]
+                    else:
+                        # Uncompressed LAS: recompress to LAZ, same coords.
+                        buf, stats, bounds = _rewrite(reader, domain_crs, None)
+                else:
+                    # CRS mismatch: exact per-point transform to the domain
+                    # CRS (horizontal only — elevations pass through).
+                    transformer = Transformer.from_crs(
+                        src_crs, domain_crs, always_xy=True
+                    )
+                    buf, stats, bounds = _rewrite(reader, domain_crs, transformer)
+
+        if stats["rewritten"]:
+            with get_gcsfs_client().open(dest, "wb") as out:
+                out.write(buf.getbuffer())
         else:
-            # Transcode LAS/LAZ -> COPC on ephemeral-disk scratch, validate the
-            # CRS, then upload. A mismatch discards the scratch build (cleaned up
-            # below) and never reaches POINT_CLOUDS_BUCKET.
-            os.makedirs(_SCRATCH_DIR, exist_ok=True)
-            scratch_path = os.path.join(_SCRATCH_DIR, f"{resource_id}.copc.laz")
-            stats = _inspect_and_transcode(input_path, scratch_path)
-            _require_crs_match(stats["crs"], domain_crs)
-            upload_file(scratch_path, dest)
+            get_gcsfs_client().copy(src, dest)
 
         update_document(
             POINT_CLOUDS_COLLECTION,
@@ -83,7 +95,7 @@ def handle_point_cloud(
             {
                 "status": "completed",
                 "modified_on": datetime.now(UTC),
-                "georeference": {"crs": stats["crs"], "bounds": stats["bounds"]},
+                "georeference": {"crs": domain_crs_name, "bounds": bounds},
                 "summary": {
                     "point_count": stats["point_count"],
                     "point_classes": stats["point_classes"],
@@ -97,165 +109,52 @@ def handle_point_cloud(
             delete_file(f"gs://{bucket}/{object_name}")
         except Exception:
             pass
-        if scratch_path and os.path.exists(scratch_path):
-            try:
-                os.remove(scratch_path)
-            except OSError:
-                pass
 
 
-def _domain_crs(domain_id: str) -> str:
-    """Return the domain's CRS as an EPSG authority string (e.g. 'EPSG:32612')."""
+def _domain_crs_name(domain_id: str) -> str:
+    """Return the domain's CRS name (e.g. 'EPSG:32612') from its document.
+
+    A domain document without a CRS is an internal invariant violation, so a
+    malformed document raises (KeyError/TypeError) rather than falling back.
+    """
     _, snapshot = get_document(DOMAINS_COLLECTION, domain_id)
     domain = snapshot.to_dict()
-    crs = domain.get("crs")
-    if isinstance(crs, dict):
-        return crs["properties"]["name"]
-    return crs or "EPSG:4326"
+    return domain["crs"]["properties"]["name"]
 
 
-def _require_crs_match(cloud_crs: str, domain_crs: str) -> None:
-    """Reject a point cloud whose CRS does not match its domain's CRS.
-
-    In v2 every resource in a domain shares the domain's CRS, so an upload must
-    already be in that CRS (mirrors the grid upload handler — no reprojection).
-
-    Raises:
-        ProcessingError: CRS_MISMATCH when the codes differ.
-    """
-    if cloud_crs != domain_crs:
-        raise ProcessingError(
-            code="CRS_MISMATCH",
-            message=(
-                f"Point cloud CRS ({cloud_crs}) does not match the domain CRS "
-                f"({domain_crs}). Reproject the file to the domain CRS before "
-                "uploading."
-            ),
-            suggestion=(
-                "Reproject with PDAL, e.g. `pdal translate in.laz out.laz "
-                f"reprojection --filters.reprojection.out_srs={domain_crs}`."
-            ),
-        )
-
-
-def _inspect_and_transcode(input_path: str, output_path: str | None) -> dict:
-    """Read a point cloud, extract metadata, and optionally write COPC.
-
-    Runs a single PDAL pass — ``readers.las`` -> ``filters.stats`` (-> a COPC
-    writer when ``output_path`` is given). Pure: touches no GCS or Firestore, so
-    it is directly unit-testable on local files. ``input_path`` / ``output_path``
-    may be local paths or GDAL ``/vsi`` paths.
+def _open_cloud(source) -> laspy.LasReader:
+    """Open a LAS/LAZ stream for chunked reading.
 
     Args:
-        input_path: Source point cloud (local or ``/vsigs`` path).
-        output_path: Where to write the COPC, or ``None`` to inspect only.
-
-    Returns:
-        ``{"crs", "bounds", "point_count", "point_classes", "density"}``.
+        source: Seekable binary stream or local path.
 
     Raises:
-        ProcessingError: UNREADABLE_POINT_CLOUD if the file cannot be read;
-            MISSING_CRS / UNRESOLVABLE_CRS if it carries no usable CRS.
+        ProcessingError: UNREADABLE_POINT_CLOUD if the source is not a
+            readable LAS/LAZ file.
     """
-    stages: list[dict] = [
-        {"type": "readers.las", "filename": input_path},
-        {
-            "type": "filters.stats",
-            "dimensions": "X,Y,Z,Classification",
-            # Enumerate per-value counts for Classification so we can report the
-            # exact set of ASPRS classes present.
-            "count": "Classification",
-        },
-    ]
-    if output_path is not None:
-        stages.append(
-            {"type": "writers.copc", "filename": output_path, "forward": "all"}
-        )
-
-    pipeline = pdal.Pipeline(json.dumps(stages))
     try:
-        point_count = pipeline.execute()
-    except RuntimeError as e:
+        return laspy.open(source)
+    except Exception as e:
         raise ProcessingError(
             code="UNREADABLE_POINT_CLOUD",
             message="The uploaded file could not be read as a point cloud.",
-            suggestion="Upload a valid LAS, LAZ, or COPC file.",
+            suggestion="Upload a valid LAS or LAZ file.",
             traceback=str(e),
         )
 
-    metadata = pipeline.metadata
-    if isinstance(metadata, str):
-        metadata = json.loads(metadata)
-    meta = metadata["metadata"]
 
-    las = meta["readers.las"]
-    if isinstance(las, list):
-        las = las[0]
-
-    srs = las.get("srs") or {}
-    wkt = ""
-    if isinstance(srs, dict):
-        wkt = srs.get("wkt") or srs.get("compoundwkt") or ""
-    crs = _wkt_to_epsg(wkt)
-
-    bounds = [
-        float(las["minx"]),
-        float(las["miny"]),
-        float(las["minz"]),
-        float(las["maxx"]),
-        float(las["maxy"]),
-        float(las["maxz"]),
-    ]
-    point_classes = _classification_set(meta)
-    area = (bounds[3] - bounds[0]) * (bounds[4] - bounds[1])
-    density = (point_count / area) if area > 0 else 0.0
-
-    return {
-        "crs": crs,
-        "bounds": bounds,
-        "point_count": int(point_count),
-        "point_classes": point_classes,
-        "density": float(density),
-    }
-
-
-def _classification_set(meta: dict) -> list[int]:
-    """Extract the sorted set of ASPRS Classification codes from stats metadata."""
-    stats = meta.get("filters.stats", {})
-    if isinstance(stats, list):
-        stats = stats[0]
-    for dim in stats.get("statistic", []):
-        if dim.get("name") != "Classification":
-            continue
-        counts = dim.get("counts")
-        if counts:
-            values = set()
-            for entry in counts:
-                if isinstance(entry, dict):
-                    values.add(int(round(float(entry["value"]))))
-                else:
-                    # Some PDAL builds emit "value/count" strings.
-                    values.add(int(round(float(str(entry).split("/")[0]))))
-            return sorted(values)
-        # Fallback if per-value counts are absent: the endpoints only.
-        lo = int(round(float(dim.get("minimum", 0))))
-        hi = int(round(float(dim.get("maximum", lo))))
-        return sorted({lo, hi})
-    return []
-
-
-def _wkt_to_epsg(wkt: str) -> str:
-    """Resolve a PDAL SRS WKT string to an ``EPSG:xxxxx`` authority code.
-
-    Compound CRSs (horizontal + vertical) resolve to their horizontal component,
-    since a point cloud's georeference records a single horizontal+vertical CRS
-    code.
+def _require_crs(header: laspy.LasHeader) -> PyprojCRS:
+    """Return the cloud's CRS, resolving compound CRSs to their horizontal part.
 
     Raises:
-        ProcessingError: MISSING_CRS if no CRS is present; UNRESOLVABLE_CRS if a
-            CRS is present but maps to no EPSG code.
+        ProcessingError: MISSING_CRS when the file carries no CRS — without a
+            source CRS the cloud cannot be reprojected to the domain CRS.
     """
-    if not wkt or not wkt.strip():
+    try:
+        crs = header.parse_crs()
+    except Exception:
+        crs = None
+    if crs is None:
         raise ProcessingError(
             code="MISSING_CRS",
             message=(
@@ -267,30 +166,101 @@ def _wkt_to_epsg(wkt: str) -> str:
                 "`pdal translate in.laz out.laz --writers.las.a_srs=EPSG:<code>`."
             ),
         )
-    try:
-        crs = PyprojCRS.from_wkt(wkt)
-    except CRSError as e:
-        raise ProcessingError(
-            code="UNRESOLVABLE_CRS",
-            message="The point cloud's coordinate reference system could not be parsed.",
-            traceback=str(e),
-        )
-
     if crs.is_compound:
         crs = crs.sub_crs_list[0]
+    return crs
 
-    epsg = crs.to_epsg()
-    if epsg is None:
-        auth = crs.to_authority(min_confidence=70)
-        if auth and auth[0] == "EPSG":
-            epsg = int(auth[1])
-    if epsg is None:
-        raise ProcessingError(
-            code="UNRESOLVABLE_CRS",
-            message=(
-                "The point cloud's CRS does not correspond to a known EPSG code. "
-                "Reproject to a standard projected CRS (e.g. the appropriate UTM "
-                "zone) before uploading."
-            ),
-        )
-    return f"EPSG:{epsg}"
+
+def _census(reader: laspy.LasReader) -> dict:
+    """Single chunked pass over a reader: point count and classification set.
+
+    Density is points per square meter over the header's horizontal extent.
+    """
+    classes: set[int] = set()
+    count = 0
+    for points in reader.chunk_iterator(_CHUNK_POINTS):
+        classes |= set(np.unique(np.asarray(points.classification)).tolist())
+        count += len(points)
+
+    header = reader.header
+    area = (header.maxs[0] - header.mins[0]) * (header.maxs[1] - header.mins[1])
+    return {
+        "rewritten": False,
+        "point_count": count,
+        "point_classes": sorted(int(c) for c in classes),
+        "density": (count / area) if area > 0 else 0.0,
+    }
+
+
+def _rewrite(
+    reader: laspy.LasReader,
+    dst_crs: PyprojCRS,
+    transformer: Transformer | None,
+) -> tuple[io.BytesIO, dict, list[float]]:
+    """Stream a cloud into an in-memory LAZ, optionally reprojecting it.
+
+    Reads in bounded chunks, transforms X/Y when a transformer is given
+    (elevations pass through untouched), and writes compressed LAZ to a
+    seekable in-memory buffer. Statistics and bounds are computed from the
+    written (output-CRS) coordinates, so what is reported is what was stored.
+
+    Args:
+        reader: Open LAS/LAZ reader positioned at the start of the points.
+        dst_crs: CRS recorded on the output header (the domain CRS).
+        transformer: Coordinate transform to apply, or None to keep coords.
+
+    Returns:
+        (buffer, stats dict, [minx, miny, minz, maxx, maxy, maxz]).
+    """
+    src_header = reader.header
+    header = laspy.LasHeader(
+        version=src_header.version, point_format=src_header.point_format
+    )
+    header.scales = src_header.scales
+    # Offsets must be near the data and fixed before writing; the transformed
+    # header minimum is exact for transformer=None and close enough otherwise.
+    if transformer is not None:
+        ox, oy = transformer.transform(src_header.mins[0], src_header.mins[1])
+    else:
+        ox, oy = src_header.mins[0], src_header.mins[1]
+    header.offsets = [ox, oy, src_header.mins[2]]
+    header.add_crs(dst_crs)
+
+    classes: set[int] = set()
+    count = 0
+    mins = np.array([np.inf, np.inf, np.inf])
+    maxs = np.array([-np.inf, -np.inf, -np.inf])
+
+    buf = io.BytesIO()
+    with laspy.open(
+        buf, mode="w", header=header, do_compress=True, closefd=False
+    ) as writer:
+        for points in reader.chunk_iterator(_CHUNK_POINTS):
+            x = np.asarray(points.x)
+            y = np.asarray(points.y)
+            if transformer is not None:
+                x, y = transformer.transform(x, y)
+            points.change_scaling(scales=header.scales, offsets=header.offsets)
+            points.x = x
+            points.y = y
+
+            z = np.asarray(points.z)
+            mins = np.minimum(mins, [x.min(), y.min(), z.min()])
+            maxs = np.maximum(maxs, [x.max(), y.max(), z.max()])
+            classes |= set(np.unique(np.asarray(points.classification)).tolist())
+            count += len(points)
+            writer.write_points(points)
+
+    if count == 0:
+        mins = np.array(header.offsets, dtype=float)
+        maxs = np.array(header.offsets, dtype=float)
+
+    area = (maxs[0] - mins[0]) * (maxs[1] - mins[1])
+    stats = {
+        "rewritten": True,
+        "point_count": count,
+        "point_classes": sorted(int(c) for c in classes),
+        "density": (count / area) if area > 0 else 0.0,
+    }
+    buf.seek(0)
+    return buf, stats, [*mins.tolist(), *maxs.tolist()]

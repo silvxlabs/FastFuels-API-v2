@@ -23,8 +23,14 @@ def get_gcsfs_client() -> gcsfs.GCSFileSystem:
     client on its first request, after the fork.
 
     For the same reason, do not call this at import / module scope.
+
+    ``requests_timeout`` bounds each HTTP request. Without it, a request sent
+    on a stale pooled keep-alive connection waits forever — observed as a
+    worker hanging indefinitely in fsspec ``sync()`` with the socket in
+    CLOSE_WAIT. With it, the dead connection raises a timeout and gcsfs's
+    built-in retry re-issues the request on a fresh connection.
     """
-    return gcsfs.GCSFileSystem()
+    return gcsfs.GCSFileSystem(requests_timeout=90)
 
 
 def _normalize_path(gcs_path: str) -> str:

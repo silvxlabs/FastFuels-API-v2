@@ -18,7 +18,6 @@ class PointCloudUploadFormat(StrEnum):
 
     las = "las"
     laz = "laz"
-    copc = "copc"
 
 
 class CreatePointCloudUploadRequest(BaseModel):
@@ -33,7 +32,7 @@ class CreatePointCloudUploadRequest(BaseModel):
     )
     format: PointCloudUploadFormat = Field(
         ...,
-        description="Format of the file you will upload: `las`, `laz`, or `copc`.",
+        description="Format of the file you will upload: `las` or `laz`.",
     )
     name: str = Field(
         "",

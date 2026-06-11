@@ -21,7 +21,6 @@ class TestCreatePointCloudUpload:
     ):
         body = {
             "type": "tls",
-            "format": "laz",
             "name": "Plot 3 TLS",
             "tags": ["plot-3"],
         }
@@ -38,8 +37,7 @@ class TestCreatePointCloudUpload:
             assert pc["georeference"] is None
             assert pc["summary"] is None
             assert pc["source"]["name"] == "upload"
-            assert pc["source"]["format"] == "laz"
-            assert pc["source"]["object_name"] == f"pointclouds/{pc['id']}/upload.laz"
+            assert pc["source"]["object_name"] == f"pointclouds/{pc['id']}/upload"
 
             assert upload["method"] == "PUT"
             assert upload["content_type"] == "application/octet-stream"
@@ -59,20 +57,6 @@ class TestCreatePointCloudUpload:
                 pc["id"]
             ).delete()
 
-    def test_las_format_uses_las_extension(
-        self, client, firestore_client, domain_for_testing
-    ):
-        body = {"type": "als", "format": "las", "name": "LAS upload"}
-        response = client.post(self.route(domain_for_testing["id"]), json=body)
-        assert response.status_code == 201, response.text
-        pc = response.json()["point_cloud"]
-        try:
-            assert pc["source"]["object_name"] == f"pointclouds/{pc['id']}/upload.las"
-        finally:
-            firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
-                pc["id"]
-            ).delete()
-
     @pytest.mark.parametrize("example_name,body", ALL_UPLOAD_EXAMPLE_VALUES)
     def test_documented_examples_are_accepted(
         self, client, firestore_client, domain_for_testing, example_name, body
@@ -82,15 +66,15 @@ class TestCreatePointCloudUpload:
         pc_id = response.json()["point_cloud"]["id"]
         firestore_client.collection(POINT_CLOUDS_COLLECTION).document(pc_id).delete()
 
-    def test_invalid_format_rejected(self, client, domain_for_testing):
+    def test_invalid_type_rejected(self, client, domain_for_testing):
         response = client.post(
             self.route(domain_for_testing["id"]),
-            json={"type": "als", "format": "ply"},
+            json={"type": "mls", "name": "Mobile scan"},
         )
         assert response.status_code == 422
 
     def test_missing_type_rejected(self, client, domain_for_testing):
         response = client.post(
-            self.route(domain_for_testing["id"]), json={"format": "laz"}
+            self.route(domain_for_testing["id"]), json={"name": "No type"}
         )
         assert response.status_code == 422

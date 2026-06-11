@@ -5,19 +5,11 @@ Schema models for creating a point cloud from a direct file upload.
 """
 
 from datetime import datetime
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from api.resources.point_clouds.schema import PointCloud, PointCloudType
-
-
-class PointCloudUploadFormat(StrEnum):
-    """File format of the point cloud being uploaded."""
-
-    las = "las"
-    laz = "laz"
 
 
 class CreatePointCloudUploadRequest(BaseModel):
@@ -29,10 +21,6 @@ class CreatePointCloudUploadRequest(BaseModel):
             "How the cloud was acquired: `als` for airborne (aircraft or drone) "
             "or `tls` for terrestrial (tripod) scans."
         ),
-    )
-    format: PointCloudUploadFormat = Field(
-        ...,
-        description="Format of the file you will upload: `las` or `laz`.",
     )
     name: str = Field(
         "",

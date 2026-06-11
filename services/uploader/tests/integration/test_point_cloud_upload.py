@@ -48,14 +48,14 @@ def _load_domain_doc(domain_id: str) -> dict:
     return data
 
 
-def _pc_doc(pc_id: str, domain_id: str, fmt: str, object_name: str) -> dict:
+def _pc_doc(pc_id: str, domain_id: str, object_name: str) -> dict:
     return {
         "id": pc_id,
         "domain_id": domain_id,
         "owner_id": "test-owner",
         "type": "als",
         "status": "running",
-        "source": {"name": "upload", "format": fmt, "object_name": object_name},
+        "source": {"name": "upload", "object_name": object_name},
     }
 
 
@@ -106,9 +106,9 @@ class TestPointCloudUpload:
 
         local = tmp_path / "upload.laz"
         truth = make_test_las(str(local), n=100, epsg=32612, classes=(1, 2, 5))
-        object_name = f"pointclouds/{pc_id}/upload.laz"
+        object_name = f"pointclouds/{pc_id}/upload"
         _upload(str(local), object_name)
-        doc = _pc_doc(pc_id, domain_id, "laz", object_name)
+        doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)
 
         try:
@@ -136,9 +136,9 @@ class TestPointCloudUpload:
 
         local = tmp_path / "upload.las"
         make_test_las(str(local), n=80, epsg=32612, classes=(2, 5))
-        object_name = f"pointclouds/{pc_id}/upload.las"
+        object_name = f"pointclouds/{pc_id}/upload"
         _upload(str(local), object_name)
-        doc = _pc_doc(pc_id, domain_id, "las", object_name)
+        doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)
 
         try:
@@ -165,9 +165,9 @@ class TestPointCloudUpload:
         local = tmp_path / "upload.laz"
         # UTM 13N cloud into a UTM 12N domain: must be reprojected, not rejected.
         truth = make_test_las(str(local), n=60, epsg=32613, classes=(2,))
-        object_name = f"pointclouds/{pc_id}/upload.laz"
+        object_name = f"pointclouds/{pc_id}/upload"
         _upload(str(local), object_name)
-        doc = _pc_doc(pc_id, domain_id, "laz", object_name)
+        doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)
 
         transformer = Transformer.from_crs(
@@ -202,9 +202,9 @@ class TestPointCloudUpload:
 
         local = tmp_path / "upload.laz"
         make_test_las(str(local), n=50, with_srs=False)
-        object_name = f"pointclouds/{pc_id}/upload.laz"
+        object_name = f"pointclouds/{pc_id}/upload"
         _upload(str(local), object_name)
-        doc = _pc_doc(pc_id, domain_id, "laz", object_name)
+        doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)
 
         try:

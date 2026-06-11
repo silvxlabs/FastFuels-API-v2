@@ -41,13 +41,21 @@ class CreatePointCloudUploadRequest(BaseModel):
 class PointCloudUploadSpec(BaseModel):
     """Where and how to upload the source file.
 
-    PUT the file to `url` with a `Content-Type` header equal to `content_type`.
+    PUT the file to `url`, sending every header in `headers` exactly as given.
     The upload must complete before `expires_at` and must not exceed
     `max_size_bytes`.
     """
 
     method: Literal["PUT"] = "PUT"
     url: str = Field(..., description="Signed URL to upload the source file to.")
+    headers: dict[str, str] = Field(
+        ...,
+        description=(
+            "HTTP headers that must be sent with the PUT request, exactly as "
+            "given. The signed URL commits to these headers; the upload is "
+            "rejected if any is missing or altered."
+        ),
+    )
     content_type: str = Field(
         ...,
         description="Value the `Content-Type` header must use when uploading.",

@@ -23,7 +23,7 @@ from api.resources.point_clouds.upload.schema import (
 )
 from api.schema import JobStatus
 from lib.config import POINT_CLOUDS_COLLECTION, UPLOADS_BUCKET
-from lib.gcs import generate_upload_signed_url
+from lib.gcs import generate_upload_signed_url, upload_required_headers
 
 router = APIRouter()
 
@@ -56,9 +56,18 @@ async def create_point_cloud_upload(
 
     1. **POST** this request to create the point cloud and receive an `upload`
        spec containing a signed URL.
-    2. **PUT** your file to `upload.url` with a `Content-Type` header equal to
-       `upload.content_type`. The file must not exceed `upload.max_size_bytes`,
-       and the upload must complete before `upload.expires_at`.
+    2. **PUT** your file to `upload.url`, sending **every header in
+       `upload.headers`** exactly as given — the signed URL commits to them,
+       and the upload is rejected if any is missing or altered. The file must
+       not exceed `upload.max_size_bytes`, and the upload must complete before
+       `upload.expires_at`. For example:
+
+       ```bash
+       curl -X PUT --upload-file cloud.laz \
+         -H "Content-Type: application/octet-stream" \
+         -H "x-goog-content-length-range: 0,1073741824" \
+         "<upload.url>"
+       ```
 
     The point cloud is returned immediately with `status` = `pending`. Once the
     file finishes uploading it is ingested in the background: `status` becomes
@@ -120,6 +129,7 @@ async def create_point_cloud_upload(
         point_cloud=PointCloud(**point_cloud_data),
         upload=PointCloudUploadSpec(
             url=url,
+            headers=upload_required_headers(_CONTENT_TYPE, MAX_POINT_CLOUD_SIZE_BYTES),
             content_type=_CONTENT_TYPE,
             expires_at=expires_at,
             max_size_bytes=MAX_POINT_CLOUD_SIZE_BYTES,

@@ -44,6 +44,15 @@ class TestCreatePointCloudUpload:
             assert upload["url"].startswith("https://")
             assert upload["max_size_bytes"] > 0
             assert "expires_at" in upload
+            assert upload["headers"] == {
+                "Content-Type": upload["content_type"],
+                "x-goog-content-length-range": f"0,{upload['max_size_bytes']}",
+            }
+            # Every header the spec asks the client to send is one the URL
+            # signed.
+            signed = upload["url"].split("X-Goog-SignedHeaders=")[1].split("&")[0]
+            for header_name in upload["headers"]:
+                assert header_name.lower() in signed.replace("%3B", ";").split(";")
 
             doc = (
                 firestore_client.collection(POINT_CLOUDS_COLLECTION)

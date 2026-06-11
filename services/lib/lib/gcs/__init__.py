@@ -16,6 +16,7 @@ from lib.gcs.signed_urls import (
     gcs_client,
     generate_download_signed_url,
     generate_upload_signed_url,
+    upload_required_headers,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "exists",
     "generate_upload_signed_url",
     "generate_download_signed_url",
+    "upload_required_headers",
 ]

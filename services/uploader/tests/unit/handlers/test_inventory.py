@@ -7,9 +7,10 @@ No GCP I/O — all file operations use local /tmp paths.
 
 import geopandas as gpd
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 from shapely.geometry import MultiPoint, Point
-from uploader.handlers.inventory import _parse, _validate
+from uploader.handlers.inventory import _parse, _validate, _write_parquet
 
 from lib.errors import ProcessingError
 
@@ -321,3 +322,22 @@ class TestValidate:
         df = self._make_df(fia_species_code=[122, None, 15])
         result = _validate(df)
         assert pd.isna(result["fia_species_code"].iloc[1])
+
+
+class TestWriteParquet:
+    def test_no_null_dask_index_in_schema(self, tmp_path):
+        """dask's synthetic RangeIndex column must not be written (#335)."""
+        df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
+        path = str(tmp_path / "inv")
+        _write_parquet(df, path)
+
+        metadata = pq.read_metadata(f"{path}/_metadata")
+        assert metadata.schema.to_arrow_schema().names == ["x", "y", "height"]
+
+    def test_round_trip_preserves_data(self, tmp_path):
+        df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
+        path = str(tmp_path / "inv")
+        _write_parquet(df, path)
+
+        result = pd.read_parquet(path)
+        pd.testing.assert_frame_equal(result, df)

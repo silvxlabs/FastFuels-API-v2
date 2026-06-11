@@ -9,7 +9,7 @@ from lib.gcs.blobs import (
     delete_file,
     download_file,
     exists,
-    gcsfs_client,
+    get_gcsfs_client,
     upload_file,
 )
 from lib.gcs.signed_urls import (
@@ -20,7 +20,7 @@ from lib.gcs.signed_urls import (
 
 __all__ = [
     "gcs_client",
-    "gcsfs_client",
+    "get_gcsfs_client",
     "upload_file",
     "download_file",
     "delete_file",

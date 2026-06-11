@@ -59,17 +59,15 @@ class TestCreatePointCloudUpload:
                 pc["id"]
             ).delete()
 
-    def test_copc_format_uses_copc_laz_extension(
+    def test_las_format_uses_las_extension(
         self, client, firestore_client, domain_for_testing
     ):
-        body = {"type": "als", "format": "copc", "name": "COPC upload"}
+        body = {"type": "als", "format": "las", "name": "LAS upload"}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201, response.text
         pc = response.json()["point_cloud"]
         try:
-            assert (
-                pc["source"]["object_name"] == f"pointclouds/{pc['id']}/upload.copc.laz"
-            )
+            assert pc["source"]["object_name"] == f"pointclouds/{pc['id']}/upload.las"
         finally:
             firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
                 pc["id"]

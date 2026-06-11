@@ -24,11 +24,11 @@ EXAMPLE_UPLOAD_TLS_LAZ = {
     "tags": ["plot-3"],
 }
 
-# Airborne scan already in Cloud Optimized Point Cloud form.
-EXAMPLE_UPLOAD_ALS_COPC = {
+# Airborne scan uploaded as uncompressed LAS.
+EXAMPLE_UPLOAD_ALS_LAS = {
     "type": "als",
-    "format": "copc",
-    "name": "Bridger ALS (COPC)",
+    "format": "las",
+    "name": "Bridger ALS (LAS)",
 }
 
 CREATE_UPLOAD_OPENAPI_EXAMPLES = {
@@ -44,15 +44,15 @@ CREATE_UPLOAD_OPENAPI_EXAMPLES = {
             "Upload a terrestrial (tripod) laser scan as a compressed LAZ file."
         ),
     },
-    "als_copc": {
-        "value": EXAMPLE_UPLOAD_ALS_COPC,
-        "summary": "Airborne (ALS) — COPC",
-        "description": "Upload an airborne scan already in COPC (.copc.laz) format.",
+    "als_las": {
+        "value": EXAMPLE_UPLOAD_ALS_LAS,
+        "summary": "Airborne (ALS) — LAS",
+        "description": "Upload an airborne laser scan as an uncompressed LAS file.",
     },
 }
 
 ALL_UPLOAD_EXAMPLE_VALUES = [
     ("als_laz", EXAMPLE_UPLOAD_ALS_LAZ),
     ("tls_laz", EXAMPLE_UPLOAD_TLS_LAZ),
-    ("als_copc", EXAMPLE_UPLOAD_ALS_COPC),
+    ("als_las", EXAMPLE_UPLOAD_ALS_LAS),
 ]

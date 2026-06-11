@@ -1,15 +1,14 @@
 """
 Shared helpers for point cloud uploader tests.
 
-Synthesizes tiny LAS/LAZ files with PDAL so tests assert against exact,
+Synthesizes tiny LAS/LAZ files with laspy so tests assert against exact,
 known-by-construction metadata (CRS, point count, classification codes) rather
 than a committed opaque binary fixture.
 """
 
-import json
-
+import laspy
 import numpy as np
-import pdal
+import pyproj
 
 
 def make_test_las(
@@ -40,23 +39,18 @@ def make_test_las(
         [classes[i % len(classes)] for i in range(n)], dtype=np.uint8
     )
 
-    arr = np.empty(
-        n,
-        dtype=[("X", "f8"), ("Y", "f8"), ("Z", "f8"), ("Classification", "u1")],
-    )
-    arr["X"], arr["Y"], arr["Z"] = x, y, z
-    arr["Classification"] = classification
-
-    writer: dict = {
-        "type": "writers.las",
-        "filename": path,
-        "minor_version": 4,
-        "dataformat_id": 6,
-    }
+    header = laspy.LasHeader(version="1.4", point_format=6)
+    header.offsets = [x0, y0, z0]
+    header.scales = [0.01, 0.01, 0.01]
     if with_srs:
-        writer["a_srs"] = f"EPSG:{epsg}"
+        header.add_crs(pyproj.CRS.from_epsg(epsg))
 
-    pdal.Pipeline(json.dumps([writer]), arrays=[arr]).execute()
+    las = laspy.LasData(header)
+    las.x = x
+    las.y = y
+    las.z = z
+    las.classification = classification
+    las.write(path)
 
     return {
         "crs": f"EPSG:{epsg}",
@@ -65,4 +59,7 @@ def make_test_las(
         "xy_area": float((x.max() - x.min()) * (y.max() - y.min())),
         "min_z": float(z.min()),
         "max_z": float(z.max()),
+        "x": x,
+        "y": y,
+        "z": z,
     }

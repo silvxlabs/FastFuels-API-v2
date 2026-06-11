@@ -20,7 +20,6 @@ unnecessary.
 import asyncio
 import functools
 
-import gcsfs
 import geopandas as gpd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -30,6 +29,7 @@ from api.resources.features.schema import (
     FeaturePartitionInfo,
 )
 from lib.config import FEATURES_BUCKET
+from lib.gcs import get_gcsfs_client
 
 MAX_RESPONSE_BYTES = 30 * 1024 * 1024
 GEOJSON_MEDIA_TYPE = "application/geo+json"
@@ -93,7 +93,7 @@ def _open_parquet_file(domain_id: str, feature_id: str) -> pq.ParquetFile:
         FileNotFoundError: blob is missing on GCS.
         InvalidFeatureParquet: blob exists but is not parseable as GeoParquet.
     """
-    fs = gcsfs.GCSFileSystem()
+    fs = get_gcsfs_client()
     try:
         return pq.ParquetFile(_blob_path(domain_id, feature_id), filesystem=fs)
     except pa.lib.ArrowInvalid as exc:

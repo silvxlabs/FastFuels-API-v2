@@ -4,38 +4,27 @@ Synchronous GCS blob operations.
 Provides file upload, download, delete, and existence checking.
 """
 
+import functools
 import json
-import os
 
 import gcsfs
 
-# fsspec async filesystems pin their event loop to the PID that created them and
-# raise ``RuntimeError: This class is not fork-safe`` when used from a forked
-# child (fsspec/asyn.py: the ``loop`` property compares the instance's creation
-# PID against the current PID). functions-framework imports this module in the
-# gunicorn master before it forks its workers, so a single module-level client
-# would be created in the master and poisoned in every worker. Build the client
-# lazily and rebuild it whenever the PID changes, so each forked worker gets its
-# own instance bound to its own loop. ``skip_instance_cache=True`` is required:
-# fsspec's instance cache is inherited across the fork, so a plain
-# ``GCSFileSystem()`` in the child could hand back the master's cached (poisoned)
-# instance.
-_gcsfs_client: gcsfs.GCSFileSystem | None = None
-_gcsfs_client_pid: int | None = None
 
-
+@functools.cache
 def get_gcsfs_client() -> gcsfs.GCSFileSystem:
-    """Return a GCS filesystem client safe to use in the current process.
+    """Return a process-wide GCS filesystem client, built lazily on first use.
 
-    The client is created on first use and rebuilt whenever the process ID
-    changes (i.e. after a fork), so it is never shared across a fork boundary.
+    fsspec's async filesystems pin their event loop to the PID that created
+    them and raise ``RuntimeError: This class is not fork-safe`` if used from a
+    forked child. functions-framework imports this module in the gunicorn
+    master *before* it forks workers, so the client must not be constructed at
+    import time — otherwise it is created in the master and poisoned in every
+    worker (#333). Building it lazily means each worker constructs its own
+    client on its first request, after the fork.
+
+    For the same reason, do not call this at import / module scope.
     """
-    global _gcsfs_client, _gcsfs_client_pid
-    pid = os.getpid()
-    if _gcsfs_client is None or _gcsfs_client_pid != pid:
-        _gcsfs_client = gcsfs.GCSFileSystem(skip_instance_cache=True)
-        _gcsfs_client_pid = pid
-    return _gcsfs_client
+    return gcsfs.GCSFileSystem()
 
 
 def _normalize_path(gcs_path: str) -> str:

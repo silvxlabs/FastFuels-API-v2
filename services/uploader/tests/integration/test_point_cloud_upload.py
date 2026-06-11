@@ -188,6 +188,16 @@ class TestPointCloudUpload:
             assert bounds[1] == pytest.approx(expected_y.min(), abs=0.011)
             assert bounds[4] == pytest.approx(expected_y.max(), abs=0.011)
 
+            # Summary is computed from the written (domain-CRS) coordinates.
+            assert result["summary"]["point_count"] == 60
+            assert result["summary"]["point_classes"] == [2]
+            expected_area = (expected_x.max() - expected_x.min()) * (
+                expected_y.max() - expected_y.min()
+            )
+            assert result["summary"]["density"] == pytest.approx(
+                60 / expected_area, rel=1e-4
+            )
+
             header = _read_stored_header(pc_id)
             assert header.parse_crs().to_epsg() == 32612
             assert header.point_count == 60

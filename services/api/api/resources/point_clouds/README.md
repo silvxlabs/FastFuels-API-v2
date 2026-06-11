@@ -71,10 +71,15 @@ See `schema.py` for the authoritative definition. Notable fields:
 - **`georeference: PointCloudGeoreference | None`** — `crs` plus a flat 3D bounding box
   `[min_x, min_y, min_z, max_x, max_y, max_z]`. `null` until the worker finishes ingesting. The
   bbox is a single-level array, so it needs **no** coordinate stringification (unlike domains'
-  nested GeoJSON coordinates — Firestore rejects nested arrays).
-- **Per-cloud statistics** (point count, ASPRS classes present, density) are **deferred** to the
-  issue that first computes them (#329/#330), so the schema commits a contract only for fields a
-  worker actually populates.
+  nested GeoJSON coordinates — Firestore rejects nested arrays). `crs` is **always the domain
+  CRS**: unlike grids (where reprojection = resampling and a mismatch is rejected), point
+  reprojection is an exact per-point transform, so the #328 upload worker reprojects mismatched
+  uploads instead of rejecting them.
+- **`summary: PointCloudSummary | None`** — per-cloud statistics (`point_count`, `point_classes` =
+  ASPRS classes present, `density` = points/m²). `null` until the worker finishes ingesting. Nested in
+  a `summary` sub-model mirroring the planned grid/inventory `summary` pattern (#257/#258). First
+  populated by the **#328 upload handler** (the first worker that reads a cloud's bytes); #329/#330
+  populate it the same way.
 
 ## Checksum & staleness
 
@@ -92,7 +97,9 @@ API). `duplicate` assigns a fresh `checksum` to the copy.
   `copy_directory` and are therefore format-agnostic.
 - The **concrete object layout under `{id}/` and the file format are owned by the ingest workers**
   (#328/#329). This resource deliberately commits to no specific format (e.g. COPC vs. plain LAZ) —
-  that decision belongs to whoever writes the bytes.
+  that decision belongs to whoever writes the bytes. The #328 upload worker stores `{id}/cloud.laz`
+  (plain LAZ, domain CRS); see the uploader service README for why LAZ-not-COPC and the planned
+  lossless LAZ → COPC upgrade path.
 
 ## Service boundary
 

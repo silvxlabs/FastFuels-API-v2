@@ -25,6 +25,8 @@ from lib.config import (
     INVENTORIES_BUCKET,
     INVENTORIES_COLLECTION,
     KEYS_COLLECTION,
+    POINT_CLOUDS_BUCKET,
+    POINT_CLOUDS_COLLECTION,
 )
 
 # isort: on
@@ -46,6 +48,7 @@ COLLECTIONS = [
     INVENTORIES_COLLECTION,
     EXPORTS_COLLECTION,
     FEATURES_COLLECTION,
+    POINT_CLOUDS_COLLECTION,
     APPLICATIONS_COLLECTION,
     KEYS_COLLECTION,
 ]
@@ -92,10 +95,12 @@ def cleanup_stale_test_data(test_owner_id):
     fs_client = firestore.Client()
     gcs = gcsfs.GCSFileSystem()
 
-    # Collect grid, inventory, and export IDs before deleting so we can clean up GCS
+    # Collect grid, inventory, export, and point cloud IDs before deleting so
+    # we can clean up GCS
     grid_ids = []
     inventory_ids = []
     export_ids = []
+    point_cloud_ids = []
     for owner_id in owner_ids:
         query = fs_client.collection(GRIDS_COLLECTION).where(
             filter=FieldFilter("owner_id", "==", owner_id)
@@ -111,6 +116,11 @@ def cleanup_stale_test_data(test_owner_id):
             filter=FieldFilter("owner_id", "==", owner_id)
         )
         export_ids.extend(doc.id for doc in query.stream())
+
+        query = fs_client.collection(POINT_CLOUDS_COLLECTION).where(
+            filter=FieldFilter("owner_id", "==", owner_id)
+        )
+        point_cloud_ids.extend(doc.id for doc in query.stream())
 
     # Delete GCS data for stale grids
     if grid_ids:
@@ -135,6 +145,14 @@ def cleanup_stale_test_data(test_owner_id):
             gcs.rm(gcs_paths, recursive=True)
         except Exception as e:
             print(f"\nWarning: Failed to clean up export GCS data: {e}")
+
+    # Delete GCS data for stale point clouds
+    if point_cloud_ids:
+        gcs_paths = [f"{POINT_CLOUDS_BUCKET}/{pid}" for pid in point_cloud_ids]
+        try:
+            gcs.rm(gcs_paths, recursive=True)
+        except Exception as e:
+            print(f"\nWarning: Failed to clean up point cloud GCS data: {e}")
 
     # Delete Firestore documents
     deleted_counts = {}

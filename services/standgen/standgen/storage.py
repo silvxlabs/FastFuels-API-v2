@@ -3,7 +3,6 @@
 import logging
 
 import dask.dataframe as dd
-import gcsfs
 import pandas as pd
 import pyarrow.parquet as pq
 import xarray as xr
@@ -120,7 +119,7 @@ def count_inventory_rows(inventory_id: str) -> int | None:
     into a job failure at the logging step.
     """
     path = f"{INVENTORIES_BUCKET}/{inventory_id}/_metadata"
-    fs = gcsfs.GCSFileSystem()
+    fs = get_gcsfs_client()
     try:
         with fs.open(path, "rb") as f:
             return pq.read_metadata(f).num_rows

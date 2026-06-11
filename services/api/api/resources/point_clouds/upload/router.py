@@ -28,10 +28,6 @@ from lib.gcs import generate_upload_signed_url
 router = APIRouter()
 
 _CONTENT_TYPE = "application/octet-stream"
-_FORMAT_EXTENSIONS = {
-    "las": "las",
-    "laz": "laz",
-}
 # Caps the signed upload. The worker streams the file with bounded chunk
 # memory, but a rewritten (reprojected/recompressed) cloud is built in an
 # in-memory buffer, so this cap also bounds the worker's peak RAM. Tunable.
@@ -73,9 +69,9 @@ async def create_point_cloud_upload(
 
     ## Supported formats
 
-    - **las** — uncompressed LAS.
-    - **laz** — compressed LAZ (including Cloud Optimized Point Clouds, which
-      are valid LAZ).
+    Upload an uncompressed **LAS** or compressed **LAZ** file (including Cloud
+    Optimized Point Clouds, which are valid LAZ). The format is detected from
+    the file itself — there is nothing to declare.
 
     ## Coordinate reference system
 
@@ -90,8 +86,7 @@ async def create_point_cloud_upload(
     point_cloud_id = uuid.uuid4().hex
     request_time = datetime.now(UTC)
 
-    fmt = body.format.value
-    object_name = f"pointclouds/{point_cloud_id}/upload.{_FORMAT_EXTENSIONS[fmt]}"
+    object_name = f"pointclouds/{point_cloud_id}/upload"
 
     point_cloud_data = {
         "id": point_cloud_id,
@@ -106,7 +101,6 @@ async def create_point_cloud_upload(
         "modified_on": request_time,
         "source": {
             "name": "upload",
-            "format": fmt,
             "object_name": object_name,
         },
         "georeference": None,

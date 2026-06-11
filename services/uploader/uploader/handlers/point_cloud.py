@@ -53,7 +53,7 @@ def handle_point_cloud(
     Args:
         resource_id: Point cloud document ID in Firestore.
         bucket: GCS bucket holding the staged upload (UPLOADS_BUCKET).
-        object_name: Full GCS object path, e.g. "pointclouds/{id}/upload.laz".
+        object_name: Full GCS object path, e.g. "pointclouds/{id}/upload".
         doc: Point cloud document loaded from Firestore.
     """
     src = f"{bucket}/{object_name}"

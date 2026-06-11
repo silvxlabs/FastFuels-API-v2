@@ -24,7 +24,7 @@ from api.resources.grids.upload.schema import (
 )
 from api.schema import JobStatus
 from lib.config import GRIDS_COLLECTION, UPLOADS_BUCKET
-from lib.gcs import generate_upload_signed_url
+from lib.gcs import generate_upload_signed_url, upload_required_headers
 
 router = APIRouter()
 
@@ -50,8 +50,17 @@ async def create_netcdf_upload(
     # Create Upload Grid (netCDF)
 
     Creates a grid resource and returns a signed URL for uploading a
-    CF-conformant netCDF directly to GCS. The upload must use HTTP PUT
-    with `Content-Type: application/x-netcdf`.
+    CF-conformant netCDF directly to GCS. Upload with HTTP PUT, sending
+    **every header in the response's `upload.headers`** exactly as given —
+    the signed URL commits to them, and the upload is rejected if any is
+    missing or altered. For example:
+
+    ```bash
+    curl -X PUT --upload-file grid.nc \
+      -H "Content-Type: application/x-netcdf" \
+      -H "x-goog-content-length-range: 0,1073741824" \
+      "<upload.url>"
+    ```
 
     When the upload completes, the uploader service processes the file
     automatically via Eventarc and updates the grid status to `completed`
@@ -144,6 +153,7 @@ async def create_netcdf_upload(
         grid=Grid(**grid_data),
         upload=GridUploadSpec(
             url=url,
+            headers=upload_required_headers(_CONTENT_TYPE, MAX_GRID_SIZE_BYTES),
             content_type=_CONTENT_TYPE,
             expires_at=expires_at,
             max_size_bytes=MAX_GRID_SIZE_BYTES,

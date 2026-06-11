@@ -45,6 +45,14 @@ class TestCreateNetcdfUpload:
         assert up["method"] == "PUT"
         assert up["content_type"] == "application/x-netcdf"
         assert up["max_size_bytes"] == 1_073_741_824
+        assert up["headers"] == {
+            "Content-Type": up["content_type"],
+            "x-goog-content-length-range": f"0,{up['max_size_bytes']}",
+        }
+        # Every header the spec asks the client to send is one the URL signed.
+        signed = up["url"].split("X-Goog-SignedHeaders=")[1].split("&")[0]
+        for header_name in up["headers"]:
+            assert header_name.lower() in signed.replace("%3B", ";").split(";")
         expires_at = datetime.fromisoformat(up["expires_at"])
         assert expires_at > datetime.now(UTC) + timedelta(minutes=50)
 

@@ -23,7 +23,7 @@ from api.resources.inventories.tree.upload.schema import (
 )
 from api.schema import JobStatus
 from lib.config import INVENTORIES_COLLECTION, UPLOADS_BUCKET
-from lib.gcs import generate_upload_signed_url
+from lib.gcs import generate_upload_signed_url, upload_required_headers
 
 router = APIRouter()
 
@@ -58,8 +58,17 @@ async def create_inventory_upload(
     # Create Upload Inventory
 
     Creates an inventory resource and returns a signed URL for uploading the
-    source file directly to GCS. The upload must use HTTP PUT with the
-    Content-Type header matching the value in the response.
+    source file directly to GCS. Upload with HTTP PUT, sending **every header
+    in the response's `upload.headers`** exactly as given — the signed URL
+    commits to them, and the upload is rejected if any is missing or altered.
+    For example:
+
+    ```bash
+    curl -X PUT --upload-file trees.csv \
+      -H "Content-Type: text/csv" \
+      -H "x-goog-content-length-range: 0,524288000" \
+      "<upload.url>"
+    ```
 
     When the upload completes, the uploader service processes the file
     automatically via Eventarc and updates the inventory status to
@@ -123,6 +132,7 @@ async def create_inventory_upload(
         inventory=Inventory(**inventory_data),
         upload=InventoryUploadSpec(
             url=url,
+            headers=upload_required_headers(content_type, MAX_INVENTORY_SIZE_BYTES),
             content_type=content_type,
             expires_at=expires_at,
             max_size_bytes=MAX_INVENTORY_SIZE_BYTES,

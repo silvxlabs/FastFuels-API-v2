@@ -49,6 +49,7 @@ class CreateInventoryUploadRequest(BaseModel):
 class InventoryUploadSpec(BaseModel):
     method: Literal["PUT"] = "PUT"
     url: str
+    headers: dict[str, str]
     content_type: str
     expires_at: datetime
     max_size_bytes: int

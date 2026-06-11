@@ -87,7 +87,8 @@ jobs:
               GCP_REGION=${{ env.REGION }},\
               UPLOADS_BUCKET=${{ secrets.UPLOADS_BUCKET }},\
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
-              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }}" \
+              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
+              POINT_CLOUDS_BUCKET=${{ secrets.POINT_CLOUDS_BUCKET }}" \
             --quiet
 
   test:
@@ -123,4 +124,5 @@ jobs:
           UPLOADS_BUCKET: ${{ secrets.UPLOADS_BUCKET }}
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
+          POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
         run: uv run pytest tests/ -v

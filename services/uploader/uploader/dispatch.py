@@ -8,6 +8,7 @@ Object path convention: {resource_type}/{resource_id}/{filename}
 from lib.errors import ProcessingError
 from uploader.handlers.grid import handle_grid_geotiff, handle_grid_netcdf
 from uploader.handlers.inventory import handle_inventory
+from uploader.handlers.point_cloud import handle_point_cloud
 
 
 def dispatch_handler(
@@ -33,6 +34,8 @@ def dispatch_handler(
     match resource_type:
         case "inventories":
             handle_inventory(resource_id, bucket, object_name, doc)
+        case "pointclouds":
+            handle_point_cloud(resource_id, bucket, object_name, doc)
         case "grids":
             fmt = (doc.get("source") or {}).get("format")
             match fmt:

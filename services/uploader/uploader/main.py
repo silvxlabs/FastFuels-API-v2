@@ -20,13 +20,18 @@ from datetime import UTC, datetime
 import functions_framework
 from cloudevents.http import CloudEvent
 
-from lib.config import GRIDS_COLLECTION, INVENTORIES_COLLECTION
+from lib.config import (
+    GRIDS_COLLECTION,
+    INVENTORIES_COLLECTION,
+    POINT_CLOUDS_COLLECTION,
+)
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 
 _RESOURCE_COLLECTIONS = {
     "inventories": INVENTORIES_COLLECTION,
     "grids": GRIDS_COLLECTION,
+    "pointclouds": POINT_CLOUDS_COLLECTION,
 }
 
 

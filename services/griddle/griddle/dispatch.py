@@ -102,7 +102,7 @@ def dispatch_handler(
         case "lookup":
             return handle_lookup(grid, source, progress_callback)
         case "resample":
-            return handle_resample(domain_gdf, source, progress_callback)
+            return handle_resample(grid, domain_gdf, source, progress_callback)
         case "pim":
             return handle_pim(domain_gdf, source, progress_callback)
         case "uniform":
@@ -278,6 +278,7 @@ def handle_lookup(
 
 
 def handle_resample(
+    grid: dict,
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
@@ -300,6 +301,15 @@ def handle_resample(
         )
     source_grid_doc = source_snapshot.to_dict()
     band_types = {b["key"]: b["type"] for b in source_grid_doc.get("bands", [])}
+
+    # Derive bands from source and write back before summarize runs.
+    source_bands = source_grid_doc.get("bands", [])
+    bands = [
+        {"key": b["key"], "type": b["type"], "unit": b.get("unit"), "index": b["index"]}
+        for b in source_bands
+    ]
+    update_document(GRIDS_COLLECTION, grid["id"], {"bands": bands})
+    grid["bands"] = bands
 
     return resample.resample_grid(
         source_grid_id=source_grid_id,

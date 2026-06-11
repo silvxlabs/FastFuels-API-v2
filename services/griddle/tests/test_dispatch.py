@@ -470,7 +470,7 @@ def _stub_source_grid_doc():
     ``handle_resample`` performs on the source grid."""
     snapshot = MagicMock()
     snapshot.to_dict.return_value = {
-        "bands": [{"key": "elevation", "type": "continuous"}],
+        "bands": [{"key": "elevation", "type": "continuous", "index": 0}],
     }
     return snapshot
 
@@ -499,16 +499,21 @@ class TestDispatchHandlerResample:
 
         result = dispatch_handler(grid, mock_gdf, progress)
 
-        mock_handle_resample.assert_called_once_with(mock_gdf, grid["source"], progress)
+        mock_handle_resample.assert_called_once_with(
+            grid, mock_gdf, grid["source"], progress
+        )
         assert result == mock_result
 
 
 class TestHandleResample:
     """Tests for handle_resample function."""
 
+    @patch("griddle.dispatch.update_document")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
-    def test_routes_to_resample_handler(self, mock_resample_grid, mock_get_doc):
+    def test_routes_to_resample_handler(
+        self, mock_resample_grid, mock_get_doc, mock_update_doc
+    ):
         """handle_resample calls resample.resample_grid with correct params."""
         mock_result = MagicMock()
         mock_resample_grid.return_value = mock_result
@@ -522,7 +527,8 @@ class TestHandleResample:
             "method_overrides": {"fbfm": "nearest"},
         }
 
-        result = handle_resample(mock_gdf, source, progress)
+        grid = {"id": "test-grid-id", "source": source}
+        result = handle_resample(grid, mock_gdf, source, progress)
 
         mock_resample_grid.assert_called_once_with(
             source_grid_id="test-source-grid-id",
@@ -539,9 +545,12 @@ class TestHandleResample:
         )
         assert result == mock_result
 
+    @patch("griddle.dispatch.update_document")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
-    def test_calls_progress_callback(self, mock_resample_grid, mock_get_doc):
+    def test_calls_progress_callback(
+        self, mock_resample_grid, mock_get_doc, mock_update_doc
+    ):
         """handle_resample reports progress."""
         progress = MagicMock()
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
@@ -552,14 +561,16 @@ class TestHandleResample:
             "alignment": {"target": "domain", "resolution": 10.0},
         }
 
-        handle_resample(mock_gdf, source, progress)
+        grid = {"id": "test-grid-id", "source": source}
+        handle_resample(grid, mock_gdf, source, progress)
 
         progress.assert_called()
 
+    @patch("griddle.dispatch.update_document")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
     def test_passes_empty_overrides_when_missing(
-        self, mock_resample_grid, mock_get_doc
+        self, mock_resample_grid, mock_get_doc, mock_update_doc
     ):
         """When source has no method_overrides key, passes empty dict."""
         progress = MagicMock()
@@ -572,7 +583,8 @@ class TestHandleResample:
             # No method_overrides key
         }
 
-        handle_resample(mock_gdf, source, progress)
+        grid = {"id": "test-grid-id", "source": source}
+        handle_resample(grid, mock_gdf, source, progress)
 
         call_kwargs = mock_resample_grid.call_args[1]
         assert call_kwargs["method_overrides"] == {}

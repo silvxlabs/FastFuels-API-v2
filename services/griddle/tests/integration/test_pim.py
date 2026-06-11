@@ -25,7 +25,14 @@ def test_treemap_tm_id(griddle_runner):
 
     # TM_ID values should be non-negative integers
     values = ds["tm_id"].values
-    assert values.dtype in (np.int16, np.int32, np.int64, np.float32, np.float64)
+    assert values.dtype in (
+        np.int16,
+        np.uint32,
+        np.int32,
+        np.int64,
+        np.float32,
+        np.float64,
+    )
 
 
 def test_treemap_both_bands(griddle_runner):
@@ -45,8 +52,12 @@ def test_treemap_both_bands(griddle_runner):
     # PLT_CN should be int64 (FIA condition numbers are large integers)
     assert ds["plt_cn"].values.dtype == np.int64
 
-    # Where tm_id > 0, plt_cn should generally be non-zero (mapped from tree table)
-    valid_mask = ds["tm_id"].values > 0
+    # If there are valid TM_ID pixels, at least some should map to a PLT_CN
+    tm_id_nodata = ds["tm_id"].rio.nodata
+    valid_mask = ds["tm_id"].values != tm_id_nodata
     if valid_mask.any():
-        mapped_plt_cn = ds["plt_cn"].values[valid_mask]
-        assert (mapped_plt_cn > 0).any(), "Expected some mapped PLT_CN values > 0"
+        plt_cn_nodata = ds["plt_cn"].rio.nodata
+        valid_plt_cn = ds["plt_cn"].values[valid_mask]
+        assert (valid_plt_cn != plt_cn_nodata).any(), (
+            "Expected some mapped PLT_CN values"
+        )

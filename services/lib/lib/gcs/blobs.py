@@ -4,11 +4,27 @@ Synchronous GCS blob operations.
 Provides file upload, download, delete, and existence checking.
 """
 
+import functools
 import json
 
 import gcsfs
 
-gcsfs_client: gcsfs.GCSFileSystem = gcsfs.GCSFileSystem()
+
+@functools.cache
+def get_gcsfs_client() -> gcsfs.GCSFileSystem:
+    """Return a process-wide GCS filesystem client, built lazily on first use.
+
+    fsspec's async filesystems pin their event loop to the PID that created
+    them and raise ``RuntimeError: This class is not fork-safe`` if used from a
+    forked child. functions-framework imports this module in the gunicorn
+    master *before* it forks workers, so the client must not be constructed at
+    import time — otherwise it is created in the master and poisoned in every
+    worker (#333). Building it lazily means each worker constructs its own
+    client on its first request, after the fork.
+
+    For the same reason, do not call this at import / module scope.
+    """
+    return gcsfs.GCSFileSystem()
 
 
 def _normalize_path(gcs_path: str) -> str:
@@ -27,7 +43,7 @@ def upload_file(local_path: str, gcs_path: str) -> None:
         gcs_path: Full GCS path (gs://bucket/path/file or bucket/path/file).
     """
     normalized = _normalize_path(gcs_path)
-    gcsfs_client.put(local_path, normalized)
+    get_gcsfs_client().put(local_path, normalized)
 
 
 def download_file(gcs_path: str, local_path: str, recursive: bool = False) -> None:
@@ -40,7 +56,7 @@ def download_file(gcs_path: str, local_path: str, recursive: bool = False) -> No
         recursive: If True, download directory recursively.
     """
     normalized = _normalize_path(gcs_path)
-    gcsfs_client.get(normalized, local_path, recursive=recursive)
+    get_gcsfs_client().get(normalized, local_path, recursive=recursive)
 
 
 def delete_file(gcs_path: str) -> None:
@@ -51,7 +67,7 @@ def delete_file(gcs_path: str) -> None:
         gcs_path: Full GCS path (gs://bucket/path/file or bucket/path/file).
     """
     normalized = _normalize_path(gcs_path)
-    gcsfs_client.rm(normalized)
+    get_gcsfs_client().rm(normalized)
 
 
 def delete_directory(gcs_path: str) -> None:
@@ -62,7 +78,7 @@ def delete_directory(gcs_path: str) -> None:
         gcs_path: Full GCS path (gs://bucket/path/ or bucket/path/).
     """
     normalized = _normalize_path(gcs_path)
-    gcsfs_client.rm(normalized, recursive=True)
+    get_gcsfs_client().rm(normalized, recursive=True)
 
 
 def exists(gcs_path: str) -> bool:
@@ -76,7 +92,7 @@ def exists(gcs_path: str) -> bool:
         True if the path exists, False otherwise.
     """
     normalized = _normalize_path(gcs_path)
-    return gcsfs_client.exists(normalized)
+    return get_gcsfs_client().exists(normalized)
 
 
 def upload_json(gcs_path: str, data: dict) -> None:
@@ -88,5 +104,5 @@ def upload_json(gcs_path: str, data: dict) -> None:
         data: The dictionary to upload as JSON.
     """
     normalized = _normalize_path(gcs_path)
-    with gcsfs_client.open(normalized, "w") as f:
+    with get_gcsfs_client().open(normalized, "w") as f:
         json.dump(data, f)

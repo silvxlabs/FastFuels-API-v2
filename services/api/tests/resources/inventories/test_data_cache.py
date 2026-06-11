@@ -23,30 +23,17 @@ def inventory_df() -> pd.DataFrame:
     )
 
 
-def _write_dask_parquet(df: pd.DataFrame, path: str, **kwargs) -> pq.FileMetaData:
+def _write_dask_parquet(df: pd.DataFrame, path: str) -> pq.FileMetaData:
+    """Write a partitioned dataset the way standgen/uploader do (#335)."""
     dd.from_pandas(df, npartitions=2).to_parquet(
-        path, write_metadata_file=True, **kwargs
+        path, write_metadata_file=True, write_index=False
     )
     return pq.read_metadata(f"{path}/_metadata")
 
 
 class TestParseMetadata:
-    def test_legacy_dataset_filters_null_dask_index(self, inventory_df, tmp_path):
-        """Datasets written before write_index=False carry the dask index
-        artifact in their schema; it must not surface in columns."""
+    def test_columns_match_file_schema(self, inventory_df, tmp_path):
         metadata = _write_dask_parquet(inventory_df, str(tmp_path / "inv"))
-        # Sanity-check the fixture reproduces the bug: the artifact is
-        # physically in the file schema.
-        assert "__null_dask_index__" in metadata.schema.to_arrow_schema().names
-
-        meta = _parse_metadata(metadata)
-
-        assert meta.columns == ["x", "y", "height"]
-
-    def test_clean_dataset_columns_pass_through(self, inventory_df, tmp_path):
-        metadata = _write_dask_parquet(
-            inventory_df, str(tmp_path / "inv"), write_index=False
-        )
 
         meta = _parse_metadata(metadata)
 

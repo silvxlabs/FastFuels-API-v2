@@ -29,12 +29,6 @@ class InventoryMeta:
     partitions: list[PartitionMeta]
 
 
-# Synthetic column dask's to_parquet writes for a meaningless RangeIndex.
-# Newer inventories are written with write_index=False, but datasets written
-# before that fix still carry it in their file schema (#335).
-_NULL_DASK_INDEX = "__null_dask_index__"
-
-
 def _read_metadata_sync(inventory_id: str) -> InventoryMeta:
     metadata_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}/_metadata"
     pf = pq.ParquetFile(metadata_path)
@@ -48,11 +42,7 @@ def _parse_metadata(metadata: pq.FileMetaData) -> InventoryMeta:
         path = rg.column(0).file_path
         partitions_by_path[path] = partitions_by_path.get(path, 0) + rg.num_rows
 
-    columns = [
-        name
-        for name in metadata.schema.to_arrow_schema().names
-        if name != _NULL_DASK_INDEX
-    ]
+    columns = metadata.schema.to_arrow_schema().names
 
     sorted_paths = sorted(partitions_by_path.keys())
     partitions = [

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import dask.dataframe as dd
 import geopandas as gpd
+import pyarrow.parquet as pq
 import pytest
 from shapely.geometry import box
 
@@ -283,6 +284,28 @@ def test_parquet_has_correct_columns(modifications_runner):
     ddf = dd.read_parquet(mod_path)
 
     assert sorted(ddf.columns.tolist()) == sorted(BASE_COLUMNS)
+
+
+def test_parquet_schema_has_no_dask_index_artifact(modifications_runner):
+    """The rewritten file schema must not carry dask's __null_dask_index__ (#335).
+
+    ``dd.read_parquet`` restores the index from pandas metadata, hiding the
+    artifact from ``.columns`` — so this reads the raw ``_metadata`` footer
+    schema, which is what the API's data/metadata endpoint surfaces.
+    """
+    modifications = [
+        {
+            "conditions": [{"attribute": "dbh", "operator": "lt", "value": 5.0}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+    _, mod_inventory = modifications_runner(modifications)
+
+    fs = get_gcsfs_client()
+    with fs.open(f"{INVENTORIES_BUCKET}/{mod_inventory['id']}/_metadata", "rb") as f:
+        schema_names = pq.read_metadata(f).schema.to_arrow_schema().names
+
+    assert "__null_dask_index__" not in schema_names
 
 
 def test_parquet_values_are_sensible(modifications_runner):

@@ -1,9 +1,8 @@
 """
 Shared fixtures for point cloud router tests.
 
-Point clouds have no create endpoint yet (creation lands in #328/#329), so these
-fixtures seed documents directly in Firestore — the same way the list/get/patch/
-delete/duplicate endpoints are exercised.
+These fixtures seed documents directly in Firestore — the same way the
+list/get/patch/delete endpoints are exercised.
 """
 
 import pytest
@@ -14,11 +13,7 @@ from tests.fixtures import make_point_cloud_data
 
 @pytest.fixture(scope="session")
 def point_cloud_in_firestore(firestore_client, domain_for_testing):
-    """A completed ALS point cloud in the test domain.
-
-    Completed (with a georeference) so it can serve both GET tests and as a
-    duplicate source.
-    """
+    """A completed ALS point cloud (with a georeference) in the test domain."""
     pc_data = make_point_cloud_data(
         domain_id=domain_for_testing["id"],
         name="Test Point Cloud for GET",

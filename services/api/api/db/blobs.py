@@ -41,6 +41,51 @@ async def copy_directory(bucket_name: str, source_path: str, dest_path: str) -> 
     await gcsfs_client._copy(source, dest, recursive=True)
 
 
+async def copy_directory_verified(
+    bucket_name: str, source_path: str, dest_path: str
+) -> None:
+    """Copy a directory within GCS and verify the copy against a pre-copy
+    snapshot of the source listing.
+
+    The source's object names and sizes are snapshotted before the copy; the
+    destination listing must match that snapshot exactly afterwards. This
+    catches a source that is deleted or rewritten while the copy is running,
+    which a plain recursive copy would turn into a silently incomplete clone.
+
+    Raises:
+        FileNotFoundError: The source contains no objects.
+        RuntimeError: The destination listing does not match the snapshot.
+    """
+    source = f"{bucket_name}/{source_path}"
+    dest = f"{bucket_name}/{dest_path}"
+
+    # Both listings must reflect live bucket state, not the shared client's
+    # dircache — a stale snapshot would make the verification vacuous.
+    gcsfs_client.invalidate_cache(source)
+    snapshot = await gcsfs_client._find(source, detail=True)
+    if not snapshot:
+        raise FileNotFoundError(f"No objects to copy at {source}")
+    expected = {
+        path.removeprefix(f"{source}/"): info["size"] for path, info in snapshot.items()
+    }
+
+    await gcsfs_client._copy(source, dest, recursive=True)
+
+    gcsfs_client.invalidate_cache(dest)
+    dest_listing = await gcsfs_client._find(dest, detail=True)
+    copied = {
+        path.removeprefix(f"{dest}/"): info["size"]
+        for path, info in dest_listing.items()
+    }
+    if copied != expected:
+        missing = sorted(set(expected) - set(copied))
+        raise RuntimeError(
+            f"Copy verification failed for {source} -> {dest}: expected "
+            f"{len(expected)} objects, found {len(copied)}"
+            + (f"; missing {missing[:5]}" if missing else "")
+        )
+
+
 async def delete_file(bucket_name: str, file_path: str) -> None:
     """Delete a single file from GCS."""
     full_path = f"{bucket_name}/{file_path}"

@@ -16,7 +16,7 @@ EXAMPLE_GDAM_MINIMAL = {
 # Full request with all optional metadata fields
 EXAMPLE_GDAM_FULL = {
     "source_tree_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "type": "tree",
+    "impute_columns": ["dbh", "crown_ratio", "fia_species_code"],
     "name": "GDAM allometry inventory",
     "description": "Position+height inventory filled in with GDAM-predicted morphology",
     "tags": ["baseline"],

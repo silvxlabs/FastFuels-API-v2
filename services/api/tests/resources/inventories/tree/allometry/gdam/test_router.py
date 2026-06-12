@@ -133,6 +133,48 @@ class TestCreateGdamInventory:
         assert data["description"] == "Testing GDAM imputation"
         assert data["tags"] == ["test", "gdam"]
 
+    def test_impute_columns_default_persisted(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """Omitting impute_columns persists all three columns in the source."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"source_tree_inventory_id": source_tree_inventory["id"]},
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["impute_columns"] == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+        ]
+
+    def test_impute_columns_subset_persisted(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """A requested subset is persisted on the source."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": source_tree_inventory["id"],
+                "impute_columns": ["fia_species_code"],
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["impute_columns"] == ["fia_species_code"]
+
+    def test_impute_columns_empty_returns_422(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """An empty impute_columns list is rejected at the schema layer."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": source_tree_inventory["id"],
+                "impute_columns": [],
+            },
+        )
+        assert response.status_code == 422
+
     def test_response_excludes_owner_id(
         self, client, domain_for_testing, source_tree_inventory
     ):

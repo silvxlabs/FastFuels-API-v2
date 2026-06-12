@@ -55,6 +55,7 @@ class TestGdamInventorySource:
             "name": "gdam",
             "source_tree_inventory_id": "inv123",
             "source_tree_inventory_checksum": None,
+            "impute_columns": ["dbh", "crown_ratio", "fia_species_code"],
         }
 
 
@@ -87,11 +88,9 @@ class TestCreateGdamInventoryRequest:
         with pytest.raises(ValidationError):
             CreateGdamInventoryRequest(name="Failing request")
 
-    def test_is_zero_config(self):
-        """The request exposes no algorithm/modifications/treatments knobs.
-
-        GDAM allometry is zero-config: the only input is the source inventory plus
-        the base metadata fields. This pins that contract so a future field
+    def test_field_set(self):
+        """The request exposes only its intended fields — no algorithm/
+        modifications/treatments knobs. Pins the contract so a future field
         addition is a deliberate, test-breaking change.
         """
         assert set(CreateGdamInventoryRequest.model_fields) == {
@@ -100,6 +99,7 @@ class TestCreateGdamInventoryRequest:
             "description",
             "tags",
             "source_tree_inventory_id",
+            "impute_columns",
         }
 
     def test_unknown_fields_ignored(self):
@@ -109,3 +109,39 @@ class TestCreateGdamInventoryRequest:
             algorithm={"name": "lmf"},
         )
         assert not hasattr(request, "algorithm")
+
+    def test_impute_columns_defaults_to_all(self):
+        """Omitting impute_columns imputes all three morphology columns."""
+        request = CreateGdamInventoryRequest(source_tree_inventory_id="inv123")
+        assert request.impute_columns == ["dbh", "crown_ratio", "fia_species_code"]
+
+    def test_impute_columns_subset_accepted(self):
+        """A subset of the imputable columns is accepted and stored."""
+        request = CreateGdamInventoryRequest(
+            source_tree_inventory_id="inv123",
+            impute_columns=["fia_species_code"],
+        )
+        assert request.impute_columns == ["fia_species_code"]
+
+    def test_impute_columns_empty_rejected(self):
+        """An empty impute_columns list is rejected."""
+        with pytest.raises(ValidationError, match="at least one column"):
+            CreateGdamInventoryRequest(
+                source_tree_inventory_id="inv123", impute_columns=[]
+            )
+
+    def test_impute_columns_duplicates_rejected(self):
+        """Duplicate columns in impute_columns are rejected."""
+        with pytest.raises(ValidationError, match="duplicate"):
+            CreateGdamInventoryRequest(
+                source_tree_inventory_id="inv123",
+                impute_columns=["dbh", "dbh"],
+            )
+
+    def test_impute_columns_unknown_rejected(self):
+        """An unknown column name is rejected by the Literal type."""
+        with pytest.raises(ValidationError):
+            CreateGdamInventoryRequest(
+                source_tree_inventory_id="inv123",
+                impute_columns=["height"],
+            )

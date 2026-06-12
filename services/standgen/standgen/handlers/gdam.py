@@ -6,8 +6,9 @@ inventory by calling the external GDAM batch-prediction API.
 
 This module is split into two layers:
 - pure marshalling functions (v2 <-> GDAM units/shape), unit-tested directly;
-- the `handle_gdam` orchestration (added separately) that chunks, calls GDAM,
-  merges, and saves.
+- the `handle_gdam` orchestration that maps each dask partition through GDAM
+  (convert -> predict -> fill-missing) and saves, so the whole inventory is never
+  held in memory at once.
 
 Unit and coordinate conventions (verified against a live GDAM probe):
 - v2 parquet: x/y in the domain CRS (m), height m, dbh cm, crown_ratio fraction
@@ -18,9 +19,9 @@ Unit and coordinate conventions (verified against a live GDAM probe):
   Lat/Lon; rows align to the request via the returned `index`.
 """
 
+import json
 import logging
 
-import dask.dataframe as dd
 import httpx
 import pandas as pd
 import pint
@@ -35,8 +36,15 @@ logger = logging.getLogger(__name__)
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
-# v2 morphology columns GDAM imputes (only these are filled / consumed back).
+# v2 morphology columns GDAM imputes, with the dtype each carries in the output
+# (only these are filled / consumed back). Order matters: columns absent from a
+# partition are appended in this order, and the result `meta` must match.
 IMPUTED_COLUMNS = ("dbh", "crown_ratio", "fia_species_code")
+_IMPUTED_DTYPES = {
+    "dbh": "float64",
+    "crown_ratio": "float64",
+    "fia_species_code": "Int64",
+}
 
 # Columns GDAM needs on every source row.
 _REQUIRED_COLUMNS = ("x", "y", "height")
@@ -55,31 +63,6 @@ def _reproject_to_lonlat(x, y, source_crs):
     return lon, lat
 
 
-def _to_split_payload(df: pd.DataFrame) -> dict:
-    """Serialize a DataFrame to pandas split orientation with JSON-safe values.
-
-    NaN becomes null and SPCD is emitted as an int (GDAM's SPCD field is an
-    integer). Every other value is a float.
-    """
-    split = {
-        "columns": list(df.columns),
-        "index": [int(i) for i in df.index],
-        "data": [],
-    }
-    for _, row in df.iterrows():
-        out_row = []
-        for col in df.columns:
-            value = row[col]
-            if pd.isna(value):
-                out_row.append(None)
-            elif col == "SPCD":
-                out_row.append(int(value))
-            else:
-                out_row.append(float(value))
-        split["data"].append(out_row)
-    return split
-
-
 def build_batch_payload(df: pd.DataFrame, source_crs) -> dict:
     """Build a GDAM /predict/batch request body from a v2 inventory chunk.
 
@@ -88,22 +71,26 @@ def build_batch_payload(df: pd.DataFrame, source_crs) -> dict:
     crown_ratio fraction->percent, fia_species_code->SPCD); absent ones are
     omitted. Environmental fields (elevation/slope/aspect) are never sent — GDAM
     auto-extracts them.
+
+    Column dtypes are trusted from the inventory: the upload path — the only way
+    users supply an inventory — runs a pandera schema that coerces species to a
+    nullable ``Int64``, and that dtype survives the parquet round-trip. So
+    ``to_json`` serializes each column correctly on its own (ints/null for SPCD,
+    floats/null elsewhere) with no per-value casting. The species column is kept
+    as-is rather than ``.to_numpy()``-ed, so its ``Int64`` dtype is preserved
+    through serialization instead of collapsing to a float.
     """
     lon, lat = _reproject_to_lonlat(df["x"].to_numpy(), df["y"].to_numpy(), source_crs)
-    columns = {
-        "Lat": lat,
-        "Lon": lon,
-        "HT": Q_(df["height"].to_numpy(), "m").to("ft").magnitude,
-    }
+    payload = pd.DataFrame({"Lat": lat, "Lon": lon}, index=df.index)
+    payload["HT"] = Q_(df["height"].to_numpy(), "m").to("ft").magnitude
     if "dbh" in df.columns:
-        columns["DIA"] = Q_(df["dbh"].to_numpy(), "cm").to("inch").magnitude
+        payload["DIA"] = Q_(df["dbh"].to_numpy(), "cm").to("inch").magnitude
     if "crown_ratio" in df.columns:
-        columns["CR"] = df["crown_ratio"].to_numpy() * 100.0  # fraction -> percent
+        payload["CR"] = df["crown_ratio"].to_numpy() * 100.0  # fraction -> percent
     if "fia_species_code" in df.columns:
-        columns["SPCD"] = df["fia_species_code"].to_numpy()
+        payload["SPCD"] = df["fia_species_code"]  # keep Int64 -> serializes as int
 
-    payload_df = pd.DataFrame(columns, index=df.index)
-    return {"trees": _to_split_payload(payload_df)}
+    return {"trees": json.loads(payload.to_json(orient="split", double_precision=15))}
 
 
 def parse_gdam_response(response: dict) -> pd.DataFrame:
@@ -129,15 +116,20 @@ def parse_gdam_response(response: dict) -> pd.DataFrame:
     return out
 
 
-def fill_missing(source_df: pd.DataFrame, predicted_df: pd.DataFrame) -> pd.DataFrame:
+def fill_missing(
+    source_df: pd.DataFrame, predicted_df: pd.DataFrame, columns=IMPUTED_COLUMNS
+) -> pd.DataFrame:
     """Fill only the originally-missing morphology cells from GDAM predictions.
 
-    Existing non-null values in `source_df` are preserved verbatim; cells that are
-    null (or whose column is absent) are taken from `predicted_df`. Rows are aligned
-    by index. x/y/height and any other source columns are untouched.
+    Only the requested `columns` are filled (default: all imputable columns);
+    columns left out are untouched, so the caller can impute a subset. Within a
+    filled column, existing non-null values in `source_df` are preserved verbatim;
+    cells that are null (or whose column is absent) are taken from `predicted_df`.
+    Rows are aligned by index. x/y/height and any other source columns are
+    untouched.
     """
     result = source_df.copy()
-    for col in IMPUTED_COLUMNS:
+    for col in columns:
         predicted = predicted_df[col].reindex(result.index)
         if col in result.columns:
             result[col] = result[col].where(result[col].notna(), predicted)
@@ -146,8 +138,8 @@ def fill_missing(source_df: pd.DataFrame, predicted_df: pd.DataFrame) -> pd.Data
     return result
 
 
-def _post_batch(payload: dict, chunk_number: int) -> dict:
-    """POST one chunk to GDAM and return the parsed JSON.
+def _post_batch(payload: dict) -> dict:
+    """POST one partition's trees to GDAM and return the parsed JSON.
 
     Any transport/HTTP failure is terminal (`GDAM_REQUEST_FAILED`): re-running the
     whole task won't fix a bad request, and the 120s timeout already absorbs GDAM
@@ -164,13 +156,13 @@ def _post_batch(payload: dict, chunk_number: int) -> dict:
     except httpx.HTTPError as e:
         raise ProcessingError(
             code="GDAM_REQUEST_FAILED",
-            message=f"GDAM prediction request failed on chunk {chunk_number}: {e}",
+            message=f"GDAM prediction request failed: {e}",
             suggestion="Retry shortly; if it persists, the GDAM service may be down.",
         ) from e
 
 
-def _predict_chunk(payload: dict, sent_index, chunk_number: int) -> dict:
-    """Predict one chunk, retrying once if GDAM returns a partial result.
+def _predict(payload: dict, sent_index) -> dict:
+    """Predict one partition, retrying once if GDAM returns a partial result.
 
     GDAM is expected to return one prediction per sent tree. The validity check
     (every sent index present in the response) guards against a silent partial
@@ -179,52 +171,29 @@ def _predict_chunk(payload: dict, sent_index, chunk_number: int) -> dict:
     expected = {int(i) for i in sent_index}
     returned: set = set()
     for _ in range(2):  # initial attempt + one retry
-        data = _post_batch(payload, chunk_number)
+        data = _post_batch(payload)
         returned = {int(i) for i in data.get("predictions", {}).get("index", [])}
         if expected <= returned:
             return data
     raise ProcessingError(
         code="PARTIAL_PREDICTION",
         message=(
-            f"GDAM returned an incomplete prediction for chunk {chunk_number}: "
-            f"expected {len(expected)} trees, got {len(expected & returned)}."
+            f"GDAM returned an incomplete prediction: expected {len(expected)} "
+            f"trees, got {len(expected & returned)}."
         ),
         suggestion="Retry the inventory; if it persists, contact the GDAM team.",
     )
 
 
-def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
-    """Fill a tree inventory's missing morphology via GDAM.
+def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.DataFrame:
+    """Impute one dask partition: call GDAM and fill the selected morphology.
 
-    Loads the source inventory parquet, sends it to GDAM in batches (converting to
-    GDAM units and lat/lon), fills only the originally-missing dbh/crown_ratio/
-    species, and writes a new parquet under this inventory's id.
-
-    Returns ``{"georeference": ...}`` for main.py to persist.
+    Runs on a dask worker (one partition at a time), so the whole inventory is
+    never held in memory. Raises ``MISSING_REQUIRED_HEIGHT`` if any tree in the
+    partition lacks a height (GDAM requires it). Always surfaces the selected
+    `columns` so the partition's schema matches the declared ``meta``.
     """
-    inventory_id = inventory["id"]
-    source_id = source["source_tree_inventory_id"]
-
-    progress("Loading source inventory...", 10)
-    try:
-        ddf = load_inventory_parquet(source_id)
-        df = ddf.compute().reset_index(drop=True)
-    except FileNotFoundError as e:
-        raise ProcessingError(
-            code="SOURCE_INVENTORY_NOT_FOUND",
-            message=f"Source tree inventory '{source_id}' has no data.",
-            suggestion="Ensure the source inventory completed before running GDAM.",
-        ) from e
-
-    missing_cols = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
-    if missing_cols:
-        raise ProcessingError(
-            code="MISSING_REQUIRED_COLUMNS",
-            message=f"Source inventory is missing required column(s): {missing_cols}.",
-            suggestion="GDAM needs x, y, and height columns on the source inventory.",
-        )
-
-    null_height = int(df["height"].isna().sum())
+    null_height = int(pdf["height"].isna().sum())
     if null_height:
         raise ProcessingError(
             code="MISSING_REQUIRED_HEIGHT",
@@ -235,31 +204,94 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
             suggestion="Remove or fix rows with a missing height before running GDAM.",
         )
 
-    source_crs = domain_gdf.crs
-    batch_size = config.GDAM_BATCH_SIZE
-    total = len(df)
-    filled_chunks = []
-    for start in range(0, total, batch_size):
-        chunk = df.iloc[start : start + batch_size]
-        chunk_number = start // batch_size + 1
-        progress(
-            f"Predicting trees ({min(start + batch_size, total)}/{total})...",
-            30 + int(60 * start / total),
-        )
-        payload = build_batch_payload(chunk, source_crs)
-        data = _predict_chunk(payload, chunk.index, chunk_number)
-        predicted = parse_gdam_response(data)
-        filled_chunks.append(fill_missing(chunk, predicted))
+    if len(pdf) == 0:
+        # No trees to predict; still surface the selected columns (empty) so the
+        # partition's schema matches `meta`.
+        out = pdf.copy()
+        for col in columns:
+            if col not in out.columns:
+                out[col] = pd.Series([], dtype=_IMPUTED_DTYPES[col], index=out.index)
+        return out
 
-    result = pd.concat(filled_chunks) if filled_chunks else df
-    logger.info(
-        f"GDAM imputed {len(result)} trees",
-        extra={"inventory_id": inventory_id},
+    payload = build_batch_payload(pdf, source_crs_str)
+    data = _predict(payload, pdf.index)
+    predicted = parse_gdam_response(data)
+    return fill_missing(pdf, predicted, columns)
+
+
+def _result_meta(ddf, columns) -> pd.DataFrame:
+    """Empty DataFrame describing _process_partition's output schema for dask.
+
+    Source columns, plus the selected imputed columns appended wherever the
+    source lacks them — matching ``fill_missing``.
+    """
+    meta = ddf._meta.copy()
+    for col in columns:
+        if col not in meta.columns:
+            meta[col] = pd.Series([], dtype=_IMPUTED_DTYPES[col])
+    return meta
+
+
+def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
+    """Fill a tree inventory's missing morphology via GDAM.
+
+    Loads the source inventory parquet lazily, repartitions it so each partition
+    is ~``GDAM_BATCH_SIZE`` trees, and maps every partition through GDAM
+    (convert -> predict -> fill-missing) with ``map_partitions``. The lazy graph
+    executes once, at ``save_parquet`` — so the whole inventory is never held in
+    memory and each GDAM request covers one partition.
+
+    Returns ``{"georeference": ...}`` for main.py to persist.
+    """
+    inventory_id = inventory["id"]
+    source_id = source["source_tree_inventory_id"]
+
+    progress("Loading source inventory...", 10)
+    try:
+        ddf = load_inventory_parquet(source_id)
+    except FileNotFoundError as e:
+        raise ProcessingError(
+            code="SOURCE_INVENTORY_NOT_FOUND",
+            message=f"Source tree inventory '{source_id}' has no data.",
+            suggestion="Ensure the source inventory completed before running GDAM.",
+        ) from e
+
+    missing_cols = [c for c in _REQUIRED_COLUMNS if c not in ddf.columns]
+    if missing_cols:
+        raise ProcessingError(
+            code="MISSING_REQUIRED_COLUMNS",
+            message=f"Source inventory is missing required column(s): {missing_cols}.",
+            suggestion="GDAM needs x, y, and height columns on the source inventory.",
+        )
+
+    # Which morphology columns to impute (default: all). Normalize to canonical
+    # order so the partition output and `meta` agree on column ordering.
+    requested = source.get("impute_columns") or list(IMPUTED_COLUMNS)
+    impute_columns = [c for c in IMPUTED_COLUMNS if c in requested]
+
+    # Size partitions to the GDAM batch target. Row counts come from the parquet
+    # footer (cheap) — not by loading the data.
+    total = int(len(ddf))
+    batch_size = config.GDAM_BATCH_SIZE
+    npartitions = max(1, (total + batch_size - 1) // batch_size)
+    ddf = ddf.repartition(npartitions=npartitions)
+
+    progress("Imputing missing morphology via GDAM...", 40)
+    # Pass the CRS as a string so the pyproj transformer is rebuilt inside each
+    # partition (pickle-safe — see standgen reprojection convention).
+    source_crs_str = str(domain_gdf.crs)
+    result_ddf = ddf.map_partitions(
+        _process_partition,
+        source_crs_str,
+        impute_columns,
+        meta=_result_meta(ddf, impute_columns),
     )
 
+    # save_parquet triggers the single execution of the lazy graph above (this is
+    # where the GDAM calls actually run).
     progress("Writing inventory...", 90)
-    result_ddf = dd.from_pandas(result, npartitions=max(ddf.npartitions, 1))
     save_parquet(inventory_id, result_ddf)
+    logger.info(f"GDAM imputed {total} trees", extra={"inventory_id": inventory_id})
 
     georeference = {
         "crs": str(domain_gdf.crs),

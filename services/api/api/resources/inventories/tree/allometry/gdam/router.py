@@ -65,10 +65,27 @@ async def create_gdam_inventory(
 
     - **source_tree_inventory_id**: (required) ID of a completed tree inventory to
       fill in.
-    - **type**: (optional) Entity type. Default: ``"tree"``.
+    - **impute_columns**: (optional) Which morphology columns to impute. Defaults
+      to all of ``dbh``, ``crown_ratio``, ``fia_species_code``. Narrow it (e.g.
+      ``["fia_species_code"]``) to impute fewer columns and write less to disk;
+      columns left out are not imputed. Must be non-empty with no duplicates.
     - **name**: (optional) Name for the inventory.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing inventories.
+
+    ## Columns
+
+    **Required on the source inventory** (the typical uploaded position+height set):
+
+    - **x**, **y**: tree position, in the domain CRS.
+    - **height**: tree height, in metres (``m``).
+
+    **Imputable by GDAM** (select via ``impute_columns``) — filled only where
+    missing; existing values are preserved:
+
+    - **dbh**: diameter at breast height, in centimetres (``cm``).
+    - **crown_ratio**: live crown ratio, as a 0–1 fraction.
+    - **fia_species_code**: FIA species code.
 
     ## Response
 
@@ -120,6 +137,7 @@ async def create_gdam_inventory(
     source = GdamInventorySource(
         source_tree_inventory_id=body.source_tree_inventory_id,
         source_tree_inventory_checksum=source_data.get("checksum"),
+        impute_columns=body.impute_columns,
     )
 
     inventory_data = {

@@ -4,9 +4,11 @@ Async Firestore document operations for FastAPI routes.
 Provides document retrieval and storage with ownership and status validation.
 """
 
+import logging
 from typing import Any, Literal
 
 from fastapi import HTTPException, status
+from google.api_core.exceptions import FailedPrecondition
 from google.cloud import firestore
 from google.cloud.firestore import (
     AsyncDocumentReference,
@@ -14,6 +16,10 @@ from google.cloud.firestore import (
     FieldFilter,
 )
 from google.cloud.firestore import Query as FirestoreQuery
+
+from lib.config import SUPPORT_EMAIL
+
+logger = logging.getLogger(__name__)
 
 firestore_client: firestore.AsyncClient = firestore.AsyncClient()
 
@@ -203,7 +209,31 @@ async def list_documents_async(
     query = query.offset(page * size).limit(size)
 
     # Execute query and return results
-    documents = await query.get()
+    try:
+        documents = await query.get()
+    except FailedPrecondition as exc:
+        # Firestore raises FailedPrecondition when the query needs a composite
+        # index that hasn't been provisioned. The exception message contains a
+        # console link to create it.
+        logger.error(
+            "Firestore query on '%s' requires a missing composite index "
+            "(sort_by=%s, sort_order=%s, filters=%s): %s",
+            collection,
+            sort_by,
+            sort_order,
+            filters,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "This list query is not supported yet: the database index for "
+                f"sort_by={sort_by!r} with sort_order={sort_order or 'descending'!r} "
+                "has not been provisioned. This is a server-side configuration "
+                "issue, not a problem with your request. Please contact "
+                f"{SUPPORT_EMAIL} so it can be fixed."
+            ),
+        ) from exc
 
     return list(documents), total_count
 

@@ -59,6 +59,9 @@ async def copy_directory_verified(
     source = f"{bucket_name}/{source_path}"
     dest = f"{bucket_name}/{dest_path}"
 
+    # Both listings must reflect live bucket state, not the shared client's
+    # dircache — a stale snapshot would make the verification vacuous.
+    gcsfs_client.invalidate_cache(source)
     snapshot = await gcsfs_client._find(source, detail=True)
     if not snapshot:
         raise FileNotFoundError(f"No objects to copy at {source}")

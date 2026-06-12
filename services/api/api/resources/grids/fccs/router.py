@@ -24,6 +24,7 @@ from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
     validate_feature_modifications,
+    validate_target_grid_alignment,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -76,6 +77,7 @@ async def create_landfire_fccs(
     owner_id = request.state.id
     domain_id = domain["id"]
 
+    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
@@ -83,6 +85,8 @@ async def create_landfire_fccs(
     source = LandfireFccsSource(
         version=body.version,
         remove_bare_ground=body.remove_bare_ground,
+        extent_buffer_cells=body.extent_buffer_cells,
+        alignment=body.alignment,
     )
 
     grid_data = {

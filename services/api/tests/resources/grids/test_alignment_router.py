@@ -10,6 +10,7 @@ any single router is caught here rather than in per-product test files.
 Endpoints under test:
 
 - ``POST /domains/{id}/grids/fbfm40/landfire``
+- ``POST /domains/{id}/grids/fccs/landfire``
 - ``POST /domains/{id}/grids/canopy/meta``
 - ``POST /domains/{id}/grids/canopy/naip``
 - ``POST /domains/{id}/grids/pim/treemap``
@@ -47,6 +48,7 @@ def _resample_extra(complete_grid: dict) -> dict:
 
 ENDPOINTS = [
     EndpointSpec("fbfm40_landfire", "fbfm40/landfire", _empty_extra),
+    EndpointSpec("fccs_landfire", "fccs/landfire", _empty_extra),
     EndpointSpec("chm_meta", "canopy/meta", _empty_extra),
     EndpointSpec("chm_naip", "canopy/naip", _empty_extra),
     EndpointSpec("pim_treemap", "pim/treemap", _empty_extra),

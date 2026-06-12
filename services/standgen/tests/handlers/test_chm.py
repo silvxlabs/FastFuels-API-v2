@@ -3,12 +3,9 @@
 from unittest.mock import MagicMock, patch
 
 import dask.dataframe as dd
-import geopandas as gpd
-import pandas as pd
 import pytest
 import rioxarray  # noqa: F401 - registers .rio accessor
 import xarray as xr
-from shapely.geometry import box
 from standgen.handlers.chm import handle_chm
 
 from lib.errors import ProcessingError
@@ -51,19 +48,6 @@ def mock_inventory_vwf():
         },
         "modifications": [],
     }
-
-
-@pytest.fixture
-def mock_domain_gdf():
-    # EPSG:32610 is a UTM zone (meters)
-    return gpd.GeoDataFrame(geometry=[box(0, 0, 100, 100)], crs="EPSG:32610")
-
-
-@pytest.fixture
-def mock_trees_ddf():
-    """Returns a Dask DataFrame matching the output of fastfuels_core functions."""
-    pdf = pd.DataFrame({"x": [10.0, 50.0], "y": [20.0, 60.0], "height": [15.0, 25.0]})
-    return dd.from_pandas(pdf, npartitions=1)
 
 
 # --- CHM Handler Tests ---

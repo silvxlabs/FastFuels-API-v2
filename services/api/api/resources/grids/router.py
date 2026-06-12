@@ -28,6 +28,7 @@ from api.db.documents import (
 from api.dependencies import VerifiedDomain
 from api.resources.grids.cache import get_grid_array
 from api.resources.grids.canopy.router import router as canopy_router
+from api.resources.grids.duplicate.router import router as duplicate_router
 from api.resources.grids.exports.quicfire.router import (
     router as quicfire_export_router,
 )
@@ -835,6 +836,7 @@ async def get_grid_data_binary(
 router.include_router(
     grid_exports_router, prefix="/{grid_id}/exports", tags=["Grids - Exports"]
 )
+router.include_router(duplicate_router, prefix="/{grid_id}/duplicate")
 router.include_router(
     quicfire_export_router,
     prefix="/exports/quicfire",

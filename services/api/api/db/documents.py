@@ -17,6 +17,8 @@ from google.cloud.firestore import (
 )
 from google.cloud.firestore import Query as FirestoreQuery
 
+from lib.config import SUPPORT_EMAIL
+
 logger = logging.getLogger(__name__)
 
 firestore_client: firestore.AsyncClient = firestore.AsyncClient()
@@ -228,7 +230,8 @@ async def list_documents_async(
                 "This list query is not supported yet: the database index for "
                 f"sort_by={sort_by!r} with sort_order={sort_order or 'descending'!r} "
                 "has not been provisioned. This is a server-side configuration "
-                "issue, not a problem with your request."
+                "issue, not a problem with your request. Please contact "
+                f"{SUPPORT_EMAIL} so it can be fixed."
             ),
         ) from exc
 

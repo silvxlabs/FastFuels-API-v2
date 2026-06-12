@@ -302,33 +302,6 @@ class UpdatePointCloudRequestBody(BaseModel):
     )
 
 
-class DuplicatePointCloudRequest(BaseModel):
-    """Optional metadata overrides for a duplicated point cloud.
-
-    Every field is optional. Any field omitted is carried over verbatim from the
-    source point cloud.
-    """
-
-    name: str | None = Field(
-        None,
-        max_length=255,
-        description="Name for the copy. Omit to reuse the source point cloud's name.",
-    )
-    description: str | None = Field(
-        None,
-        max_length=2000,
-        description=(
-            "Description for the copy. Omit to reuse the source point cloud's "
-            "description."
-        ),
-    )
-    tags: list[str] | None = Field(
-        None,
-        max_length=50,
-        description="Tags for the copy. Omit to reuse the source point cloud's tags.",
-    )
-
-
 class ListPointCloudsResponse(PaginatedResponse):
     """Paginated response for listing point clouds."""
 

@@ -30,10 +30,10 @@ ALS-only model). Each carries a `type` discriminator:
 
 This package ships the **CRUD framework only**:
 
-- `schema.py` — `PointCloud`, `PointCloudType`, `PointCloudGeoreference`, the update/duplicate
-  request bodies, and the list response.
-- `router.py` — list (cross-domain + domain-scoped), get, patch (metadata only), delete (with async
-  GCS cleanup), and duplicate.
+- `schema.py` — `PointCloud`, `PointCloudType`, `PointCloudGeoreference`, the update request body,
+  and the list response.
+- `router.py` — list (cross-domain + domain-scoped), get, patch (metadata only), and delete (with
+  async GCS cleanup).
 
 **Creation endpoints are intentionally absent here** and arrive in follow-on work:
 
@@ -42,9 +42,9 @@ This package ships the **CRUD framework only**:
 - **#330** — convert a point cloud to a CHM (a new `point_cloud` source on the existing
   `grids/canopy` grid — not a new resource).
 
-Because there is no create endpoint yet, a point cloud comes into existence either by being seeded
-directly in Firestore (tests) or via `duplicate`. The creation routers will add a `source`-keyed
-sub-router structure (`upload` / `3dep`); that routing shape is deliberately **not** fixed here.
+A point cloud comes into existence via a creation router (the `upload` source, #328) or by being
+seeded directly in Firestore (tests). The creation routers use a `source`-keyed sub-router
+structure (`upload` / `3dep`).
 
 ## URL structure
 
@@ -54,7 +54,6 @@ GET    /domains/{domain_id}/pointclouds             # list within a domain
 GET    /domains/{domain_id}/pointclouds/{id}        # get
 PATCH  /domains/{domain_id}/pointclouds/{id}        # update metadata only
 DELETE /domains/{domain_id}/pointclouds/{id}        # delete (+ async GCS cleanup)
-POST   /domains/{domain_id}/pointclouds/{id}/duplicate
 ```
 
 The path segment is the **collapsed single token `pointclouds`** (no underscore, no hyphen), matching
@@ -87,14 +86,14 @@ Follows the #304 pattern: `checksum` is an opaque `uuid4().hex` assigned at crea
 changed whenever content is rebuilt, and **unaffected by metadata-only PATCH**. Derivatives capture
 the value they were built from — e.g. the CHM grid in #330 stores `source_pointcloud_checksum` —
 and staleness detection is user-space (compare stored vs. current; no stale flag/warn/block in the
-API). `duplicate` assigns a fresh `checksum` to the copy.
+API).
 
 ## Storage
 
 - Firestore collection: `POINT_CLOUDS_COLLECTION` (default `pointclouds-v2`).
 - GCS bucket: `POINT_CLOUDS_BUCKET`. Each point cloud owns the directory `{id}/` at the bucket root;
-  `delete` and `duplicate` operate on that whole directory via `delete_directory_safe` /
-  `copy_directory` and are therefore format-agnostic.
+  `delete` operates on that whole directory via `delete_directory_safe` and is therefore
+  format-agnostic.
 - The **concrete object layout under `{id}/` and the file format are owned by the ingest workers**
   (#328/#329). This resource deliberately commits to no specific format (e.g. COPC vs. plain LAZ) —
   that decision belongs to whoever writes the bytes. The #328 upload worker stores `{id}/cloud.laz`

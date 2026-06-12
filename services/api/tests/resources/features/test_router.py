@@ -139,6 +139,18 @@ class TestListFeaturesWildcard:
         feature_ids = [f["id"] for f in response.json()["features"]]
         assert feature_with_different_owner["id"] not in feature_ids
 
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_wildcard_sorting_matrix_returns_200(
+        self, client, features_across_domains, sort_by, sort_order
+    ):
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route()}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
+        assert response.status_code == 200
+
 
 # GET /domains/{domain_id}/features (List) Tests
 
@@ -210,6 +222,32 @@ class TestListFeatures:
             if f["name"] in ["Alpha Road", "Beta Water", "Gamma Layer"]
         ]
         assert names == sorted(names)
+
+    def test_list_sorting_by_name_descending(
+        self, client, features_for_listing, domain_for_testing
+    ):
+        response = client.get(
+            f"{self.route(domain_for_testing['id'])}?sort_by=name&sort_order=descending"
+        )
+        data = response.json()
+        names = [
+            f["name"]
+            for f in data["features"]
+            if f["name"] in ["Alpha Road", "Beta Water", "Gamma Layer"]
+        ]
+        assert names == sorted(names, reverse=True)
+
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_list_sorting_matrix_returns_200(
+        self, client, features_for_listing, domain_for_testing, sort_by, sort_order
+    ):
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route(domain_for_testing['id'])}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
+        assert response.status_code == 200
 
     def test_list_filter_by_type(
         self, client, features_for_listing, domain_for_testing

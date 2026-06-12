@@ -151,15 +151,29 @@ class TestListExports:
         for export in data["exports"]:
             assert "fixture" in export["tags"]
 
-    @pytest.mark.parametrize(
-        "sort_by,sort_order",
-        [("created_on", "ascending"), ("created_on", "descending")],
-    )
-    def test_list_sort_by_created_on(
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_list_sorting_matrix_returns_200(
         self, client, export_in_firestore, sort_by, sort_order
     ):
-        """Sort exports by created_on."""
-        response = client.get(f"{ROUTE}?sort_by={sort_by}&sort_order={sort_order}")
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{ROUTE}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_list_sorting_matrix_with_domain_filter_returns_200(
+        self, client, export_in_firestore, sort_by, sort_order
+    ):
+        """Sorting combined with the domain_id filter is served (issue #321)."""
+        domain_id = export_in_firestore["domain_id"]
+        url = f"{ROUTE}?domain_id={domain_id}&sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
         assert response.status_code == 200
 
     def test_list_pagination(self, client, export_in_firestore):

@@ -144,6 +144,18 @@ class TestListPointCloudsWildcard:
         for pc in response.json()["point_clouds"]:
             assert "owner_id" not in pc
 
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_wildcard_sorting_matrix_returns_200(
+        self, client, point_clouds_across_domains, sort_by, sort_order
+    ):
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route()}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
+        assert response.status_code == 200
+
 
 # GET /domains/{domain_id}/pointclouds (List) Tests
 
@@ -279,12 +291,16 @@ class TestListPointClouds:
         names = [p["name"] for p in response.json()["point_clouds"]]
         assert names == sorted(names, reverse=True)
 
-    def test_list_sorting_by_created_on(
-        self, client, point_clouds_for_listing, domain_for_testing
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_list_sorting_matrix_returns_200(
+        self, client, point_clouds_for_listing, domain_for_testing, sort_by, sort_order
     ):
-        response = client.get(
-            f"{self.route(domain_for_testing['id'])}?sort_by=created_on&sort_order=descending"
-        )
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route(domain_for_testing['id'])}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
         assert response.status_code == 200
 
     def test_list_filter_by_type(

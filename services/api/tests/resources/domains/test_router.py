@@ -881,16 +881,16 @@ class TestListDomains:
         names = [d["name"] for d in data["domains"]]
         assert names == sorted(names, reverse=True)
 
-    def test_list_sorting_by_created_on(self, client, domains_for_listing):
-        """Sorting by created_on is accepted."""
-        response = client.get(f"{self.route}?sort_by=created_on&sort_order=descending")
-
-        assert response.status_code == 200
-
-    def test_list_sorting_by_modified_on(self, client, domains_for_listing):
-        """Sorting by modified_on is accepted."""
-        response = client.get(f"{self.route}?sort_by=modified_on&sort_order=ascending")
-
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_list_sorting_matrix_returns_200(
+        self, client, domains_for_listing, sort_by, sort_order
+    ):
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
         assert response.status_code == 200
 
     def test_list_invalid_page_returns_422(self, client):

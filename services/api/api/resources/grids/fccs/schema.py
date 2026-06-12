@@ -12,7 +12,7 @@ from enum import StrEnum
 from typing import Literal
 
 from api.resources.grids.providers.landfire import LandfireSource
-from api.resources.grids.schema import Band, BandType, CreateGridRequestBase
+from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
 
 
 class LandfireFccsVersion(StrEnum):
@@ -33,7 +33,7 @@ class LandfireFccsSource(LandfireSource):
     remove_bare_ground: bool = False
 
 
-class CreateLandfireFccsRequest(CreateGridRequestBase):
+class CreateLandfireFccsRequest(CreateSourceGridRequestBase):
     """Request to create a grid from LANDFIRE FCCS.
 
     Returns a single-band grid with categorical fuelbed IDs.

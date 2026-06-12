@@ -101,7 +101,8 @@ class TestBuildBatchPayload:
                 "height": [10.0],
                 "dbh": [25.4],  # cm -> 10 in
                 "crown_ratio": [0.45],  # fraction -> 45 percent
-                "fia_species_code": [122],
+                # Int64 is the dtype the uploader's pandera schema produces.
+                "fia_species_code": pd.array([122], dtype="Int64"),
             }
         )
         payload = build_batch_payload(df, _UTM10N)
@@ -111,6 +112,7 @@ class TestBuildBatchPayload:
         row = dict(zip(trees["columns"], trees["data"][0]))
         assert row["DIA"] == pytest.approx(10.0)
         assert row["CR"] == pytest.approx(45.0)
+        # SPCD stays an int (no cast) because the Int64 dtype is preserved.
         assert row["SPCD"] == 122
         assert isinstance(row["SPCD"], int)
 
@@ -121,7 +123,8 @@ class TestBuildBatchPayload:
                 "y": [4500000.0, 4500030.0],
                 "height": [10.0, 12.0],
                 "dbh": [25.4, np.nan],  # second tree missing dbh
-                "fia_species_code": [122, np.nan],  # and species
+                # Int64 with a missing value -> int for the present one, null for NA.
+                "fia_species_code": pd.array([122, pd.NA], dtype="Int64"),
             }
         )
         payload = build_batch_payload(df, _UTM10N)
@@ -130,6 +133,7 @@ class TestBuildBatchPayload:
         ]
         assert rows[0]["DIA"] == pytest.approx(10.0)
         assert rows[0]["SPCD"] == 122
+        assert isinstance(rows[0]["SPCD"], int)
         assert rows[1]["DIA"] is None
         assert rows[1]["SPCD"] is None
 
@@ -217,6 +221,21 @@ class TestFillMissing:
         assert result.loc[7, "dbh"] == 77.0
         assert result.loc[3, "dbh"] == 11.0
 
+    def test_only_fills_selected_columns(self):
+        source = pd.DataFrame({"x": [1.0], "y": [1.0], "height": [10.0]})
+        predicted = pd.DataFrame(
+            {
+                "dbh": [42.0],
+                "crown_ratio": [0.6],
+                "fia_species_code": pd.array([202], dtype="Int64"),
+            }
+        )
+        result = fill_missing(source, predicted, ["fia_species_code"])
+        # Only the requested column is added; the rest are left out entirely.
+        assert result.loc[0, "fia_species_code"] == 202
+        assert "dbh" not in result.columns
+        assert "crown_ratio" not in result.columns
+
 
 # --- handle_gdam orchestration (GDAM HTTP + storage mocked) ---
 
@@ -261,14 +280,26 @@ def _ok_post(url, json=None, timeout=None):
 
 @contextmanager
 def _patched(source_frame, post_side_effect):
-    """Patch the handler's parquet I/O and GDAM client for one call."""
+    """Patch the handler's parquet I/O and GDAM client for one call.
+
+    ``save_parquet`` computes the lazy ddf (mirroring the real ``to_parquet``)
+    using the synchronous scheduler, so the ``map_partitions`` GDAM calls actually
+    run and any error surfaces inside ``handle_gdam`` — exactly as in production.
+    Yields ``(saved, mock_post)`` where ``saved`` holds the computed result.
+    """
     ddf = dd.from_pandas(source_frame, npartitions=1)
+    saved = {}
+
+    def fake_save(inventory_id, result_ddf):
+        saved["id"] = inventory_id
+        saved["df"] = result_ddf.compute(scheduler="synchronous")
+
     with (
         patch.object(gdam, "load_inventory_parquet", return_value=ddf),
-        patch.object(gdam, "save_parquet") as mock_save,
+        patch.object(gdam, "save_parquet", side_effect=fake_save),
         patch.object(gdam.httpx, "post", side_effect=post_side_effect) as mock_post,
     ):
-        yield mock_save, mock_post
+        yield saved, mock_post
 
 
 class TestHandleGdam:
@@ -283,15 +314,13 @@ class TestHandleGdam:
                 "dbh": [99.0, np.nan],  # first present, second missing
             }
         )
-        with _patched(frame, _ok_post) as (mock_save, _):
+        with _patched(frame, _ok_post) as (saved, _):
             out = gdam.handle_gdam(
                 dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
             )
 
-        mock_save.assert_called_once()
-        inv_id, result_ddf = mock_save.call_args[0]
-        result = result_ddf.compute()
-        assert inv_id == "newinv"
+        result = saved["df"]
+        assert saved["id"] == "newinv"
         # Existing dbh preserved; missing dbh filled from GDAM.
         assert result.loc[0, "dbh"] == 99.0
         assert result.loc[1, "dbh"] == pytest.approx(30.0, abs=1e-2)
@@ -301,6 +330,20 @@ class TestHandleGdam:
         # Position and height are untouched.
         assert list(result["height"]) == [10.0, 12.0]
         assert out["georeference"]["crs"].upper().endswith("32610")
+
+    def test_imputes_only_selected_columns(self, mock_domain_gdf):
+        # Position+height source, request only species -> dbh/crown_ratio absent.
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["fia_species_code"],
+        }
+        with _patched(frame, _ok_post) as (saved, _):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        result = saved["df"]
+        assert result["fia_species_code"].notna().all()
+        assert "dbh" not in result.columns
+        assert "crown_ratio" not in result.columns
 
     def test_missing_height_raises(self, mock_domain_gdf):
         frame = pd.DataFrame({"x": [1.0], "y": [1.0], "height": [np.nan]})
@@ -332,7 +375,8 @@ class TestHandleGdam:
                 )
         assert exc.value.code == "SOURCE_INVENTORY_NOT_FOUND"
 
-    def test_chunks_large_inventory_and_reassembles(self, mock_domain_gdf, monkeypatch):
+    def test_one_gdam_call_per_partition(self, mock_domain_gdf, monkeypatch):
+        # Batch size of 2 over 5 trees -> 3 partitions -> 3 GDAM requests.
         monkeypatch.setattr(gdam.config, "GDAM_BATCH_SIZE", 2)
         frame = pd.DataFrame(
             {
@@ -342,16 +386,15 @@ class TestHandleGdam:
                 "dbh": [np.nan] * 5,
             }
         )
-        with _patched(frame, _ok_post) as (mock_save, mock_post):
+        with _patched(frame, _ok_post) as (saved, mock_post):
             gdam.handle_gdam(
                 dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
             )
-        # 5 rows / batch 2 -> 3 chunk requests.
         assert mock_post.call_count == 3
-        result = mock_save.call_args[0][1].compute()
+        result = saved["df"]
         assert len(result) == 5
         assert result["dbh"].notna().all()
-        assert list(result.index) == [0, 1, 2, 3, 4]
+        assert sorted(result.index) == [0, 1, 2, 3, 4]
 
     def test_transport_error_raises_gdam_request_failed(self, mock_domain_gdf):
         frame = pd.DataFrame({"x": [1.0], "y": [1.0], "height": [10.0]})
@@ -421,10 +464,9 @@ class TestHandleGdam:
             resp.json.return_value = _predictions(idx[:1] if calls["n"] == 1 else idx)
             return resp
 
-        with _patched(frame, flaky) as (mock_save, mock_post):
+        with _patched(frame, flaky) as (saved, mock_post):
             gdam.handle_gdam(
                 dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
             )
         assert mock_post.call_count == 2
-        result = mock_save.call_args[0][1].compute()
-        assert result["dbh"].notna().all()
+        assert saved["df"]["dbh"].notna().all()

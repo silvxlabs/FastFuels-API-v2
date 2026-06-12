@@ -23,6 +23,7 @@ import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 import pytest
+from standgen import config as standgen_config
 
 from lib.config import (
     DEPLOYMENT_ENV,
@@ -50,9 +51,11 @@ _EXISTING_DBH_CM = 25.0
 def gdam_source():
     """Stage a Blue Mountain domain and a crafted position+height source parquet.
 
-    Yields (source_inventory_id, source_df, domain_id). The source has three
-    trees with x/y in the domain CRS and height; the first tree also has an
-    existing dbh (the rest are missing) so tests can prove fill-vs-preserve.
+    Yields (source_inventory_id, source_df, domain_id). The source has six trees
+    with x/y in the domain CRS and height; the first tree also has an existing
+    dbh (the rest are missing) so tests can prove fill-vs-preserve. Six trees plus
+    a small batch size (set in ``completed_gdam_inventory``) splits the run across
+    multiple dask partitions.
     """
     domain_data = load_json(DOMAINS_DIR / "blue_mtn.json")
     domain_id = f"test-{uuid4().hex}"
@@ -64,13 +67,14 @@ def gdam_source():
     # in whatever CRS the domain uses (projected metres or geographic degrees).
     gdf = parse_domain_gdf(stored_domain)
     minx, miny, maxx, maxy = gdf.total_bounds
-    fracs = (0.25, 0.5, 0.75)
+    fracs = (0.15, 0.3, 0.45, 0.6, 0.75, 0.9)
     source_df = pd.DataFrame(
         {
             "x": [minx + (maxx - minx) * f for f in fracs],
             "y": [miny + (maxy - miny) * f for f in fracs],
-            "height": [12.0, 18.0, 25.0],
-            "dbh": [_EXISTING_DBH_CM, np.nan, np.nan],  # first preserved, rest filled
+            "height": [12.0, 18.0, 25.0, 14.0, 20.0, 16.0],
+            # First tree keeps an existing dbh; the rest are imputed.
+            "dbh": [_EXISTING_DBH_CM, np.nan, np.nan, np.nan, np.nan, np.nan],
         }
     )
 
@@ -111,7 +115,16 @@ def completed_gdam_inventory(gdam_source):
     }
     set_document(INVENTORIES_COLLECTION, inventory_id, inventory_data)
 
-    _run_standgen(inventory_id)
+    # Force a small batch so the 6-tree source splits into 3 dask partitions,
+    # exercising the map_partitions path end-to-end. This only takes effect in
+    # local (in-process) mode; in deployed mode the container uses the default
+    # size and runs a single partition, which produces the same output.
+    original_batch_size = standgen_config.GDAM_BATCH_SIZE
+    standgen_config.GDAM_BATCH_SIZE = 2
+    try:
+        _run_standgen(inventory_id)
+    finally:
+        standgen_config.GDAM_BATCH_SIZE = original_batch_size
 
     if DEPLOYMENT_ENV != "local":
         inventory = _poll_for_completion(inventory_id)
@@ -148,7 +161,11 @@ def test_pipeline_completes_with_georeference(completed_gdam_inventory):
 
 
 def test_missing_morphology_is_filled(completed_gdam_inventory):
-    """All originally-missing dbh / crown_ratio / species are populated."""
+    """All originally-missing dbh / crown_ratio / species are populated.
+
+    Also proves every partition's trees are reassembled — the result row count
+    must equal the source (6) after the multi-partition run.
+    """
     inventory, source_df, _ = completed_gdam_inventory
     result = _result_df(inventory)
 
@@ -160,17 +177,24 @@ def test_missing_morphology_is_filled(completed_gdam_inventory):
 
 def test_existing_dbh_is_preserved(completed_gdam_inventory):
     """The tree that already had a dbh keeps it (GDAM only fills the gaps)."""
-    inventory, _, _ = completed_gdam_inventory
+    inventory, source_df, _ = completed_gdam_inventory
     result = _result_df(inventory)
-    assert result.loc[0, "dbh"] == pytest.approx(_EXISTING_DBH_CM)
+    # Identify the tree by its (preserved) x coordinate rather than row position,
+    # so the assertion is robust to partition ordering.
+    first_x = source_df["x"].iloc[0]
+    match = result.loc[result["x"] == first_x]
+    assert len(match) == 1
+    assert match["dbh"].iloc[0] == pytest.approx(_EXISTING_DBH_CM)
 
 
 def test_position_and_height_unchanged(completed_gdam_inventory):
     """x / y / height are carried through untouched from the source."""
     inventory, source_df, _ = completed_gdam_inventory
-    result = _result_df(inventory)
+    # Sort both by x so the comparison is independent of partition/row ordering.
+    result = _result_df(inventory).sort_values("x").reset_index(drop=True)
+    expected = source_df.sort_values("x").reset_index(drop=True)
     for col in ("x", "y", "height"):
-        assert result[col].to_numpy() == pytest.approx(source_df[col].to_numpy())
+        assert result[col].to_numpy() == pytest.approx(expected[col].to_numpy())
 
 
 def test_filled_values_are_sensible(completed_gdam_inventory):

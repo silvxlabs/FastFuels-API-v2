@@ -17,7 +17,9 @@ GDAM_API_URL = os.getenv(
     "GDAM_API_URL", "https://gdam-api-v2-782971006568.us-west1.run.app"
 )
 
-# Trees sent per /predict/batch request.
+# Target trees per dask partition, i.e. per /predict/batch request. The handler
+# repartitions the source inventory to this size so each GDAM call (and each
+# partition held in memory) is bounded.
 GDAM_BATCH_SIZE = int(os.getenv("GDAM_BATCH_SIZE", "5000"))
 
 # Per-request timeout (seconds) on outbound GDAM calls. Must stay under Cloud Run's

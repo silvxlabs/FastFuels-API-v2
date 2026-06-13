@@ -36,6 +36,7 @@ from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.fccs.router import router as fccs_router
 from api.resources.grids.lookup.router import router as lookup_router
+from api.resources.grids.modifications.router import router as modifications_router
 from api.resources.grids.pim.router import router as pim_router
 from api.resources.grids.rasterize.router import router as rasterize_router
 from api.resources.grids.resample.router import router as resample_router
@@ -837,6 +838,11 @@ router.include_router(
     grid_exports_router, prefix="/{grid_id}/exports", tags=["Grids - Exports"]
 )
 router.include_router(duplicate_router, prefix="/{grid_id}/duplicate")
+router.include_router(
+    modifications_router,
+    prefix="/{grid_id}/modifications",
+    tags=["Grids - Modifications"],
+)
 router.include_router(
     quicfire_export_router,
     prefix="/exports/quicfire",

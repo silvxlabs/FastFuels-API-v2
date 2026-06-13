@@ -18,6 +18,7 @@ from google.api_core.exceptions import NotFound
 
 from api.db.blobs import copy_directory_verified
 from api.db.documents import (
+    firestore_client,
     get_document_async,
     set_document_async,
     update_document_async,
@@ -35,18 +36,38 @@ router = APIRouter()
 COLLECTION = GRIDS_COLLECTION
 
 
-async def _copy_grid_data(source_id: str, new_id: str) -> None:
+async def _copy_grid_data(source_id: str, new_id: str, source_checksum: str) -> None:
     """Background task: server-side copy the zarr artifact from the source
     grid to the new one, then flip the new grid to ``completed``.
 
-    The copy is verified against a pre-copy snapshot of the source listing,
-    so a source deleted or rewritten mid-copy fails the duplicate instead of
-    completing with a silently incomplete clone. On any failure the new grid
-    is marked ``failed`` with a structured error so the dangling ``pending``
-    document never lingers.
+    The copy is verified two ways before completing:
+
+    - against a pre-copy snapshot of the source listing, so a source deleted
+      or shrunk mid-copy fails the duplicate instead of completing with a
+      silently incomplete clone; and
+    - against the source doc's ``status``/``checksum``, because an in-place
+      modification (#277) rewrites the zarr with identical object names and
+      possibly identical sizes — invisible to the listing check.
+
+    On any failure the new grid is marked ``failed`` with a structured error
+    so the dangling ``pending`` document never lingers.
     """
     try:
         await copy_directory_verified(GRIDS_BUCKET, source_id, new_id)
+
+        source_snapshot = (
+            await firestore_client.collection(COLLECTION).document(source_id).get()
+        )
+        source_data = source_snapshot.to_dict() if source_snapshot.exists else None
+        if (
+            source_data is None
+            or source_data.get("status") != JobStatus.completed.value
+            or source_data.get("checksum") != source_checksum
+        ):
+            raise RuntimeError(
+                f"Source grid {source_id} was deleted or modified during the copy."
+            )
+
         await update_document_async(
             COLLECTION,
             new_id,
@@ -179,6 +200,8 @@ async def duplicate_grid(
     # before-validator decodes stringified modification coordinates in place,
     # so building it first would corrupt the values written to Firestore.
     await set_document_async(COLLECTION, new_grid_id, grid_data)
-    background_tasks.add_task(_copy_grid_data, grid_id, new_grid_id)
+    background_tasks.add_task(
+        _copy_grid_data, grid_id, new_grid_id, source_data.get("checksum")
+    )
 
     return Grid(**grid_data)

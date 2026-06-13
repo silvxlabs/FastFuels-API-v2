@@ -17,7 +17,7 @@ from api.resources.grids.alignment import (
     GridAlignmentSpecification,
     ResamplingMethod,
 )
-from api.resources.grids.modifications import GridModification
+from api.resources.grids.modification_models import GridModification
 
 
 class ResampleSource(BaseModel):

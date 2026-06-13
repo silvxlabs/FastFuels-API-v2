@@ -1,12 +1,12 @@
 """
-Unit tests for api/v2/resources/grids/modifications.py
+Unit tests for api/v2/resources/grids/modification_models.py
 
 Tests the grid-specific modification classes and base enums.
 These are pure unit tests with no external dependencies.
 """
 
 import pytest
-from api.resources.grids.modifications import (
+from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
     GridGeometrySpatialCondition,
     GridModification,

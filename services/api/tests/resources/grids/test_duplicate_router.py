@@ -147,8 +147,15 @@ class TestDuplicateGrid:
         fresh identity and equal create/modify timestamps."""
         response = client.post(self.route(domain_for_testing["id"], source_grid["id"]))
         assert response.status_code == 201, response.text
-        new_id = response.json()["id"]
+        data = response.json()
+        new_id = data["id"]
         cleanup_grids.append(new_id)
+
+        # Fresh, equal create/modify timestamps (both set to the request time).
+        # Assert this on the synchronous response: the background copy task
+        # updates the persisted doc's modified_on once it runs, so re-reading
+        # the doc here would race that update.
+        assert data["created_on"] == data["modified_on"]
 
         new_doc = (
             firestore_client.collection(GRIDS_COLLECTION)
@@ -166,8 +173,6 @@ class TestDuplicateGrid:
         ]
         assert isinstance(stored_coords, str)
         assert new_doc["owner_id"] == source_grid["owner_id"]
-        # Fresh, equal create/modify timestamps (both set to the request time).
-        assert new_doc["created_on"] == new_doc["modified_on"]
 
     def test_duplicate_name_override(
         self, client, domain_for_testing, source_grid, cleanup_grids

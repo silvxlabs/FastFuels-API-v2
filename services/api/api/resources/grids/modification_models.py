@@ -188,10 +188,18 @@ class GridModificationAction(BaseModel):
 
 class GridModification(BaseModel):
     """
-    A grid modification rule with conditions and actions.
+    A grid modification rule: a list of conditions and a list of actions.
 
-    All conditions are ANDed together. When all match, actions are applied.
-    Conditions can be band-based (checking values) or spatial (checking location).
+    Conditions can be band-based (checking values) or spatial (checking
+    location). All conditions in a rule are **ANDed** — the actions apply only
+    to cells that satisfy *every* condition, so adding a condition narrows the
+    selection (the intersection).
+
+    There is no OR within a rule. To act on a **union** of selections (e.g.
+    roads *or* water bodies), supply multiple rules: each rule is applied
+    independently, so adding a rule widens the overall selection. Putting two
+    mutually exclusive conditions (a road feature AND a water feature) in one
+    rule selects cells that are both at once — usually none.
     """
 
     model_config = ConfigDict(

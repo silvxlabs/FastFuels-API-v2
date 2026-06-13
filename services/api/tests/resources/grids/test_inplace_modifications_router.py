@@ -23,6 +23,7 @@ from api.resources.grids.modifications.examples import (
     EXAMPLE_REPLACE_GR1_WITH_GR2,
     EXAMPLE_REPLACE_GR1_WITH_GR2_IN_POLYGON,
     EXAMPLE_ZERO_FUEL_IN_POLYGON,
+    EXAMPLE_ZERO_HEAVY_FUEL_NEAR_ROAD,
 )
 
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
@@ -194,6 +195,83 @@ class TestApplyGridModifications:
             assert response.status_code == 200, response.text
         finally:
             feature_ref.delete()
+
+    def test_compound_feature_and_attribute_conditions_anded_in_one_rule(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """The zero-heavy-fuel-near-road example: a single rule with a feature
+        condition AND an attribute condition. Both conditions are queued
+        together in one rule (intersection semantics), demonstrating that a
+        rule's condition list accepts multiple entries."""
+        # This example references the fuel_load.100hr band, so seed a grid
+        # that carries it (the default fixture grid does not).
+        grid_data = make_grid_data(
+            domain_id=domain_for_testing["id"],
+            status="completed",
+            bands=[
+                {
+                    "key": "fuel_load.100hr",
+                    "type": "continuous",
+                    "unit": "kg/m**2",
+                    "index": 0,
+                },
+            ],
+        )
+        grid_data["checksum"] = uuid.uuid4().hex
+        grid_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+            grid_data["id"]
+        )
+        grid_ref.set(grid_data)
+
+        feature = make_layerset_feature_data(domain_id=domain_for_testing["id"])
+        feature_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feature["id"]
+        )
+        feature_ref.set(feature)
+        # Point the example's placeholder feature_id at the seeded feature.
+        body = {
+            "modifications": [
+                {
+                    "conditions": [
+                        {
+                            **EXAMPLE_ZERO_HEAVY_FUEL_NEAR_ROAD["modifications"][0][
+                                "conditions"
+                            ][0],
+                            "feature_id": feature["id"],
+                        },
+                        EXAMPLE_ZERO_HEAVY_FUEL_NEAR_ROAD["modifications"][0][
+                            "conditions"
+                        ][1],
+                    ],
+                    "actions": EXAMPLE_ZERO_HEAVY_FUEL_NEAR_ROAD["modifications"][0][
+                        "actions"
+                    ],
+                }
+            ]
+        }
+        try:
+            response = client.post(
+                route(domain_for_testing["id"], grid_data["id"]),
+                json=body,
+            )
+            assert response.status_code == 200, response.text
+
+            doc = grid_ref.get().to_dict()
+            pending = doc["pending_modifications"]
+            # One rule carrying both conditions (feature + attribute).
+            assert len(pending) == 1
+            conditions = pending[0]["conditions"]
+            assert len(conditions) == 2
+            assert conditions[0]["source"] == "feature"
+            assert conditions[0]["buffer_m"] == 10
+            assert conditions[1] == {
+                "band": "fuel_load.100hr",
+                "operator": "gt",
+                "value": 2.0,
+            }
+        finally:
+            feature_ref.delete()
+            grid_ref.delete()
 
     def test_retry_post_on_failed_grid_with_pending_appends(
         self, client, firestore_client, domain_for_testing

@@ -81,8 +81,24 @@ async def apply_grid_modifications(
     since the grid was built.
 
     Modifications select cells by conditions and apply actions to the matching
-    cells. Conditions within a single rule are ANDed together; multiple rules
-    are evaluated independently in order.
+    cells.
+
+    ## Combining conditions: AND within a rule, OR across rules
+
+    Each rule's `conditions` are **ANDed** — a cell is selected only when it
+    satisfies *every* condition in that rule. Adding a condition to a rule
+    therefore **narrows** the selection (the intersection). Example: a feature
+    condition plus an attribute condition matches cells inside the feature
+    **and** above a value threshold.
+
+    There is **no OR within a rule**. To act on a **union** — "roads *or*
+    water bodies", "GR1 *or* GR2 cells" — use **multiple rules**. Rules are
+    applied independently and in order, so a cell matched by *any* rule is
+    affected. Adding a rule therefore **widens** the overall selection.
+
+    Putting two mutually exclusive conditions in one rule (e.g. a road feature
+    AND a water feature) is the classic mistake: it selects cells that are
+    both at once — usually none. Split them into one rule per feature instead.
 
     ## Conditions
 

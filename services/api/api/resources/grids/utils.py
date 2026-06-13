@@ -14,7 +14,7 @@ from api.resources.grids.alignment import (
     GridAlignmentGridTarget,
     GridAlignmentSpecification,
 )
-from api.resources.grids.modifications import (
+from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
     GridModification,
 )

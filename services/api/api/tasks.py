@@ -35,15 +35,27 @@ async def create_http_task_async(
     queue: str,
     service: str,
     task_id: str,
+    task_name: str | None = None,
 ) -> Task | None:
-    """Enqueue an HTTP POST task asynchronously. Returns None if task already exists."""
+    """Enqueue an HTTP POST task asynchronously. Returns None if task already exists.
+
+    Args:
+        queue: Cloud Tasks queue name.
+        service: Cloud Run service the task targets.
+        task_id: Resource ID sent in the task body as {"id": task_id}.
+        task_name: Optional Cloud Tasks task name. Defaults to task_id, which
+            deduplicates create requests — but completed task names are
+            tombstoned, so re-processing the same resource later (e.g. an
+            in-place modification) must pass a unique name here or the task
+            is silently dropped as AlreadyExists.
+    """
     url = await _get_service_url(service)
 
     async with tasks_v2.CloudTasksAsyncClient() as client:
         parent = client.queue_path(GCP_PROJECT, GCP_REGION, queue)
 
         task = Task(
-            name=client.task_path(GCP_PROJECT, GCP_REGION, queue, task_id),
+            name=client.task_path(GCP_PROJECT, GCP_REGION, queue, task_name or task_id),
             http_request={
                 "http_method": HttpMethod.POST,
                 "url": url,

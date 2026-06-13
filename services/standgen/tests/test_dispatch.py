@@ -51,3 +51,18 @@ def test_chm_dispatch(mock_handle_chm):
         inventory, inventory["source"], mock_gdf, progress
     )
     assert "georeference" in result
+
+
+@patch("standgen.handlers.gdam.handle_gdam")
+def test_gdam_dispatch(mock_handle_gdam):
+    mock_handle_gdam.return_value = {"georeference": {}}
+    inventory = {"source": {"name": "gdam", "source_tree_inventory_id": "test-inv-id"}}
+    mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+    progress = MagicMock()
+
+    result = dispatch_handler(inventory, mock_gdf, progress)
+
+    mock_handle_gdam.assert_called_once_with(
+        inventory, inventory["source"], mock_gdf, progress
+    )
+    assert "georeference" in result

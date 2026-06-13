@@ -45,4 +45,5 @@ tmp/
 /AGENTS.md
 /sandbox/
 /.claude/
+/tasks/
 /services/etcher/cache/

@@ -345,3 +345,60 @@ class TestCreateChmInventory:
             "discriminator" in str(error).lower() or "tag" in str(error).lower()
             for error in detail
         )
+
+    def test_create_time_modification_referencing_dbh_returns_422(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        """A create-time modification that filters on dbh is rejected at the
+        boundary — a CHM inventory only ever carries position and height."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_chm_grid_id": chm_grid_for_inventory["id"],
+                "modifications": [
+                    {
+                        "conditions": {
+                            "attribute": "dbh",
+                            "operator": "lt",
+                            "value": 5.0,
+                        },
+                        "actions": {"modifier": "remove"},
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "Available column(s)" in detail
+        # dbh is the referenced-but-missing column: it appears in the required
+        # portion of the message but not in the CHM inventory's available set.
+        required_part, available_part = detail.split("Available column(s)")
+        assert "dbh" in required_part
+        assert "dbh" not in available_part
+
+    def test_create_time_modification_referencing_height_succeeds(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        """The guard doesn't over-reject: a create-time modification that only
+        references height is accepted (height is in CHM's column set)."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_chm_grid_id": chm_grid_for_inventory["id"],
+                "modifications": [
+                    {
+                        "conditions": {
+                            "attribute": "height",
+                            "operator": "gt",
+                            "value": 40.0,
+                        },
+                        "actions": {
+                            "attribute": "height",
+                            "modifier": "multiply",
+                            "value": 0.9,
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 201

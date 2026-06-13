@@ -24,6 +24,10 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
+from api.resources.inventories.utils import (
+    inventory_column_keys,
+    require_inventory_columns,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -32,6 +36,7 @@ from lib.config import (
     TREEVOX_QUEUE,
     TREEVOX_SERVICE,
 )
+from lib.inventory import VOXELIZE_REQUIRED_COLUMNS
 
 router = APIRouter()
 
@@ -121,6 +126,20 @@ async def create_tree_inventory_grid(
                 f"a tree inventory."
             ),
         )
+
+    # Voxelization reads every per-tree measurement (diameter, species, crown
+    # ratio drive the crown-profile and biomass models; status keeps live trees).
+    # A position-and-height-only inventory (e.g. CHM/ITD extraction) can't be
+    # voxelized until those exist. Biomass / max-crown-radius inventory-column
+    # references are validated by treevox at read time.
+    require_inventory_columns(
+        inventory_column_keys(inventory_data),
+        VOXELIZE_REQUIRED_COLUMNS,
+        detail=(
+            "This inventory lacks the per-tree measurements voxelization needs "
+            "(a position-and-height-only CHM/ITD inventory must be enriched first)."
+        ),
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

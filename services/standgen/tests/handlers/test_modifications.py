@@ -16,6 +16,8 @@ import pytest
 from shapely.geometry import box
 from standgen.handlers.modifications import apply_in_place_modifications
 
+from lib.errors import ProcessingError
+
 
 @pytest.fixture
 def sample_ddf():
@@ -191,3 +193,41 @@ class TestApplyInPlaceModifications:
         result_df = mock_save.call_args[0][1].compute()
         assert (result_df["dbh"] >= 3.0).all()
         assert len(result_df) < len(sample_ddf.compute())
+
+    @patch("standgen.handlers.modifications.save_parquet_replace")
+    @patch("standgen.handlers.modifications.load_inventory_parquet")
+    def test_rule_referencing_absent_column_raises_missing_columns(
+        self, mock_load, mock_save, domain_gdf
+    ):
+        """Backstop: if the actual Parquet lacks a column the rule references
+        (e.g. a stale document claims dbh but the data is height-only), fail with
+        an actionable MISSING_COLUMNS error instead of a mid-write KeyError or a
+        silently materialized all-null column."""
+        height_only = dd.from_pandas(
+            pd.DataFrame({"x": [500000.0], "y": [5200000.0], "height": [12.0]}),
+            npartitions=1,
+        )
+        inventory = {
+            "id": "inventory-id",
+            "domain_id": "domain-123",
+            "georeference": {"crs": "EPSG:32611", "bounds": [0, 0, 1, 1]},
+            "source": {"name": "chm"},
+            "modifications": [],
+            "pending_modifications": [
+                {
+                    "conditions": [
+                        {"attribute": "dbh", "operator": "lt", "value": 5.0}
+                    ],
+                    "actions": [{"modifier": "remove"}],
+                }
+            ],
+        }
+        mock_load.return_value = height_only
+        progress = MagicMock()
+
+        with pytest.raises(ProcessingError) as exc:
+            apply_in_place_modifications(inventory, domain_gdf, progress)
+        assert exc.value.code == "MISSING_COLUMNS"
+        assert "dbh" in exc.value.message
+        # The guard fires before any write.
+        mock_save.assert_not_called()

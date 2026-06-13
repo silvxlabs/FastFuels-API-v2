@@ -53,9 +53,17 @@ async def create_gdam_inventory(
     """
     # Create GDAM Allometry Inventory
 
-    Creates a new tree inventory by calling the GDAM machine-learning API to fill
-    in the missing morphology columns (diameter, crown ratio, species) of an
-    existing tree inventory.
+    **GDAM (Generalized Dendro Allometric Model)** is a machine-learning model
+    that predicts tree morphology — diameter at breast height, live crown ratio,
+    and species — from simple stem metrics (position and height). It replaces
+    legacy region-specific allometric equations with a single generative model:
+    each tree is routed to a region-specific model by geography, and a masked
+    tabular autoencoder fills in every missing field in one pass while preserving
+    any values you already supply.
+
+    This endpoint creates a new tree inventory by calling the GDAM API to fill in
+    the missing morphology columns (diameter, crown ratio, species) of an existing
+    tree inventory.
 
     The typical input is an uploaded **position + height** inventory (`x`, `y`,
     `height`). GDAM predicts the missing fields; any values already present are

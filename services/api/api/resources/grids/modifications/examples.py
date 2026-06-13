@@ -9,9 +9,11 @@ They mirror the worked examples on ``GridModification.model_config``
 (json_schema_extra), wrapped in the endpoint's request envelope.
 """
 
-# Wipe all surface fuel inside a road Feature (linestring + target=cell
-# catches every cell the road crosses)
-EXAMPLE_ZERO_FUEL_ON_ROAD = {
+# Wipe all surface fuel from roads and water bodies. Conditions within a rule
+# are ANDed, so a union of two features needs two rules: one for the road
+# (linestring + target=cell catches every cell the road crosses) and one for
+# the water body (polygon — the default centroid test covers an area feature).
+EXAMPLE_ZERO_FUEL_ON_ROADS_AND_WATER = {
     "modifications": [
         {
             "conditions": [
@@ -27,7 +29,21 @@ EXAMPLE_ZERO_FUEL_ON_ROAD = {
                 {"band": "fuel_load.10hr", "modifier": "replace", "value": 0},
                 {"band": "fuel_load.100hr", "modifier": "replace", "value": 0},
             ],
-        }
+        },
+        {
+            "conditions": [
+                {
+                    "source": "feature",
+                    "operator": "intersects",
+                    "feature_id": "feat_water_xyz",
+                }
+            ],
+            "actions": [
+                {"band": "fuel_load.1hr", "modifier": "replace", "value": 0},
+                {"band": "fuel_load.10hr", "modifier": "replace", "value": 0},
+                {"band": "fuel_load.100hr", "modifier": "replace", "value": 0},
+            ],
+        },
     ],
 }
 
@@ -155,14 +171,17 @@ APPLY_GRID_MODIFICATIONS_OPENAPI_EXAMPLES = {
         ),
         "value": EXAMPLE_REPLACE_GR1_WITH_GR2_IN_POLYGON,
     },
-    "zero_fuel_on_road": {
-        "summary": "Zero surface fuel on a road feature",
+    "zero_fuel_on_roads_and_water": {
+        "summary": "Zero surface fuel on roads and water bodies",
         "description": (
-            "Wipe the 1/10/100-hour fuel loads in every cell the referenced "
-            "road Feature crosses (`target=cell` catches cells a linestring "
-            "merely touches)."
+            "Wipe the 1/10/100-hour fuel loads inside both a road Feature and "
+            "a water Feature. Because conditions in a single rule are ANDed, "
+            "the union is expressed as two rules — one per Feature. The road "
+            "rule uses `target=cell` so every cell its linestring crosses is "
+            "caught; the water rule uses the default centroid test for its "
+            "polygon."
         ),
-        "value": EXAMPLE_ZERO_FUEL_ON_ROAD,
+        "value": EXAMPLE_ZERO_FUEL_ON_ROADS_AND_WATER,
     },
     "reduce_fuel_along_road_buffer": {
         "summary": "Reduce fuel 90% along a buffered road",

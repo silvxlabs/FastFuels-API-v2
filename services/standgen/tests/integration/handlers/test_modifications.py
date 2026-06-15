@@ -109,9 +109,12 @@ def modifications_runner(shared_pim_source):
     pim_inventory, pim_id, domain_id = shared_pim_source
     mod_ids = []
 
-    def _run(modifications: list[dict]) -> tuple[dict, dict]:
+    def _run(
+        modifications: list[dict], prior_modifications: list[dict] | None = None
+    ) -> tuple[dict, dict]:
         from standgen.main import process_inventory_request
 
+        prior_modifications = prior_modifications or []
         mod_id = f"test-{uuid4().hex}"
         # In-place modifications apply to the inventory's own data, so copy the
         # shared PIM parquet to a fresh ID and modify the copy — the shared
@@ -128,7 +131,9 @@ def modifications_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
-            "modifications": modifications,
+            # The ledger holds only previously-applied rules; the new delta lives
+            # in pending_modifications until completion merges it in.
+            "modifications": prior_modifications,
             "pending_modifications": modifications,
         }
         set_document(INVENTORIES_COLLECTION, mod_id, mod_data)
@@ -143,8 +148,11 @@ def modifications_runner(shared_pim_source):
         assert mod_inventory["status"] == "completed", (
             f"Modifications inventory not completed: {mod_inventory.get('error')}"
         )
-        # The delta is applied; the work queue is cleared on completion.
+        # The delta is applied; on completion the work queue is cleared and the
+        # delta is merged onto the end of the ledger (ledger == applied data),
+        # never duplicated or dropped (#319).
         assert mod_inventory.get("pending_modifications") == []
+        assert mod_inventory.get("modifications") == prior_modifications + modifications
 
         return pim_inventory, mod_inventory
 
@@ -365,6 +373,29 @@ def test_final_progress_is_100(modifications_runner):
     assert mod_inventory["progress"]["message"] == "Complete"
 
 
+def test_pending_delta_appended_to_existing_ledger(modifications_runner):
+    """A new modification delta is appended to the existing ledger on
+    completion, not replacing it: an inventory that already carries a completed
+    rule ends with both the prior rule and the new delta, in order (#319)."""
+    prior = [
+        {
+            "conditions": [{"attribute": "height", "operator": "gt", "value": 40.0}],
+            "actions": [{"attribute": "height", "modifier": "multiply", "value": 0.9}],
+        }
+    ]
+    delta = [
+        {
+            "conditions": [{"attribute": "dbh", "operator": "lt", "value": 5.0}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+
+    _, mod_inventory = modifications_runner(delta, prior_modifications=prior)
+
+    assert mod_inventory.get("pending_modifications") == []
+    assert mod_inventory.get("modifications") == prior + delta
+
+
 @pytest.fixture
 def feature_modifications_runner(shared_pim_source):
     """Run a feature-based spatial modification against the shared PIM source.
@@ -434,7 +465,8 @@ def feature_modifications_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
-            "modifications": resolved_mods,
+            # Ledger starts empty; the delta is queued and merged on completion.
+            "modifications": [],
             "pending_modifications": resolved_mods,
         }
         set_document(INVENTORIES_COLLECTION, mod_id, mod_data)
@@ -449,6 +481,10 @@ def feature_modifications_runner(shared_pim_source):
         assert mod_inventory["status"] == "completed", (
             f"Modifications inventory not completed: {mod_inventory.get('error')}"
         )
+        # On completion the queued delta is merged into the ledger and the queue
+        # cleared (#319).
+        assert mod_inventory.get("pending_modifications") == []
+        assert mod_inventory.get("modifications") == resolved_mods
         return pim_inventory, mod_inventory
 
     yield _run

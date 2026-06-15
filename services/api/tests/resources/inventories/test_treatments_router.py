@@ -3,13 +3,17 @@ Integration tests for the in-place inventory treatments endpoint.
 
 Tests POST /domains/{domain_id}/inventories/{inventory_id}/treatments
 
-The endpoint mutates the inventory **in place** (same ID): it appends the
-submitted treatments to the inventory's ``treatments`` ledger, queues that delta
-in ``pending_treatments``, re-assigns its ``checksum``, flips status to
-``pending``, and enqueues standgen to re-derive the data. These tests make real
-HTTP requests and interact with Firestore.
+The endpoint mutates the inventory **in place** (same ID): it queues the
+submitted treatments in ``pending_treatments``, re-assigns its ``checksum``,
+flips status to ``pending``, and enqueues standgen to re-derive the data. The
+visible ``treatments`` ledger grows only on completion (standgen merges the
+pending delta into the ledger atomically with status=completed), so the stored
+ledger always equals the applied data. The read-validate-append runs in a
+Firestore transaction so concurrent POSTs cannot drop a treatment. These tests
+make real HTTP requests and interact with Firestore.
 """
 
+import threading
 import uuid
 
 import pytest
@@ -44,7 +48,8 @@ def source_inventory(firestore_client, domain_for_testing, cleanup_inventories):
 
     Function-scoped: the endpoint mutates this document (status -> pending), so
     each test gets its own. Carries a checksum and one existing treatment so
-    tests can assert the checksum changes and the ledger grows.
+    tests can assert the checksum changes and the existing ledger is left
+    untouched (the new delta is queued, not appended to the ledger).
     """
     inv = make_inventory_data(
         domain_id=domain_for_testing["id"],
@@ -168,8 +173,9 @@ class TestApplyTreatmentsInPlace:
     def test_applies_in_place_same_id(
         self, client, domain_for_testing, source_inventory, firestore_client
     ):
-        """Mutates the same inventory: same ID, status pending, ledger grows,
-        checksum changes, and the delta is queued in pending_treatments."""
+        """Mutates the same inventory: same ID, status pending, checksum
+        changes, and the delta is queued in pending_treatments while the
+        visible ledger is left untouched (it grows only on completion)."""
         source_id = source_inventory["id"]
         response = client.post(
             self.route(domain_for_testing["id"], source_id),
@@ -185,10 +191,11 @@ class TestApplyTreatmentsInPlace:
         assert data["status"] == "pending"
         assert data["error"] is None
 
-        # The submitted treatment is appended to the existing ledger (1 + 1 = 2).
-        assert len(data["treatments"]) == 2
-        assert data["treatments"][-1]["metric"] == "diameter"
-        assert data["treatments"][-1]["value"] == 5.0
+        # Ledger == applied data: the submitted treatment is queued, not yet
+        # part of the visible treatments list, so the existing ledger is
+        # unchanged.
+        assert len(data["treatments"]) == 1
+        assert data["treatments"][0]["value"] == 10.0
 
         # checksum is re-assigned so derivatives become detectably stale.
         assert data["checksum"] != source_inventory["checksum"]
@@ -196,16 +203,21 @@ class TestApplyTreatmentsInPlace:
         # The source is unchanged (still the root pim source).
         assert data["source"]["name"] == source_inventory["source"]["name"]
 
-        # Firestore: only the new delta is queued for standgen to apply.
+        # Firestore: only the new delta is queued for standgen to apply; the
+        # ledger still holds just the pre-existing treatment. The job is in
+        # flight (a real standgen task was enqueued), so its status may have
+        # advanced past pending — but it cannot be completed (these test docs
+        # have no backing parquet), so the queue is never cleared/merged here.
         doc = (
             firestore_client.collection(INVENTORIES_COLLECTION)
             .document(source_id)
             .get()
             .to_dict()
         )
-        assert doc["status"] == "pending"
+        assert doc["status"] != "completed"
         assert len(doc["pending_treatments"]) == 1
-        assert len(doc["treatments"]) == 2
+        assert doc["pending_treatments"][0]["value"] == 5.0
+        assert len(doc["treatments"]) == 1
 
     def test_response_excludes_owner_id(
         self, client, domain_for_testing, source_inventory
@@ -232,10 +244,11 @@ class TestApplyTreatmentsInPlace:
         assert data["columns"] == source_inventory["columns"]
         assert data["georeference"] == source_inventory["georeference"]
 
-    def test_appends_multiple_treatments(
-        self, client, domain_for_testing, source_inventory
+    def test_queues_multiple_treatments(
+        self, client, domain_for_testing, source_inventory, firestore_client
     ):
-        """Multiple treatments in one request all append to the ledger."""
+        """Multiple treatments in one request are all queued in the delta; the
+        visible ledger stays at its pre-existing size until completion."""
         body = {
             "treatments": [
                 {"metric": "diameter", "method": "from_below", "value": 2.54},
@@ -247,11 +260,18 @@ class TestApplyTreatmentsInPlace:
             json=body,
         )
         assert response.status_code == 200, response.json()
-        # 1 existing + 2 submitted.
-        assert len(response.json()["treatments"]) == 3
+        # Ledger unchanged (1 pre-existing treatment); both submitted queued.
+        assert len(response.json()["treatments"]) == 1
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        assert len(doc["pending_treatments"]) == 2
 
     def test_inventory_wide_basal_area_on_small_domain_succeeds(
-        self, client, domain_for_testing, source_inventory
+        self, client, domain_for_testing, source_inventory, firestore_client
     ):
         """An inventory-wide basal-area treatment on a small domain is allowed."""
         body = {
@@ -264,12 +284,18 @@ class TestApplyTreatmentsInPlace:
             json=body,
         )
         assert response.status_code == 200, response.json()
-        assert response.json()["treatments"][-1]["metric"] == "basal_area"
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        assert doc["pending_treatments"][-1]["metric"] == "basal_area"
 
     def test_unit_conversion_preserved(
-        self, client, domain_for_testing, source_inventory
+        self, client, domain_for_testing, source_inventory, firestore_client
     ):
-        """A unit field on a treatment round-trips into the ledger."""
+        """A unit field on a treatment round-trips into the queued delta."""
         body = {
             "treatments": [
                 {
@@ -285,7 +311,13 @@ class TestApplyTreatmentsInPlace:
             json=body,
         )
         assert response.status_code == 200
-        assert response.json()["treatments"][-1]["unit"] == "in"
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        assert doc["pending_treatments"][-1]["unit"] == "in"
 
     # Error cases
 
@@ -304,6 +336,91 @@ class TestApplyTreatmentsInPlace:
             json=MINIMAL_TREATMENTS_BODY,
         )
         assert response.status_code == 422
+
+    def test_retry_post_on_failed_inventory_with_pending_appends(
+        self, client, firestore_client, domain_for_testing, cleanup_inventories
+    ):
+        """A failed in-place treatment is not dead-ended: another POST is
+        accepted and its delta joins the retained queue."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Failed treat",
+            status="failed",
+            georeference={
+                "crs": "EPSG:32611",
+                "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
+            },
+        )
+        inv["checksum"] = uuid.uuid4().hex
+        inv["pending_treatments"] = [
+            {"metric": "diameter", "method": "from_below", "value": 10.0}
+        ]
+        firestore_client.collection(INVENTORIES_COLLECTION).document(inv["id"]).set(inv)
+        cleanup_inventories.append(inv["id"])
+
+        response = client.post(
+            self.route(domain_for_testing["id"], inv["id"]),
+            json=MINIMAL_TREATMENTS_BODY,
+        )
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == "pending"
+
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(inv["id"])
+            .get()
+            .to_dict()
+        )
+        assert len(doc["pending_treatments"]) == 2
+
+    def test_failed_inventory_without_pending_returns_422(
+        self, client, firestore_client, domain_for_testing, cleanup_inventories
+    ):
+        """A failed initial build has no queued delta to retry — not retryable
+        here, so a fresh treatment is rejected until the build succeeds."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Failed build",
+            status="failed",
+        )
+        firestore_client.collection(INVENTORIES_COLLECTION).document(inv["id"]).set(inv)
+        cleanup_inventories.append(inv["id"])
+
+        response = client.post(
+            self.route(domain_for_testing["id"], inv["id"]),
+            json=MINIMAL_TREATMENTS_BODY,
+        )
+        assert response.status_code == 422
+
+    def test_concurrent_posts_exactly_one_wins(
+        self, client, firestore_client, domain_for_testing, source_inventory
+    ):
+        """Two racing POSTs cannot drop a treatment: the transactional append
+        lets exactly one through; the loser sees the pending status and is
+        rejected."""
+        results = []
+
+        def _post():
+            r = client.post(
+                self.route(domain_for_testing["id"], source_inventory["id"]),
+                json=MINIMAL_TREATMENTS_BODY,
+            )
+            results.append(r.status_code)
+
+        threads = [threading.Thread(target=_post) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sorted(results) == [200, 422], results
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        assert len(doc["pending_treatments"]) == 1
 
     def test_wrong_owner_returns_404(
         self, client, domain_with_different_owner, completed_inventory_different_owner
@@ -487,7 +604,12 @@ class TestFeatureConditions:
         assert feature_id in response.json()["detail"]
 
     def test_completed_feature_succeeds(
-        self, client, domain_for_testing, source_inventory, completed_feature
+        self,
+        client,
+        domain_for_testing,
+        source_inventory,
+        completed_feature,
+        firestore_client,
     ):
         feature_id = completed_feature["id"]
         response = client.post(
@@ -495,7 +617,13 @@ class TestFeatureConditions:
             json=self._body(feature_id),
         )
         assert response.status_code == 200, response.json()
-        condition = response.json()["treatments"][-1]["conditions"][0]
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        condition = doc["pending_treatments"][-1]["conditions"][0]
         assert condition["feature_id"] == feature_id
 
 

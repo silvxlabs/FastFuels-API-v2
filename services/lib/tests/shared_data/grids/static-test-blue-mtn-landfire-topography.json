@@ -1,24 +1,61 @@
 {
   "bands": [
     {
+      "description": "Height above sea level.",
       "index": 0,
       "key": "elevation",
+      "name": "Elevation",
+      "nodata": 32767,
+      "summary": {
+        "count": 289068,
+        "max": 1171.0,
+        "mean": 1035.637804945549,
+        "min": 959.0,
+        "nodata_count": 0,
+        "std": 43.25981967546135,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
     },
     {
+      "description": "Terrain slope (0-90 degrees).",
       "index": 1,
       "key": "slope",
+      "name": "Slope",
+      "nodata": 32767,
+      "summary": {
+        "count": 289068,
+        "max": 23.0,
+        "mean": 9.512820512820513,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 4.401557633590866,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "deg"
     },
     {
+      "description": "Downslope compass direction, degrees clockwise from north (0-360).",
       "index": 2,
       "key": "aspect",
+      "name": "Aspect",
+      "nodata": 32767,
+      "summary": {
+        "count": 289068,
+        "max": 359.0,
+        "mean": 121.56201309034553,
+        "min": -1.0,
+        "nodata_count": 0,
+        "std": 112.9057145878755,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "deg"
     }
   ],
+  "checksum": "cc027a18b13940718e2ebbb5186db1bd",
   "chunks": {
     "count": 2,
     "count_by_axis": {

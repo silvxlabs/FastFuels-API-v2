@@ -1,39 +1,23 @@
 {
+  "checksum": "78542d0eb3c441329c43c1832bb683bc",
   "columns": [
     {
       "key": "x",
+      "summary": null,
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "y",
+      "summary": null,
       "type": "continuous",
       "unit": "m"
-    },
-    {
-      "key": "fia_species_code",
-      "type": "categorical",
-      "unit": null
-    },
-    {
-      "key": "fia_status_code",
-      "type": "categorical",
-      "unit": null
-    },
-    {
-      "key": "dbh",
-      "type": "continuous",
-      "unit": "cm"
     },
     {
       "key": "height",
+      "summary": null,
       "type": "continuous",
       "unit": "m"
-    },
-    {
-      "key": "crown_ratio",
-      "type": "continuous",
-      "unit": null
     }
   ],
   "description": "",
@@ -60,9 +44,11 @@
       "name": "lmf"
     },
     "name": "chm",
+    "source_chm_grid_checksum": "bc99caaa828144a3ba607b65d31a010d",
     "source_chm_grid_id": "static-test-blue-mtn-naip-chm"
   },
   "status": "completed",
   "tags": [],
+  "treatments": [],
   "type": "tree"
 }

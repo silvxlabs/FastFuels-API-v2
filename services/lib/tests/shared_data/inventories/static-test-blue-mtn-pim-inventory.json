@@ -1,37 +1,45 @@
 {
+  "checksum": "13da4a21077e40fbb3171a16947325c6",
   "columns": [
     {
       "key": "x",
+      "summary": null,
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "y",
+      "summary": null,
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "fia_species_code",
+      "summary": null,
       "type": "categorical",
       "unit": null
     },
     {
       "key": "fia_status_code",
+      "summary": null,
       "type": "categorical",
       "unit": null
     },
     {
       "key": "dbh",
+      "summary": null,
       "type": "continuous",
       "unit": "cm"
     },
     {
       "key": "height",
+      "summary": null,
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "crown_ratio",
+      "summary": null,
       "type": "continuous",
       "unit": null
     }
@@ -57,9 +65,11 @@
     "name": "pim",
     "point_process": "inhomogeneous_poisson",
     "seed": 898870608,
+    "source_pim_grid_checksum": "0645db9b7f2145d699e144beeb7cbc59",
     "source_pim_grid_id": "static-test-blue-mtn-pim-treemap"
   },
   "status": "completed",
   "tags": [],
+  "treatments": [],
   "type": "tree"
 }

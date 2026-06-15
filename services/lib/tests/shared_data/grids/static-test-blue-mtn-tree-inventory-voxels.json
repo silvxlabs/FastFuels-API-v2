@@ -1,30 +1,47 @@
 {
   "bands": [
     {
+      "description": "Fraction of the voxel occupied by tree crown.",
       "index": 0,
       "key": "volume_fraction",
+      "name": "Crown Volume Fraction",
+      "nodata": null,
+      "summary": null,
       "type": "continuous",
       "unit": null
     },
     {
+      "description": "Per-voxel bulk density of live foliage.",
       "index": 1,
       "key": "bulk_density.foliage.live",
+      "name": "Live Foliage Bulk Density",
+      "nodata": null,
+      "summary": null,
       "type": "continuous",
       "unit": "kg/m**3"
     },
     {
+      "description": "Moisture content of live canopy fuels (% of oven-dry weight).",
       "index": 2,
       "key": "fuel_moisture.live",
+      "name": "Live Fuel Moisture",
+      "nodata": null,
+      "summary": null,
       "type": "continuous",
       "unit": "%"
     },
     {
+      "description": "Surface-area-to-volume ratio of foliage.",
       "index": 3,
       "key": "savr.foliage",
+      "name": "Foliage Surface-Area-to-Volume Ratio",
+      "nodata": null,
+      "summary": null,
       "type": "continuous",
       "unit": "1/m"
     }
   ],
+  "checksum": "1345c9a309194894afca5d89695c246e",
   "chunks": {
     "count": 2,
     "count_by_axis": {
@@ -102,6 +119,7 @@
       "vertical": 1.0
     },
     "seed": 42,
+    "source_inventory_checksum": "13da4a21077e40fbb3171a16947325c6",
     "source_inventory_id": "static-test-blue-mtn-pim-inventory"
   },
   "status": "completed",

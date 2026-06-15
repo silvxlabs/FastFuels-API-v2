@@ -1,12 +1,25 @@
 {
   "bands": [
     {
+      "description": "Moisture content of 1-hour timelag dead surface fuels (% of oven-dry weight).",
       "index": 0,
       "key": "fuel_moisture.1hr",
+      "name": "1-hour Fuel Moisture",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 6.0,
+        "mean": 6.0,
+        "min": 6.0,
+        "nodata_count": 0,
+        "std": 0.0,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "%"
     }
   ],
+  "checksum": "512f333a4ded4caea89bb638c7663cd7",
   "chunks": {
     "count": 2,
     "count_by_axis": {

@@ -1,24 +1,61 @@
 {
   "bands": [
     {
+      "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels.",
       "index": 0,
       "key": "fuel_load.1hr",
+      "name": "1-hour Fuel Load",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 1.3001821041107178,
+        "mean": 0.316337780055216,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 0.4233536320219707,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "kg/m**2"
     },
     {
+      "description": "Vertical depth of the surface fuel bed.",
       "index": 1,
       "key": "fuel_depth",
+      "name": "Fuel Bed Depth",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 0.6096000075340271,
+        "mean": 0.3276573625557047,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 0.1417036456482622,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
     },
     {
+      "description": "Surface-area-to-volume ratio of 1-hour timelag dead fuels.",
       "index": 2,
       "key": "savr.1hr",
+      "name": "1-hour Surface-Area-to-Volume Ratio",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 6561.6796875,
+        "mean": 6234.117790083129,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 1193.6326415617798,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "1/m"
     }
   ],
+  "checksum": "e16747c94e8343dbab00c1bebdbc2be9",
   "chunks": {
     "count": 2,
     "count_by_axis": {
@@ -56,6 +93,7 @@
   "source": {
     "name": "lookup",
     "source_band": "fbfm",
+    "source_grid_checksum": "3216c527caa64a48a5a9cf12ebde996f",
     "source_grid_id": "static-test-blue-mtn-landfire-fbfm40",
     "table": "fbfm40"
   },

@@ -1,12 +1,22 @@
 {
   "bands": [
     {
+      "description": "Scott & Burgan 40 fire behavior fuel model code (e.g. GR1, TL3, SH5). Convert to fuel parameters via /grids/lookup/fbfm40.",
       "index": 0,
       "key": "fbfm",
+      "name": "Scott & Burgan 40 Fuel Model",
+      "nodata": 32767,
+      "summary": {
+        "count": 289068,
+        "nodata_count": 0,
+        "type": "categorical",
+        "unique_count": 9
+      },
       "type": "categorical",
       "unit": null
     }
   ],
+  "checksum": "3216c527caa64a48a5a9cf12ebde996f",
   "chunks": {
     "count": 2,
     "count_by_axis": {

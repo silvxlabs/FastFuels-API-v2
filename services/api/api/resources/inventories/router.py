@@ -23,9 +23,10 @@ from fastapi import (
 )
 from google.api_core.exceptions import NotFound
 
-from api.db.blobs import copy_directory, delete_directory_safe
+from api.db.blobs import copy_directory_verified, delete_directory_safe
 from api.db.documents import (
     delete_document_async,
+    firestore_client,
     get_document_async,
     list_documents_async,
     set_document_async,
@@ -409,15 +410,41 @@ async def delete_inventory(
     background_tasks.add_task(delete_directory_safe, INVENTORIES_BUCKET, inventory_id)
 
 
-async def _copy_inventory_data(source_id: str, new_id: str) -> None:
+async def _copy_inventory_data(
+    source_id: str, new_id: str, source_checksum: str
+) -> None:
     """Background task: server-side copy the parquet artifact from the source
     inventory to the new one, then flip the new inventory to ``completed``.
+
+    The copy is verified two ways before completing:
+
+    - against a pre-copy snapshot of the source listing, so a source deleted
+      or shrunk mid-copy fails the duplicate instead of completing with a
+      silently incomplete clone; and
+    - against the source doc's ``status``/``checksum``, because an in-place
+      modification or treatment rewrites the parquet with new part files —
+      possibly while the copy is mid-flight — yielding a clone that mixes old
+      and new partitions.
 
     On any failure the new inventory is marked ``failed`` with a structured
     error so the dangling ``pending`` document never lingers.
     """
     try:
-        await copy_directory(INVENTORIES_BUCKET, source_id, new_id)
+        await copy_directory_verified(INVENTORIES_BUCKET, source_id, new_id)
+
+        source_snapshot = (
+            await firestore_client.collection(COLLECTION).document(source_id).get()
+        )
+        source_data = source_snapshot.to_dict() if source_snapshot.exists else None
+        if (
+            source_data is None
+            or source_data.get("status") != JobStatus.completed.value
+            or source_data.get("checksum") != source_checksum
+        ):
+            raise RuntimeError(
+                f"Source inventory {source_id} was deleted or modified during the copy."
+            )
+
         await update_document_async(
             COLLECTION,
             new_id,
@@ -548,7 +575,12 @@ async def duplicate_inventory(
     # before-validator decodes stringified modification/treatment coordinates in
     # place, so building it first would corrupt the values written to Firestore.
     await set_document_async(COLLECTION, new_inventory_id, inventory_data)
-    background_tasks.add_task(_copy_inventory_data, inventory_id, new_inventory_id)
+    background_tasks.add_task(
+        _copy_inventory_data,
+        inventory_id,
+        new_inventory_id,
+        source_data.get("checksum"),
+    )
 
     return Inventory(**inventory_data)
 

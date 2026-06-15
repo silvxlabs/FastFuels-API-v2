@@ -13,8 +13,9 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, HTTPException, Request, status
+from google.cloud import firestore
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
 from api.resources.inventories.schema import Inventory
 from api.resources.inventories.treatments.examples import (
@@ -105,10 +106,26 @@ async def apply_treatments(
 
     ## Response
 
-    Returns this inventory (same ID) with status `"pending"` and the submitted
-    treatments appended to `treatments`. Its `checksum` changes, so any resource
-    derived from it can detect that the source has changed. Poll the inventory
-    until status returns to `"completed"`.
+    Returns this inventory (same ID) with status `"pending"`. Its `checksum`
+    changes immediately, so any resource derived from it can detect that the
+    source has changed. The submitted treatments appear in the inventory's
+    `treatments` list once processing completes — poll the inventory until
+    status returns to `"completed"`.
+
+    If processing fails, the inventory's status becomes `"failed"` with error
+    details, the stored data is unchanged, and the queued treatments are
+    retained — submit another POST to retry (the new treatments are applied
+    together with the retained ones).
+
+    ## Error Responses
+
+    - **404 Not Found**: The inventory does not exist, is not owned by the
+      caller, or is not in this domain.
+    - **422 Unprocessable Content**: The inventory is not in `completed` status
+      (and is not a retryable failed treatment); the inventory has no `dbh`
+      column to thin against (e.g. CHM-derived); an inventory-wide basal-area
+      treatment over a very large domain; or a referenced `feature_id` is
+      missing, cross-domain, or not completed.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
@@ -116,49 +133,83 @@ async def apply_treatments(
     await validate_feature_conditions(body.treatments, owner_id, domain_id)
     validate_inventory_wide_treatment_area(domain, body.treatments)
 
-    # Inventory must exist, be owned, in this domain, and completed.
-    _, snapshot = await get_document_async(
-        COLLECTION,
-        inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    inventory_data = snapshot.to_dict()
-
-    # Treatments thin against diameter; an inventory without a dbh column (e.g. a
-    # CHM-derived inventory) has nothing to thin. Reject in the same spirit as
-    # the create-time CHM rejection rather than failing the async job later.
-    columns = inventory_data.get("columns", [])
-    if not any(column.get("key") == "dbh" for column in columns):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                "Silvicultural treatments require a tree diameter (`dbh`) to thin "
-                "against, but this inventory has no `dbh` column. CHM-derived "
-                "inventories carry only height and position, so treatments cannot "
-                "be applied to them."
-            ),
-        )
-
     new_treatments = stringify_modification_coordinates(
         [t.model_dump() for t in body.treatments]
     )
+    new_checksum = uuid.uuid4().hex
+    ref = firestore_client.collection(COLLECTION).document(inventory_id)
 
-    # Append the new treatments to the cumulative ledger, and queue only this
-    # delta for standgen to apply to the current data (pending_treatments). The
-    # checksum is re-assigned here so derivatives become detectably stale (#304).
-    existing = inventory_data.get("treatments", [])
-    inventory_data["treatments"] = existing + new_treatments
-    inventory_data["pending_treatments"] = new_treatments
-    inventory_data["checksum"] = uuid.uuid4().hex
-    inventory_data["status"] = JobStatus.pending.value
-    inventory_data["progress"] = None
-    inventory_data["error"] = None
-    inventory_data["modified_on"] = datetime.now()
+    @firestore.async_transactional
+    async def _append_pending(transaction) -> dict:
+        """Read-validate-append atomically so concurrent POSTs can't drop a
+        treatment: the loser's transaction retries, re-reads the now-`pending`
+        status, and is rejected instead of overwriting the winner's delta."""
+        snapshot = await ref.get(transaction=transaction)
+        inventory_data = snapshot.to_dict() if snapshot.exists else None
+        if (
+            inventory_data is None
+            or inventory_data.get("owner_id") != owner_id
+            or inventory_data.get("domain_id") != domain_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document not found: inventories/{inventory_id}",
+            )
 
-    await set_document_async(COLLECTION, inventory_id, inventory_data)
-    await create_http_task_async(STANDGEN_QUEUE, STANDGEN_SERVICE, inventory_id)
+        # Treatments thin against diameter; an inventory without a dbh column
+        # (e.g. a CHM-derived inventory) has nothing to thin. Reject in the same
+        # spirit as the create-time CHM rejection rather than failing the async
+        # job later.
+        columns = inventory_data.get("columns", [])
+        if not any(column.get("key") == "dbh" for column in columns):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Silvicultural treatments require a tree diameter (`dbh`) to "
+                    "thin against, but this inventory has no `dbh` column. "
+                    "CHM-derived inventories carry only height and position, so "
+                    "treatments cannot be applied to them."
+                ),
+            )
+
+        pending = inventory_data.get("pending_treatments") or []
+        inventory_status = inventory_data.get("status")
+        retryable_failed = inventory_status == JobStatus.failed.value and pending
+        if inventory_status != JobStatus.completed.value and not retryable_failed:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"inventories/{inventory_id} status is '{inventory_status}', "
+                    f"expected 'completed'."
+                ),
+            )
+
+        # Queue only the delta; standgen merges pending_treatments into the
+        # cumulative `treatments` ledger atomically with status=completed, so the
+        # ledger always equals the applied data (#319). The checksum rotates now
+        # so derivatives become detectably stale (#304).
+        update = {
+            "pending_treatments": pending + new_treatments,
+            "checksum": new_checksum,
+            "status": JobStatus.pending.value,
+            "progress": None,
+            "error": None,
+            "modified_on": datetime.now(),
+        }
+        transaction.update(ref, update)
+        return {**inventory_data, **update}
+
+    inventory_data = await _append_pending(firestore_client.transaction())
+
+    # The task name embeds the fresh checksum: Cloud Tasks tombstones reused
+    # task names, so re-using the bare inventory_id (the create task's name)
+    # would silently drop this task.
+    await create_http_task_async(
+        STANDGEN_QUEUE,
+        STANDGEN_SERVICE,
+        inventory_id,
+        task_name=f"{inventory_id}-{new_checksum}",
+    )
 
     # pending_treatments is an internal work-queue field, not part of the
     # Inventory schema; Pydantic ignores it (and owner_id) on construction.

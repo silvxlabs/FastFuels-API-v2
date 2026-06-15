@@ -260,12 +260,10 @@ def _poll_inventory(client, domain_id, inventory_id, timeout=60) -> dict:
         r = client.get(url)
         assert r.status_code == 200, r.text
         doc = r.json()
-        if doc["status"] == "completed":
+        if doc["status"] in ("completed", "failed"):
             return doc
-        if doc["status"] == "failed":
-            pytest.fail(f"Duplicate copy failed: {doc.get('error')}")
         time.sleep(1)
-    pytest.fail(f"Duplicate did not complete within {timeout}s")
+    pytest.fail(f"Duplicate did not reach a terminal status within {timeout}s")
 
 
 class TestDuplicateInventoryCopiesData:
@@ -313,7 +311,7 @@ class TestDuplicateInventoryCopiesData:
             assert response.json()["status"] == "pending"
 
             completed = _poll_inventory(client, domain_for_testing["id"], new_id)
-            assert completed["status"] == "completed"
+            assert completed["status"] == "completed", completed.get("error")
 
             # The copied parquet exists at the new path and matches the source.
             copied = dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{new_id}").compute()
@@ -335,3 +333,35 @@ class TestDuplicateInventoryCopiesData:
                 firestore_client.collection(INVENTORIES_COLLECTION).document(
                     inv_id
                 ).delete()
+
+    def test_duplicate_without_source_data_fails(
+        self, client, firestore_client, domain_for_testing, cleanup_inventories
+    ):
+        """A completed doc with no backing GCS data fails the copy verification:
+        the duplicate transitions to failed with a structured error instead of
+        completing as an empty clone."""
+        source = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Source without data",
+            status="completed",
+            source=dict(EXAMPLE_SOURCE),
+            georeference=dict(EXAMPLE_GEOREF),
+        )
+        source["checksum"] = uuid.uuid4().hex
+        source_id = source["id"]
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            source_id
+        )
+        doc_ref.set(source)
+
+        try:
+            response = client.post(self.route(domain_for_testing["id"], source_id))
+            assert response.status_code == 201, response.text
+            new_id = response.json()["id"]
+            cleanup_inventories.append(new_id)
+
+            final = _poll_inventory(client, domain_for_testing["id"], new_id)
+            assert final["status"] == "failed"
+            assert final["error"]["code"] == "INVENTORY_DUPLICATE_COPY_FAILED"
+        finally:
+            doc_ref.delete()

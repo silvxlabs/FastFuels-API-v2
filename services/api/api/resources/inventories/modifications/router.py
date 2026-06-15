@@ -11,9 +11,10 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, Body, HTTPException, Request, status
+from google.cloud import firestore
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
 from api.resources.inventories.modifications.examples import (
     APPLY_MODIFICATIONS_OPENAPI_EXAMPLES,
@@ -107,44 +108,91 @@ async def apply_modifications(
 
     ## Response
 
-    Returns this inventory (same ID) with status `"pending"` and the submitted
-    rules appended to `modifications`. Its `checksum` changes, so any resource
-    derived from it can detect that the source has changed. Poll the inventory
-    until status returns to `"completed"`.
+    Returns this inventory (same ID) with status `"pending"`. Its `checksum`
+    changes immediately, so any resource derived from it can detect that the
+    source has changed. The submitted rules appear in the inventory's
+    `modifications` list once processing completes — poll the inventory until
+    status returns to `"completed"`.
+
+    If processing fails, the inventory's status becomes `"failed"` with error
+    details, the stored data is unchanged, and the queued rules are retained —
+    submit another POST to retry (the new rules are applied together with the
+    retained ones).
+
+    ## Error Responses
+
+    - **404 Not Found**: The inventory does not exist, is not owned by the
+      caller, or is not in this domain.
+    - **422 Unprocessable Content**: The inventory is not in `completed` status
+      (and is not a retryable failed modification); or a referenced `feature_id`
+      is missing, cross-domain, or not completed.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
 
     await validate_feature_conditions(body.modifications, owner_id, domain_id)
 
-    # Inventory must exist, be owned, in this domain, and completed.
-    _, snapshot = await get_document_async(
-        COLLECTION,
-        inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    inventory_data = snapshot.to_dict()
-
     new_modifications = stringify_modification_coordinates(
         [m.model_dump() for m in body.modifications]
     )
+    new_checksum = uuid.uuid4().hex
+    ref = firestore_client.collection(COLLECTION).document(inventory_id)
 
-    # Append the new rules to the cumulative ledger, and queue only this delta
-    # for standgen to apply to the current data (pending_modifications). The
-    # checksum is re-assigned here so derivatives become detectably stale (#304).
-    existing = inventory_data.get("modifications", [])
-    inventory_data["modifications"] = existing + new_modifications
-    inventory_data["pending_modifications"] = new_modifications
-    inventory_data["checksum"] = uuid.uuid4().hex
-    inventory_data["status"] = JobStatus.pending.value
-    inventory_data["progress"] = None
-    inventory_data["error"] = None
-    inventory_data["modified_on"] = datetime.now()
+    @firestore.async_transactional
+    async def _append_pending(transaction) -> dict:
+        """Read-validate-append atomically so concurrent POSTs can't drop a
+        rule: the loser's transaction retries, re-reads the now-`pending`
+        status, and is rejected instead of overwriting the winner's delta."""
+        snapshot = await ref.get(transaction=transaction)
+        inventory_data = snapshot.to_dict() if snapshot.exists else None
+        if (
+            inventory_data is None
+            or inventory_data.get("owner_id") != owner_id
+            or inventory_data.get("domain_id") != domain_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document not found: inventories/{inventory_id}",
+            )
 
-    await set_document_async(COLLECTION, inventory_id, inventory_data)
-    await create_http_task_async(STANDGEN_QUEUE, STANDGEN_SERVICE, inventory_id)
+        pending = inventory_data.get("pending_modifications") or []
+        inventory_status = inventory_data.get("status")
+        retryable_failed = inventory_status == JobStatus.failed.value and pending
+        if inventory_status != JobStatus.completed.value and not retryable_failed:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"inventories/{inventory_id} status is '{inventory_status}', "
+                    f"expected 'completed'."
+                ),
+            )
+
+        # Queue only the delta; standgen merges pending_modifications into the
+        # cumulative `modifications` ledger atomically with status=completed, so
+        # the ledger always equals the applied data (#319). The checksum rotates
+        # now so derivatives become detectably stale (#304).
+        update = {
+            "pending_modifications": pending + new_modifications,
+            "checksum": new_checksum,
+            "status": JobStatus.pending.value,
+            "progress": None,
+            "error": None,
+            "modified_on": datetime.now(),
+        }
+        transaction.update(ref, update)
+        return {**inventory_data, **update}
+
+    inventory_data = await _append_pending(firestore_client.transaction())
+
+    # The task name embeds the fresh checksum: Cloud Tasks tombstones reused
+    # task names, so re-using the bare inventory_id (the create task's name)
+    # would silently drop this task.
+    await create_http_task_async(
+        STANDGEN_QUEUE,
+        STANDGEN_SERVICE,
+        inventory_id,
+        task_name=f"{inventory_id}-{new_checksum}",
+    )
 
     # pending_modifications is an internal work-queue field, not part of the
     # Inventory schema; Pydantic ignores it (and owner_id) on construction.

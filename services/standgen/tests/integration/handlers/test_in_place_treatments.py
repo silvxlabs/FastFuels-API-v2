@@ -104,15 +104,20 @@ def treatments_runner(shared_pim_source):
     """Apply an in-place treatment delta to a copy of the shared PIM source.
 
     Copies the shared PIM Parquet to a fresh ID, queues the treatments in
-    ``pending_treatments`` (as the API does), runs standgen, and returns
+    ``pending_treatments`` while leaving the ``treatments`` ledger holding only
+    ``prior_treatments`` (as the API does — the delta is merged into the ledger
+    only on completion, not at queue time), runs standgen, and returns
     ``(pim_inventory, treated_inventory)``. Cleans up each copy on teardown.
     """
     pim_inventory, pim_id, domain_id = shared_pim_source
     treated_ids = []
 
-    def _run(treatments: list[dict]) -> tuple[dict, dict]:
+    def _run(
+        treatments: list[dict], prior_treatments: list[dict] | None = None
+    ) -> tuple[dict, dict]:
         from standgen.main import process_inventory_request
 
+        prior_treatments = prior_treatments or []
         treated_id = f"test-{uuid4().hex}"
         get_gcsfs_client().copy(
             f"{INVENTORIES_BUCKET}/{pim_id}",
@@ -126,7 +131,9 @@ def treatments_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
-            "treatments": treatments,
+            # The ledger holds only previously-applied treatments; the new delta
+            # lives in pending_treatments until completion merges it in.
+            "treatments": prior_treatments,
             "pending_treatments": treatments,
         }
         set_document(INVENTORIES_COLLECTION, treated_id, treated_data)
@@ -141,8 +148,11 @@ def treatments_runner(shared_pim_source):
         assert treated_inventory["status"] == "completed", (
             f"Treated inventory not completed: {treated_inventory.get('error')}"
         )
-        # The delta is applied in place; the work queue is cleared on completion.
+        # The delta is applied in place; on completion the work queue is cleared
+        # and the delta is merged onto the end of the ledger (ledger == applied
+        # data), never duplicated or dropped (#319).
         assert treated_inventory.get("pending_treatments") == []
+        assert treated_inventory.get("treatments") == prior_treatments + treatments
 
         return pim_inventory, treated_inventory
 
@@ -262,6 +272,19 @@ def test_final_progress_is_100(treatments_runner):
     assert treated["progress"]["message"] == "Complete"
 
 
+def test_pending_delta_appended_to_existing_ledger(treatments_runner):
+    """A new treatment delta is appended to the existing ledger on completion,
+    not replacing it: an inventory that already carries a completed treatment
+    ends with both the prior treatment and the new delta, in order (#319)."""
+    prior = [{"metric": "diameter", "method": "from_below", "value": 5.0}]
+    delta = [{"metric": "diameter", "method": "from_above", "value": 30.0}]
+
+    _, treated = treatments_runner(delta, prior_treatments=prior)
+
+    assert treated.get("pending_treatments") == []
+    assert treated.get("treatments") == prior + delta
+
+
 @pytest.fixture
 def feature_treatments_runner(shared_pim_source):
     """Apply an in-place feature-scoped treatment to a copy of the shared source.
@@ -326,7 +349,8 @@ def feature_treatments_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
-            "treatments": resolved,
+            # Ledger starts empty; the delta is queued and merged on completion.
+            "treatments": [],
             "pending_treatments": resolved,
         }
         set_document(INVENTORIES_COLLECTION, treated_id, treated_data)
@@ -341,6 +365,10 @@ def feature_treatments_runner(shared_pim_source):
         assert treated_inventory["status"] == "completed", (
             f"Treated inventory not completed: {treated_inventory.get('error')}"
         )
+        # On completion the queued delta is merged into the ledger and the queue
+        # cleared (#319).
+        assert treated_inventory.get("pending_treatments") == []
+        assert treated_inventory.get("treatments") == resolved
         return pim_inventory, treated_inventory
 
     yield _run

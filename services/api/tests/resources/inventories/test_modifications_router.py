@@ -176,7 +176,9 @@ class TestApplyModificationsInPlace:
         )
         assert response.status_code == 200
         data = response.json()
-        expected_columns = [{**col, "summary": None} for col in source_inventory["columns"]]
+        expected_columns = [
+            {**col, "summary": None} for col in source_inventory["columns"]
+        ]
         assert data["columns"] == expected_columns
         assert data["georeference"] == source_inventory["georeference"]
 

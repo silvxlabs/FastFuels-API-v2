@@ -41,7 +41,7 @@
       "unit": "1/m"
     }
   ],
-  "checksum": "1345c9a309194894afca5d89695c246e",
+  "checksum": "cc6114e3004c41ad8bd51f0e25bfc96e",
   "chunks": {
     "count": 2,
     "count_by_axis": {
@@ -119,7 +119,7 @@
       "vertical": 1.0
     },
     "seed": 42,
-    "source_inventory_checksum": "13da4a21077e40fbb3171a16947325c6",
+    "source_inventory_checksum": "7a2e02dd5eaf475788d6ed0b1d945230",
     "source_inventory_id": "static-test-blue-mtn-pim-inventory"
   },
   "status": "completed",

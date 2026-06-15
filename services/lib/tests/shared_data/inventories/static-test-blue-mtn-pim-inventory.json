@@ -1,5 +1,5 @@
 {
-  "checksum": "13da4a21077e40fbb3171a16947325c6",
+  "checksum": "7a2e02dd5eaf475788d6ed0b1d945230",
   "columns": [
     {
       "key": "x",
@@ -65,7 +65,7 @@
     "name": "pim",
     "point_process": "inhomogeneous_poisson",
     "seed": 898870608,
-    "source_pim_grid_checksum": "0645db9b7f2145d699e144beeb7cbc59",
+    "source_pim_grid_checksum": "c2d42126e8734dd19ddd1a4aaaefe8ca",
     "source_pim_grid_id": "static-test-blue-mtn-pim-treemap"
   },
   "status": "completed",

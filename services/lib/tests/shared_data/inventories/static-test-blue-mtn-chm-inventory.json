@@ -1,5 +1,5 @@
 {
-  "checksum": "78542d0eb3c441329c43c1832bb683bc",
+  "checksum": "97c001a15ade4cf2b1b7bce2ab3da8e9",
   "columns": [
     {
       "key": "x",
@@ -44,7 +44,7 @@
       "name": "lmf"
     },
     "name": "chm",
-    "source_chm_grid_checksum": "bc99caaa828144a3ba607b65d31a010d",
+    "source_chm_grid_checksum": "04538408ba1148c2ad46f09908dfc33b",
     "source_chm_grid_id": "static-test-blue-mtn-naip-chm"
   },
   "status": "completed",

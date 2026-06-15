@@ -55,7 +55,7 @@
       "unit": "1/m"
     }
   ],
-  "checksum": "e16747c94e8343dbab00c1bebdbc2be9",
+  "checksum": "5b8c30bb413546dcae744f0f033bd1ba",
   "chunks": {
     "count": 2,
     "count_by_axis": {
@@ -93,7 +93,7 @@
   "source": {
     "name": "lookup",
     "source_band": "fbfm",
-    "source_grid_checksum": "3216c527caa64a48a5a9cf12ebde996f",
+    "source_grid_checksum": "31090ac673ff4c65acee09938fc473b9",
     "source_grid_id": "static-test-blue-mtn-landfire-fbfm40",
     "table": "fbfm40"
   },

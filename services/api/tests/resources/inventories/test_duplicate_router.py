@@ -106,7 +106,9 @@ class TestDuplicateInventory:
         assert response.status_code == 201, response.text
         data = response.json()
         cleanup_inventories.append(data["id"])
-        expected_columns = [{**col, "summary": None} for col in source_inventory["columns"]]
+        expected_columns = [
+            {**col, "summary": None} for col in source_inventory["columns"]
+        ]
 
         assert data["source"] == source_inventory["source"]
         assert data["checksum"] == source_inventory["checksum"]

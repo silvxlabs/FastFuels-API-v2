@@ -12,11 +12,36 @@ import pytest
 from treevox import inventory_io
 from treevox.errors import ProcessingError
 from treevox.inventory_io import (
-    REQUIRED_COLUMNS,
     assign_tree_ids,
     drop_null_rows,
     read_inventory,
 )
+
+# Every column a full tree inventory carries (e.g. an upload or PIM expansion).
+ALL_COLUMNS = [
+    "x",
+    "y",
+    "fia_species_code",
+    "fia_status_code",
+    "dbh",
+    "height",
+    "crown_ratio",
+]
+
+
+def _stub_schema(monkeypatch, columns):
+    """Make `read_inventory`'s schema probe return ``columns`` without GCS."""
+    monkeypatch.setattr(inventory_io, "_available_columns", lambda inv: set(columns))
+
+
+def _stub_open_raising(monkeypatch, exc):
+    """Make the schema probe's `gcsfs_client.open` raise ``exc``."""
+
+    class _FakeFS:
+        def open(self, *args, **kwargs):
+            raise exc
+
+    monkeypatch.setattr(inventory_io, "gcsfs_client", _FakeFS())
 
 
 class TestReadInventory:
@@ -41,22 +66,35 @@ class TestReadInventory:
             captured["filters"] = filters
             return df_in[columns] if columns else df_in
 
+        _stub_schema(monkeypatch, ALL_COLUMNS)
         monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
 
         result = read_inventory("inv123")
-        pd.testing.assert_frame_equal(result, df_in[REQUIRED_COLUMNS])
+        assert set(result.columns) == set(ALL_COLUMNS)
+        assert list(result["dbh"]) == [20.0]
         assert captured["path"].startswith("gs://")
         assert captured["path"].endswith("inv123")
-        # Column projection and status pushdown both make it to parquet.
-        assert captured["columns"] == REQUIRED_COLUMNS
+        # Full column projection and the live-tree pushdown both reach parquet.
+        assert set(captured["columns"]) == set(ALL_COLUMNS)
         assert captured["filters"] == [("fia_status_code", "=", 1)]
 
-    def test_biomass_column_appended_to_projection(self, monkeypatch):
-        df_in = pd.DataFrame(
-            {col: [1.0] for col in REQUIRED_COLUMNS} | {"my_load": [42.0]}
+    def test_missing_required_column_raises_missing_columns(self, monkeypatch):
+        """A height-only (CHM/ITD) inventory can't be voxelized — surface that as
+        MISSING_COLUMNS, not the old misleading INVENTORY_NOT_FOUND."""
+        _stub_schema(monkeypatch, ["x", "y", "height"])
+        monkeypatch.setattr(
+            inventory_io.pd,
+            "read_parquet",
+            lambda *a, **k: pytest.fail("should not read data when columns missing"),
         )
-        df_in["fia_species_code"] = [131]
-        df_in["fia_status_code"] = [1]
+
+        with pytest.raises(ProcessingError) as exc:
+            read_inventory("chm")
+        assert exc.value.code == "MISSING_COLUMNS"
+        assert "dbh" in exc.value.message
+
+    def test_biomass_column_appended_to_projection(self, monkeypatch):
+        df_in = pd.DataFrame({col: [1.0] for col in ALL_COLUMNS} | {"my_load": [42.0]})
 
         captured: dict = {}
 
@@ -64,20 +102,37 @@ class TestReadInventory:
             captured["columns"] = columns
             return df_in[columns]
 
+        _stub_schema(monkeypatch, ALL_COLUMNS + ["my_load"])
         monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
 
         read_inventory("inv1", biomass_column="my_load")
         assert "my_load" in captured["columns"]
 
+    def test_missing_biomass_column_raises_missing_columns(self, monkeypatch):
+        """A requested biomass/crown column that isn't in the inventory is a
+        missing required column too."""
+        _stub_schema(monkeypatch, ALL_COLUMNS)
+        monkeypatch.setattr(
+            inventory_io.pd,
+            "read_parquet",
+            lambda *a, **k: pytest.fail("should not read data when columns missing"),
+        )
+
+        with pytest.raises(ProcessingError) as exc:
+            read_inventory("inv1", biomass_column="my_load")
+        assert exc.value.code == "MISSING_COLUMNS"
+        assert "my_load" in exc.value.message
+
     def test_biomass_column_already_required_not_duplicated(self, monkeypatch):
-        """If the biomass column name happens to collide with REQUIRED_COLUMNS,
-        it must not appear twice (pyarrow would reject a duplicated projection)."""
+        """If the biomass column name collides with a required column, it must
+        not appear twice (pyarrow would reject a duplicated projection)."""
         captured: dict = {}
 
         def fake_read_parquet(path, columns=None, filters=None, **kwargs):
             captured["columns"] = columns
             return pd.DataFrame({c: [] for c in columns})
 
+        _stub_schema(monkeypatch, ALL_COLUMNS)
         monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
 
         read_inventory("inv1", biomass_column="dbh")
@@ -90,6 +145,7 @@ class TestReadInventory:
             captured["columns"] = columns
             return pd.DataFrame({c: [] for c in columns})
 
+        _stub_schema(monkeypatch, ALL_COLUMNS + ["lidar_max_radius"])
         monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
 
         read_inventory("inv1", crown_radius_column="lidar_max_radius")
@@ -102,6 +158,7 @@ class TestReadInventory:
             captured["columns"] = columns
             return pd.DataFrame({c: [] for c in columns})
 
+        _stub_schema(monkeypatch, ALL_COLUMNS + ["my_load", "lidar_max_radius"])
         monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
 
         read_inventory(
@@ -119,16 +176,29 @@ class TestReadInventory:
             captured["columns"] = columns
             return pd.DataFrame({c: [] for c in columns})
 
+        _stub_schema(monkeypatch, ALL_COLUMNS)
         monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
 
         read_inventory("inv1", crown_radius_column="dbh")
         assert captured["columns"].count("dbh") == 1
 
-    def test_missing_inventory_raises_processing_error(self, monkeypatch):
-        def raising(path, **kwargs):
-            raise FileNotFoundError(path)
+    def test_same_biomass_and_crown_radius_column_not_duplicated(self, monkeypatch):
+        """If both the biomass and max-crown-radius roles map to the same custom
+        column, it must appear once — pyarrow rejects a duplicated projection."""
+        captured: dict = {}
 
-        monkeypatch.setattr(inventory_io.pd, "read_parquet", raising)
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            return pd.DataFrame({c: [] for c in columns})
+
+        _stub_schema(monkeypatch, ALL_COLUMNS + ["my_col"])
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        read_inventory("inv1", biomass_column="my_col", crown_radius_column="my_col")
+        assert captured["columns"].count("my_col") == 1
+
+    def test_missing_inventory_raises_processing_error(self, monkeypatch):
+        _stub_open_raising(monkeypatch, FileNotFoundError("no _metadata"))
 
         with pytest.raises(ProcessingError) as exc:
             read_inventory("missing")
@@ -136,14 +206,25 @@ class TestReadInventory:
 
     def test_unexpected_io_error_also_maps_to_not_found(self, monkeypatch):
         """gcsfs / pyarrow may surface permission or transport errors; map all to NOT_FOUND."""
+        _stub_open_raising(monkeypatch, PermissionError("denied"))
 
-        def raising(path, **kwargs):
-            raise PermissionError("denied")
+        with pytest.raises(ProcessingError) as exc:
+            read_inventory("x")
+        assert exc.value.code == "INVENTORY_NOT_FOUND"
+
+    def test_data_read_failure_maps_to_not_found(self, monkeypatch):
+        """The footer probe can succeed (all columns present) yet the data read
+        still fail — e.g. a corrupt row group or transport error mid-scan. That
+        branch must also map to NOT_FOUND, distinct from the footer-probe path."""
+        _stub_schema(monkeypatch, ALL_COLUMNS)
+
+        def raising(*a, **k):
+            raise OSError("row group read failed")
 
         monkeypatch.setattr(inventory_io.pd, "read_parquet", raising)
 
         with pytest.raises(ProcessingError) as exc:
-            read_inventory("x")
+            read_inventory("inv1")
         assert exc.value.code == "INVENTORY_NOT_FOUND"
 
 

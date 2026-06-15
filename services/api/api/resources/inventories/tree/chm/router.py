@@ -12,13 +12,19 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.resources.inventories.modification_models import (
+    modification_referenced_columns,
+)
 from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.chm.examples import CREATE_CHM_OPENAPI_EXAMPLES
 from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
     CreateChmInventoryRequest,
 )
-from api.resources.inventories.utils import validate_feature_conditions
+from api.resources.inventories.utils import (
+    require_inventory_columns,
+    validate_feature_conditions,
+)
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -78,6 +84,15 @@ async def create_chm_inventory(
 
     await validate_feature_conditions(
         [*body.modifications, *body.treatments], owner_id, domain_id
+    )
+
+    # A CHM inventory only ever carries position and height. Reject create-time
+    # modifications that reference columns it won't have (e.g. `dbh > 30`) at the
+    # boundary, mirroring the in-place modifications guard.
+    require_inventory_columns(
+        {column.key for column in CHM_INVENTORY_COLUMNS},
+        modification_referenced_columns(body.modifications),
+        detail="A modification references column(s) a CHM inventory doesn't have.",
     )
 
     # Validate source CHM grid exists, is owned, in this domain, and completed

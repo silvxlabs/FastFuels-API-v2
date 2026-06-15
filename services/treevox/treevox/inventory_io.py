@@ -16,19 +16,42 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from lib.config import INVENTORIES_BUCKET
+from lib.gcs import gcsfs_client
+from lib.inventory import STATUS, VOXELIZE_REQUIRED_COLUMNS
 from treevox.errors import ProcessingError
 
-REQUIRED_COLUMNS = [
-    "x",
-    "y",
-    "fia_species_code",
-    "fia_status_code",
-    "dbh",
-    "height",
-    "crown_ratio",
-]
+
+def _available_columns(inventory_id: str) -> set[str]:
+    """Return the column names an inventory parquet carries (footer only).
+
+    Reads just the dask-written ``_metadata`` file — no data scan — so we can
+    fail with an actionable ``MISSING_COLUMNS`` error instead of a misleading
+    ``INVENTORY_NOT_FOUND`` when a required column is absent.
+    """
+    gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+    try:
+        with gcsfs_client.open(
+            f"{INVENTORIES_BUCKET}/{inventory_id}/_metadata", "rb"
+        ) as f:
+            return set(pq.read_schema(f).names)
+    except FileNotFoundError as e:
+        raise ProcessingError(
+            code="INVENTORY_NOT_FOUND",
+            message=f"Inventory {inventory_id} not found at {gcs_path}.",
+            suggestion="Verify the inventory ID exists and has completed processing.",
+        ) from e
+    except Exception as e:
+        # gcsfs / pyarrow can surface permission or transport errors as arbitrary
+        # exception types; treat any I/O failure as missing for user-facing
+        # purposes.
+        raise ProcessingError(
+            code="INVENTORY_NOT_FOUND",
+            message=f"Could not read inventory {inventory_id}: {e}",
+            suggestion="Verify the inventory ID exists and has completed processing.",
+        ) from e
 
 
 def read_inventory(
@@ -39,34 +62,44 @@ def read_inventory(
     """Read a tree-inventory parquet directly from GCS with column projection
     and a `fia_status_code == 1` predicate pushdown.
 
-    Only `REQUIRED_COLUMNS` (plus `biomass_column` and `crown_radius_column`
-    if supplied) are decoded; parquet row groups containing only dead trees
-    are skipped when statistics permit. This avoids staging the blob on the
-    Cloud Run tmpfs, cuts peak memory roughly in half during load, and
-    transfers less data over the wire.
-    """
-    gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-    columns = list(REQUIRED_COLUMNS)
-    for optional in (biomass_column, crown_radius_column):
-        if optional and optional not in columns:
-            columns.append(optional)
+    Only `VOXELIZE_REQUIRED_COLUMNS` (plus `biomass_column` and
+    `crown_radius_column` if supplied) are decoded; parquet row groups containing
+    only dead trees are skipped when statistics permit. This avoids staging the
+    blob on the Cloud Run tmpfs, cuts peak memory roughly in half during load,
+    and transfers less data over the wire.
 
-    try:
-        return pd.read_parquet(
-            gcs_path,
-            columns=columns,
-            filters=[("fia_status_code", "=", 1)],
-        )
-    except FileNotFoundError as e:
+    Missing required columns raise `MISSING_COLUMNS` (the API voxelize guard
+    already rejects such inventories; this is the backstop for direct calls).
+    """
+    # Dedupe so a request that maps both the biomass and max-crown-radius roles
+    # to the same inventory column doesn't produce a duplicated parquet
+    # projection (pyarrow rejects those).
+    optional = list(
+        dict.fromkeys(c for c in (biomass_column, crown_radius_column) if c)
+    )
+    required = VOXELIZE_REQUIRED_COLUMNS | set(optional)
+    missing = sorted(required - _available_columns(inventory_id))
+    if missing:
         raise ProcessingError(
-            code="INVENTORY_NOT_FOUND",
-            message=f"Inventory {inventory_id} not found at {gcs_path}.",
-            suggestion="Verify the inventory ID exists and has completed processing.",
-        ) from e
+            code="MISSING_COLUMNS",
+            message=(
+                f"Inventory {inventory_id} is missing column(s) required for "
+                f"voxelization: {missing}."
+            ),
+            suggestion=(
+                "Voxelization needs per-tree diameter, species, height, crown "
+                "ratio, and status. A position-and-height-only inventory (e.g. "
+                "from CHM/ITD extraction) must be enriched with those first."
+            ),
+        )
+
+    columns = sorted(VOXELIZE_REQUIRED_COLUMNS)
+    columns += [c for c in optional if c not in VOXELIZE_REQUIRED_COLUMNS]
+
+    gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+    try:
+        return pd.read_parquet(gcs_path, columns=columns, filters=[(STATUS, "=", 1)])
     except Exception as e:
-        # gcsfs / pyarrow can surface permission or transport errors as
-        # arbitrary exception types; treat any I/O failure as missing for
-        # user-facing purposes.
         raise ProcessingError(
             code="INVENTORY_NOT_FOUND",
             message=f"Could not read inventory {inventory_id}: {e}",
@@ -87,7 +120,7 @@ def drop_null_rows(
     drop individual rows missing `dbh` / `height` / `crown_ratio`. That's
     this function's job.
     """
-    required = list(REQUIRED_COLUMNS)
+    required = list(VOXELIZE_REQUIRED_COLUMNS)
     for optional in (biomass_column, crown_radius_column):
         if optional and optional not in required:
             required.append(optional)

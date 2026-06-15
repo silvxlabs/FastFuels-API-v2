@@ -9,6 +9,7 @@ to UPLOADS_BUCKET, calls handle_inventory directly, and asserts results.
 import json
 from uuid import uuid4
 
+import dask.dataframe as dd
 import gcsfs
 import geopandas as gpd
 import pandas as pd
@@ -177,8 +178,6 @@ class TestCsvUpload:
             assert exists(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
-            import dask.dataframe as dd
-
             parquet_df = dd.read_parquet(
                 f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
             ).compute()
@@ -186,6 +185,11 @@ class TestCsvUpload:
             assert list(parquet_df["x"]) == SAMPLE_X
             assert list(parquet_df["y"]) == SAMPLE_Y
             assert list(parquet_df["height"]) == SAMPLE_HEIGHT
+
+            # The Parquet carries exactly the columns the file provided — the
+            # uploader no longer pads missing optional columns with all-null
+            # placeholders, so absence stays absent downstream.
+            assert set(parquet_df.columns) == {"x", "y", "height"}
 
         finally:
             gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
@@ -219,6 +223,13 @@ class TestCsvUpload:
             result = snap.to_dict()
             assert result["status"] == "completed"
             assert [c["key"] for c in result["columns"]] == ["x", "y", "dbh", "height"]
+
+            # Only the provided columns are written — the provided optional (dbh)
+            # appears, but the optionals the file omitted are not padded in.
+            parquet_df = dd.read_parquet(
+                f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+            ).compute()
+            assert set(parquet_df.columns) == {"x", "y", "height", "dbh"}
         finally:
             gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
             if exists(gcs_path):

@@ -8,6 +8,7 @@ attribute conditions, expression conditions, and actions with optional
 pint unit conversion.
 """
 
+import ast
 import copy
 import json
 import logging
@@ -75,6 +76,35 @@ def convert_value(attribute: str, value, unit: str | None):
 
     converted = Q_(value, unit).to(native).magnitude
     return converted
+
+
+def referenced_columns(modifications: list[dict]) -> set[str]:
+    """Return the inventory column names a list of modification dicts references.
+
+    Mirrors the API's ``modification_referenced_columns`` for the Firestore-dict
+    shape standgen consumes: attribute conditions/actions contribute their
+    ``attribute``; expression conditions contribute every name used in the
+    expression. Spatial conditions and remove actions reference no measurement
+    column. Used by the handler to fail fast (with an actionable error) before a
+    rule touches a column the inventory's Parquet doesn't have.
+    """
+    columns: set[str] = set()
+    for mod in modifications:
+        for cond in mod.get("conditions", []):
+            if cond.get("source") in ("geometry", "feature"):
+                continue
+            if "expression" in cond:
+                tree = ast.parse(cond["expression"], mode="eval")
+                columns.update(
+                    node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+                )
+            elif "attribute" in cond:
+                columns.add(cond["attribute"])
+        for action in mod.get("actions", []):
+            attribute = action.get("attribute")
+            if attribute is not None:
+                columns.add(attribute)
+    return columns
 
 
 def apply_modifications(df: pd.DataFrame, modifications: list[dict]) -> pd.DataFrame:

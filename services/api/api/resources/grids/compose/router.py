@@ -31,6 +31,7 @@ from api.resources.grids.modification_models import (
 from api.resources.grids.schema import CHUNK_SHAPE, Band, BandType, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    resolve_modification_fuel_model_labels,
     validate_feature_modifications,
     validate_grid_has_band,
     validate_grid_has_georeference,
@@ -44,6 +45,7 @@ from lib.config import (
     GRIDDLE_SERVICE,
     GRIDS_COLLECTION,
 )
+from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 from lib.units import canonicalize_unit
 
 router = APIRouter()
@@ -222,12 +224,16 @@ def _is_bare_number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
 
+def _resolve_labels(value: Any) -> Any:
+    """Resolve FBFM40 string labels to integer codes, raising 422 on unknowns."""
+    try:
+        return resolve_fuel_model_value(value)
+    except UnknownFuelModelError as exc:
+        raise _http_422(str(exc))
+
+
 def _value_items(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
-
-
-def _has_string_value(value: Any) -> bool:
-    return any(isinstance(item, str) for item in _value_items(value))
 
 
 def _all_numeric_values(value: Any) -> bool:
@@ -361,8 +367,8 @@ def _validate_else_value(
     if isinstance(value, ComposeLiteral):
         if isinstance(value.value, str):
             raise _http_422(
-                "String literal fallbacks are not supported for grid compose outputs. "
-                "Use numeric categorical codes for categorical fallbacks."
+                "String fallbacks are only supported as FBFM fuel-model labels "
+                "for categorical output bands."
             )
         elif value.unit != output_band.unit:
             raise _http_422(
@@ -372,9 +378,23 @@ def _validate_else_value(
 
     if isinstance(value, str):
         raise _http_422(
-            "String literal fallbacks are not supported for grid compose outputs. "
-            "Use numeric categorical codes for categorical fallbacks."
+            "String fallbacks are only supported as FBFM fuel-model labels "
+            "for categorical output bands."
         )
+
+
+def _resolve_else_labels(value: ComposeElseValue, output_band: Band, aliases: set[str]):
+    """Resolve an FBFM label `else` fallback for a categorical output to a code.
+
+    Band references (`alias.band`) and non-categorical outputs are left as-is.
+    """
+    if output_band.type != BandType.categorical:
+        return value
+    if isinstance(value, str) and value.partition(".")[0] not in aliases:
+        return _resolve_labels(value)
+    if isinstance(value, ComposeLiteral) and isinstance(value.value, str):
+        value.value = _resolve_labels(value.value)
+    return value
 
 
 def _validate_conditions(
@@ -405,11 +425,8 @@ def _validate_conditions(
                 f"Operator '{condition.operator}' does not support list values."
             )
         if band["type"] == BandType.categorical.value:
-            if _has_string_value(condition.value):
-                raise _http_422(
-                    "Categorical compose conditions require numeric stored codes, "
-                    "not string labels. For example, FBFM GR1 is 101."
-                )
+            # FBFM labels (e.g. "GR1") resolve to their stored integer code.
+            condition.value = _resolve_labels(condition.value)
         elif not _all_numeric_values(condition.value):
             raise _http_422("Continuous compose conditions require numeric values.")
 
@@ -433,6 +450,9 @@ def _validate_compose_operations(
             )
         _validate_conditions(operation.conditions, source_grids, input_by_alias)
         if operation.else_ is not None:
+            operation.else_ = _resolve_else_labels(
+                operation.else_, output_band, set(source_grids)
+            )
             _validate_else_value(
                 operation.else_, output_band, source_grids, input_by_alias
             )
@@ -442,6 +462,9 @@ def _validate_compose_operations(
         _validate_conditions(operation.conditions, source_grids, input_by_alias)
         _validate_compute_units(operation, output_band, source_grids, input_by_alias)
         if operation.else_ is not None:
+            operation.else_ = _resolve_else_labels(
+                operation.else_, output_band, set(source_grids)
+            )
             _validate_else_value(
                 operation.else_, output_band, source_grids, input_by_alias
             )
@@ -478,6 +501,7 @@ async def create_compose(
     domain_id = domain["id"]
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    resolve_modification_fuel_model_labels(body.modifications)
     await _validate_compose_feature_conditions(
         body.select, body.compute, owner_id, domain_id
     )

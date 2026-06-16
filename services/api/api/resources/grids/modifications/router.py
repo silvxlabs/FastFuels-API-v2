@@ -23,6 +23,7 @@ from api.resources.grids.modifications.schema import ApplyGridModificationsReque
 from api.resources.grids.schema import Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    resolve_modification_fuel_model_labels,
     validate_feature_modifications,
     validate_grid_has_band,
 )
@@ -106,7 +107,9 @@ async def apply_grid_modifications(
     - `band`: dot-notation band key (e.g., `fbfm`, `fuel_load.1hr`)
     - `operator`: `eq`, `ne`, `gt`, `lt`, `ge`, `le`
       (`eq`/`ne` also accept a list of values)
-    - `value`: number, string, or list for `eq`/`ne`
+    - `value`: number or list for `eq`/`ne`. For `fbfm` bands you may use the
+      human-readable Scott-Burgan labels (`"GR1"`) or the numeric codes (`101`)
+      interchangeably — labels are resolved to codes when the rule is stored.
 
     **Spatial conditions** test each cell's location against a geometry. Two
     variants discriminated by the required `source` field:
@@ -159,6 +162,7 @@ async def apply_grid_modifications(
     domain_id = domain["id"]
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    resolve_modification_fuel_model_labels(body.modifications)
 
     new_modifications = dump_modifications_for_firestore(body.modifications)
     new_checksum = uuid.uuid4().hex

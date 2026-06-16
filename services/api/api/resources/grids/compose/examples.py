@@ -144,15 +144,15 @@ EXAMPLE_COMPOSE_SET_MEMBERSHIP = {
                     "band": "a.fbfm",
                     "operator": "in",
                     "value": [
-                        101,
-                        102,
-                        103,
-                        104,
-                        105,
-                        106,
-                        107,
-                        108,
-                        109,
+                        "GR1",
+                        "GR2",
+                        "GR3",
+                        "GR4",
+                        "GR5",
+                        "GR6",
+                        "GR7",
+                        "GR8",
+                        "GR9",
                     ],
                 }
             ],
@@ -239,7 +239,11 @@ EXAMPLE_COMPOSE_TYPED_LITERAL_FALLBACK = {
             "output": "fuel_load.1hr",
             "from": "a.fuel_load.1hr",
             "conditions": [
-                {"band": "a.fbfm", "operator": "ne", "value": [91, 92, 93, 98, 99]}
+                {
+                    "band": "a.fbfm",
+                    "operator": "ne",
+                    "value": ["NB1", "NB2", "NB3", "NB8", "NB9"],
+                }
             ],
             "else": {"type": "literal", "value": 0, "unit": "kg/m**2"},
         }
@@ -326,10 +330,11 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
         "description": (
             "Uses a categorical source band to decide which raster should "
             "supply the output value. The `in` operator checks whether "
-            "`a.fbfm` is one of the numeric Scott-Burgan grass fuel model "
-            "codes (GR1-GR9 are stored as 101-109); matching cells come from "
-            "RAP and all other cells come from LANDFIRE. For categorical "
-            "conditions, compose supports `eq`, `ne`, and `in`."
+            "`a.fbfm` is one of the Scott-Burgan grass fuel models. Conditions "
+            "accept the human-readable FBFM labels (`GR1`-`GR9`) or the "
+            "equivalent numeric codes (101-109) interchangeably; matching "
+            "cells come from RAP and all other cells come from LANDFIRE. For "
+            "categorical conditions, compose supports `eq`, `ne`, and `in`."
         ),
     },
     "inline_compute_fallback": {

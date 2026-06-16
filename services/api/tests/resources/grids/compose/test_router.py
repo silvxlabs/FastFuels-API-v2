@@ -207,7 +207,7 @@ class TestCreateCompose:
         assert response.status_code == 422
         assert "categorical" in response.json()["detail"].lower()
 
-    def test_categorical_condition_rejects_string_value(
+    def test_categorical_condition_accepts_fbfm_label(
         self, client, domain_for_testing, complete_grid
     ):
         body = {
@@ -229,8 +229,34 @@ class TestCreateCompose:
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
+        assert response.status_code == 201, response.json()
+        stored = response.json()["source"]["select"][0]["conditions"][0]["value"]
+        assert stored == 101
+
+    def test_unknown_fbfm_label_returns_422(
+        self, client, domain_for_testing, complete_grid
+    ):
+        body = {
+            "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
+            "bands": [
+                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
+            ],
+            "select": [
+                {
+                    "output": "fuel_load.1hr",
+                    "from": "a.fuel_load.1hr",
+                    "conditions": [
+                        {"band": "a.fbfm", "operator": "in", "value": ["GR1", "GRX"]}
+                    ],
+                    "else": 0,
+                }
+            ],
+        }
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+
         assert response.status_code == 422
-        assert "numeric stored codes" in response.json()["detail"]
+        assert "FBFM" in response.json()["detail"]
 
     def test_in_condition_requires_list_value(
         self, client, domain_for_testing, complete_grid
@@ -255,7 +281,7 @@ class TestCreateCompose:
         assert response.status_code == 422
         assert "requires a list" in response.json()["detail"]
 
-    def test_string_literal_fallback_returns_422(
+    def test_label_fallback_resolves_to_code(
         self, client, domain_for_testing, complete_grid
     ):
         body = {
@@ -266,15 +292,15 @@ class TestCreateCompose:
                     "output": "fbfm",
                     "from": "a.fbfm",
                     "conditions": [{"band": "a.fbfm", "operator": "eq", "value": 91}],
-                    "else": "NB1",
+                    "else": "GR2",
                 }
             ],
         }
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
-        assert response.status_code == 422
-        assert "String literal fallbacks" in response.json()["detail"]
+        assert response.status_code == 201, response.json()
+        assert response.json()["source"]["select"][0]["else"] == 102
 
     def test_numeric_categorical_fallback_is_allowed(
         self, client, domain_for_testing, complete_grid

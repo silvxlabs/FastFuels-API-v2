@@ -21,6 +21,7 @@ from api.resources.grids.modification_models import (
 from api.resources.grids.schema import GridDataChunkMetadata
 from api.resources.modifications import stringify_modification_coordinates
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 
 
 def dump_modifications_for_firestore(
@@ -34,6 +35,40 @@ def dump_modifications_for_firestore(
     pattern; the read-back validator on ``Grid`` decodes them again.
     """
     return stringify_modification_coordinates([m.model_dump() for m in modifications])
+
+
+def resolve_modification_fuel_model_labels(
+    modifications: list[GridModification],
+) -> None:
+    """Resolve FBFM40 string labels (e.g. ``"GR1"``) to integer codes in place.
+
+    Categorical grid bands store integer Scott-Burgan codes, so condition and
+    action values are normalized to codes at the write boundary; the processing
+    services stay integer-only. Numeric values pass through unchanged.
+
+    Raises:
+        HTTPException(422): If a string value is not a recognized FBFM40 label.
+    """
+    for modification in modifications:
+        for condition in modification.conditions:
+            value = getattr(condition, "value", None)
+            if value is None:
+                continue
+            try:
+                condition.value = resolve_fuel_model_value(value)
+            except UnknownFuelModelError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=str(exc),
+                )
+        for action in modification.actions:
+            try:
+                action.value = resolve_fuel_model_value(action.value)
+            except UnknownFuelModelError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=str(exc),
+                )
 
 
 def validate_grid_has_band(

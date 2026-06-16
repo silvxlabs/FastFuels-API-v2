@@ -10,6 +10,7 @@ from griddle.dispatch import (
     dispatch_handler,
     handle_3dep,
     handle_canopy,
+    handle_compose,
     handle_landfire,
     handle_lookup,
     handle_pim,
@@ -262,6 +263,24 @@ class TestDispatchHandler:
         assert exc_info.value.code == "UNKNOWN_SOURCE"
         assert "unknown_source" in exc_info.value.message
 
+    @patch("griddle.dispatch.handle_compose")
+    def test_routes_compose_source(self, mock_handle_compose):
+        """dispatch_handler routes compose source to handle_compose."""
+        mock_result = MagicMock()
+        mock_handle_compose.return_value = mock_result
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {
+            "source": {"name": "compose", "inputs": []},
+            "domain_id": "test-domain-id",
+        }
+
+        result = dispatch_handler(grid, mock_gdf, progress)
+
+        mock_handle_compose.assert_called_once_with(grid, grid["source"], progress)
+        assert result == mock_result
+
     @patch("griddle.dispatch.handle_lookup")
     def test_routes_lookup_source(self, mock_handle_lookup):
         """dispatch_handler routes lookup source to handle_lookup."""
@@ -278,6 +297,23 @@ class TestDispatchHandler:
         result = dispatch_handler(grid, mock_gdf, progress)
 
         mock_handle_lookup.assert_called_once_with(grid, grid["source"], progress)
+        assert result == mock_result
+
+
+class TestHandleCompose:
+    """Tests for handle_compose function."""
+
+    @patch("griddle.dispatch.compose.compose_grid")
+    def test_handle_compose_delegates_to_handler(self, mock_compose_grid):
+        mock_result = MagicMock()
+        mock_compose_grid.return_value = mock_result
+        grid = {"id": "grid-id", "source": {"name": "compose"}}
+        source = grid["source"]
+        progress = MagicMock()
+
+        result = handle_compose(grid, source, progress)
+
+        mock_compose_grid.assert_called_once_with(grid, source, progress)
         assert result == mock_result
 
 

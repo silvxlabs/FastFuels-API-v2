@@ -81,6 +81,9 @@ def shared_chm_inventory(module_chm_grid):
         f"Error: {inventory.get('error')}"
     )
     assert inventory.get("georeference") is not None
+    assert inventory.get("columns") is not None
+    for col in inventory["columns"]:
+        assert col["summary"] is not None
 
     yield inventory
 

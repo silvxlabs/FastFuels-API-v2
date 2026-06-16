@@ -127,6 +127,7 @@ def modifications_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             "modifications": modifications,
             "pending_modifications": modifications,
         }
@@ -142,6 +143,9 @@ def modifications_runner(shared_pim_source):
         assert mod_inventory["status"] == "completed", (
             f"Modifications inventory not completed: {mod_inventory.get('error')}"
         )
+        assert mod_inventory.get("columns") is not None
+        for col in mod_inventory["columns"]:
+            assert col["summary"] is not None
         # The delta is applied; the work queue is cleared on completion.
         assert mod_inventory.get("pending_modifications") == []
 
@@ -411,6 +415,7 @@ def feature_modifications_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             "modifications": resolved_mods,
             "pending_modifications": resolved_mods,
         }
@@ -426,6 +431,9 @@ def feature_modifications_runner(shared_pim_source):
         assert mod_inventory["status"] == "completed", (
             f"Modifications inventory not completed: {mod_inventory.get('error')}"
         )
+        assert mod_inventory.get("columns") is not None
+        for col in mod_inventory["columns"]:
+            assert col["summary"] is not None
         return pim_inventory, mod_inventory
 
     yield _run

@@ -61,6 +61,15 @@ def firestore_inventory():
                 "point_process": "inhomogeneous_poisson",
                 "seed": seed,
             },
+            "columns": [
+                {"key": "x", "type": "continuous", "unit": "m"},
+                {"key": "y", "type": "continuous", "unit": "m"},
+                {"key": "fia_species_code", "type": "categorical"},
+                {"key": "fia_status_code", "type": "categorical"},
+                {"key": "dbh", "type": "continuous", "unit": "cm"},
+                {"key": "height", "type": "continuous", "unit": "m"},
+                {"key": "crown_ratio", "type": "continuous"},
+            ],
         }
         set_document(INVENTORIES_COLLECTION, inventory_id, data)
         created_ids.append(inventory_id)
@@ -107,6 +116,12 @@ class TestProcessInventoryRequest:
         inventory = snapshot.to_dict()
         assert inventory["status"] == "completed"
         assert inventory["georeference"] is not None
+        columns = inventory.get("columns", [])
+        assert len(columns) > 0
+        for col in columns:
+            assert col["summary"] is not None
+            assert col["summary"]["count"] >= 0
+            assert col["summary"]["null_count"] >= 0
 
     @pytest.mark.parametrize("source_pim_grid", [STATIC_PIM_GRID], indirect=True)
     def test_parquet_written_to_gcs(

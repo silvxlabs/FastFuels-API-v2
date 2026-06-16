@@ -1,0 +1,105 @@
+"""Unit tests for compose schema models."""
+
+import pytest
+from api.resources.grids.compose.examples import ALL_COMPOSE_EXAMPLE_VALUES
+from api.resources.grids.compose.schema import (
+    ComposeLiteral,
+    CreateComposeRequest,
+)
+from pydantic import ValidationError
+
+
+class TestCreateComposeRequest:
+    def test_minimal_valid_request(self):
+        request = CreateComposeRequest(
+            inputs=[{"grid_id": "grid_a", "alias": "a"}],
+            bands=[{"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}],
+            compute=[
+                {
+                    "output": "fuel_load.1hr",
+                    "operator": "multiply",
+                    "operands": ["a.fuel_load.1hr", 0.5],
+                }
+            ],
+        )
+
+        assert request.inputs[0].alias == "a"
+        assert request.compute[0].operands[1] == 0.5
+
+    def test_alias_must_be_identifier_like(self):
+        with pytest.raises(ValidationError):
+            CreateComposeRequest(
+                inputs=[{"grid_id": "grid_a", "alias": "a.bad"}],
+                bands=[
+                    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
+                ],
+                compute=[
+                    {
+                        "output": "fuel_load.1hr",
+                        "operator": "multiply",
+                        "operands": ["a.fuel_load.1hr", 0.5],
+                    }
+                ],
+            )
+
+    def test_duplicate_outputs_rejected(self):
+        with pytest.raises(ValidationError, match="Duplicate"):
+            CreateComposeRequest(
+                inputs=[{"grid_id": "grid_a", "alias": "a"}],
+                bands=[
+                    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
+                ],
+                select=[
+                    {"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"},
+                    {"output": "fuel_load.1hr", "from": "a.fuel_load.10hr"},
+                ],
+            )
+
+    def test_bands_must_match_operation_outputs(self):
+        with pytest.raises(ValidationError, match="exactly match"):
+            CreateComposeRequest(
+                inputs=[{"grid_id": "grid_a", "alias": "a"}],
+                bands=[{"key": "fuel_depth", "type": "continuous", "unit": "m"}],
+                select=[{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
+            )
+
+    def test_else_required_with_conditions(self):
+        with pytest.raises(ValidationError, match="else"):
+            CreateComposeRequest(
+                inputs=[{"grid_id": "grid_a", "alias": "a"}],
+                bands=[
+                    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
+                ],
+                select=[
+                    {
+                        "output": "fuel_load.1hr",
+                        "from": "a.fuel_load.1hr",
+                        "conditions": [
+                            {"band": "a.fbfm", "operator": "eq", "value": 91}
+                        ],
+                    }
+                ],
+            )
+
+
+class TestComposeLiteral:
+    def test_typed_literal_accepts_canonical_unit(self):
+        literal = ComposeLiteral(value=7, unit="kg/m**2")
+        assert literal.type == "literal"
+        assert literal.value == 7
+
+    def test_typed_literal_rejects_noncanonical_unit(self):
+        with pytest.raises(ValidationError):
+            ComposeLiteral(value=7, unit="kg/m^2")
+
+    def test_string_literal_must_be_unitless(self):
+        with pytest.raises(ValidationError):
+            ComposeLiteral(value="NB1", unit="%")
+
+
+class TestExamplesValidateAgainstSchema:
+    @pytest.mark.parametrize("example_name,example_value", ALL_COMPOSE_EXAMPLE_VALUES)
+    def test_example_validates_against_schema(self, example_name, example_value):
+        request = CreateComposeRequest(**example_value)
+        assert request.inputs, example_name
+        assert request.bands, example_name

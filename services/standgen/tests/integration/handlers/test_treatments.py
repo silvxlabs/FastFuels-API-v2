@@ -142,6 +142,7 @@ def treatment_runner(treatment_env):
                 "seed": seed,
                 "source_pim_grid_id": grid_id,
             },
+            "columns": baseline["columns"],
             "treatments": _stringify_treatments(treatments),
         }
         set_document(INVENTORIES_COLLECTION, treated_id, treated_data)
@@ -156,6 +157,9 @@ def treatment_runner(treatment_env):
         assert treated["status"] == "completed", (
             f"Treated inventory not completed: {treated.get('error')}"
         )
+        assert treated.get("columns") is not None
+        for col in treated["columns"]:
+            assert col["summary"] is not None
         return baseline, treated
 
     yield _run

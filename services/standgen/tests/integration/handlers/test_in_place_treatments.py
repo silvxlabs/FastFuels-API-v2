@@ -126,6 +126,7 @@ def treatments_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             "treatments": treatments,
             "pending_treatments": treatments,
         }
@@ -141,6 +142,9 @@ def treatments_runner(shared_pim_source):
         assert treated_inventory["status"] == "completed", (
             f"Treated inventory not completed: {treated_inventory.get('error')}"
         )
+        assert treated_inventory.get("columns") is not None
+        for col in treated_inventory["columns"]:
+            assert col["summary"] is not None
         # The delta is applied in place; the work queue is cleared on completion.
         assert treated_inventory.get("pending_treatments") == []
 
@@ -326,6 +330,7 @@ def feature_treatments_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             "treatments": resolved,
             "pending_treatments": resolved,
         }
@@ -341,6 +346,9 @@ def feature_treatments_runner(shared_pim_source):
         assert treated_inventory["status"] == "completed", (
             f"Treated inventory not completed: {treated_inventory.get('error')}"
         )
+        assert treated_inventory.get("columns") is not None
+        for col in treated_inventory["columns"]:
+            assert col["summary"] is not None
         return pim_inventory, treated_inventory
 
     yield _run

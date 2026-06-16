@@ -13,6 +13,8 @@ from standgen.handlers.chm import handle_chm
 
 from lib.errors import ProcessingError
 
+from .conftest import CHM_INVENTORY_COLUMNS
+
 # --- Fixtures for Handler ---
 
 
@@ -31,6 +33,7 @@ def mock_inventory_lmf():
             },
         },
         "modifications": [],
+        "columns": CHM_INVENTORY_COLUMNS,
     }
 
 
@@ -50,6 +53,7 @@ def mock_inventory_vwf():
             },
         },
         "modifications": [],
+        "columns": CHM_INVENTORY_COLUMNS,
     }
 
 
@@ -93,7 +97,7 @@ class TestHandleChm:
     @patch("standgen.handlers.chm.count_inventory_rows")
     @patch("standgen.handlers.chm.get_document")
     @patch("standgen.handlers.chm.load_grid")
-    @patch("standgen.handlers.chm.save_parquet")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
     @patch("standgen.handlers.chm.fixed_window_filter")
     def test_successful_lmf_execution(
         self,
@@ -110,6 +114,7 @@ class TestHandleChm:
         self._setup_mock_grid(mock_get, mock_load, resolution=1.0)
         mock_fixed_filter.return_value = mock_trees_ddf
         mock_count.return_value = 2
+        mock_save.return_value = ("gs://test-bucket/test-inv-123", {})
         progress = MagicMock()
 
         # Execute
@@ -128,15 +133,18 @@ class TestHandleChm:
         mock_save.assert_called_once()
         args, _ = mock_save.call_args
         saved_ddf = args[1]
+        saved_columns = args[2]
 
         assert isinstance(saved_ddf, dd.DataFrame)
         assert sorted(saved_ddf.columns.tolist()) == ["height", "x", "y"]
         assert result["georeference"]["crs"] == "EPSG:32610"
+        assert "columns" in result
+        assert saved_columns == mock_inventory_lmf["columns"]
 
     @patch("standgen.handlers.chm.count_inventory_rows")
     @patch("standgen.handlers.chm.get_document")
     @patch("standgen.handlers.chm.load_grid")
-    @patch("standgen.handlers.chm.save_parquet")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
     @patch("standgen.handlers.chm.variable_window_filter")
     def test_successful_vwf_execution(
         self,
@@ -152,6 +160,7 @@ class TestHandleChm:
         """Handler correctly routes VWF and passes exact parameters."""
         self._setup_mock_grid(mock_get, mock_load, resolution=0.5)
         mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {})
         mock_count.return_value = 2
         progress = MagicMock()
 

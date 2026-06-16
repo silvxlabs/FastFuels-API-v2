@@ -78,11 +78,20 @@ def update_progress(inventory_id, message, percent=None):
         raise CancelledException(f"Inventory {inventory_id} was cancelled")
 
 
-def update_status(inventory_id, status, georeference=None, error=None, extra=None):
+def update_status(
+    inventory_id, status, georeference=None, columns=None, error=None, extra=None
+):
     """Update inventory status.
 
-    ``extra`` merges additional fields into the update — used to clear the
-    ``pending_modifications`` work queue once an in-place modification completes.
+    Args:
+        inventory_id: Inventory document ID.
+        status: New status value ('pending', 'running', 'completed', 'failed').
+        georeference: Spatial reference to write on completion.
+        columns: Column list with populated summaries to write on completion.
+        error: Error details to write on failure.
+        extra: Additional fields merged into the update — used to clear
+            ``pending_modifications`` or ``pending_treatments`` once an
+            in-place handler completes.
     """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
@@ -91,6 +100,8 @@ def update_status(inventory_id, status, georeference=None, error=None, extra=Non
         data["progress"] = {"message": "Failed", "percent": 100}
     if georeference is not None:
         data["georeference"] = georeference
+    if columns is not None:
+        data["columns"] = columns
     if error is not None:
         data["error"] = error
     if extra:
@@ -209,6 +220,7 @@ def process_inventory_request(request: Request):
             inventory_id,
             "completed",
             georeference=result["georeference"],
+            columns=result["columns"],
             extra=completion_extra,
         )
         logger.info("Processing complete", extra=ids)

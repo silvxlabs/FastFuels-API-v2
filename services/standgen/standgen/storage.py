@@ -2,6 +2,7 @@
 
 import logging
 
+import dask
 import dask.dataframe as dd
 import gcsfs
 import pandas as pd
@@ -12,8 +13,12 @@ from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
 from lib.errors import ProcessingError
 from lib.gcs import delete_directory, exists, gcsfs_client
 from lib.zarr_utils import load_zarr
+from standgen.summarize import _build_column_stats_graph
 
 logger = logging.getLogger(__name__)
+
+
+FLOAT_STATS = {"min", "max", "mean", "std"}
 
 
 def load_grid(grid_id: str) -> xr.Dataset:
@@ -36,29 +41,90 @@ def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:
     return dd.read_parquet(path)
 
 
-def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
-    """Write a dask DataFrame to GCS as partitioned Parquet.
+def _compute_write_and_stats(
+    write_delayed, stats_graph: dict[str, dict]
+) -> dict[str, dict]:
+    """Flatten lazy reductions and a deferred parquet write into a single
+    dask.compute call, then reassemble the stats dict.
 
-    Each partition writes as a separate part-XXXX.parquet file.
-    The full DataFrame is never materialized in memory.
+    Handles both continuous columns (which use a single ``.agg()`` lazy Series)
+    and categorical columns (which use individual lazy scalars).
+
+    Args:
+        write_delayed: Deferred parquet write from ``ddf.to_parquet(..., compute=False)``.
+        stats_graph: Dict of lazy reductions from ``_build_column_stats_graph``.
+
+    Returns:
+        Dict keyed by column key with computed summary stats.
+    """
+    # Collect all lazy objects alongside their (col_key, stat_key) address
+    flat_lazy = []
+    flat_keys = []
+    for k in stats_graph:
+        for s, val in stats_graph[k].items():
+            if s == "type":
+                continue
+            flat_lazy.append(val)
+            flat_keys.append((k, s))
+
+    results = dask.compute(write_delayed, *flat_lazy)
+    computed_values = results[1:]
+
+    stats = {}
+    for i, (k, s) in enumerate(flat_keys):
+        if k not in stats:
+            stats[k] = {"type": stats_graph[k]["type"]}
+        val = computed_values[i]
+        if s in FLOAT_STATS:
+            stats[k][s] = float(val)
+        else:
+            stats[k][s] = int(val)
+
+    for k, v in stats.items():
+        if v["type"] == "continuous" and v["count"] == 0:
+            v["min"] = v["max"] = v["mean"] = v["std"] = None
+
+    return stats
+
+
+def save_parquet_with_summary(
+    inventory_id: str,
+    ddf: dd.DataFrame,
+    columns: list[dict],
+) -> tuple[str, dict[str, dict]]:
+    """Write partitions to GCS and compute per-column summaries in one pass.
+
+    Flattens all lazy scalar reductions from ``_build_column_stats_graph``
+    alongside the deferred parquet write into a single ``dask.compute`` call.
+    Because the scalars and the write share the same dask expression graph,
+    each partition is materialized exactly once.
     """
     path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-    ddf.to_parquet(path, write_metadata_file=True)
-    logger.info(f"Saved inventory data to {path}")
-    return path
+    write_delayed = ddf.to_parquet(path, write_metadata_file=False, compute=False)
+    stats_graph = _build_column_stats_graph(ddf, columns)
+    stats = _compute_write_and_stats(write_delayed, stats_graph)
+
+    logger.info(f"Saved inventory data with summaries to {path}")
+    return path, stats
 
 
-def save_parquet_replace(inventory_id: str, ddf: dd.DataFrame) -> str:
-    """Replace an inventory's Parquet data in place with ``ddf``.
+def save_parquet_replace_with_summary(
+    inventory_id: str,
+    ddf: dd.DataFrame,
+    columns: list[dict],
+) -> tuple[str, dict[str, dict]]:
+    """Replace an inventory's Parquet data in place with ``ddf`` and compute
+    per-column summaries in one pass.
 
     ``ddf`` is typically derived by reading the inventory's *own* current
     Parquet (an in-place modification). Writing straight back to the live path
     would corrupt the data: ``dd.read_parquet`` is lazy, so the read executes
-    during this write and would race the overwrite. Instead write to a staging
-    prefix, then swap it into place once the write (and its read) have
-    completed:
+    during this write and would race the overwrite. Instead, the stats
+    reductions and the write are fused into a single dask.compute call against
+    a staging prefix, then swapped into place once complete:
 
-    1. write ``ddf`` to ``{id}__rev`` (reads the live ``{id}`` here),
+    1. fuse write + stats reductions to ``{id}__rev`` in a single ``dask.compute``
+       call by flattening lazy scalars alongside the deferred write,
     2. delete the live ``{id}`` directory,
     3. server-side copy ``{id}__rev`` -> ``{id}`` (same bucket, no egress),
     4. delete the staging ``{id}__rev`` directory.
@@ -71,7 +137,11 @@ def save_parquet_replace(inventory_id: str, ddf: dd.DataFrame) -> str:
     if exists(staging_uri):
         delete_directory(staging_uri)
 
-    ddf.to_parquet(staging_uri, write_metadata_file=True)
+    write_delayed = ddf.to_parquet(
+        staging_uri, write_metadata_file=False, compute=False
+    )
+    stats_graph = _build_column_stats_graph(ddf, columns)
+    stats = _compute_write_and_stats(write_delayed, stats_graph)
 
     # dask wrote staging through its own gcsfs instance, and the exists() probe
     # above cached this client's listing of the (then-absent) staging dir. Drop
@@ -102,7 +172,7 @@ def save_parquet_replace(inventory_id: str, ddf: dd.DataFrame) -> str:
     delete_directory(staging_uri)
 
     logger.info(f"Replaced inventory data at gs://{live_rel}")
-    return f"gs://{live_rel}"
+    return f"gs://{live_rel}", stats
 
 
 def count_inventory_rows(inventory_id: str) -> int | None:

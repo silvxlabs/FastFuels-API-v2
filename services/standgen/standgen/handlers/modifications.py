@@ -15,7 +15,7 @@ from standgen.modifications import (
     apply_modifications,
     resolve_spatial_conditions,
 )
-from standgen.storage import load_inventory_parquet, save_parquet_replace
+from standgen.storage import load_inventory_parquet, save_parquet_replace_with_summary
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,8 @@ def apply_in_place_modifications(
         progress: Callback for progress reporting.
 
     Returns:
-        Dict with 'georeference' key (the inventory's existing georeference).
+        Dict with 'georeference' key (the inventory's existing georeference)
+        and 'columns' key with per-column summary statistics populated.
     """
     inventory_id = inventory["id"]
     modifications = inventory.get("pending_modifications", [])
@@ -58,8 +59,15 @@ def apply_in_place_modifications(
 
     # Replace the inventory's Parquet in place (staging swap — see storage.py).
     progress("Writing modified inventory...", 70)
-    save_parquet_replace(inventory_id, ddf)
+    _, stats = save_parquet_replace_with_summary(
+        inventory_id, ddf, inventory["columns"]
+    )
 
     progress("Complete", 100)
 
-    return {"georeference": inventory.get("georeference")}
+    return {
+        "georeference": inventory.get("georeference"),
+        "columns": [
+            {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
+        ],
+    }

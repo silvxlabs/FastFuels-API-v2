@@ -27,7 +27,7 @@ from standgen.modifications import (
     apply_modifications,
     resolve_spatial_conditions,
 )
-from standgen.storage import load_grid, load_tree_table, save_parquet
+from standgen.storage import load_grid, load_tree_table, save_parquet_with_summary
 from standgen.treatments import apply_treatments
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,8 @@ def handle_pim(
         progress: Callback for progress reporting
 
     Returns:
-        Dict with 'georeference' key
+        Dict with 'georeference' key and 'columns' key with per-column
+        summary statistics populated.
     """
     inventory_id = inventory["id"]
     source_pim_grid_id = source["source_pim_grid_id"]
@@ -185,7 +186,7 @@ def handle_pim(
 
     # Write Parquet to GCS (lazy — each partition writes separately)
     progress("Writing inventory data...", 80)
-    save_parquet(inventory_id, ddf)
+    _, stats = save_parquet_with_summary(inventory_id, ddf, inventory["columns"])
 
     # Compute georeference from domain
     progress("Computing georeference...", 95)
@@ -193,7 +194,12 @@ def handle_pim(
 
     progress("Complete", 100)
 
-    return {"georeference": georeference}
+    return {
+        "georeference": georeference,
+        "columns": [
+            {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
+        ],
+    }
 
 
 def raster_to_plots_gdf(dataset: xr.Dataset, plot_id_band: str) -> gpd.GeoDataFrame:

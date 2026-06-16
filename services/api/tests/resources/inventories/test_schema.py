@@ -8,6 +8,10 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.inventories.schema import (
+    CategoricalColumnSummary,
+    Column,
+    ColumnType,
+    ContinuousColumnSummary,
     CreateInventoryRequestBase,
     Inventory,
     InventoryDataFormat,
@@ -413,3 +417,75 @@ class TestInventoryDataResponse:
         )
         assert resp.num_rows == 0
         assert resp.data == []
+
+
+class TestColumnSummary:
+    """Tests for Column summary discriminated union."""
+
+    def test_continuous_summary_round_trip(self):
+        col = Column(
+            key="dbh",
+            type=ColumnType.continuous,
+            unit="cm",
+            summary={
+                "type": "continuous",
+                "count": 100,
+                "null_count": 5,
+                "min": 2.5,
+                "max": 80.0,
+                "mean": 25.3,
+                "std": 10.1,
+            },
+        )
+        assert isinstance(col.summary, ContinuousColumnSummary)
+        assert col.summary.count == 100
+        assert col.summary.min == 2.5
+        d = col.model_dump()
+        restored = Column(**d)
+        assert restored.summary.mean == col.summary.mean
+
+    def test_categorical_summary_round_trip(self):
+        col = Column(
+            key="fia_species_code",
+            type=ColumnType.categorical,
+            summary={
+                "type": "categorical",
+                "count": 200,
+                "null_count": 0,
+                "unique_count": 12,
+            },
+        )
+        assert isinstance(col.summary, CategoricalColumnSummary)
+        assert col.summary.unique_count == 12
+        d = col.model_dump()
+        restored = Column(**d)
+        assert restored.summary.unique_count == 12
+
+    def test_continuous_all_null_column(self):
+        col = Column(
+            key="dbh",
+            type=ColumnType.continuous,
+            summary={
+                "type": "continuous",
+                "count": 0,
+                "null_count": 50,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "std": None,
+            },
+        )
+        assert col.summary.count == 0
+        assert col.summary.min is None
+
+    def test_summary_defaults_to_none(self):
+        col = Column(key="dbh", type=ColumnType.continuous)
+        assert col.summary is None
+
+    def test_wrong_discriminator_raises(self):
+        with pytest.raises(ValidationError):
+            Column(
+                key="dbh",
+                type=ColumnType.continuous,
+                summary={"type": "unknown", "count": 1, "null_count": 0},
+            )

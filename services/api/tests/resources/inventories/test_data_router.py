@@ -127,11 +127,7 @@ class TestGetInventoryDataMetadata:
         assert data["total_rows"] > 0
         assert isinstance(data["columns"], list)
         assert len(data["columns"]) > 0
-        assert len(data["partitions"]) == data["num_partitions"]
-        for p in data["partitions"]:
-            assert "index" in p
-            assert "num_rows" in p
-            assert p["num_rows"] > 0
+        assert "partitions" not in data
 
     def test_inventory_not_completed_returns_422(
         self, client, domain_for_testing, pending_inventory_in_firestore

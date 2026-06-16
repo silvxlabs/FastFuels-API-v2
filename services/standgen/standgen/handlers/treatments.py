@@ -15,8 +15,18 @@ from standgen.modifications import (
     _has_spatial_condition,
     resolve_spatial_conditions,
 )
-from standgen.storage import load_inventory_parquet, save_parquet_replace
-from standgen.treatments import DIA_COLUMN, apply_treatments
+from standgen.storage import (
+    load_inventory_parquet,
+    write_changed_partitions,
+    write_full_partitions,
+)
+from standgen.treatments import (
+    DIA_COLUMN,
+    apply_treatments,
+    apply_treatments_to_partition,
+    has_proportional_basal_area,
+    precompute_cutoffs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +56,12 @@ def apply_in_place_treatments(
     # reproducible (diameter/directional thinning consumes no RNG).
     seed = inventory.get("source", {}).get("seed")
 
-    # Load the inventory's own current data as a dask DataFrame.
-    progress("Loading inventory...", 10)
+    # Read the inventory's schema. Treatments thin against tree diameter; the API
+    # rejects dbh-less inventories at request time from the document's column
+    # metadata, but this checks the actual Parquet schema (footer only, no data
+    # scan) so a stale document fails with an actionable error instead of a
+    # KeyError mid-write.
     ddf = load_inventory_parquet(inventory_id)
-
-    # Treatments thin against tree diameter. The API rejects dbh-less
-    # inventories at request time from the document's column metadata; this
-    # checks the actual Parquet schema (no compute) so a stale document fails
-    # with an actionable error instead of a KeyError mid-write.
     if DIA_COLUMN not in ddf.columns:
         raise ProcessingError(
             code="TREATMENTS_REQUIRE_DBH",
@@ -68,18 +76,33 @@ def apply_in_place_treatments(
             ),
         )
 
-    # Apply only the new delta. Resolve spatial-condition geometries once here
-    # (off the per-partition path) when any are present.
+    # Resolve spatial-condition geometries once here (off the per-partition path)
+    # when any are present.
     progress("Applying treatments...", 40)
     if _has_spatial_condition(treatments):
         treatments = resolve_spatial_conditions(
             treatments, inventory["domain_id"], domain_gdf.crs
         )
-    ddf = apply_treatments(ddf, treatments, domain_gdf, seed=seed)
 
-    # Replace the inventory's Parquet in place (staging swap — see storage.py).
     progress("Writing treated inventory...", 70)
-    save_parquet_replace(inventory_id, ddf)
+    if has_proportional_basal_area(treatments):
+        # Proportional basal-area removes trees at random over the whole treated
+        # population, so it cannot be reproduced as a per-partition filter; the
+        # result is materialized and the full dataset rewritten.
+        result = apply_treatments(ddf, treatments, domain_gdf, seed=seed).compute()
+        write_full_partitions(inventory_id, result)
+    else:
+        # Diameter and directional basal-area thins are per-partition filters —
+        # the latter via a diameter cutoff precomputed over the treated
+        # population — so rewrite only the partitions that change, including for
+        # polygon-scoped thins.
+        cutoffs = precompute_cutoffs(ddf, treatments, domain_gdf)
+        write_changed_partitions(
+            inventory_id,
+            lambda df: apply_treatments_to_partition(
+                df, treatments, cutoffs, domain_gdf
+            ),
+        )
 
     progress("Complete", 100)
 

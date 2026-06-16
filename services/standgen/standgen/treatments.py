@@ -240,6 +240,135 @@ def apply_treatments(
     return ddf
 
 
+def has_proportional_basal_area(treatments: list[dict]) -> bool:
+    """True if any treatment is a proportional basal-area thin.
+
+    Proportional thinning removes trees at random over the whole treated
+    population, so — unlike diameter and directional basal-area thins — it cannot
+    be reproduced as a per-partition filter and forces a full rewrite.
+    """
+    return any(
+        t["metric"] == "basal_area" and t["method"] == "proportional"
+        for t in treatments
+    )
+
+
+def precompute_cutoffs(
+    ddf: dd.DataFrame, treatments: list[dict], domain_gdf: gpd.GeoDataFrame
+) -> list[float | None]:
+    """Diameter cutoff for each directional basal-area treatment (None otherwise).
+
+    A directional basal-area thin to a target stand basal area is equivalent to a
+    single diameter cutoff (keep the largest trees for ``from_below``, the
+    smallest for ``from_above``). Finding that cutoff needs the whole treated
+    population at once, so this materializes it once — the in-region subset for a
+    spatially-scoped thin, the whole inventory otherwise — applying any preceding
+    treatments first so a composed thin sees the right population. The cutoff is
+    then applied per-partition by :func:`apply_treatments_to_partition`, so the
+    write stays partial (only the partitions a scoped thin overlaps change).
+    """
+    cutoffs: list[float | None] = [None] * len(treatments)
+    for i, treatment in enumerate(treatments):
+        if treatment["metric"] != "basal_area":
+            continue  # diameter treatments are row-local; no global cutoff
+        conditions = treatment.get("conditions", [])
+        region_area_ha = compute_region_area_ha(domain_gdf, conditions)
+        _enforce_area_limit(region_area_ha, scoped=bool(conditions))
+        if conditions:
+            mask = ddf.map_partitions(
+                build_condition_mask, conditions, meta=pd.Series(dtype=bool)
+            )
+            pop = ddf[mask].compute().reset_index(drop=True)
+        else:
+            pop = ddf.compute().reset_index(drop=True)
+        for j in range(i):
+            pop = _apply_treatment_to_df(pop, treatments[j], cutoffs[j], domain_gdf)
+        cutoffs[i] = _directional_cutoff(pop, treatment, domain_gdf)
+    return cutoffs
+
+
+def _directional_cutoff(
+    pop: pd.DataFrame, treatment: dict, domain_gdf: gpd.GeoDataFrame
+) -> float | None:
+    """Diameter cutoff that reproduces a directional basal-area thin of ``pop``.
+
+    Runs the fastfuels-core thinner once to get the kept set, then takes the
+    boundary diameter: the smallest kept tree for ``from_below`` (keep dbh >=
+    cutoff) or the largest for ``from_above`` (keep dbh <= cutoff). Returns
+    ``None`` when the stand is already at/below target (nothing removed).
+    """
+    if pop.empty:
+        return None
+    conditions = treatment.get("conditions", [])
+    area_ha = compute_region_area_ha(domain_gdf, conditions)
+    value_per_ha = convert_treatment_value(
+        "basal_area", treatment["value"], treatment.get("unit")
+    )
+    kept = build_thinner(treatment, value_per_ha * area_ha).apply(
+        pop, dia_column_name=DIA_COLUMN
+    )
+    if len(kept) >= len(pop):
+        return None  # already at/below target — nothing removed
+    if kept.empty:
+        # Target is below even the largest tree's basal area — remove everything.
+        # The per-partition filter then drops every in-region tree.
+        return float("inf") if treatment["method"] == "from_below" else float("-inf")
+    if treatment["method"] == "from_below":
+        return float(kept[DIA_COLUMN].min())
+    return float(kept[DIA_COLUMN].max())
+
+
+def _apply_directional_cutoff(
+    df: pd.DataFrame, treatment: dict, cutoff: float | None
+) -> pd.DataFrame:
+    """Apply a precomputed directional basal-area cutoff to a single partition."""
+    if cutoff is None or df.empty:
+        return df
+    conditions = treatment.get("conditions", [])
+    in_region = (
+        build_condition_mask(df, conditions)
+        if conditions
+        else pd.Series(True, index=df.index)
+    )
+    if treatment["method"] == "from_below":
+        remove = in_region & (df[DIA_COLUMN] < cutoff)
+    else:  # from_above
+        remove = in_region & (df[DIA_COLUMN] > cutoff)
+    return df[~remove].reset_index(drop=True)
+
+
+def _apply_treatment_to_df(
+    df: pd.DataFrame,
+    treatment: dict,
+    cutoff: float | None,
+    domain_gdf: gpd.GeoDataFrame,
+) -> pd.DataFrame:
+    """Apply one per-partition-expressible treatment (diameter or directional
+    basal-area) to a DataFrame."""
+    if treatment["metric"] == "diameter":
+        return apply_single_treatment(df, treatment, domain_gdf)
+    return _apply_directional_cutoff(df, treatment, cutoff)
+
+
+def apply_treatments_to_partition(
+    df: pd.DataFrame,
+    treatments: list[dict],
+    cutoffs: list[float | None],
+    domain_gdf: gpd.GeoDataFrame,
+) -> pd.DataFrame:
+    """Apply diameter + directional basal-area treatments to a single partition.
+
+    Each diameter treatment is a row-local filter; each directional basal-area
+    treatment is applied via its precomputed cutoff (see
+    :func:`precompute_cutoffs`). Both are per-partition, so the handler rewrites
+    only the partitions that change — including for polygon-scoped thins.
+    Proportional basal-area is NOT routed here.
+    """
+    for treatment, cutoff in zip(treatments, cutoffs):
+        df = _apply_treatment_to_df(df, treatment, cutoff, domain_gdf)
+    return df
+
+
 def _apply_treatment_to_ddf(
     ddf: dd.DataFrame, treatment: dict, domain_gdf: gpd.GeoDataFrame
 ) -> dd.DataFrame:

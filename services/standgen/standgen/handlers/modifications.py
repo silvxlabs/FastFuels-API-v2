@@ -15,7 +15,7 @@ from standgen.modifications import (
     apply_modifications,
     resolve_spatial_conditions,
 )
-from standgen.storage import load_inventory_parquet, save_parquet_replace
+from standgen.storage import write_changed_partitions
 
 logger = logging.getLogger(__name__)
 
@@ -43,22 +43,21 @@ def apply_in_place_modifications(
     inventory_id = inventory["id"]
     modifications = inventory.get("pending_modifications", [])
 
-    # Load the inventory's own current data as a dask DataFrame.
-    progress("Loading inventory...", 10)
-    ddf = load_inventory_parquet(inventory_id)
-
-    # Apply only the new delta. Resolve spatial-condition geometries once here
-    # (off the per-partition path) when any are present.
+    # Resolve spatial-condition geometries once here (off the per-partition path)
+    # when any are present.
     progress("Applying modifications...", 40)
     if _has_spatial_condition(modifications):
         modifications = resolve_spatial_conditions(
             modifications, inventory["domain_id"], domain_gdf.crs
         )
-    ddf = ddf.map_partitions(apply_modifications, modifications)
 
-    # Replace the inventory's Parquet in place (staging swap — see storage.py).
+    # Apply the pending delta to each partition and rewrite only the partitions
+    # whose content changed — a scoped modification touches only the partitions
+    # it overlaps. The ``modifications`` ledger and ``georeference`` are unchanged.
     progress("Writing modified inventory...", 70)
-    save_parquet_replace(inventory_id, ddf)
+    write_changed_partitions(
+        inventory_id, lambda df: apply_modifications(df, modifications)
+    )
 
     progress("Complete", 100)
 

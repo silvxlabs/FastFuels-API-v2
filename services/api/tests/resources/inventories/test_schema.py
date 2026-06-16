@@ -14,7 +14,6 @@ from api.resources.inventories.schema import (
     InventoryDataMetadata,
     InventoryDataResponse,
     InventoryJsonOrientation,
-    InventoryPartitionInfo,
     InventorySortField,
     InventoryType,
     ListInventoriesResponse,
@@ -335,18 +334,6 @@ class TestInventoryJsonOrientation:
         assert InventoryJsonOrientation("records") == InventoryJsonOrientation.records
 
 
-class TestInventoryPartitionInfo:
-    def test_basic(self):
-        p = InventoryPartitionInfo(index=0, num_rows=1000)
-        assert p.index == 0
-        assert p.num_rows == 1000
-
-    def test_serialization(self):
-        p = InventoryPartitionInfo(index=2, num_rows=500)
-        d = p.model_dump()
-        assert d == {"index": 2, "num_rows": 500}
-
-
 class TestInventoryDataMetadata:
     def test_basic(self):
         meta = InventoryDataMetadata(
@@ -354,16 +341,11 @@ class TestInventoryDataMetadata:
             num_partitions=2,
             total_rows=2000,
             columns=["x", "y", "dbh"],
-            partitions=[
-                InventoryPartitionInfo(index=0, num_rows=1000),
-                InventoryPartitionInfo(index=1, num_rows=1000),
-            ],
         )
         assert meta.inventory_id == "abc123"
         assert meta.num_partitions == 2
         assert meta.total_rows == 2000
         assert meta.columns == ["x", "y", "dbh"]
-        assert len(meta.partitions) == 2
 
     def test_serialization_round_trip(self):
         meta = InventoryDataMetadata(
@@ -371,7 +353,6 @@ class TestInventoryDataMetadata:
             num_partitions=1,
             total_rows=100,
             columns=["x"],
-            partitions=[InventoryPartitionInfo(index=0, num_rows=100)],
         )
         d = meta.model_dump()
         restored = InventoryDataMetadata(**d)

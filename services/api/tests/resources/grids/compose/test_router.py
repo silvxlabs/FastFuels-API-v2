@@ -278,8 +278,10 @@ class TestCreateCompose:
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
+        # `in`-requires-list is now a schema (Pydantic) check, so FastAPI
+        # returns the standard list-shaped validation error body.
         assert response.status_code == 422
-        assert "requires a list" in response.json()["detail"]
+        assert "requires a list" in str(response.json()["detail"])
 
     def test_label_fallback_resolves_to_code(
         self, client, domain_for_testing, complete_grid

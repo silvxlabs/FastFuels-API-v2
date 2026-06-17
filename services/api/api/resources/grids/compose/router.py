@@ -12,6 +12,7 @@ from api.db.documents import firestore_client, get_document_async, set_document_
 from api.dependencies import VerifiedDomain
 from api.resources.grids.compose.examples import CREATE_COMPOSE_OPENAPI_EXAMPLES
 from api.resources.grids.compose.schema import (
+    CATEGORICAL_CONDITION_OPERATORS,
     ComposeAttributeCondition,
     ComposeCompute,
     ComposeElseValue,
@@ -52,6 +53,19 @@ router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 _ureg = pint.UnitRegistry()
+
+# Operators whose output carries the same unit as its operands (as opposed to
+# multiply/divide, which derive a new unit). Operands must be unit-compatible
+# with the output band.
+_UNIT_MATCHED_OPERATORS = frozenset(
+    {
+        ComposeOperator.add,
+        ComposeOperator.subtract,
+        ComposeOperator.average,
+        ComposeOperator.min,
+        ComposeOperator.max,
+    }
+)
 
 
 def _http_422(message: str) -> HTTPException:
@@ -200,10 +214,6 @@ def _canonical_unit_from_pint(unit) -> str | None:
     return canonicalize_unit(formatted)
 
 
-def _literal_is_numeric(literal: ComposeLiteral) -> bool:
-    return not isinstance(literal.value, str)
-
-
 def _operand_metadata(
     operand: Any,
     source_grids: dict[str, dict],
@@ -246,57 +256,32 @@ def _units_compatible(left: str | None, right: str | None) -> bool:
     return _unit_object(left).is_compatible_with(_unit_object(right))
 
 
-def _validate_compute_arity(op: ComposeCompute | InlineCompute) -> None:
-    count = len(op.operands)
-    if op.operator in {
-        ComposeOperator.add,
-        ComposeOperator.multiply,
-        ComposeOperator.average,
-        ComposeOperator.min,
-        ComposeOperator.max,
-    }:
-        if count < 2:
-            raise _http_422(f"Operator '{op.operator}' requires at least two operands.")
-    elif count != 2:
-        raise _http_422(f"Operator '{op.operator}' requires exactly two operands.")
-
-
 def _validate_compute_units(
     op: ComposeCompute | InlineCompute,
     output_band: Band,
     source_grids: dict[str, dict],
     input_by_alias: dict[str, ComposeInput],
 ) -> None:
-    _validate_compute_arity(op)
+    """Validate operand band types and derive/check the output unit.
 
+    Operand arity and structural operand rules are enforced by the schema; this
+    only handles what needs the loaded source-grid metadata.
+    """
     raster_bands = [
         metadata
         for operand in op.operands
         if (metadata := _operand_metadata(operand, source_grids, input_by_alias))
         is not None
     ]
-    if not raster_bands:
-        raise _http_422("Compute operations must include at least one band operand.")
-
     for band in raster_bands:
         if band["type"] != BandType.continuous.value:
             raise _http_422("Compute operands must reference continuous bands.")
-
-    for operand in op.operands:
-        if isinstance(operand, ComposeLiteral) and not _literal_is_numeric(operand):
-            raise _http_422("String literals are not valid compute operands.")
 
     typed_literal_units = [
         operand.unit for operand in op.operands if isinstance(operand, ComposeLiteral)
     ]
 
-    if op.operator in {
-        ComposeOperator.add,
-        ComposeOperator.subtract,
-        ComposeOperator.average,
-        ComposeOperator.min,
-        ComposeOperator.max,
-    }:
+    if op.operator in _UNIT_MATCHED_OPERATORS:
         units = [band.get("unit") for band in raster_bands] + typed_literal_units
         has_unitful = any(unit is not None for unit in units)
         has_unitless = any(unit is None for unit in units)
@@ -406,25 +391,11 @@ def _validate_conditions(
         if not isinstance(condition, ComposeAttributeCondition):
             continue
         band = _band_ref_metadata(condition.band, source_grids, input_by_alias)
-        if band["type"] == BandType.categorical.value and condition.operator not in {
-            "eq",
-            "ne",
-            "in",
-        }:
-            raise _http_422(
-                "Categorical compose conditions support only eq, ne, and in."
-            )
-        if condition.operator == "in" and not isinstance(condition.value, list):
-            raise _http_422(
-                "The 'in' compose condition operator requires a list value."
-            )
-        if condition.operator not in {"eq", "ne", "in"} and isinstance(
-            condition.value, list
-        ):
-            raise _http_422(
-                f"Operator '{condition.operator}' does not support list values."
-            )
         if band["type"] == BandType.categorical.value:
+            if condition.operator not in CATEGORICAL_CONDITION_OPERATORS:
+                raise _http_422(
+                    "Categorical compose conditions support only eq, ne, and in."
+                )
             # FBFM labels (e.g. "GR1") resolve to their stored integer code.
             condition.value = _resolve_labels(condition.value)
         elif not _all_numeric_values(condition.value):

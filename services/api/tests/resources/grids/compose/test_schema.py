@@ -3,8 +3,11 @@
 import pytest
 from api.resources.grids.compose.examples import ALL_COMPOSE_EXAMPLE_VALUES
 from api.resources.grids.compose.schema import (
+    ComposeAttributeCondition,
+    ComposeCompute,
     ComposeLiteral,
     CreateComposeRequest,
+    InlineCompute,
 )
 from pydantic import ValidationError
 
@@ -95,6 +98,51 @@ class TestComposeLiteral:
     def test_string_literal_must_be_unitless(self):
         with pytest.raises(ValidationError):
             ComposeLiteral(value="NB1", unit="%")
+
+
+class TestComputationOperands:
+    """Operand arity and structure are enforced by the schema, not the router."""
+
+    def test_binary_operator_requires_exactly_two_operands(self):
+        with pytest.raises(ValidationError, match="exactly two operands"):
+            InlineCompute(operator="divide", operands=["a.x", "a.y", "a.z"])
+
+    def test_variadic_operator_requires_at_least_two_operands(self):
+        with pytest.raises(ValidationError, match="at least two operands"):
+            InlineCompute(operator="add", operands=["a.x"])
+
+    def test_requires_at_least_one_band_operand(self):
+        with pytest.raises(ValidationError, match="at least one band operand"):
+            InlineCompute(operator="add", operands=[1, 2])
+
+    def test_string_literal_is_not_a_valid_operand(self):
+        with pytest.raises(ValidationError, match="String literals are not valid"):
+            InlineCompute(
+                operator="add",
+                operands=["a.x", {"type": "literal", "value": "NB1"}],
+            )
+
+    def test_compose_compute_inherits_operand_validation(self):
+        with pytest.raises(ValidationError, match="exactly two operands"):
+            ComposeCompute(output="z", operator="subtract", operands=["a.x"])
+
+
+class TestAttributeConditionShape:
+    """`in`/ordering operator value shape is enforced by the schema."""
+
+    def test_in_operator_requires_list_value(self):
+        with pytest.raises(ValidationError, match="requires a list value"):
+            ComposeAttributeCondition(band="a.fbfm", operator="in", value=101)
+
+    def test_ordering_operator_rejects_list_value(self):
+        with pytest.raises(ValidationError, match="does not support list values"):
+            ComposeAttributeCondition(band="a.x", operator="gt", value=[1, 2])
+
+    def test_equality_accepts_scalar_or_list(self):
+        assert ComposeAttributeCondition(band="a.x", operator="eq", value=1).value == 1
+        assert ComposeAttributeCondition(
+            band="a.x", operator="eq", value=[1, 2]
+        ).value == [1, 2]
 
 
 class TestExamplesValidateAgainstSchema:

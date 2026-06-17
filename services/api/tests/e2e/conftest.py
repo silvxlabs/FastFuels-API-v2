@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import gcsfs
+import httpx
 import pytest
 from api.resources.domains.examples import EXAMPLE_WGS84_DEFAULT
 from google.cloud import firestore
@@ -43,6 +44,11 @@ STATIC_GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 STATIC_INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
 STATIC_FEATURES_DIR = SHARED_TEST_FEATURES_DIR
 E2E_CREATE_TIMEOUT_SECONDS = 240.0
+# Per-request read timeout for completion-poll GETs. The client default (30s)
+# is too tight when the service under test is cold-starting after a fresh
+# deploy, so each poll GET gets a generous budget and transient transport
+# errors are retried (see _poll_for_completion).
+POLL_REQUEST_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -76,10 +82,17 @@ def _poll_for_completion(
     domain_id: str,
     resource_type: str,
     resource_id: str,
-    timeout: int = 120,
+    timeout: int = 300,
     interval: float = 1,
 ) -> dict:
-    """Poll the API until the resource reaches a terminal status."""
+    """Poll the API until the resource reaches a terminal status.
+
+    Each poll GET uses a generous per-request read timeout, and transient
+    transport errors (read timeouts, dropped connections) are logged and
+    retried within the overall ``timeout`` budget rather than failing the test.
+    This tolerates the slower cold-start responses that follow a fresh deploy
+    of the service under test.
+    """
     url = f"/domains/{domain_id}/{resource_type}/{resource_id}"
     start = time.time()
 
@@ -90,7 +103,16 @@ def _poll_for_completion(
                 f"{resource_type}/{resource_id} did not complete within {timeout}s"
             )
 
-        response = client.get(url)
+        try:
+            response = client.get(url, timeout=POLL_REQUEST_TIMEOUT_SECONDS)
+        except httpx.TransportError as exc:
+            logger.warning(
+                f"Transient error polling {resource_type}/{resource_id} "
+                f"(elapsed={elapsed:.0f}s); retrying: {type(exc).__name__}: {exc}"
+            )
+            time.sleep(interval)
+            continue
+
         if response.status_code != 200:
             pytest.fail(f"GET {url} returned {response.status_code}: {response.text}")
 

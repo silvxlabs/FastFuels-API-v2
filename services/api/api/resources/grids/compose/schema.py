@@ -46,6 +46,35 @@ class ComposeComparisonOperator(StrEnum):
     in_ = "in"
 
 
+# Operators that accept two or more operands; the rest are strictly binary.
+VARIADIC_OPERATORS = frozenset(
+    {
+        ComposeOperator.add,
+        ComposeOperator.multiply,
+        ComposeOperator.average,
+        ComposeOperator.min,
+        ComposeOperator.max,
+    }
+)
+# Comparison operators valid on categorical bands (ordering is meaningless).
+CATEGORICAL_CONDITION_OPERATORS = frozenset(
+    {
+        ComposeComparisonOperator.eq,
+        ComposeComparisonOperator.ne,
+        ComposeComparisonOperator.in_,
+    }
+)
+# Ordering comparisons require a single scalar operand, never a list.
+_ORDERING_OPERATORS = frozenset(
+    {
+        ComposeComparisonOperator.gt,
+        ComposeComparisonOperator.lt,
+        ComposeComparisonOperator.ge,
+        ComposeComparisonOperator.le,
+    }
+)
+
+
 class ComposeInput(BaseModel):
     """A source grid participating in a compose request."""
 
@@ -115,11 +144,44 @@ BareNumber = StrictInt | StrictFloat
 ComposeOperand = str | BareNumber | ComposeLiteral
 
 
+def _validate_computation_operands(
+    operator: ComposeOperator, operands: list[ComposeOperand]
+) -> None:
+    """Structural operand checks shared by computes and inline computes.
+
+    These depend only on the request body (operator arity, the presence of a
+    band operand, operand types); unit and band-type compatibility are checked
+    by the router against the loaded source grids.
+    """
+    if operator in VARIADIC_OPERATORS:
+        if len(operands) < 2:
+            raise ValueError(f"Operator '{operator}' requires at least two operands.")
+    elif len(operands) != 2:
+        raise ValueError(f"Operator '{operator}' requires exactly two operands.")
+
+    if not any(isinstance(operand, str) for operand in operands):
+        raise ValueError("Compute operations must include at least one band operand.")
+    if any(
+        isinstance(operand, ComposeLiteral) and isinstance(operand.value, str)
+        for operand in operands
+    ):
+        raise ValueError("String literals are not valid compute operands.")
+
+
 class InlineCompute(BaseModel):
-    """Computation usable as a conditional fallback value."""
+    """A computation body: an operator over operands.
+
+    Usable on its own as a conditional-fallback value; `ComposeCompute`
+    extends it with an output target and optional conditions.
+    """
 
     operator: ComposeOperator
     operands: list[ComposeOperand] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def _check_operands(self):
+        _validate_computation_operands(self.operator, self.operands)
+        return self
 
 
 ComposeElseValue = str | BareNumber | ComposeLiteral | InlineCompute
@@ -131,6 +193,17 @@ class ComposeAttributeCondition(BaseModel):
     band: str = Field(..., description="Alias-qualified band ref, e.g. `a.fbfm`.")
     operator: ComposeComparisonOperator
     value: StrictInt | StrictFloat | str | list[StrictInt | StrictFloat | str]
+
+    @model_validator(mode="after")
+    def _check_operator_value_shape(self):
+        is_list = isinstance(self.value, list)
+        if self.operator == ComposeComparisonOperator.in_ and not is_list:
+            raise ValueError("The 'in' condition operator requires a list value.")
+        if self.operator in _ORDERING_OPERATORS and is_list:
+            raise ValueError(
+                f"Operator '{self.operator}' does not support list values."
+            )
+        return self
 
 
 ComposeCondition = (
@@ -159,14 +232,12 @@ class ComposeSelect(BaseModel):
         return self
 
 
-class ComposeCompute(BaseModel):
+class ComposeCompute(InlineCompute):
     """Compute an output band from one or more operands."""
 
     model_config = ConfigDict(populate_by_name=True)
 
     output: str
-    operator: ComposeOperator
-    operands: list[ComposeOperand] = Field(..., min_length=1)
     conditions: list[ComposeCondition] | None = None
     else_: ComposeElseValue | None = Field(default=None, alias="else")
 

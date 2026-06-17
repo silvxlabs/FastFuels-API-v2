@@ -162,9 +162,7 @@ async def apply_grid_modifications(
     domain_id = domain["id"]
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
-    resolve_modification_fuel_model_labels(body.modifications)
 
-    new_modifications = dump_modifications_for_firestore(body.modifications)
     new_checksum = uuid.uuid4().hex
     ref = firestore_client.collection(COLLECTION).document(grid_id)
 
@@ -197,6 +195,13 @@ async def apply_grid_modifications(
             )
 
         validate_grid_has_band(grid_data, grid_id, _referenced_band_keys(body))
+
+        # Resolve FBFM labels against the grid's own band types (the
+        # authoritative read), then snapshot the delta. Re-running on a
+        # transaction retry is a no-op: resolved codes pass through unchanged.
+        band_types = {b["key"]: b["type"] for b in grid_data.get("bands", [])}
+        resolve_modification_fuel_model_labels(body.modifications, band_types)
+        new_modifications = dump_modifications_for_firestore(body.modifications)
 
         pending = grid_data.get("pending_modifications") or []
         grid_status = grid_data.get("status")

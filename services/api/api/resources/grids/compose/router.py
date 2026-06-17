@@ -501,7 +501,8 @@ async def create_compose(
     domain_id = domain["id"]
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
-    resolve_modification_fuel_model_labels(body.modifications)
+    output_band_types = {band.key: band.type.value for band in body.bands}
+    resolve_modification_fuel_model_labels(body.modifications, output_band_types)
     await _validate_compose_feature_conditions(
         body.select, body.compute, owner_id, domain_id
     )

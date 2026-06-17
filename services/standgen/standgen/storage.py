@@ -4,14 +4,13 @@ import logging
 
 import dask
 import dask.dataframe as dd
-import gcsfs
 import pandas as pd
 import pyarrow.parquet as pq
 import xarray as xr
 
 from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
 from lib.errors import ProcessingError
-from lib.gcs import delete_directory, exists, gcsfs_client
+from lib.gcs import delete_directory, exists, get_gcsfs_client
 from lib.zarr_utils import load_zarr
 from standgen.summarize import _build_column_stats_graph
 
@@ -87,6 +86,21 @@ def _compute_write_and_stats(
     return stats
 
 
+def _write_parquet(ddf: dd.DataFrame, path: str) -> None:
+    """Write ``ddf`` as partitioned Parquet with an aggregated ``_metadata`` file.
+
+    ``write_index=False`` keeps dask from materializing the meaningless
+    RangeIndex as a synthetic ``__null_dask_index__`` column in the file
+    schema, which leaked into the API's data/metadata ``columns`` (#335).
+
+    Returns a deferred write for fusing with stats reductions in a single
+    ``dask.compute`` call.
+    """
+    return ddf.to_parquet(
+        path, write_metadata_file=True, write_index=False, compute=False
+    )
+
+
 def save_parquet_with_summary(
     inventory_id: str,
     ddf: dd.DataFrame,
@@ -100,7 +114,7 @@ def save_parquet_with_summary(
     each partition is materialized exactly once.
     """
     path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-    write_delayed = ddf.to_parquet(path, write_metadata_file=False, compute=False)
+    write_delayed = _write_parquet(ddf, path)
     stats_graph = _build_column_stats_graph(ddf, columns)
     stats = _compute_write_and_stats(write_delayed, stats_graph)
 
@@ -137,17 +151,17 @@ def save_parquet_replace_with_summary(
     if exists(staging_uri):
         delete_directory(staging_uri)
 
-    write_delayed = ddf.to_parquet(
-        staging_uri, write_metadata_file=False, compute=False
-    )
+    write_delayed = _write_parquet(ddf, staging_uri)
     stats_graph = _build_column_stats_graph(ddf, columns)
     stats = _compute_write_and_stats(write_delayed, stats_graph)
+
+    fs = get_gcsfs_client()
 
     # dask wrote staging through its own gcsfs instance, and the exists() probe
     # above cached this client's listing of the (then-absent) staging dir. Drop
     # the stale cache so the copy and the count check below list staging fresh.
-    gcsfs_client.invalidate_cache()
-    staged_files = gcsfs_client.find(staging_rel)
+    fs.invalidate_cache()
+    staged_files = fs.find(staging_rel)
 
     delete_directory(f"gs://{live_rel}")
     # Recursive copy keeps fsspec's default on_error="ignore". gcsfs's
@@ -156,9 +170,9 @@ def save_parquet_replace_with_summary(
     # swallowed, so transient errors still raise). That same leniency would also
     # skip a genuinely missing part file, so verify completeness by file count
     # before deleting staging — never mark an incomplete dataset completed.
-    gcsfs_client.copy(staging_rel, live_rel, recursive=True)
-    gcsfs_client.invalidate_cache()
-    live_files = gcsfs_client.find(live_rel)
+    fs.copy(staging_rel, live_rel, recursive=True)
+    fs.invalidate_cache()
+    live_files = fs.find(live_rel)
     if len(live_files) != len(staged_files):
         raise ProcessingError(
             code="INVENTORY_REWRITE_INCOMPLETE",
@@ -188,7 +202,7 @@ def count_inventory_rows(inventory_id: str) -> int | None:
     into a job failure at the logging step.
     """
     path = f"{INVENTORIES_BUCKET}/{inventory_id}/_metadata"
-    fs = gcsfs.GCSFileSystem()
+    fs = get_gcsfs_client()
     try:
         with fs.open(path, "rb") as f:
             return pq.read_metadata(f).num_rows

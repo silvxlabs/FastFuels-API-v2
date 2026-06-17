@@ -31,20 +31,20 @@ class TestWriteParquet:
     def test_no_null_dask_index_in_schema(self, inventory_df, tmp_path):
         """dask's synthetic RangeIndex column must not be written (#335)."""
         path = str(tmp_path / "inv")
-        _write_parquet(dd.from_pandas(inventory_df, npartitions=2), path)
+        _write_parquet(dd.from_pandas(inventory_df, npartitions=2), path).compute()
 
         assert _schema_names(path) == ["x", "y", "height"]
 
     def test_writes_metadata_file(self, inventory_df, tmp_path):
         path = str(tmp_path / "inv")
-        _write_parquet(dd.from_pandas(inventory_df, npartitions=2), path)
+        _write_parquet(dd.from_pandas(inventory_df, npartitions=2), path).compute()
 
         metadata = pq.read_metadata(f"{path}/_metadata")
         assert metadata.num_rows == 4
 
     def test_round_trip_preserves_data(self, inventory_df, tmp_path):
         path = str(tmp_path / "inv")
-        _write_parquet(dd.from_pandas(inventory_df, npartitions=2), path)
+        _write_parquet(dd.from_pandas(inventory_df, npartitions=2), path).compute()
 
         result = dd.read_parquet(path).compute().reset_index(drop=True)
         pd.testing.assert_frame_equal(result, inventory_df)
@@ -59,7 +59,7 @@ class TestWriteParquet:
         assert "__null_dask_index__" in _schema_names(legacy_path)
 
         rewritten_path = str(tmp_path / "rewritten")
-        _write_parquet(dd.read_parquet(legacy_path), rewritten_path)
+        _write_parquet(dd.read_parquet(legacy_path), rewritten_path).compute()
 
         assert _schema_names(rewritten_path) == ["x", "y", "height"]
         result = dd.read_parquet(rewritten_path).compute().reset_index(drop=True)

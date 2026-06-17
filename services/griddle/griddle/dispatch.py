@@ -12,6 +12,7 @@ import xarray as xr
 
 from griddle.handlers import (
     chm,
+    compose,
     landfire,
     layerset,
     lookup,
@@ -111,6 +112,8 @@ def dispatch_handler(
             return handle_canopy(domain_gdf, source, progress_callback)
         case "3dep":
             return handle_3dep(domain_gdf, source, progress_callback)
+        case "compose":
+            return handle_compose(grid, source, progress_callback)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",
@@ -320,6 +323,16 @@ def handle_resample(
         band_types=band_types,
         progress=progress,
     )
+
+
+def handle_compose(
+    grid: dict,
+    source: dict,
+    progress: Callable[[str, int | None], None],
+) -> xr.Dataset:
+    """Handle compose source grids."""
+    progress("Composing grid...", 10)
+    return compose.compose_grid(grid, source, progress)
 
 
 def handle_uniform(

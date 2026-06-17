@@ -466,7 +466,7 @@ def _dump_operations_for_firestore(
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid by composing existing grids",
 )
-async def create_compose(
+async def create_compose_grid(
     request: Request,
     domain: VerifiedDomain,
     body: Annotated[

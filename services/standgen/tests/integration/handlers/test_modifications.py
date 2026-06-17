@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import dask.dataframe as dd
 import geopandas as gpd
+import pyarrow.parquet as pq
 import pytest
 from shapely.geometry import box
 
@@ -33,7 +34,7 @@ from lib.gcs.blobs import (
     delete_directory,
     delete_file,
     exists,
-    gcsfs_client,
+    get_gcsfs_client,
     upload_file,
 )
 from lib.testing import SHARED_TEST_INVENTORIES_DIR
@@ -108,14 +109,17 @@ def modifications_runner(shared_pim_source):
     pim_inventory, pim_id, domain_id = shared_pim_source
     mod_ids = []
 
-    def _run(modifications: list[dict]) -> tuple[dict, dict]:
+    def _run(
+        modifications: list[dict], prior_modifications: list[dict] | None = None
+    ) -> tuple[dict, dict]:
         from standgen.main import process_inventory_request
 
+        prior_modifications = prior_modifications or []
         mod_id = f"test-{uuid4().hex}"
         # In-place modifications apply to the inventory's own data, so copy the
         # shared PIM parquet to a fresh ID and modify the copy — the shared
         # source stays pristine for other tests.
-        gcsfs_client.copy(
+        get_gcsfs_client().copy(
             f"{INVENTORIES_BUCKET}/{pim_id}",
             f"{INVENTORIES_BUCKET}/{mod_id}",
             recursive=True,
@@ -128,7 +132,9 @@ def modifications_runner(shared_pim_source):
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),
-            "modifications": modifications,
+            # The ledger holds only previously-applied rules; the new delta lives
+            # in pending_modifications until completion merges it in.
+            "modifications": prior_modifications,
             "pending_modifications": modifications,
         }
         set_document(INVENTORIES_COLLECTION, mod_id, mod_data)
@@ -146,8 +152,11 @@ def modifications_runner(shared_pim_source):
         assert mod_inventory.get("columns") is not None
         for col in mod_inventory["columns"]:
             assert col["summary"] is not None
-        # The delta is applied; the work queue is cleared on completion.
+        # The delta is applied; on completion the work queue is cleared and the
+        # delta is merged onto the end of the ledger (ledger == applied data),
+        # never duplicated or dropped (#319).
         assert mod_inventory.get("pending_modifications") == []
+        assert mod_inventory.get("modifications") == prior_modifications + modifications
 
         return pim_inventory, mod_inventory
 
@@ -289,6 +298,28 @@ def test_parquet_has_correct_columns(modifications_runner):
     assert sorted(ddf.columns.tolist()) == sorted(BASE_COLUMNS)
 
 
+def test_parquet_schema_has_no_dask_index_artifact(modifications_runner):
+    """The rewritten file schema must not carry dask's __null_dask_index__ (#335).
+
+    ``dd.read_parquet`` restores the index from pandas metadata, hiding the
+    artifact from ``.columns`` — so this reads the raw ``_metadata`` footer
+    schema, which is what the API's data/metadata endpoint surfaces.
+    """
+    modifications = [
+        {
+            "conditions": [{"attribute": "dbh", "operator": "lt", "value": 5.0}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+    _, mod_inventory = modifications_runner(modifications)
+
+    fs = get_gcsfs_client()
+    with fs.open(f"{INVENTORIES_BUCKET}/{mod_inventory['id']}/_metadata", "rb") as f:
+        schema_names = pq.read_metadata(f).schema.to_arrow_schema().names
+
+    assert "__null_dask_index__" not in schema_names
+
+
 def test_parquet_values_are_sensible(modifications_runner):
     """Modified tree values should be within reasonable ranges."""
     modifications = [
@@ -344,6 +375,29 @@ def test_final_progress_is_100(modifications_runner):
 
     assert mod_inventory["progress"]["percent"] == 100
     assert mod_inventory["progress"]["message"] == "Complete"
+
+
+def test_pending_delta_appended_to_existing_ledger(modifications_runner):
+    """A new modification delta is appended to the existing ledger on
+    completion, not replacing it: an inventory that already carries a completed
+    rule ends with both the prior rule and the new delta, in order (#319)."""
+    prior = [
+        {
+            "conditions": [{"attribute": "height", "operator": "gt", "value": 40.0}],
+            "actions": [{"attribute": "height", "modifier": "multiply", "value": 0.9}],
+        }
+    ]
+    delta = [
+        {
+            "conditions": [{"attribute": "dbh", "operator": "lt", "value": 5.0}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+
+    _, mod_inventory = modifications_runner(delta, prior_modifications=prior)
+
+    assert mod_inventory.get("pending_modifications") == []
+    assert mod_inventory.get("modifications") == prior + delta
 
 
 @pytest.fixture
@@ -403,7 +457,7 @@ def feature_modifications_runner(shared_pim_source):
             resolved_mods.append({**mod, "conditions": conditions})
 
         mod_id = f"test-{uuid4().hex}"
-        gcsfs_client.copy(
+        get_gcsfs_client().copy(
             f"{INVENTORIES_BUCKET}/{pim_id}",
             f"{INVENTORIES_BUCKET}/{mod_id}",
             recursive=True,
@@ -416,7 +470,8 @@ def feature_modifications_runner(shared_pim_source):
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),
-            "modifications": resolved_mods,
+            # Ledger starts empty; the delta is queued and merged on completion.
+            "modifications": [],
             "pending_modifications": resolved_mods,
         }
         set_document(INVENTORIES_COLLECTION, mod_id, mod_data)
@@ -434,6 +489,10 @@ def feature_modifications_runner(shared_pim_source):
         assert mod_inventory.get("columns") is not None
         for col in mod_inventory["columns"]:
             assert col["summary"] is not None
+        # On completion the queued delta is merged into the ledger and the queue
+        # cleared (#319).
+        assert mod_inventory.get("pending_modifications") == []
+        assert mod_inventory.get("modifications") == resolved_mods
         return pim_inventory, mod_inventory
 
     yield _run

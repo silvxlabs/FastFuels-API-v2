@@ -8,10 +8,9 @@ EXAMPLE_COMPOSE_BASIC_COMPUTE = {
     ],
     "compute": [
         {
-            "output": "fuel_load.1hr",
+            "output": "fuel_load",
             "operator": "add",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
-            "name": "Combined 1-hour fuel load",
         }
     ],
 }
@@ -79,6 +78,8 @@ EXAMPLE_COMPOSE_UNIT_OVERRIDE = {
             "output": "fuel_load.1hr",
             "operator": "add",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
+            "name": "Combined fuel loads",
+            "description": "Combined fuel loads in grams.",
             "unit": "g/m**2",
         }
     ],
@@ -236,7 +237,7 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
         "summary": "Compute one output from two grids",
         "description": (
             "Adds the same continuous band from two aligned source grids and "
-            "writes the result as a single output band. This is the smallest "
+            "writes the result as a single output band named `fuel_load`. This is the smallest "
             "multi-grid compose request: `inputs` gives each source grid an "
             "alias, and `compute` names the output plus the arithmetic "
             "operation. The output band's type (continuous) and unit "

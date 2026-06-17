@@ -30,10 +30,10 @@ ALS-only model). Each carries a `type` discriminator:
 
 This package ships the **CRUD framework only**:
 
-- `schema.py` — `PointCloud`, `PointCloudType`, `PointCloudGeoreference`, the update/duplicate
-  request bodies, and the list response.
-- `router.py` — list (cross-domain + domain-scoped), get, patch (metadata only), delete (with async
-  GCS cleanup), and duplicate.
+- `schema.py` — `PointCloud`, `PointCloudType`, `PointCloudGeoreference`, the update request body,
+  and the list response.
+- `router.py` — list (cross-domain + domain-scoped), get, patch (metadata only), and delete (with
+  async GCS cleanup).
 
 **Creation endpoints are intentionally absent here** and arrive in follow-on work:
 
@@ -42,9 +42,9 @@ This package ships the **CRUD framework only**:
 - **#330** — convert a point cloud to a CHM (a new `point_cloud` source on the existing
   `grids/canopy` grid — not a new resource).
 
-Because there is no create endpoint yet, a point cloud comes into existence either by being seeded
-directly in Firestore (tests) or via `duplicate`. The creation routers will add a `source`-keyed
-sub-router structure (`upload` / `3dep`); that routing shape is deliberately **not** fixed here.
+A point cloud comes into existence via a creation router (the `upload` source, #328) or by being
+seeded directly in Firestore (tests). The creation routers use a `source`-keyed sub-router
+structure (`upload` / `3dep`).
 
 ## URL structure
 
@@ -54,7 +54,6 @@ GET    /domains/{domain_id}/pointclouds             # list within a domain
 GET    /domains/{domain_id}/pointclouds/{id}        # get
 PATCH  /domains/{domain_id}/pointclouds/{id}        # update metadata only
 DELETE /domains/{domain_id}/pointclouds/{id}        # delete (+ async GCS cleanup)
-POST   /domains/{domain_id}/pointclouds/{id}/duplicate
 ```
 
 The path segment is the **collapsed single token `pointclouds`** (no underscore, no hyphen), matching
@@ -71,10 +70,15 @@ See `schema.py` for the authoritative definition. Notable fields:
 - **`georeference: PointCloudGeoreference | None`** — `crs` plus a flat 3D bounding box
   `[min_x, min_y, min_z, max_x, max_y, max_z]`. `null` until the worker finishes ingesting. The
   bbox is a single-level array, so it needs **no** coordinate stringification (unlike domains'
-  nested GeoJSON coordinates — Firestore rejects nested arrays).
-- **Per-cloud statistics** (point count, ASPRS classes present, density) are **deferred** to the
-  issue that first computes them (#329/#330), so the schema commits a contract only for fields a
-  worker actually populates.
+  nested GeoJSON coordinates — Firestore rejects nested arrays). `crs` is **always the domain
+  CRS**: unlike grids (where reprojection = resampling and a mismatch is rejected), point
+  reprojection is an exact per-point transform, so the #328 upload worker reprojects mismatched
+  uploads instead of rejecting them.
+- **`summary: PointCloudSummary | None`** — per-cloud statistics (`point_count`, `point_classes` =
+  ASPRS classes present, `density` = points/m²). `null` until the worker finishes ingesting. Nested in
+  a `summary` sub-model mirroring the planned grid/inventory `summary` pattern (#257/#258). First
+  populated by the **#328 upload handler** (the first worker that reads a cloud's bytes); #329/#330
+  populate it the same way.
 
 ## Checksum & staleness
 
@@ -82,17 +86,19 @@ Follows the #304 pattern: `checksum` is an opaque `uuid4().hex` assigned at crea
 changed whenever content is rebuilt, and **unaffected by metadata-only PATCH**. Derivatives capture
 the value they were built from — e.g. the CHM grid in #330 stores `source_pointcloud_checksum` —
 and staleness detection is user-space (compare stored vs. current; no stale flag/warn/block in the
-API). `duplicate` assigns a fresh `checksum` to the copy.
+API).
 
 ## Storage
 
 - Firestore collection: `POINT_CLOUDS_COLLECTION` (default `pointclouds-v2`).
 - GCS bucket: `POINT_CLOUDS_BUCKET`. Each point cloud owns the directory `{id}/` at the bucket root;
-  `delete` and `duplicate` operate on that whole directory via `delete_directory_safe` /
-  `copy_directory` and are therefore format-agnostic.
+  `delete` operates on that whole directory via `delete_directory_safe` and is therefore
+  format-agnostic.
 - The **concrete object layout under `{id}/` and the file format are owned by the ingest workers**
   (#328/#329). This resource deliberately commits to no specific format (e.g. COPC vs. plain LAZ) —
-  that decision belongs to whoever writes the bytes.
+  that decision belongs to whoever writes the bytes. The #328 upload worker stores `{id}/cloud.laz`
+  (plain LAZ, domain CRS); see the uploader service README for why LAZ-not-COPC and the planned
+  lossless LAZ → COPC upgrade path.
 
 ## Service boundary
 

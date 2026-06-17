@@ -39,6 +39,3 @@ def mock_trees_ddf():
     """A minimal tree Dask DataFrame (x, y, height) as handlers produce/consume."""
     pdf = pd.DataFrame({"x": [10.0, 50.0], "y": [20.0, 60.0], "height": [15.0, 25.0]})
     return dd.from_pandas(pdf, npartitions=1)
-
-
-"""Shared fixtures and constants for standgen handler tests."""

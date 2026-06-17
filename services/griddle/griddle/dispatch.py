@@ -12,6 +12,7 @@ import xarray as xr
 
 from griddle.handlers import (
     chm,
+    compose,
     landfire,
     layerset,
     lookup,
@@ -102,7 +103,7 @@ def dispatch_handler(
         case "lookup":
             return handle_lookup(grid, source, progress_callback)
         case "resample":
-            return handle_resample(domain_gdf, source, progress_callback)
+            return handle_resample(grid, domain_gdf, source, progress_callback)
         case "pim":
             return handle_pim(domain_gdf, source, progress_callback)
         case "uniform":
@@ -111,6 +112,8 @@ def dispatch_handler(
             return handle_canopy(domain_gdf, source, progress_callback)
         case "3dep":
             return handle_3dep(domain_gdf, source, progress_callback)
+        case "compose":
+            return handle_compose(grid, source, progress_callback)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",
@@ -278,6 +281,7 @@ def handle_lookup(
 
 
 def handle_resample(
+    grid: dict,
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
@@ -301,6 +305,15 @@ def handle_resample(
     source_grid_doc = source_snapshot.to_dict()
     band_types = {b["key"]: b["type"] for b in source_grid_doc.get("bands", [])}
 
+    # Derive bands from source and write back before summarize runs.
+    source_bands = source_grid_doc.get("bands", [])
+    bands = [
+        {"key": b["key"], "type": b["type"], "unit": b.get("unit"), "index": b["index"]}
+        for b in source_bands
+    ]
+    update_document(GRIDS_COLLECTION, grid["id"], {"bands": bands})
+    grid["bands"] = bands
+
     return resample.resample_grid(
         source_grid_id=source_grid_id,
         alignment=alignment,
@@ -310,6 +323,16 @@ def handle_resample(
         band_types=band_types,
         progress=progress,
     )
+
+
+def handle_compose(
+    grid: dict,
+    source: dict,
+    progress: Callable[[str, int | None], None],
+) -> xr.Dataset:
+    """Handle compose source grids."""
+    progress("Composing grid...", 10)
+    return compose.compose_grid(grid, source, progress)
 
 
 def handle_uniform(

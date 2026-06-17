@@ -145,15 +145,12 @@ def _post_batch(payload: dict) -> dict:
     whole task won't fix a bad request, and the 120s timeout already absorbs GDAM
     cold starts, so a timeout here is a real outage rather than a transient blip.
     """
-    print(f"Sending payload with {len(payload['trees']['index'])} trees")
     try:
         response = httpx.post(
             f"{config.GDAM_API_URL}/predict/batch",
             json=payload,
             timeout=config.GDAM_REQUEST_TIMEOUT_S,
         )
-        print(f"Response status: {response.status_code}")
-        print(f"Response body: {response.text[:500]}")
         response.raise_for_status()
         return response.json()
     except httpx.HTTPError as e:

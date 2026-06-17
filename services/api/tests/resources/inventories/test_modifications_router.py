@@ -3,13 +3,17 @@ Integration tests for the in-place inventory modifications endpoint.
 
 Tests POST /domains/{domain_id}/inventories/{inventory_id}/modifications
 
-The endpoint mutates the inventory **in place** (same ID): it appends the
-submitted rules to the inventory's ``modifications`` ledger, queues that delta
-in ``pending_modifications``, re-assigns its ``checksum``, flips status to
-``pending``, and enqueues standgen to re-derive the data. These tests make real
-HTTP requests and interact with Firestore.
+The endpoint mutates the inventory **in place** (same ID): it queues the
+submitted rules in ``pending_modifications``, re-assigns its ``checksum``, flips
+status to ``pending``, and enqueues standgen to re-derive the data. The visible
+``modifications`` ledger grows only on completion (standgen merges the pending
+delta into the ledger atomically with status=completed), so the stored ledger
+always equals the applied data. The read-validate-append runs in a Firestore
+transaction so concurrent POSTs cannot drop a rule. These tests make real HTTP
+requests and interact with Firestore.
 """
 
+import threading
 import uuid
 
 import pytest
@@ -38,7 +42,8 @@ def source_inventory(firestore_client, domain_for_testing, cleanup_inventories):
 
     Function-scoped: the endpoint mutates this document (status -> pending), so
     each test gets its own. Carries a checksum and one existing modification so
-    tests can assert the checksum changes and the ledger grows.
+    tests can assert the checksum changes and the existing ledger is left
+    untouched (the new delta is queued, not appended to the ledger).
     """
     inv = make_inventory_data(
         domain_id=domain_for_testing["id"],
@@ -117,8 +122,9 @@ class TestApplyModificationsInPlace:
     def test_applies_in_place_same_id(
         self, client, domain_for_testing, source_inventory, firestore_client
     ):
-        """Mutates the same inventory: same ID, status pending, ledger grows,
-        checksum changes, and the delta is queued in pending_modifications."""
+        """Mutates the same inventory: same ID, status pending, checksum
+        changes, and the delta is queued in pending_modifications while the
+        visible ledger is left untouched (it grows only on completion)."""
         source_id = source_inventory["id"]
         response = client.post(
             self.route(domain_for_testing["id"], source_id),
@@ -134,9 +140,10 @@ class TestApplyModificationsInPlace:
         assert data["status"] == "pending"
         assert data["error"] is None
 
-        # The submitted rule is appended to the existing ledger (1 + 1 = 2).
-        assert len(data["modifications"]) == 2
-        assert data["modifications"][-1]["conditions"][0]["attribute"] == "dbh"
+        # Ledger == applied data: the submitted rule is queued, not yet part of
+        # the visible modifications list, so the existing ledger is unchanged.
+        assert len(data["modifications"]) == 1
+        assert data["modifications"][0]["conditions"][0]["attribute"] == "height"
 
         # checksum is re-assigned so derivatives become detectably stale.
         assert data["checksum"] != source_inventory["checksum"]
@@ -144,16 +151,21 @@ class TestApplyModificationsInPlace:
         # The source is unchanged (still the root pim source, not "modifications").
         assert data["source"]["name"] == source_inventory["source"]["name"]
 
-        # Firestore: only the new delta is queued for standgen to apply.
+        # Firestore: only the new delta is queued for standgen to apply; the
+        # ledger still holds just the pre-existing rule. The job is in flight (a
+        # real standgen task was enqueued), so its status may have advanced past
+        # pending — but it cannot be completed (these test docs have no backing
+        # parquet), so the queue is never cleared/merged here.
         doc = (
             firestore_client.collection(INVENTORIES_COLLECTION)
             .document(source_id)
             .get()
             .to_dict()
         )
-        assert doc["status"] == "pending"
+        assert doc["status"] != "completed"
         assert len(doc["pending_modifications"]) == 1
-        assert len(doc["modifications"]) == 2
+        assert doc["pending_modifications"][0]["conditions"][0]["attribute"] == "dbh"
+        assert len(doc["modifications"]) == 1
 
     def test_response_excludes_owner_id(
         self, client, domain_for_testing, source_inventory
@@ -182,10 +194,11 @@ class TestApplyModificationsInPlace:
         assert data["columns"] == expected_columns
         assert data["georeference"] == source_inventory["georeference"]
 
-    def test_appends_multiple_modifications(
-        self, client, domain_for_testing, source_inventory
+    def test_queues_multiple_modifications(
+        self, client, domain_for_testing, source_inventory, firestore_client
     ):
-        """Multiple rules in one request all append to the ledger."""
+        """Multiple rules in one request are all queued in the delta; the
+        visible ledger stays at its pre-existing size until completion."""
         body = {
             "modifications": [
                 {
@@ -211,13 +224,20 @@ class TestApplyModificationsInPlace:
             json=body,
         )
         assert response.status_code == 200
-        # 1 existing + 2 submitted.
-        assert len(response.json()["modifications"]) == 3
+        # Ledger unchanged (1 pre-existing rule); both submitted rules queued.
+        assert len(response.json()["modifications"]) == 1
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        assert len(doc["pending_modifications"]) == 2
 
     def test_unit_conversion_preserved(
-        self, client, domain_for_testing, source_inventory
+        self, client, domain_for_testing, source_inventory, firestore_client
     ):
-        """A unit field on a condition round-trips into the ledger."""
+        """A unit field on a condition round-trips into the queued delta."""
         body = {
             "modifications": [
                 {
@@ -236,7 +256,13 @@ class TestApplyModificationsInPlace:
             json=body,
         )
         assert response.status_code == 200
-        assert response.json()["modifications"][-1]["conditions"][0]["unit"] == "in"
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        assert doc["pending_modifications"][-1]["conditions"][0]["unit"] == "in"
 
     def test_expression_condition_accepted(
         self, client, domain_for_testing, source_inventory
@@ -273,6 +299,96 @@ class TestApplyModificationsInPlace:
             json=MINIMAL_MODIFICATIONS_BODY,
         )
         assert response.status_code == 422
+
+    def test_retry_post_on_failed_inventory_with_pending_appends(
+        self, client, firestore_client, domain_for_testing, cleanup_inventories
+    ):
+        """A failed in-place modification is not dead-ended: another POST is
+        accepted and its delta joins the retained queue."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Failed modify",
+            status="failed",
+            georeference={
+                "crs": "EPSG:32611",
+                "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
+            },
+        )
+        inv["checksum"] = uuid.uuid4().hex
+        inv["pending_modifications"] = [
+            {
+                "conditions": [{"attribute": "dbh", "operator": "lt", "value": 5.0}],
+                "actions": [{"modifier": "remove"}],
+            }
+        ]
+        firestore_client.collection(INVENTORIES_COLLECTION).document(inv["id"]).set(inv)
+        cleanup_inventories.append(inv["id"])
+
+        response = client.post(
+            self.route(domain_for_testing["id"], inv["id"]),
+            json=MINIMAL_MODIFICATIONS_BODY,
+        )
+        assert response.status_code == 200, response.json()
+        data = response.json()
+        assert data["status"] == "pending"
+        assert data["error"] is None
+
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(inv["id"])
+            .get()
+            .to_dict()
+        )
+        assert len(doc["pending_modifications"]) == 2
+
+    def test_failed_inventory_without_pending_returns_422(
+        self, client, firestore_client, domain_for_testing, cleanup_inventories
+    ):
+        """A failed initial build has no queued delta to retry — not retryable
+        here, so a fresh modification is rejected until the build succeeds."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Failed build",
+            status="failed",
+        )
+        firestore_client.collection(INVENTORIES_COLLECTION).document(inv["id"]).set(inv)
+        cleanup_inventories.append(inv["id"])
+
+        response = client.post(
+            self.route(domain_for_testing["id"], inv["id"]),
+            json=MINIMAL_MODIFICATIONS_BODY,
+        )
+        assert response.status_code == 422
+
+    def test_concurrent_posts_exactly_one_wins(
+        self, client, firestore_client, domain_for_testing, source_inventory
+    ):
+        """Two racing POSTs cannot drop a rule: the transactional append lets
+        exactly one through; the loser sees the pending status and is
+        rejected."""
+        results = []
+
+        def _post():
+            r = client.post(
+                self.route(domain_for_testing["id"], source_inventory["id"]),
+                json=MINIMAL_MODIFICATIONS_BODY,
+            )
+            results.append(r.status_code)
+
+        threads = [threading.Thread(target=_post) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sorted(results) == [200, 422], results
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        assert len(doc["pending_modifications"]) == 1
 
     def test_wrong_owner_returns_404(
         self, client, domain_with_different_owner, completed_inventory_different_owner
@@ -475,7 +591,12 @@ class TestFeatureConditions:
         assert feature_id in response.json()["detail"]
 
     def test_completed_feature_succeeds(
-        self, client, domain_for_testing, source_inventory, completed_feature
+        self,
+        client,
+        domain_for_testing,
+        source_inventory,
+        completed_feature,
+        firestore_client,
     ):
         feature_id = completed_feature["id"]
         response = client.post(
@@ -483,7 +604,13 @@ class TestFeatureConditions:
             json=self._body(feature_id),
         )
         assert response.status_code == 200, response.json()
-        condition = response.json()["modifications"][-1]["conditions"][0]
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_inventory["id"])
+            .get()
+            .to_dict()
+        )
+        condition = doc["pending_modifications"][-1]["conditions"][0]
         assert condition["feature_id"] == feature_id
 
 

@@ -97,6 +97,36 @@ class TestCreateLandfireFccsRequest:
         assert request.description == "A test grid"
         assert request.tags == ["test", "fuel"]
 
+    def test_alignment_defaults_to_domain_target(self):
+        """alignment defaults to the domain target."""
+        request = CreateLandfireFccsRequest()
+        assert request.alignment.target == "domain"
+
+    def test_extent_buffer_cells_defaults_to_zero(self):
+        """extent_buffer_cells defaults to 0 (no buffer)."""
+        request = CreateLandfireFccsRequest()
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_accepts_positive(self):
+        """extent_buffer_cells accepts positive integers."""
+        request = CreateLandfireFccsRequest(extent_buffer_cells=10)
+        assert request.extent_buffer_cells == 10
+
+    def test_extent_buffer_cells_accepts_zero(self):
+        """extent_buffer_cells accepts 0 (explicit no buffer)."""
+        request = CreateLandfireFccsRequest(extent_buffer_cells=0)
+        assert request.extent_buffer_cells == 0
+
+    def test_extent_buffer_cells_rejects_negative(self):
+        """extent_buffer_cells rejects negative values."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFccsRequest(extent_buffer_cells=-1)
+
+    def test_extent_buffer_cells_rejects_above_maximum(self):
+        """extent_buffer_cells rejects values above the maximum of 10."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFccsRequest(extent_buffer_cells=11)
+
 
 class TestFccsBand:
     """Tests for FCCS_BAND constant."""

@@ -182,6 +182,18 @@ class TestListGridsWildcard:
         for grid in response.json()["grids"]:
             assert "owner_id" not in grid
 
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_wildcard_sorting_matrix_returns_200(
+        self, client, grids_across_domains, sort_by, sort_order
+    ):
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route()}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
+        assert response.status_code == 200
+
 
 # GET /domains/{domain_id}/grids (List) Tests
 
@@ -321,24 +333,16 @@ class TestListGrids:
         names = [g["name"] for g in data["grids"]]
         assert names == sorted(names, reverse=True)
 
-    def test_list_sorting_by_created_on(
-        self, client, grids_for_listing, domain_for_testing
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_list_sorting_matrix_returns_200(
+        self, client, grids_for_listing, domain_for_testing, sort_by, sort_order
     ):
-        """Sorting by created_on is accepted."""
-        response = client.get(
-            f"{self.route(domain_for_testing['id'])}?sort_by=created_on&sort_order=descending"
-        )
-
-        assert response.status_code == 200
-
-    def test_list_sorting_by_modified_on(
-        self, client, grids_for_listing, domain_for_testing
-    ):
-        """Sorting by modified_on is accepted."""
-        response = client.get(
-            f"{self.route(domain_for_testing['id'])}?sort_by=modified_on&sort_order=ascending"
-        )
-
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route(domain_for_testing['id'])}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
         assert response.status_code == 200
 
     def test_list_invalid_page_returns_422(self, client, domain_for_testing):

@@ -10,6 +10,7 @@ dependencies = [
     "dask[dataframe]>=2024.1.0",
     "geopandas>=1.1.2",
     "h5netcdf[h5py]>=1.8",
+    "laspy[lazrs]>=2.7.0",
     "pandas>=2.0.0",
     "pandera>=0.20.0",
     "pyarrow>=18.0.0",

@@ -18,7 +18,7 @@ from flask import Request
 
 from griddle.dispatch import dispatch_handler
 from griddle.modifications import apply_modifications
-from griddle.storage import delete_zarr, save_zarr
+from griddle.storage import delete_zarr, load_zarr, save_zarr
 from griddle.summarize import summarize_dataset
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
@@ -117,6 +117,7 @@ def update_status(
     georeference: dict | None = None,
     chunks: dict | None = None,
     error: dict | None = None,
+    extra: dict | None = None,
 ) -> None:
     """Update grid status.
 
@@ -126,6 +127,9 @@ def update_status(
         georeference: Optional georeference dict (for completed status)
         chunks: Optional chunks layout dict (for completed status)
         error: Optional error dict (for failed status)
+        extra: Optional additional fields written in the same update, for
+            changes that must land atomically with the status transition
+            (e.g. merging pending_modifications into the ledger on completion)
 
     Raises:
         CancelledException: If grid was deleted (user cancelled)
@@ -134,6 +138,9 @@ def update_status(
         "status": status,
         "modified_on": datetime.now(UTC),
     }
+
+    if extra:
+        data.update(extra)
 
     if status == "completed":
         data["progress"] = {"message": "Complete", "percent": 100}
@@ -235,10 +242,13 @@ def process_grid_request(request: Request):
     2. Parse request to get grid_id
     3. Load grid document from Firestore
     4. Update status to "running"
-    5. Dispatch to appropriate handler
+    5. Either dispatch to the source handler, or — when the doc carries
+       pending_modifications (#277) — load the grid's own zarr and apply
+       only that delta
     6. Compute band summaries and write back to Firestore
     7. Save result to Zarr
-    8. Update status to "completed" with georeference
+    8. Update status to "completed" with georeference (merging
+       pending_modifications into the ledger for the in-place path)
     9. On error, update status to "failed" with error details
 
     Returns:
@@ -292,34 +302,55 @@ def process_grid_request(request: Request):
         return "OK", 200
 
     try:
-        # Load and parse domain
-        domain_gdf = _load_domain(grid["domain_id"])
-
-        # Dispatch to handler
-        progress_callback = make_progress_callback(grid_id)
-        result = dispatch_handler(grid, domain_gdf, progress_callback)
-
-        # Write back enriched source metadata (e.g., 3DEP tile provenance)
-        update_document(GRIDS_COLLECTION, grid_id, {"source": grid["source"]})
-
-        # Compute band summaries, propagate nodata, and write back to Firestore
         chunk_shape = tuple((grid.get("chunks") or {}).get("shape") or CHUNK_SHAPE)
+        pending_modifications = grid.get("pending_modifications") or []
+        completion_extra = None
+
+        if pending_modifications:
+            # In-place modification (#277): the grid already has rendered
+            # data. Load its own zarr and apply only the queued delta —
+            # never re-fetch from the upstream source, which may have
+            # drifted and would silently change untouched cells. The .load()
+            # is required: apply_modifications mutates band arrays in place,
+            # which is lost on a lazy (dask-backed) Dataset.
+            update_progress(grid_id, "Applying modifications...", 40)
+            result = load_zarr(grid_id).load()
+            apply_modifications(result, pending_modifications, grid["domain_id"])
+
+            # Merge the applied delta into the cumulative ledger atomically
+            # with status=completed, so the ledger always equals the applied
+            # data (#319). A failed run leaves pending_modifications intact,
+            # keeping the grid retryable.
+            completion_extra = {
+                "modifications": (grid.get("modifications") or [])
+                + pending_modifications,
+                "pending_modifications": [],
+            }
+        else:
+            # Load and parse domain
+            domain_gdf = _load_domain(grid["domain_id"])
+
+            # Dispatch to handler
+            progress_callback = make_progress_callback(grid_id)
+            result = dispatch_handler(grid, domain_gdf, progress_callback)
+
+            # Write back enriched source metadata (e.g., 3DEP tile provenance)
+            update_document(GRIDS_COLLECTION, grid_id, {"source": grid["source"]})
+
+            # Apply modifications if present
+            if grid.get("modifications"):
+                update_progress(grid_id, "Applying modifications...", 80)
+                result = apply_modifications(
+                    result, grid["modifications"], grid["domain_id"]
+                )
+
+        # Compute band summaries and per-band nodata from the final data —
+        # after modifications, so both describe what is actually stored —
+        # and write back to Firestore (NaN-float nodata surfaces as null).
         summaries = summarize_dataset(result, grid["bands"], chunk_shape)
         bands_with_summaries = [
             {**band, "summary": summaries.get(band["key"])} for band in grid["bands"]
         ]
-
-        # Apply modifications if present
-        if grid.get("modifications"):
-            update_progress(grid_id, "Applying modifications...", 80)
-            result = apply_modifications(
-                result, grid["modifications"], grid["domain_id"]
-            )
-
-        # Propagate each band's nodata value from the produced data onto the
-        # grid resource so consumers see it without opening the Zarr (NaN
-        # floats surface as null). Read after modifications so it reflects the
-        # final stored data.
         for band in bands_with_summaries:
             band["nodata"] = _band_nodata(result, band["key"])
         update_document(GRIDS_COLLECTION, grid_id, {"bands": bands_with_summaries})
@@ -340,6 +371,7 @@ def process_grid_request(request: Request):
                 "shape": list(grid_shape),
             },
             chunks=compute_chunks_doc(grid_shape, chunk_shape),
+            extra=completion_extra,
         )
 
         logger.info("Processing complete", extra=ids)

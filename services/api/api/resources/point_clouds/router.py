@@ -5,45 +5,42 @@ Router for the Point Cloud resource with standard CRUD endpoints.
 
 Creation endpoints (uploading a file, fetching from USGS 3DEP) are added by
 source-specific sub-routers in follow-on work; this module provides only the
-list / get / update / delete / duplicate surface. The router does Firestore and
+list / get / update / delete surface. The router does Firestore and
 GCS bookkeeping only — all point-cloud parsing happens in worker services, so
 the API stays free of GDAL/PDAL at runtime.
 """
 
-import logging
-import traceback
-import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, status
-from google.api_core.exceptions import NotFound
 
-from api.db.blobs import copy_directory, delete_directory_safe
+from api.db.blobs import delete_directory_safe
 from api.db.documents import (
     delete_document_async,
     get_document_async,
     list_documents_async,
-    set_document_async,
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
 from api.resources.point_clouds.schema import (
-    DuplicatePointCloudRequest,
     ListPointCloudsResponse,
     PointCloud,
     PointCloudSortField,
     PointCloudType,
     UpdatePointCloudRequestBody,
 )
-from api.schema import JobStatus, SortOrder
+from api.resources.point_clouds.upload.router import router as upload_router
+from api.schema import SortOrder
 from lib.config import POINT_CLOUDS_BUCKET, POINT_CLOUDS_COLLECTION
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 wildcard_router = APIRouter()
 
 COLLECTION = POINT_CLOUDS_COLLECTION
+
+# Source-specific creation sub-routers. The upload source creates a point cloud
+# from a user-supplied file (#328); the 3dep source (#329) attaches similarly.
+router.include_router(upload_router, prefix="/upload", tags=["Point Clouds - Upload"])
 
 
 @wildcard_router.get(
@@ -388,146 +385,3 @@ async def delete_point_cloud(
     background_tasks.add_task(
         delete_directory_safe, POINT_CLOUDS_BUCKET, point_cloud_id
     )
-
-
-async def _copy_point_cloud_data(source_id: str, new_id: str) -> None:
-    """Background task: server-side copy the stored point data from the source
-    point cloud to the new one, then flip the new point cloud to ``completed``.
-
-    On any failure the new point cloud is marked ``failed`` with a structured
-    error so the dangling ``pending`` document never lingers.
-    """
-    try:
-        await copy_directory(POINT_CLOUDS_BUCKET, source_id, new_id)
-        await update_document_async(
-            COLLECTION,
-            new_id,
-            {"status": JobStatus.completed.value, "modified_on": datetime.now()},
-        )
-    except Exception:
-        logger.exception("Failed to copy point cloud data %s -> %s", source_id, new_id)
-        try:
-            await update_document_async(
-                COLLECTION,
-                new_id,
-                {
-                    "status": JobStatus.failed.value,
-                    "modified_on": datetime.now(),
-                    "error": {
-                        "code": "POINT_CLOUD_DUPLICATE_COPY_FAILED",
-                        "message": "Failed to copy point cloud data during duplication.",
-                        "suggestion": "Retry the duplicate request.",
-                        "traceback": traceback.format_exc(),
-                    },
-                },
-            )
-        except NotFound:
-            # The new point cloud was deleted before the copy finished — there
-            # is no document left to mark failed.
-            logger.info(
-                "Duplicate target %s no longer exists; skipping failure update",
-                new_id,
-            )
-
-
-@router.post(
-    "/{point_cloud_id}/duplicate",
-    response_model=PointCloud,
-    status_code=status.HTTP_201_CREATED,
-    summary="Duplicate a point cloud",
-)
-async def duplicate_point_cloud(
-    request: Request,
-    domain: VerifiedDomain,
-    point_cloud_id: str,
-    background_tasks: BackgroundTasks,
-    body: DuplicatePointCloudRequest | None = None,
-):
-    """
-    # Duplicate a Point Cloud
-
-    Creates an independent **copy** of a completed point cloud under a new ID.
-    Use this to branch a scenario: duplicate, then edit the copy's metadata while
-    the original stays untouched.
-
-    This is a true clone, not a re-acquisition. The finished point data is
-    byte-copied; nothing is re-fetched or re-ingested. The copy carries over the
-    source's `type`, `source`, and `georeference` verbatim. It is a distinct
-    resource, so it receives a fresh `id` and `checksum` and its own timestamps.
-
-    ## Request Body (optional)
-
-    All fields are optional. Any field omitted is carried over from the source.
-
-    - **name**: Name for the copy.
-    - **description**: Description for the copy.
-    - **tags**: Tags for the copy.
-
-    Send no body at all to copy the metadata unchanged.
-
-    ## Response
-
-    Returns the new point cloud with status `"pending"`. The data is copied in
-    the background; the status transitions to `"completed"` once the copy
-    finishes (or `"failed"` if it does not). The source point cloud is unchanged.
-
-    ## Error Responses
-
-    - **404 Not Found**: The source point cloud does not exist, is not owned by
-      the caller, or is not in this domain.
-    - **422 Unprocessable Content**: The source point cloud exists but is not yet
-      `completed`, so there is no finished data to copy.
-    """
-    owner_id = request.state.id
-    domain_id = domain["id"]
-
-    # Source must exist, be owned, in this domain, and completed.
-    _, source_snapshot = await get_document_async(
-        COLLECTION,
-        point_cloud_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    source_data = source_snapshot.to_dict()
-
-    overrides = body or DuplicatePointCloudRequest()
-    new_point_cloud_id = uuid.uuid4().hex
-    request_time = datetime.now()
-
-    point_cloud_data = {
-        # Carry over type, source, and georeference verbatim; override identity
-        # (new id + fresh checksum, since the copy is a distinct resource),
-        # timestamps, transient status fields, and any supplied metadata.
-        **source_data,
-        "id": new_point_cloud_id,
-        "checksum": uuid.uuid4().hex,
-        "owner_id": owner_id,
-        "created_on": request_time,
-        "modified_on": request_time,
-        "status": JobStatus.pending.value,
-        "progress": None,
-        "error": None,
-        "name": (
-            overrides.name
-            if overrides.name is not None
-            else source_data.get("name", "")
-        ),
-        "description": (
-            overrides.description
-            if overrides.description is not None
-            else source_data.get("description", "")
-        ),
-        "tags": (
-            overrides.tags
-            if overrides.tags is not None
-            else source_data.get("tags", [])
-        ),
-    }
-
-    await set_document_async(COLLECTION, new_point_cloud_id, point_cloud_data)
-    background_tasks.add_task(
-        _copy_point_cloud_data, point_cloud_id, new_point_cloud_id
-    )
-
-    return PointCloud(**point_cloud_data)

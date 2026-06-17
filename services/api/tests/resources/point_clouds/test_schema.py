@@ -7,7 +7,6 @@ external dependencies.
 
 import pytest
 from api.resources.point_clouds.schema import (
-    DuplicatePointCloudRequest,
     ListPointCloudsResponse,
     PointCloud,
     PointCloudGeoreference,
@@ -137,20 +136,6 @@ class TestUpdatePointCloudRequestBody:
     def test_description_max_length(self):
         with pytest.raises(ValidationError):
             UpdatePointCloudRequestBody(description="x" * 2001)
-
-
-class TestDuplicatePointCloudRequest:
-    """Tests for DuplicatePointCloudRequest."""
-
-    def test_defaults_are_none(self):
-        body = DuplicatePointCloudRequest()
-        assert body.name is None
-        assert body.description is None
-        assert body.tags is None
-
-    def test_name_max_length(self):
-        with pytest.raises(ValidationError):
-            DuplicatePointCloudRequest(name="x" * 256)
 
 
 class TestListPointCloudsResponse:

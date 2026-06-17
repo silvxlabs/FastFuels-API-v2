@@ -10,7 +10,7 @@ from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
     GridAlignmentSpecification,
 )
-from api.resources.grids.modifications import GridModification
+from api.resources.grids.modification_models import GridModification
 from api.resources.modifications import parse_modification_coordinates
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 

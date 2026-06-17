@@ -71,9 +71,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "compute": [
                 {
                     "output": "fuel_load.1hr",
@@ -96,6 +93,44 @@ class TestCreateCompose:
         assert data["bands"][0]["key"] == "fuel_load.1hr"
         assert data["georeference"] is None
 
+    def test_compute_band_type_and_unit_are_derived(
+        self, client, domain_for_testing, complete_grid
+    ):
+        body = {
+            "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
+            "compute": [
+                {
+                    "output": "fuel_load.1hr",
+                    "operator": "multiply",
+                    "operands": ["a.fuel_load.1hr", 0.5],
+                    "name": "Half fuel load",
+                }
+            ],
+        }
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+
+        assert response.status_code == 201, response.json()
+        band = response.json()["bands"][0]
+        assert band["type"] == "continuous"
+        assert band["unit"] == "kg/m**2"
+        assert band["name"] == "Half fuel load"
+
+    def test_select_inherits_source_band_type_and_unit(
+        self, client, domain_for_testing, complete_grid
+    ):
+        body = {
+            "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
+            "select": [{"output": "fbfm", "from": "a.fbfm"}],
+        }
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+
+        assert response.status_code == 201, response.json()
+        band = response.json()["bands"][0]
+        assert band["type"] == "categorical"
+        assert band["unit"] is None
+
     def test_multi_grid_compute_records_source_checksums(
         self, client, domain_for_testing, complete_grid, complete_grid_b
     ):
@@ -103,9 +138,6 @@ class TestCreateCompose:
             "inputs": [
                 {"grid_id": complete_grid["id"], "alias": "a"},
                 {"grid_id": complete_grid_b["id"], "alias": "b"},
-            ],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
             ],
             "compute": [
                 {
@@ -126,7 +158,6 @@ class TestCreateCompose:
     def test_missing_band_returns_422(self, client, domain_for_testing, complete_grid):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [{"key": "missing", "type": "continuous", "unit": "kg/m**2"}],
             "select": [{"output": "missing", "from": "a.missing"}],
         }
 
@@ -140,9 +171,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": pending_grid["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "select": [{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
         }
 
@@ -156,9 +184,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": grid_in_different_domain["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "select": [{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
         }
 
@@ -166,15 +191,35 @@ class TestCreateCompose:
 
         assert response.status_code == 404
 
-    def test_unit_mismatch_returns_422(self, client, domain_for_testing, complete_grid):
+    def test_unit_override_succeeds(self, client, domain_for_testing, complete_grid):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [{"key": "fuel_load.1hr", "type": "continuous", "unit": "m"}],
             "compute": [
                 {
                     "output": "fuel_load.1hr",
                     "operator": "multiply",
                     "operands": ["a.fuel_load.1hr", 0.5],
+                    "unit": "g/m**2",
+                }
+            ],
+        }
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+
+        assert response.status_code == 201, response.json()
+        assert response.json()["bands"][0]["unit"] == "g/m**2"
+
+    def test_incompatible_unit_override_returns_422(
+        self, client, domain_for_testing, complete_grid
+    ):
+        body = {
+            "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
+            "compute": [
+                {
+                    "output": "fuel_load.1hr",
+                    "operator": "multiply",
+                    "operands": ["a.fuel_load.1hr", 0.5],
+                    "unit": "m",
                 }
             ],
         }
@@ -182,16 +227,13 @@ class TestCreateCompose:
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
         assert response.status_code == 422
-        assert "unit" in response.json()["detail"].lower()
+        assert "compatible" in response.json()["detail"].lower()
 
     def test_categorical_condition_rejects_ordering_operator(
         self, client, domain_for_testing, complete_grid
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "select": [
                 {
                     "output": "fuel_load.1hr",
@@ -212,9 +254,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "select": [
                 {
                     "output": "fuel_load.1hr",
@@ -238,9 +277,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "select": [
                 {
                     "output": "fuel_load.1hr",
@@ -263,9 +299,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "select": [
                 {
                     "output": "fuel_load.1hr",
@@ -288,7 +321,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [{"key": "fbfm", "type": "categorical", "unit": None}],
             "select": [
                 {
                     "output": "fbfm",
@@ -309,7 +341,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "bands": [{"key": "fbfm", "type": "categorical", "unit": None}],
             "select": [
                 {
                     "output": "fbfm",
@@ -329,7 +360,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_percent_grid["id"], "alias": "a"}],
-            "bands": [{"key": "moisture", "type": "continuous", "unit": "%"}],
             "compute": [
                 {
                     "output": "moisture",
@@ -342,6 +372,7 @@ class TestCreateCompose:
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
         assert response.status_code == 201, response.json()
+        assert response.json()["bands"][0]["unit"] == "%"
 
     def test_add_rejects_unitless_and_unitful_raster_operands(
         self, client, domain_for_testing, complete_grid, complete_unitless_grid
@@ -350,9 +381,6 @@ class TestCreateCompose:
             "inputs": [
                 {"grid_id": complete_grid["id"], "alias": "a"},
                 {"grid_id": complete_unitless_grid["id"], "alias": "b"},
-            ],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
             ],
             "compute": [
                 {
@@ -373,9 +401,6 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid_no_georeference["id"], "alias": "a"}],
-            "bands": [
-                {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-            ],
             "select": [{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
         }
 

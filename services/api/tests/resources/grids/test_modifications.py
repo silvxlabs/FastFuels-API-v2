@@ -1,12 +1,12 @@
 """
-Unit tests for api/v2/resources/grids/modifications.py
+Unit tests for api/v2/resources/grids/modification_models.py
 
 Tests the grid-specific modification classes and base enums.
 These are pure unit tests with no external dependencies.
 """
 
 import pytest
-from api.resources.grids.modifications import (
+from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
     GridGeometrySpatialCondition,
     GridModification,
@@ -14,11 +14,13 @@ from api.resources.grids.modifications import (
     GridModificationCondition,
     GridSpatialTarget,
 )
+from api.resources.grids.utils import resolve_modification_fuel_model_labels
 from api.resources.modifications import (
     Modifier,
     Operator,
     SpatialOperator,
 )
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 # =============================================================================
@@ -713,3 +715,56 @@ class TestGridSpatialConditionDispatch:
         reparsed = GridModification.model_validate(data)
         assert isinstance(reparsed.conditions[0], GridFeatureSpatialCondition)
         assert reparsed.conditions[0].feature_id == "feat_road_abc"
+
+
+class TestFuelModelLabelResolution:
+    """resolve_modification_fuel_model_labels normalizes FBFM labels to codes."""
+
+    _BAND_TYPES = {"fbfm": "categorical", "fuel_load.1hr": "continuous"}
+
+    def test_resolves_condition_and_action_labels_in_place(self):
+        modification = GridModification(
+            conditions=[
+                {"band": "fbfm", "operator": "eq", "value": ["GR1", "GR2"]},
+            ],
+            actions=[{"band": "fbfm", "modifier": "replace", "value": "GR3"}],
+        )
+
+        resolve_modification_fuel_model_labels([modification], self._BAND_TYPES)
+
+        assert modification.conditions[0].value == [101, 102]
+        assert modification.actions[0].value == 103
+
+    def test_passes_numeric_values_through(self):
+        modification = GridModification(
+            conditions=[{"band": "fuel_load.1hr", "operator": "gt", "value": 0.5}],
+            actions=[{"band": "fuel_load.1hr", "modifier": "multiply", "value": 0.1}],
+        )
+
+        resolve_modification_fuel_model_labels([modification], self._BAND_TYPES)
+
+        assert modification.conditions[0].value == 0.5
+        assert modification.actions[0].value == 0.1
+
+    def test_unknown_label_raises_422(self):
+        modification = GridModification(
+            conditions=[{"band": "fbfm", "operator": "eq", "value": "GRX"}],
+            actions=[{"band": "fbfm", "modifier": "replace", "value": 102}],
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_modification_fuel_model_labels([modification], self._BAND_TYPES)
+        assert exc_info.value.status_code == 422
+
+    def test_string_value_on_continuous_band_raises_422(self):
+        # A label on a continuous band must be rejected clearly, not
+        # silently mis-resolved to a fuel-model code.
+        modification = GridModification(
+            conditions=[{"band": "fuel_load.1hr", "operator": "eq", "value": "GR1"}],
+            actions=[{"band": "fuel_load.1hr", "modifier": "replace", "value": 0.1}],
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_modification_fuel_model_labels([modification], self._BAND_TYPES)
+        assert exc_info.value.status_code == 422
+        assert "continuous" in exc_info.value.detail.lower()

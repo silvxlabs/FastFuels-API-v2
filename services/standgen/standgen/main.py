@@ -205,14 +205,27 @@ def process_inventory_request(request: Request):
         # pending_modifications / pending_treatments; apply it to the inventory's
         # own data rather than re-deriving from the root source. The two are
         # mutually exclusive per request — each endpoint sets only its own queue.
-        if inventory.get("pending_modifications"):
+        # The pending delta is merged into the cumulative ledger only here, in
+        # the same update that flips status to completed, so the stored ledger
+        # always equals the applied data: a failed run leaves the ledger as-is
+        # and pending_* intact for a retry (#319).
+        pending_modifications = inventory.get("pending_modifications") or []
+        pending_treatments = inventory.get("pending_treatments") or []
+        if pending_modifications:
             result = apply_in_place_modifications(
                 inventory, domain_gdf, progress_callback
             )
-            completion_extra = {"pending_modifications": []}
-        elif inventory.get("pending_treatments"):
+            completion_extra = {
+                "modifications": (inventory.get("modifications") or [])
+                + pending_modifications,
+                "pending_modifications": [],
+            }
+        elif pending_treatments:
             result = apply_in_place_treatments(inventory, domain_gdf, progress_callback)
-            completion_extra = {"pending_treatments": []}
+            completion_extra = {
+                "treatments": (inventory.get("treatments") or []) + pending_treatments,
+                "pending_treatments": [],
+            }
         else:
             result = dispatch_handler(inventory, domain_gdf, progress_callback)
             completion_extra = None

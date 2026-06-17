@@ -52,6 +52,25 @@ def generate_upload_signed_url(
     )
 
 
+def upload_required_headers(content_type: str, max_size_bytes: int) -> dict[str, str]:
+    """Return the headers a client must send with a signed upload PUT.
+
+    V4 signing commits the request to every signed header; GCS rejects a PUT
+    that omits or alters any of them. Kept next to the signer so the header
+    names/values stay in lockstep with what ``generate_upload_signed_url``
+    actually signs — API responses should surface this dict verbatim so
+    clients can replay it without knowing GCS conventions.
+
+    Args:
+        content_type: Same value passed to ``generate_upload_signed_url``.
+        max_size_bytes: Same value passed to ``generate_upload_signed_url``.
+    """
+    return {
+        "Content-Type": content_type,
+        "x-goog-content-length-range": f"0,{max_size_bytes}",
+    }
+
+
 def generate_download_signed_url(
     bucket_name: str,
     blob_path: str,

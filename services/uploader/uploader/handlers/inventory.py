@@ -103,9 +103,7 @@ def handle_inventory(
             )
 
         path = f"gs://{INVENTORIES_BUCKET}/{resource_id}"
-        dd.from_pandas(df.reset_index(drop=True), npartitions=1).to_parquet(
-            path, write_metadata_file=True
-        )
+        _write_parquet(df, path)
 
         georeference = {
             "crs": domain_crs_str,
@@ -144,6 +142,18 @@ def handle_inventory(
             pass
         if os.path.exists(local_path):
             os.remove(local_path)
+
+
+def _write_parquet(df: pd.DataFrame, path: str) -> None:
+    """Write ``df`` as partitioned Parquet with an aggregated ``_metadata`` file.
+
+    ``write_index=False`` keeps dask from materializing the meaningless
+    RangeIndex as a synthetic ``__null_dask_index__`` column in the file
+    schema, which leaked into the API's data/metadata ``columns`` (#335).
+    """
+    dd.from_pandas(df.reset_index(drop=True), npartitions=1).to_parquet(
+        path, write_metadata_file=True, write_index=False
+    )
 
 
 def _parse(

@@ -1,6 +1,6 @@
 # Griddle
 
-Griddle is the backend service for processing V2 Grid resources. It handles all grid sources (LANDFIRE, 3DEP, Meta2024) and operations (lookup, resample, blend) in a single Cloud Run service.
+Griddle is the backend service for processing V2 Grid resources. It handles all grid sources (LANDFIRE, 3DEP, Meta2024) and operations (lookup, resample, compose) in a single Cloud Run service.
 
 ## Why "Griddle"?
 
@@ -254,8 +254,9 @@ services/griddle/
 │       ├── __init__.py
 │       ├── landfire.py       # fetch_fbfm40, fetch_topography + shared helpers
 │       ├── lookup.py         # fbfm40_lookup
-│       └── resample.py       # resample_grid
-│       # Future: dep3.py, meta2024.py, blend.py
+│       ├── resample.py       # resample_grid
+│       └── compose.py        # compose_grid
+│       # Future: dep3.py, meta2024.py
 ├── tests/
 │   ├── data/
 │   │   └── domains/          # Test domain GeoJSON files
@@ -315,10 +316,11 @@ def fetch_elevation(roi: gpd.GeoDataFrame) -> xr.Dataset:
 def fetch_chm(roi: gpd.GeoDataFrame) -> xr.Dataset:
     """Fetch Meta 2024 canopy height model."""
     ...
+```
 
-### Transform Handlers (Not Yet Implemented)
+### Transform Handlers
 
-Future handlers that will operate on existing grid data. The following are design specifications for planned implementations.
+Transform handlers operate on existing grid data.
 
 **Lookup:**
 ```python
@@ -393,81 +395,24 @@ def resample(
     return xr.concat(bands, dim="band")
 ```
 
-**Blend:**
+**Compose:**
 ```python
-# handlers/blend.py
+# handlers/compose.py
 
-import operator
+def compose_grid(
+    grid: dict,
+    source: dict,
+    progress_callback=None,
+) -> xr.Dataset:
+    """Compose a Dataset from existing grid Zarr datasets.
 
-OPERATORS = {
-    "add": operator.add,
-    "subtract": operator.sub,
-    "multiply": operator.mul,
-    "divide": operator.truediv,
-    "max": lambda a, b: xr.where(a > b, a, b),
-    "min": lambda a, b: xr.where(a < b, a, b),
-    "average": lambda a, b: (a + b) / 2,
-}
-
-def blend(
-    inputs: dict[str, xr.DataArray],  # alias -> data
-    select: list[dict],
-    compute: list[dict],
-) -> xr.DataArray:
-    """Blend multiple grids via select/compute operations.
-
-    Args:
-        inputs: Mapping of alias to DataArray, e.g., {"a": grid_a, "b": grid_b}
-        select: Band selections, e.g., [{"output": "fbfm", "from": "a.fbfm"}]
-        compute: Band computations, e.g., [{"output": "fuel_load.1hr", "operator": "add", "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"]}]
+    Source metadata supplies:
+      - inputs: grid_id, alias, source_grid_checksum
+      - bands: ordered output band metadata
+      - select: direct band selections with optional conditions
+      - compute: arithmetic operations with optional conditions
     """
-    bands = []
-
-    for sel in select:
-        band = select_band(inputs, sel)
-        bands.append(band)
-
-    for comp in compute:
-        band = compute_band(inputs, comp)
-        bands.append(band)
-
-    return xr.concat(bands, dim="band")
-
-
-def select_band(inputs: dict[str, xr.DataArray], spec: dict) -> xr.DataArray:
-    """Select a band from inputs, optionally with conditions."""
-    alias, band_name = spec["from"].split(".", 1)
-    source = inputs[alias].sel(band=band_name)
-
-    if "conditions" in spec:
-        mask = evaluate_conditions(inputs, spec["conditions"])
-        else_value = resolve_else(inputs, spec["else"])
-        source = xr.where(mask, source, else_value)
-
-    return source.assign_coords(band=spec["output"])
-
-
-def compute_band(inputs: dict[str, xr.DataArray], spec: dict) -> xr.DataArray:
-    """Compute a band from operands."""
-    operands = [resolve_operand(inputs, op) for op in spec["operands"]]
-    op_func = OPERATORS[spec["operator"]]
-
-    result = operands[0]
-    for operand in operands[1:]:
-        result = op_func(result, operand)
-
-    if "conditions" in spec:
-        mask = evaluate_conditions(inputs, spec["conditions"])
-        else_value = resolve_else(inputs, spec["else"])
-        result = xr.where(mask, result, else_value)
-
-    return result.assign_coords(band=spec["output"])
-
-
-def resolve_operand(inputs: dict[str, xr.DataArray], ref: str) -> xr.DataArray:
-    """Resolve 'alias.band' reference to actual data."""
-    alias, band_name = ref.split(".", 1)
-    return inputs[alias].sel(band=band_name)
+    ...
 ```
 
 ## Shared Utilities (Planned)
@@ -972,6 +917,7 @@ Performance testing with ~1 km² domains shows:
 ### Phase 3: Transform Handlers
 - [x] Implement `handlers/lookup.py` (FBFM40 SB40 lookup with pint unit conversion)
 - [x] Implement `handlers/resample.py` (rioxarray `rio.reproject()` with 14 methods and per-band overrides)
+- [x] Implement `handlers/compose.py` (select, compute, conditional fallback, literals)
 - [ ] Implement `utils/modifications.py`
 
 ### Phase 4: Remaining Source Handlers
@@ -980,9 +926,9 @@ Performance testing with ~1 km² domains shows:
 - [ ] Implement `handlers/dep3.py`
 - [ ] Implement `handlers/meta2024.py`
 
-### Phase 5: Blend
-- [ ] Implement `handlers/blend.py`
-- [ ] Test complex blend operations
+### Phase 5: Compose
+- [x] Implement `handlers/compose.py`
+- [x] Test compose select, compute, literals, conditions, and dispatch
 
 ## References
 

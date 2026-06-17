@@ -1,7 +1,7 @@
 """
 Integration tests for api/v2/resources/point_clouds/router.py
 
-Tests the standard CRUD endpoints (LIST, GET, PATCH, DELETE, DUPLICATE). These
+Tests the standard CRUD endpoints (LIST, GET, PATCH, DELETE). These
 tests make real HTTP requests to the API and interact with Firestore. There is
 no create endpoint yet (#328/#329), so documents are seeded directly.
 """
@@ -144,6 +144,18 @@ class TestListPointCloudsWildcard:
         for pc in response.json()["point_clouds"]:
             assert "owner_id" not in pc
 
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_wildcard_sorting_matrix_returns_200(
+        self, client, point_clouds_across_domains, sort_by, sort_order
+    ):
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route()}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
+        assert response.status_code == 200
+
 
 # GET /domains/{domain_id}/pointclouds (List) Tests
 
@@ -279,12 +291,16 @@ class TestListPointClouds:
         names = [p["name"] for p in response.json()["point_clouds"]]
         assert names == sorted(names, reverse=True)
 
-    def test_list_sorting_by_created_on(
-        self, client, point_clouds_for_listing, domain_for_testing
+    @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
+    @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
+    def test_list_sorting_matrix_returns_200(
+        self, client, point_clouds_for_listing, domain_for_testing, sort_by, sort_order
     ):
-        response = client.get(
-            f"{self.route(domain_for_testing['id'])}?sort_by=created_on&sort_order=descending"
-        )
+        """Every sort field/direction combination is served (issue #321)."""
+        url = f"{self.route(domain_for_testing['id'])}?sort_by={sort_by}"
+        if sort_order:
+            url += f"&sort_order={sort_order}"
+        response = client.get(url)
         assert response.status_code == 200
 
     def test_list_filter_by_type(
@@ -556,130 +572,3 @@ class TestDeletePointCloud:
 
         response2 = client.delete(f"{self.route(domain_for_testing['id'])}/{pc_id}")
         assert response2.status_code == 404
-
-
-# POST /domains/{domain_id}/pointclouds/{point_cloud_id}/duplicate Tests
-
-
-class TestDuplicatePointCloud:
-    """Test the POST /domains/{domain_id}/pointclouds/{id}/duplicate endpoint."""
-
-    def route(self, domain_id):
-        return f"/domains/{domain_id}/pointclouds"
-
-    @pytest.fixture(scope="function")
-    def completed_source(self, firestore_client, domain_for_testing):
-        pc_data = make_point_cloud_data(
-            domain_id=domain_for_testing["id"],
-            name="Duplicate Source",
-            description="Source for duplicate tests",
-            status="completed",
-            tags=["dup-src"],
-            georeference={
-                "crs": "EPSG:32612",
-                "bounds": [0.0, 0.0, 1.0, 10.0, 10.0, 50.0],
-            },
-        )
-        doc_ref = firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
-            pc_data["id"]
-        )
-        doc_ref.set(pc_data)
-        yield pc_data
-        doc_ref.delete()
-
-    @pytest.fixture(scope="function")
-    def pending_source(self, firestore_client, domain_for_testing):
-        pc_data = make_point_cloud_data(
-            domain_id=domain_for_testing["id"],
-            name="Pending Source",
-            status="pending",
-        )
-        doc_ref = firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
-            pc_data["id"]
-        )
-        doc_ref.set(pc_data)
-        yield pc_data
-        doc_ref.delete()
-
-    def _cleanup(self, firestore_client, pc_id):
-        firestore_client.collection(POINT_CLOUDS_COLLECTION).document(pc_id).delete()
-
-    def test_duplicate_creates_new_pending_copy(
-        self, client, completed_source, firestore_client, domain_for_testing
-    ):
-        src_id = completed_source["id"]
-        response = client.post(
-            f"{self.route(domain_for_testing['id'])}/{src_id}/duplicate",
-            json={"name": "The Copy"},
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        try:
-            assert data["id"] != src_id
-            assert data["status"] == "pending"
-            assert data["name"] == "The Copy"
-            # Source content/provenance carried over verbatim.
-            assert data["type"] == completed_source["type"]
-            assert data["source"] == completed_source["source"]
-            assert data["georeference"]["crs"] == "EPSG:32612"
-            # A fresh checksum so derivatives can detect the copy as distinct.
-            assert data["checksum"] != completed_source["checksum"]
-        finally:
-            self._cleanup(firestore_client, data["id"])
-
-    def test_duplicate_without_body_carries_metadata(
-        self, client, completed_source, firestore_client, domain_for_testing
-    ):
-        src_id = completed_source["id"]
-        response = client.post(
-            f"{self.route(domain_for_testing['id'])}/{src_id}/duplicate"
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        try:
-            assert data["name"] == completed_source["name"]
-            assert data["description"] == completed_source["description"]
-            assert data["tags"] == completed_source["tags"]
-        finally:
-            self._cleanup(firestore_client, data["id"])
-
-    def test_duplicate_excludes_owner_id(
-        self, client, completed_source, firestore_client, domain_for_testing
-    ):
-        src_id = completed_source["id"]
-        response = client.post(
-            f"{self.route(domain_for_testing['id'])}/{src_id}/duplicate"
-        )
-        assert response.status_code == 201
-        data = response.json()
-        try:
-            assert "owner_id" not in data
-        finally:
-            self._cleanup(firestore_client, data["id"])
-
-    def test_duplicate_pending_source_returns_422(
-        self, client, pending_source, domain_for_testing
-    ):
-        """A source that is not completed has no finished data to copy."""
-        src_id = pending_source["id"]
-        response = client.post(
-            f"{self.route(domain_for_testing['id'])}/{src_id}/duplicate"
-        )
-        assert response.status_code == 422
-
-    def test_duplicate_nonexistent_returns_404(self, client, domain_for_testing):
-        response = client.post(
-            f"{self.route(domain_for_testing['id'])}/00000000000000000000000000000000/duplicate"
-        )
-        assert response.status_code == 404
-
-    def test_duplicate_wrong_owner_returns_404(
-        self, client, point_cloud_with_different_owner, domain_with_different_owner
-    ):
-        src_id = point_cloud_with_different_owner["id"]
-        response = client.post(
-            f"{self.route(domain_with_different_owner['id'])}/{src_id}/duplicate"
-        )
-        assert response.status_code == 404

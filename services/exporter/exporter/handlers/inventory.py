@@ -14,7 +14,6 @@ import traceback
 import zipfile
 from collections.abc import Callable
 
-import gcsfs
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
@@ -23,6 +22,7 @@ from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
 from exporter.storage import load_inventory_parquet
 from lib.config import EXPORTS_BUCKET
+from lib.gcs import get_gcsfs_client
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ def _upload_bytes(data: bytes, gcs_path: str) -> None:
         data: Raw bytes to upload
         gcs_path: Full GCS path (gs://bucket/path/to/file)
     """
-    fs = gcsfs.GCSFileSystem()
+    fs = get_gcsfs_client()
     with fs.open(gcs_path, "wb") as f:
         f.write(data)
 

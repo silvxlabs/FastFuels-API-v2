@@ -28,6 +28,8 @@ from api.db.documents import (
 from api.dependencies import VerifiedDomain
 from api.resources.grids.cache import get_grid_array
 from api.resources.grids.canopy.router import router as canopy_router
+from api.resources.grids.compose.router import router as compose_router
+from api.resources.grids.duplicate.router import router as duplicate_router
 from api.resources.grids.exports.quicfire.router import (
     router as quicfire_export_router,
 )
@@ -35,6 +37,7 @@ from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.fccs.router import router as fccs_router
 from api.resources.grids.lookup.router import router as lookup_router
+from api.resources.grids.modifications.router import router as modifications_router
 from api.resources.grids.pim.router import router as pim_router
 from api.resources.grids.rasterize.router import router as rasterize_router
 from api.resources.grids.resample.router import router as resample_router
@@ -835,6 +838,12 @@ async def get_grid_data_binary(
 router.include_router(
     grid_exports_router, prefix="/{grid_id}/exports", tags=["Grids - Exports"]
 )
+router.include_router(duplicate_router, prefix="/{grid_id}/duplicate")
+router.include_router(
+    modifications_router,
+    prefix="/{grid_id}/modifications",
+    tags=["Grids - Modifications"],
+)
 router.include_router(
     quicfire_export_router,
     prefix="/exports/quicfire",
@@ -847,6 +856,7 @@ router.include_router(
 )
 router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
 router.include_router(canopy_router, prefix="/canopy", tags=["Grids - Canopy"])
+router.include_router(compose_router, prefix="/compose", tags=["Grids - Compose"])
 router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(rasterize_router, prefix="/rasterize", tags=["Grids - Rasterize"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])

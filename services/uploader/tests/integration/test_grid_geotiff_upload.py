@@ -79,7 +79,9 @@ def _teardown_gcsfs() -> None:
         fasyn.loop[0] = None
         fasyn.iothread[0] = None
     gcsfs.GCSFileSystem.clear_instance_cache()
-    _gcs_blobs.gcsfs_client = gcsfs.GCSFileSystem()
+    # Drop the lib accessor's cached client so the next get_gcsfs_client()
+    # rebuilds against the fresh loop instead of the one we just stopped.
+    _gcs_blobs.get_gcsfs_client.cache_clear()
 
 
 @pytest.fixture(autouse=True)

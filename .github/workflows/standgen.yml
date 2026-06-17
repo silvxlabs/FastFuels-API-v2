@@ -5,6 +5,9 @@ env:
   REPO_NAME: v2
   REGION: us-west1
   PROJECT_ID: ${{ secrets.GCP_PROJECT }}
+  # Public GDAM allometry inference API. Literal (not a secret) so an unset
+  # secret can't override the correct default with an empty string.
+  GDAM_API_URL: https://gdam-api-v2-782971006568.us-west1.run.app
 
 on:
   push:
@@ -88,7 +91,8 @@ jobs:
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
               INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
               FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
-              TABLES_BUCKET=${{ secrets.TABLES_BUCKET }}" \
+              TABLES_BUCKET=${{ secrets.TABLES_BUCKET }},\
+              GDAM_API_URL=${{ env.GDAM_API_URL }}" \
             --quiet
 
   test:
@@ -124,6 +128,7 @@ jobs:
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
           TABLES_BUCKET: ${{ secrets.TABLES_BUCKET }}
+          GDAM_API_URL: ${{ env.GDAM_API_URL }}
         run: uv run pytest tests/ --ignore=tests/integration -v
 
       - name: Run integration tests
@@ -135,6 +140,7 @@ jobs:
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           TABLES_BUCKET: ${{ secrets.TABLES_BUCKET }}
+          GDAM_API_URL: ${{ env.GDAM_API_URL }}
           DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
           INFRA_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
         run: uv run pytest tests/integration/ -n auto -v

@@ -10,7 +10,6 @@ import logging
 import traceback
 from collections.abc import Callable
 
-import gcsfs
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -21,6 +20,7 @@ from griddle.handlers.tiles import TileMetadata
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import TABLES_BUCKET
 from lib.errors import ProcessingError
+from lib.gcs import get_gcsfs_client
 from lib.raster import RasterConnection, cog_env
 
 META_VERSION_CONFIG = {
@@ -45,7 +45,7 @@ def _query_tile_index(index_path: str, roi: gpd.GeoDataFrame) -> pd.DataFrame:
     roi_4326 = roi.to_crs("EPSG:4326")
     xmin_q, ymin_q, xmax_q, ymax_q = roi_4326.total_bounds
 
-    fs = gcsfs.GCSFileSystem()
+    fs = get_gcsfs_client()
     raw = fs.cat(index_path)
     df = pd.read_parquet(io.BytesIO(raw))
     mask = (

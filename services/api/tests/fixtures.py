@@ -217,6 +217,7 @@ def make_point_cloud_data(
     source: dict | None = None,
     point_cloud_type: str = "als",
     georeference: dict | None = None,
+    summary: dict | None = None,
     checksum: str | None = None,
 ) -> dict:
     """Factory function to create point cloud data as stored in Firestore."""
@@ -234,6 +235,7 @@ def make_point_cloud_data(
         "checksum": checksum or uuid.uuid4().hex,
         "source": source or {"name": "3dep"},
         "georeference": georeference,
+        "summary": summary,
         "error": None,
         "tags": tags or [],
     }

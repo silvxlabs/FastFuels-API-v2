@@ -32,8 +32,10 @@ class InventoryMeta:
 def _read_metadata_sync(inventory_id: str) -> InventoryMeta:
     metadata_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}/_metadata"
     pf = pq.ParquetFile(metadata_path)
-    metadata = pf.metadata
+    return _parse_metadata(pf.metadata)
 
+
+def _parse_metadata(metadata: pq.FileMetaData) -> InventoryMeta:
     partitions_by_path: dict[str, int] = {}
     for i in range(metadata.num_row_groups):
         rg = metadata.row_group(i)

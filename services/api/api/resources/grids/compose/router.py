@@ -24,7 +24,6 @@ from api.resources.grids.compose.schema import (
     ComposeSourceInput,
     CreateComposeRequest,
     InlineCompute,
-    build_compose_bands,
 )
 from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
@@ -86,10 +85,6 @@ def _split_band_ref(ref: str, aliases: set[str]) -> tuple[str, str]:
 def _band_by_key(grid_data: dict, grid_id: str, key: str) -> dict:
     validate_grid_has_band(grid_data, grid_id, key)
     return next(b for b in grid_data.get("bands", []) if b["key"] == key)
-
-
-def _output_band_by_key(bands: list[Band], key: str) -> Band:
-    return next(b for b in bands if b.key == key)
 
 
 def _band_ref_metadata(
@@ -256,16 +251,17 @@ def _units_compatible(left: str | None, right: str | None) -> bool:
     return _unit_object(left).is_compatible_with(_unit_object(right))
 
 
-def _validate_compute_units(
+def _derive_compute_unit(
     op: ComposeCompute | InlineCompute,
-    output_band: Band,
     source_grids: dict[str, dict],
     input_by_alias: dict[str, ComposeInput],
-) -> None:
-    """Validate operand band types and derive/check the output unit.
+) -> str | None:
+    """Validate operand band types and return the compute's output unit.
 
-    Operand arity and structural operand rules are enforced by the schema; this
-    only handles what needs the loaded source-grid metadata.
+    Operand arity and structural rules are enforced by the schema; this needs
+    the loaded source-grid metadata. The output unit defaults to the unit
+    derived from the operands and may be overridden (on `ComposeCompute`) with
+    any dimensionally compatible unit, which the worker converts to.
     """
     raster_bands = [
         metadata
@@ -280,6 +276,7 @@ def _validate_compute_units(
     typed_literal_units = [
         operand.unit for operand in op.operands if isinstance(operand, ComposeLiteral)
     ]
+    override = getattr(op, "unit", None)
 
     if op.operator in _UNIT_MATCHED_OPERATORS:
         units = [band.get("unit") for band in raster_bands] + typed_literal_units
@@ -289,19 +286,22 @@ def _validate_compute_units(
             raise _http_422(
                 f"Operator '{op.operator}' cannot mix unitless and unitful operands."
             )
-        expected_unit = output_band.unit
-        if any(not _units_compatible(unit, expected_unit) for unit in units):
+        # The operands all share a unit; default the output to the first band's.
+        output_unit = override if override is not None else raster_bands[0].get("unit")
+        if any(not _units_compatible(unit, output_unit) for unit in units):
             raise _http_422(
                 f"Operator '{op.operator}' requires operands compatible with output unit "
-                f"{expected_unit!r}."
+                f"{output_unit!r}."
             )
-    elif op.operator == ComposeOperator.multiply:
+        return output_unit
+
+    if op.operator == ComposeOperator.multiply:
         unit = _ureg.dimensionless
         for band in raster_bands:
             unit *= _unit_object(band.get("unit"))
         for literal_unit in typed_literal_units:
             unit *= _unit_object(literal_unit)
-        expected_unit = _canonical_unit_from_pint(unit)
+        derived_unit = _canonical_unit_from_pint(unit)
     else:
         numerator, denominator = op.operands
 
@@ -311,17 +311,16 @@ def _validate_compute_units(
                 return _unit_object(metadata.get("unit"))
             return _unit_object(_literal_unit(operand))
 
-        expected_unit = _canonical_unit_from_pint(
+        derived_unit = _canonical_unit_from_pint(
             operand_unit(numerator) / operand_unit(denominator)
         )
 
-    if output_band.type != BandType.continuous:
-        raise _http_422("Compute outputs must be continuous bands.")
-    if output_band.unit != expected_unit:
+    if override is not None and not _units_compatible(override, derived_unit):
         raise _http_422(
-            f"Output band {output_band.key!r} has unit {output_band.unit!r}, "
-            f"expected {expected_unit!r} for operator '{op.operator}'."
+            f"Output unit {override!r} is not compatible with the unit "
+            f"{derived_unit!r} derived for operator '{op.operator}'."
         )
+    return override if override is not None else derived_unit
 
 
 def _validate_else_value(
@@ -331,7 +330,12 @@ def _validate_else_value(
     input_by_alias: dict[str, ComposeInput],
 ) -> None:
     if isinstance(value, InlineCompute):
-        _validate_compute_units(value, output_band, source_grids, input_by_alias)
+        else_unit = _derive_compute_unit(value, source_grids, input_by_alias)
+        if not _units_compatible(else_unit, output_band.unit):
+            raise _http_422(
+                f"Inline `else` compute produces unit {else_unit!r}, incompatible "
+                f"with output {output_band.key!r} unit {output_band.unit!r}."
+            )
         return
 
     metadata = (
@@ -402,43 +406,51 @@ def _validate_conditions(
             raise _http_422("Continuous compose conditions require numeric values.")
 
 
-def _validate_compose_operations(
+def _build_output_bands(
     body: CreateComposeRequest,
-    bands: list[Band],
     source_grids: dict[str, dict],
-) -> None:
-    input_by_alias = {inp.alias: inp for inp in body.inputs}
+    input_by_alias: dict[str, ComposeInput],
+) -> list[Band]:
+    """Derive the ordered output band list from the compose operations.
 
-    for operation in body.select:
-        output_band = _output_band_by_key(bands, operation.output)
-        source_band = _band_ref_metadata(operation.from_, source_grids, input_by_alias)
-        if (
-            source_band["type"] != output_band.type.value
-            or source_band.get("unit") != output_band.unit
-        ):
-            raise _http_422(
-                f"Selected band {operation.from_!r} is not compatible with output {operation.output!r}."
+    Select outputs inherit the source band's type and unit; compute outputs are
+    always continuous with a derived (or compatibly overridden) unit.
+    `name`/`description` come from the operation. Conditions and `else`
+    fallbacks are validated here against the loaded source grids, and FBFM
+    label fallbacks are resolved in place.
+    """
+    bands: list[Band] = []
+    for operation in [*body.select, *body.compute]:
+        if isinstance(operation, ComposeSelect):
+            source_band = _band_ref_metadata(
+                operation.from_, source_grids, input_by_alias
             )
+            band = Band(
+                index=len(bands),
+                key=operation.output,
+                type=BandType(source_band["type"]),
+                unit=source_band.get("unit"),
+                name=operation.name,
+                description=operation.description,
+            )
+        else:
+            band = Band(
+                index=len(bands),
+                key=operation.output,
+                type=BandType.continuous,
+                unit=_derive_compute_unit(operation, source_grids, input_by_alias),
+                name=operation.name,
+                description=operation.description,
+            )
+
         _validate_conditions(operation.conditions, source_grids, input_by_alias)
         if operation.else_ is not None:
             operation.else_ = _resolve_else_labels(
-                operation.else_, output_band, set(source_grids)
+                operation.else_, band, set(source_grids)
             )
-            _validate_else_value(
-                operation.else_, output_band, source_grids, input_by_alias
-            )
-
-    for operation in body.compute:
-        output_band = _output_band_by_key(bands, operation.output)
-        _validate_conditions(operation.conditions, source_grids, input_by_alias)
-        _validate_compute_units(operation, output_band, source_grids, input_by_alias)
-        if operation.else_ is not None:
-            operation.else_ = _resolve_else_labels(
-                operation.else_, output_band, set(source_grids)
-            )
-            _validate_else_value(
-                operation.else_, output_band, source_grids, input_by_alias
-            )
+            _validate_else_value(operation.else_, band, source_grids, input_by_alias)
+        bands.append(band)
+    return bands
 
 
 def _dump_operations_for_firestore(
@@ -472,8 +484,6 @@ async def create_compose(
     domain_id = domain["id"]
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
-    output_band_types = {band.key: band.type.value for band in body.bands}
-    resolve_modification_fuel_model_labels(body.modifications, output_band_types)
     await _validate_compose_feature_conditions(
         body.select, body.compute, owner_id, domain_id
     )
@@ -482,8 +492,9 @@ async def create_compose(
     input_by_alias = {inp.alias: inp for inp in body.inputs}
     _validate_alignment(source_grids, input_by_alias)
 
-    bands = build_compose_bands(body.bands)
-    _validate_compose_operations(body, bands, source_grids)
+    bands = _build_output_bands(body, source_grids, input_by_alias)
+    output_band_types = {band.key: band.type.value for band in bands}
+    resolve_modification_fuel_model_labels(body.modifications, output_band_types)
 
     source = ComposeSource(
         inputs=[

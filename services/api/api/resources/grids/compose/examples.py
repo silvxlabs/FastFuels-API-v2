@@ -6,14 +6,12 @@ EXAMPLE_COMPOSE_BASIC_COMPUTE = {
         {"grid_id": "grid_fbfm40", "alias": "a"},
         {"grid_id": "grid_fccs", "alias": "b"},
     ],
-    "bands": [
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
-    ],
     "compute": [
         {
             "output": "fuel_load.1hr",
             "operator": "add",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
+            "name": "Combined 1-hour fuel load",
         }
     ],
 }
@@ -23,12 +21,6 @@ EXAMPLE_COMPOSE_SELECT_AND_COMPUTE = {
     "inputs": [
         {"grid_id": "grid_fbfm40", "alias": "a"},
         {"grid_id": "grid_fccs", "alias": "b"},
-    ],
-    "bands": [
-        {"key": "fbfm", "type": "categorical", "unit": None},
-        {"key": "fuel_depth", "type": "continuous", "unit": "m"},
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
-        {"key": "fuel_load.10hr", "type": "continuous", "unit": "kg/m**2"},
     ],
     "select": [
         {"output": "fbfm", "from": "a.fbfm"},
@@ -51,11 +43,6 @@ EXAMPLE_COMPOSE_SELECT_AND_COMPUTE = {
 EXAMPLE_COMPOSE_SINGLE_GRID_MATH = {
     "name": "FCCS with combined 1hr fuels",
     "inputs": [{"grid_id": "grid_fccs", "alias": "a"}],
-    "bands": [
-        {"key": "fuel_depth", "type": "continuous", "unit": "m"},
-        {"key": "moisture_of_extinction", "type": "continuous", "unit": "%"},
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
-    ],
     "select": [
         {"output": "fuel_depth", "from": "a.fuel_depth"},
         {"output": "moisture_of_extinction", "from": "a.moisture_of_extinction"},
@@ -72,9 +59,6 @@ EXAMPLE_COMPOSE_SINGLE_GRID_MATH = {
 EXAMPLE_COMPOSE_WITH_LITERAL = {
     "name": "Adjusted fuel loads",
     "inputs": [{"grid_id": "grid_surface", "alias": "a"}],
-    "bands": [
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
-    ],
     "compute": [
         {
             "output": "fuel_load.1hr",
@@ -84,14 +68,27 @@ EXAMPLE_COMPOSE_WITH_LITERAL = {
     ],
 }
 
+EXAMPLE_COMPOSE_UNIT_OVERRIDE = {
+    "name": "Fuel load in grams",
+    "inputs": [
+        {"grid_id": "grid_fbfm40", "alias": "a"},
+        {"grid_id": "grid_fccs", "alias": "b"},
+    ],
+    "compute": [
+        {
+            "output": "fuel_load.1hr",
+            "operator": "add",
+            "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
+            "unit": "g/m**2",
+        }
+    ],
+}
+
 EXAMPLE_COMPOSE_CONDITIONAL_COMPUTE = {
     "name": "Averaged fuel loads where both valid",
     "inputs": [
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
-    ],
-    "bands": [
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
     ],
     "compute": [
         {
@@ -113,9 +110,6 @@ EXAMPLE_COMPOSE_CONDITIONAL_FALLBACK = {
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
     ],
-    "bands": [
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
-    ],
     "select": [
         {
             "output": "fuel_load.1hr",
@@ -131,9 +125,6 @@ EXAMPLE_COMPOSE_SET_MEMBERSHIP = {
     "inputs": [
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
-    ],
-    "bands": [
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
     ],
     "select": [
         {
@@ -167,9 +158,6 @@ EXAMPLE_COMPOSE_INLINE_COMPUTE_FALLBACK = {
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
     ],
-    "bands": [
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
-    ],
     "select": [
         {
             "output": "fuel_load.1hr",
@@ -188,11 +176,6 @@ EXAMPLE_COMPOSE_MIXED_CONDITIONS = {
     "inputs": [
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
-    ],
-    "bands": [
-        {"key": "fbfm", "type": "categorical", "unit": None},
-        {"key": "fuel_depth", "type": "continuous", "unit": "m"},
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
     ],
     "select": [
         {"output": "fbfm", "from": "a.fbfm"},
@@ -231,9 +214,6 @@ EXAMPLE_COMPOSE_MIXED_CONDITIONS = {
 EXAMPLE_COMPOSE_TYPED_LITERAL_FALLBACK = {
     "name": "Zero non-burnable fuels",
     "inputs": [{"grid_id": "grid_surface", "alias": "a"}],
-    "bands": [
-        {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"},
-    ],
     "select": [
         {
             "output": "fuel_load.1hr",
@@ -258,10 +238,12 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
             "Adds the same continuous band from two aligned source grids and "
             "writes the result as a single output band. This is the smallest "
             "multi-grid compose request: `inputs` gives each source grid an "
-            "alias, `bands` declares the output metadata, and `compute` names "
-            "the output plus the arithmetic operation. Use this pattern when "
-            "two products carry compatible units and should contribute to the "
-            "same fire-model quantity."
+            "alias, and `compute` names the output plus the arithmetic "
+            "operation. The output band's type (continuous) and unit "
+            "(`kg/m**2`, inherited from the operands) are derived automatically "
+            "— only the optional `name` is supplied. Use this pattern when two "
+            "products carry compatible units and should contribute to the same "
+            "fire-model quantity."
         ),
     },
     "select_and_compute": {
@@ -271,10 +253,10 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
             "Builds a richer output grid by copying some bands directly from "
             "one source and computing others from two sources. `select` "
             "preserves categorical or already-valid bands such as `fbfm` and "
-            "`fuel_depth`; `compute` derives new continuous outputs. The "
-            "`bands` list is intentionally explicit and ordered: it defines "
-            "the output band metadata and final band order, and its keys must "
-            "exactly match the `select` and `compute` outputs."
+            "`fuel_depth`; `compute` derives new continuous outputs. The output "
+            "grid's bands come from the operations, in order — selects first, "
+            "then computes — so the resulting band order is `fbfm`, "
+            "`fuel_depth`, `fuel_load.1hr`, `fuel_load.10hr`."
         ),
     },
     "single_grid_math": {
@@ -287,7 +269,7 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
             "`moisture_of_extinction` are copied through unchanged while "
             "`dead_grass + litter` becomes the composed `fuel_load.1hr` band. "
             "A single-grid compose still creates a new async Grid with normal "
-            "lineage and output band metadata."
+            "lineage and derived band metadata."
         ),
     },
     "literal_operand": {
@@ -297,8 +279,20 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
             "Scales a raster band by a bare numeric literal. Bare numbers are "
             "allowed in `compute.operands`; for `multiply` and `divide` they "
             "are treated as dimensionless, so multiplying `kg/m**2` by `0.5` "
-            "keeps the output unit `kg/m**2`. Use a tagged literal instead "
-            "when the literal itself has a unit."
+            "leaves the derived output unit `kg/m**2`. Use a tagged literal "
+            "instead when the literal itself has a unit."
+        ),
+    },
+    "unit_override": {
+        "value": EXAMPLE_COMPOSE_UNIT_OVERRIDE,
+        "summary": "Express the result in a different unit",
+        "description": (
+            "A compute output's unit is derived from its operands by default. "
+            "Supply `unit` to express the result in a different but "
+            "dimensionally compatible unit, and the worker converts to it. "
+            "Here two `kg/m**2` fuel loads are added and the output is written "
+            "in `g/m**2`. An incompatible override (e.g. `m`) is rejected at "
+            "request time."
         ),
     },
     "conditional_compute": {
@@ -381,6 +375,7 @@ ALL_COMPOSE_EXAMPLE_VALUES = [
     ("select_and_compute", EXAMPLE_COMPOSE_SELECT_AND_COMPUTE),
     ("single_grid_math", EXAMPLE_COMPOSE_SINGLE_GRID_MATH),
     ("literal_operand", EXAMPLE_COMPOSE_WITH_LITERAL),
+    ("unit_override", EXAMPLE_COMPOSE_UNIT_OVERRIDE),
     ("conditional_compute", EXAMPLE_COMPOSE_CONDITIONAL_COMPUTE),
     ("conditional_fallback", EXAMPLE_COMPOSE_CONDITIONAL_FALLBACK),
     ("set_membership", EXAMPLE_COMPOSE_SET_MEMBERSHIP),

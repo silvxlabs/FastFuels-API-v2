@@ -16,7 +16,6 @@ class TestCreateComposeRequest:
     def test_minimal_valid_request(self):
         request = CreateComposeRequest(
             inputs=[{"grid_id": "grid_a", "alias": "a"}],
-            bands=[{"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}],
             compute=[
                 {
                     "output": "fuel_load.1hr",
@@ -29,13 +28,14 @@ class TestCreateComposeRequest:
         assert request.inputs[0].alias == "a"
         assert request.compute[0].operands[1] == 0.5
 
+    def test_at_least_one_operation_required(self):
+        with pytest.raises(ValidationError, match="select or compute"):
+            CreateComposeRequest(inputs=[{"grid_id": "grid_a", "alias": "a"}])
+
     def test_alias_must_be_identifier_like(self):
         with pytest.raises(ValidationError):
             CreateComposeRequest(
                 inputs=[{"grid_id": "grid_a", "alias": "a.bad"}],
-                bands=[
-                    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-                ],
                 compute=[
                     {
                         "output": "fuel_load.1hr",
@@ -49,30 +49,16 @@ class TestCreateComposeRequest:
         with pytest.raises(ValidationError, match="Duplicate"):
             CreateComposeRequest(
                 inputs=[{"grid_id": "grid_a", "alias": "a"}],
-                bands=[
-                    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-                ],
                 select=[
                     {"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"},
                     {"output": "fuel_load.1hr", "from": "a.fuel_load.10hr"},
                 ],
             )
 
-    def test_bands_must_match_operation_outputs(self):
-        with pytest.raises(ValidationError, match="exactly match"):
-            CreateComposeRequest(
-                inputs=[{"grid_id": "grid_a", "alias": "a"}],
-                bands=[{"key": "fuel_depth", "type": "continuous", "unit": "m"}],
-                select=[{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
-            )
-
     def test_else_required_with_conditions(self):
         with pytest.raises(ValidationError, match="else"):
             CreateComposeRequest(
                 inputs=[{"grid_id": "grid_a", "alias": "a"}],
-                bands=[
-                    {"key": "fuel_load.1hr", "type": "continuous", "unit": "kg/m**2"}
-                ],
                 select=[
                     {
                         "output": "fuel_load.1hr",
@@ -150,4 +136,4 @@ class TestExamplesValidateAgainstSchema:
     def test_example_validates_against_schema(self, example_name, example_value):
         request = CreateComposeRequest(**example_value)
         assert request.inputs, example_name
-        assert request.bands, example_name
+        assert request.select or request.compute, example_name

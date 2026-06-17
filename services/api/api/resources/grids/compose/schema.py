@@ -18,7 +18,7 @@ from api.resources.grids.modification_models import (
     GridGeometrySpatialCondition,
     GridModification,
 )
-from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.grids.schema import Band, validate_no_duplicates
 from lib.units import validate_unit
 
 
@@ -96,25 +96,6 @@ class ComposeSourceInput(ComposeInput):
             "the source grid's current checksum to detect staleness."
         ),
     )
-
-
-class ComposeOutputBand(BaseModel):
-    """Explicit output band metadata for compose-created grids."""
-
-    key: str = Field(..., description="Output dot-notation band key.")
-    name: str | None = Field(None, max_length=255)
-    description: str | None = Field(None, max_length=2000)
-    type: BandType
-    unit: str | None = Field(
-        None,
-        description="Canonical UDUNITS-2 unit string, or null for categorical/dimensionless bands.",
-    )
-
-    @field_validator("unit")
-    @classmethod
-    def _check_canonical_unit(cls, v: str | None) -> str | None:
-        validate_unit(v)
-        return v
 
 
 class ComposeLiteral(BaseModel):
@@ -214,13 +195,23 @@ ComposeCondition = (
 
 
 class ComposeSelect(BaseModel):
-    """Select one input band into an output band, optionally conditionally."""
+    """Select one input band into an output band, optionally conditionally.
+
+    The output band's type and unit are inherited from the selected source
+    band; only the human-readable `name`/`description` are optional overrides.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str
+    output: str = Field(..., description="Output band key, e.g. `fuel_load.1hr`.")
     from_: str = Field(
         ..., alias="from", description="Alias-qualified source band ref."
+    )
+    name: str | None = Field(
+        None, max_length=255, description="Optional display name for the output band."
+    )
+    description: str | None = Field(
+        None, max_length=2000, description="Optional description for the output band."
     )
     conditions: list[ComposeCondition] | None = None
     else_: ComposeElseValue | None = Field(default=None, alias="else")
@@ -233,13 +224,38 @@ class ComposeSelect(BaseModel):
 
 
 class ComposeCompute(InlineCompute):
-    """Compute an output band from one or more operands."""
+    """Compute an output band from one or more operands.
+
+    The output band is always continuous and its unit is derived from the
+    operands (the product/quotient for `multiply`/`divide`, the operand unit
+    otherwise). Supply `unit` only to express the result in a different but
+    dimensionally compatible unit; the worker converts to it.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str
+    output: str = Field(..., description="Output band key, e.g. `fuel_load.1hr`.")
+    name: str | None = Field(
+        None, max_length=255, description="Optional display name for the output band."
+    )
+    description: str | None = Field(
+        None, max_length=2000, description="Optional description for the output band."
+    )
+    unit: str | None = Field(
+        None,
+        description=(
+            "Optional canonical output unit. Defaults to the unit derived from "
+            "the operands; if given it must be dimensionally compatible."
+        ),
+    )
     conditions: list[ComposeCondition] | None = None
     else_: ComposeElseValue | None = Field(default=None, alias="else")
+
+    @field_validator("unit")
+    @classmethod
+    def _check_canonical_unit(cls, v: str | None) -> str | None:
+        validate_unit(v)
+        return v
 
     @model_validator(mode="after")
     def _else_required_with_conditions(self):
@@ -262,7 +278,6 @@ class CreateComposeRequest(BaseModel):
     """Request to create a grid by composing one or more existing grids."""
 
     inputs: list[ComposeInput] = Field(..., min_length=1)
-    bands: list[ComposeOutputBand] = Field(..., min_length=1)
     select: list[ComposeSelect] = Field(default_factory=list)
     compute: list[ComposeCompute] = Field(default_factory=list)
     name: str = Field("", max_length=255)
@@ -277,30 +292,12 @@ class CreateComposeRequest(BaseModel):
         validate_no_duplicates([inp.grid_id for inp in v])
         return v
 
-    @field_validator("bands")
-    @classmethod
-    def _bands_are_unique(cls, v: list[ComposeOutputBand]) -> list[ComposeOutputBand]:
-        validate_no_duplicates([band.key for band in v])
-        return v
-
     @model_validator(mode="after")
-    def _has_operations_and_matching_outputs(self):
+    def _has_unique_operations(self):
         operation_outputs = [op.output for op in self.select] + [
             op.output for op in self.compute
         ]
         if not operation_outputs:
             raise ValueError("At least one select or compute operation is required.")
         validate_no_duplicates(operation_outputs)
-
-        band_keys = [band.key for band in self.bands]
-        if set(band_keys) != set(operation_outputs):
-            raise ValueError(
-                "`bands` keys must exactly match select/compute output keys."
-            )
         return self
-
-
-def build_compose_bands(outputs: list[ComposeOutputBand]) -> list[Band]:
-    """Build indexed Grid Band models from explicit compose output metadata."""
-
-    return [Band(index=i, **output.model_dump()) for i, output in enumerate(outputs)]

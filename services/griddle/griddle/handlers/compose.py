@@ -37,6 +37,7 @@ def compose_grid(
     progress("Loading compose inputs...", 10)
     inputs = _load_inputs(source["inputs"], grid)
     _validate_alignment(inputs)
+    _normalize_input_coords(inputs)
 
     base_ds = next(iter(inputs.values()))["dataset"]
     feature_cache: dict[tuple[str, float], object] = {}
@@ -197,6 +198,31 @@ def _validate_dataset_is_2d(ds: xr.Dataset, alias: str) -> None:
                     "Compose currently supports 2D grids only."
                 ),
             )
+
+
+def _normalize_input_coords(inputs: dict[str, dict]) -> None:
+    """Snap every input onto the first input's spatial coordinates.
+
+    Alignment validation only proves the inputs share a shape and a transform
+    to within ``abs_tol=1e-9``. xarray arithmetic and ``xr.where`` align by
+    coordinate *label*, so sub-nanometer drift between grids built by different
+    code paths (e.g. a LANDFIRE lattice vs. a reprojected raster) could
+    otherwise inner-join to NaN or empty results. Assigning one shared set of
+    ``y``/``x`` coordinates makes every later combination broadcast
+    cell-for-cell.
+    """
+    first_ds = inputs[next(iter(inputs))]["dataset"]
+    y_dim, x_dim = first_ds.rio.y_dim, first_ds.rio.x_dim
+    ref_coords = {
+        dim: first_ds.coords[dim] for dim in (y_dim, x_dim) if dim in first_ds.coords
+    }
+    if not ref_coords:
+        return
+    for item in inputs.values():
+        ds = item["dataset"]
+        shared = {dim: coord for dim, coord in ref_coords.items() if dim in ds.coords}
+        if shared:
+            item["dataset"] = ds.assign_coords(shared)
 
 
 def _split_ref(ref: str, inputs: dict[str, dict]) -> tuple[str, str]:
@@ -362,8 +388,7 @@ def _evaluate_value(
     output_band: dict,
     inputs: dict[str, dict],
     base_ds: xr.Dataset,
-    domain_id: str,
-    feature_cache: dict[tuple[str, float], object],
+    used_mask: np.ndarray | None = None,
 ) -> xr.DataArray | int | float | str:
     if _is_known_band_ref(value, inputs):
         return _band_da(inputs, value)
@@ -375,8 +400,7 @@ def _evaluate_value(
             output_band,
             inputs,
             base_ds,
-            domain_id,
-            feature_cache,
+            used_mask=used_mask,
         )
     return value
 
@@ -393,11 +417,11 @@ def _evaluate_select(
     if not operation.get("conditions"):
         return selected.copy()
 
-    fallback = _evaluate_value(
-        operation["else"], output_band, inputs, base_ds, domain_id, feature_cache
-    )
     mask = _condition_mask(
         operation["conditions"], inputs, base_ds, domain_id, feature_cache
+    )
+    fallback = _evaluate_value(
+        operation["else"], output_band, inputs, base_ds, used_mask=~mask
     )
     mask_da = xr.DataArray(mask, dims=selected.dims, coords=selected.coords)
     return xr.where(mask_da, selected, fallback)
@@ -411,22 +435,20 @@ def _evaluate_compute(
     domain_id: str,
     feature_cache: dict[tuple[str, float], object],
 ) -> xr.DataArray:
-    computed = _evaluate_inline_compute(
-        operation,
-        output_band,
-        inputs,
-        base_ds,
-        domain_id,
-        feature_cache,
-    )
     if not operation.get("conditions"):
-        return computed
+        return _evaluate_inline_compute(operation, output_band, inputs, base_ds)
 
-    fallback = _evaluate_value(
-        operation["else"], output_band, inputs, base_ds, domain_id, feature_cache
-    )
+    # Compute the mask first so the non-finite check only fires on cells that
+    # actually keep the computed branch — a divide-by-zero in a cell the
+    # conditions exclude (and that takes the fallback) must not fail the job.
     mask = _condition_mask(
         operation["conditions"], inputs, base_ds, domain_id, feature_cache
+    )
+    computed = _evaluate_inline_compute(
+        operation, output_band, inputs, base_ds, used_mask=mask
+    )
+    fallback = _evaluate_value(
+        operation["else"], output_band, inputs, base_ds, used_mask=~mask
     )
     mask_da = xr.DataArray(mask, dims=computed.dims, coords=computed.coords)
     return xr.where(mask_da, computed, fallback)
@@ -437,10 +459,8 @@ def _evaluate_inline_compute(
     output_band: dict,
     inputs: dict[str, dict],
     base_ds: xr.Dataset,
-    domain_id: str,
-    feature_cache: dict[tuple[str, float], object],
+    used_mask: np.ndarray | None = None,
 ) -> xr.DataArray:
-    del domain_id, feature_cache
     template = _template_da(base_ds)
     values: list[xr.DataArray | int | float] = []
     valid_mask = np.ones((base_ds.rio.height, base_ds.rio.width), dtype=bool)
@@ -449,8 +469,12 @@ def _evaluate_inline_compute(
 
     for operand in operation["operands"]:
         if isinstance(operand, str):
-            da = _band_da(inputs, operand).astype(float)
-            valid_mask &= ~_nodata_mask(da)
+            raw = _band_da(inputs, operand)
+            # Read nodata from the band as loaded — before astype (which need
+            # not preserve the nodata metadata) and before any unit scaling
+            # (which would shift a sentinel past `== nodata` recognition).
+            valid_mask &= ~_nodata_mask(raw)
+            da = raw.astype(float)
             if op_name in {"add", "subtract", "average", "max", "min"}:
                 source_unit = _band_metadata(inputs, operand).get("unit")
                 factor = _conversion_factor(source_unit, output_unit)
@@ -496,7 +520,8 @@ def _evaluate_inline_compute(
         result = result * _operation_conversion_factor(operation, inputs, output_unit)
 
     result_da = _data_array_from_values(template, result)
-    _raise_on_non_finite_result(result_da, valid_mask)
+    check_mask = valid_mask if used_mask is None else (valid_mask & used_mask)
+    _raise_on_non_finite_result(result_da, check_mask)
     valid_da = xr.DataArray(valid_mask, dims=result_da.dims, coords=result_da.coords)
     result_da = xr.where(valid_da, result_da, np.nan)
     return result_da.rio.write_nodata(np.nan)
@@ -541,7 +566,8 @@ def _raise_on_non_finite_result(
                 "or NaN, in valid cells."
             ),
             suggestion=(
-                "Check divide operations for zero denominators or add conditions "
-                "that exclude invalid cells."
+                "Check divide operations for zero denominators, or add a "
+                "condition (with an else fallback) that routes those cells to "
+                "the fallback instead of the computed result."
             ),
         )

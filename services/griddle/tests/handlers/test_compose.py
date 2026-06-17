@@ -715,6 +715,48 @@ class TestComposeGrid:
 
     @patch("griddle.handlers.compose.get_document")
     @patch("griddle.handlers.compose.load_zarr")
+    def test_nodata_detected_before_unit_scaling(
+        self, mock_load_zarr, mock_get_document
+    ):
+        # The nodata sentinel must be read from the raw band — before astype
+        # and before the cm->m factor would scale -9999 to -99.99 and hide it.
+        mock_get_document.return_value = (
+            None,
+            _snapshot(
+                _grid_doc({"key": "depth_cm", "type": "continuous", "unit": "cm"})
+            ),
+        )
+        mock_load_zarr.return_value = _make_ds(
+            {"depth_cm": np.array([[100.0, -9999.0], [200.0, 300.0]])},
+            nodata={"depth_cm": -9999.0},
+        )
+
+        result = compose_grid(
+            _grid({"key": "depth_out", "type": "continuous", "unit": "m"}),
+            _source(
+                [{"grid_id": "grid_a", "alias": "a"}],
+                compute=[
+                    {
+                        "output": "depth_out",
+                        "operator": "add",
+                        "operands": [
+                            "a.depth_cm",
+                            {"type": "literal", "value": 0, "unit": "cm"},
+                        ],
+                    }
+                ],
+            ),
+            MagicMock(),
+        )
+
+        values = result["depth_out"].values
+        assert np.isnan(values[0, 1])
+        np.testing.assert_array_equal(
+            values[[0, 1, 1], [0, 0, 1]], np.array([1.0, 2.0, 3.0])
+        )
+
+    @patch("griddle.handlers.compose.get_document")
+    @patch("griddle.handlers.compose.load_zarr")
     def test_divide_by_zero_raises(self, mock_load_zarr, mock_get_document):
         mock_get_document.return_value = (None, _snapshot())
         mock_load_zarr.return_value = _make_ds(
@@ -741,6 +783,45 @@ class TestComposeGrid:
             )
 
         assert exc_info.value.code == "COMPOSE_NON_FINITE_RESULT"
+
+    @patch("griddle.handlers.compose.get_document")
+    @patch("griddle.handlers.compose.load_zarr")
+    def test_divide_by_zero_excluded_by_condition_does_not_raise(
+        self, mock_load_zarr, mock_get_document
+    ):
+        # The zero denominator at [0, 1] makes the divide produce inf, but the
+        # condition routes that cell to the fallback, so the job must succeed.
+        mock_get_document.return_value = (None, _snapshot())
+        mock_load_zarr.return_value = _make_ds(
+            {
+                "fuel_load.1hr": np.array([[1.0, 2.0], [3.0, 4.0]]),
+                "fuel_depth": np.array([[1.0, 0.0], [2.0, 2.0]]),
+            }
+        )
+
+        result = compose_grid(
+            _grid({"key": "fuel_ratio", "type": "continuous", "unit": "kg/m**3"}),
+            _source(
+                [{"grid_id": "grid_a", "alias": "a"}],
+                compute=[
+                    {
+                        "output": "fuel_ratio",
+                        "operator": "divide",
+                        "operands": ["a.fuel_load.1hr", "a.fuel_depth"],
+                        "conditions": [
+                            {"band": "a.fuel_depth", "operator": "gt", "value": 0}
+                        ],
+                        "else": 0,
+                    }
+                ],
+            ),
+            MagicMock(),
+        )
+
+        np.testing.assert_array_equal(
+            result["fuel_ratio"].values,
+            np.array([[1.0, 0.0], [1.5, 2.0]]),
+        )
 
     @patch("griddle.handlers.compose.get_document")
     @patch("griddle.handlers.compose.load_zarr")
@@ -822,6 +903,43 @@ class TestComposeGrid:
 
         assert exc_info.value.code == "COMPOSE_INPUT_NOT_COMPLETED"
         mock_load_zarr.assert_not_called()
+
+    @patch("griddle.handlers.compose.get_document")
+    @patch("griddle.handlers.compose.load_zarr")
+    def test_subnanometer_coord_drift_still_aligns(
+        self, mock_load_zarr, mock_get_document
+    ):
+        # Sub-nanometer coordinate drift passes the 1e-9 transform tolerance but
+        # would make xarray's label-based arithmetic inner-join to an empty
+        # result without coordinate normalization.
+        mock_get_document.return_value = (None, _snapshot())
+        first = _make_ds({"fuel_load.1hr": np.full((3, 3), 2.0)})
+        drifted = _make_ds({"fuel_load.1hr": np.full((3, 3), 3.0)})
+        drifted = drifted.assign_coords(x=drifted["x"] + 1e-10, y=drifted["y"] + 1e-10)
+        mock_load_zarr.side_effect = [first, drifted]
+
+        result = compose_grid(
+            _grid("fuel_load.1hr"),
+            _source(
+                [
+                    {"grid_id": "grid_a", "alias": "a"},
+                    {"grid_id": "grid_b", "alias": "b"},
+                ],
+                compute=[
+                    {
+                        "output": "fuel_load.1hr",
+                        "operator": "add",
+                        "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
+                    }
+                ],
+            ),
+            MagicMock(),
+        )
+
+        assert result["fuel_load.1hr"].shape == (3, 3)
+        np.testing.assert_array_equal(
+            result["fuel_load.1hr"].values, np.full((3, 3), 5.0)
+        )
 
     @patch("griddle.handlers.compose.get_document")
     @patch("griddle.handlers.compose.load_zarr")

@@ -18,7 +18,7 @@ from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
     GridModification,
 )
-from api.resources.grids.schema import GridDataChunkMetadata
+from api.resources.grids.schema import BandType, GridDataChunkMetadata
 from api.resources.modifications import stringify_modification_coordinates
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
@@ -39,36 +39,66 @@ def dump_modifications_for_firestore(
 
 def resolve_modification_fuel_model_labels(
     modifications: list[GridModification],
+    band_types: dict[str, str],
 ) -> None:
     """Resolve FBFM40 string labels (e.g. ``"GR1"``) to integer codes in place.
 
     Categorical grid bands store integer Scott-Burgan codes, so condition and
-    action values are normalized to codes at the write boundary; the processing
-    services stay integer-only. Numeric values pass through unchanged.
+    action values that target a categorical band are normalized to codes at the
+    write boundary; the processing services stay integer-only. Numeric values
+    pass through unchanged. A string value that targets a *continuous* band is
+    rejected with a clear error rather than being mis-resolved as a fuel-model
+    label, mirroring the compose endpoint's band-type-aware validation.
+
+    Args:
+        modifications: Modifications whose values are normalized in place.
+        band_types: Map of band key -> band ``type`` ("categorical" /
+            "continuous") for the grid these modifications apply to.
 
     Raises:
-        HTTPException(422): If a string value is not a recognized FBFM40 label.
+        HTTPException(422): If a string value targets a continuous band, or is
+            not a recognized FBFM40 label on a categorical band.
     """
     for modification in modifications:
         for condition in modification.conditions:
-            value = getattr(condition, "value", None)
-            if value is None:
+            # Spatial conditions carry a `source`, not a `band`/`value`.
+            band = getattr(condition, "band", None)
+            if band is None or getattr(condition, "value", None) is None:
                 continue
-            try:
-                condition.value = resolve_fuel_model_value(value)
-            except UnknownFuelModelError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=str(exc),
-                )
+            condition.value = _resolve_fuel_model_band_value(
+                band, condition.value, band_types
+            )
         for action in modification.actions:
-            try:
-                action.value = resolve_fuel_model_value(action.value)
-            except UnknownFuelModelError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=str(exc),
-                )
+            action.value = _resolve_fuel_model_band_value(
+                action.band, action.value, band_types
+            )
+
+
+def _resolve_fuel_model_band_value(band_key: str, value, band_types: dict[str, str]):
+    """Resolve FBFM40 labels on a categorical band; reject strings elsewhere.
+
+    Numeric values (and lists of them) pass through unchanged regardless of
+    band type.
+    """
+    if band_types.get(band_key) == BandType.categorical.value:
+        try:
+            return resolve_fuel_model_value(value)
+        except UnknownFuelModelError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            )
+    items = value if isinstance(value, list) else [value]
+    if any(isinstance(item, str) for item in items):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Modification on band {band_key!r} has a string value, but "
+                "fuel-model labels are only accepted on categorical fbfm bands; "
+                "continuous bands require numeric values."
+            ),
+        )
+    return value
 
 
 def validate_grid_has_band(

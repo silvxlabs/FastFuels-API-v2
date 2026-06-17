@@ -142,8 +142,10 @@ class TestDuplicateInventory:
         assert new_doc["treatments"] == source_inventory["treatments"]
         assert new_doc["columns"] == source_inventory["columns"]
         assert new_doc["owner_id"] == source_inventory["owner_id"]
-        # Fresh, equal create/modify timestamps (both set to the request time).
-        assert new_doc["created_on"] == new_doc["modified_on"]
+        # Fresh, equal create/modify timestamps at write time. Assert on the
+        # response — not the read-back doc — because the background copy bumps
+        # modified_on when it completes, which races this read.
+        assert response.json()["created_on"] == response.json()["modified_on"]
 
     def test_duplicate_name_override(
         self, client, domain_for_testing, source_inventory, cleanup_inventories

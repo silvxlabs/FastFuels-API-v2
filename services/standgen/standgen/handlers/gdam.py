@@ -165,21 +165,20 @@ def _predict(payload: dict, sent_index) -> dict:
     """Predict one partition, retrying once if GDAM returns a partial result.
 
     GDAM is expected to return one prediction per sent tree. The validity check
-    (every sent index present in the response) guards against a silent partial
-    result; a single retry absorbs a one-off hiccup before failing the inventory.
+    (returned count >= expected count) guards against a silent partial result;
+    a single retry absorbs a one-off hiccup before failing the inventory.
     """
-    expected = {int(i) for i in sent_index}
-    returned: set = set()
-    for _ in range(2):  # initial attempt + one retry
+    expected_count = len(list(sent_index))
+    for _ in range(2):
         data = _post_batch(payload)
-        returned = {int(i) for i in data.get("predictions", {}).get("index", [])}
-        if expected <= returned:
+        returned_count = len(data.get("predictions", {}).get("index", []))
+        if returned_count >= expected_count:
             return data
     raise ProcessingError(
         code="PARTIAL_PREDICTION",
         message=(
-            f"GDAM returned an incomplete prediction: expected {len(expected)} "
-            f"trees, got {len(expected & returned)}."
+            f"GDAM returned an incomplete prediction: expected {expected_count} "
+            f"trees, got {returned_count}."
         ),
         suggestion="Retry the inventory; if it persists, contact the GDAM team.",
     )
@@ -192,6 +191,10 @@ def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.Da
     never held in memory. Raises ``MISSING_REQUIRED_HEIGHT`` if any tree in the
     partition lacks a height (GDAM requires it). Always surfaces the selected
     `columns` so the partition's schema matches the declared ``meta``.
+
+    Sends a 0-based index to GDAM (which always returns 0-based indices) and
+    restores the partition's original index before calling ``fill_missing`` so
+    row alignment is preserved across partitions.
     """
     null_height = int(pdf["height"].isna().sum())
     if null_height:
@@ -214,8 +217,9 @@ def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.Da
         return out
 
     payload = build_batch_payload(pdf, source_crs_str)
-    data = _predict(payload, pdf.index)
+    data = _predict(payload, range(len(pdf)))
     predicted = parse_gdam_response(data)
+    predicted.index = pdf.index
     return fill_missing(pdf, predicted, columns)
 
 

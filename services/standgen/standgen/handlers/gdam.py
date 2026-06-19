@@ -161,18 +161,20 @@ def _post_batch(payload: dict) -> dict:
         ) from e
 
 
-def _predict(payload: dict, sent_index) -> dict:
+def _predict(payload: dict, expected_count: int) -> dict:
     """Predict one partition, retrying once if GDAM returns a partial result.
 
-    GDAM is expected to return one prediction per sent tree. The validity check
-    (returned count >= expected count) guards against a silent partial result;
-    a single retry absorbs a one-off hiccup before failing the inventory.
+    GDAM returns one prediction per sent tree, 0-based and aligned to the sent
+    batch by position. The validity check (returned count == expected count)
+    guards against a silent partial result; a single retry absorbs a one-off
+    hiccup before failing the inventory. An exact match (not ``>=``) is required
+    so a degenerate over-long response can't slip through and misalign the
+    position->index mapping in ``_process_partition``.
     """
-    expected_count = len(list(sent_index))
     for _ in range(2):
         data = _post_batch(payload)
         returned_count = len(data.get("predictions", {}).get("index", []))
-        if returned_count >= expected_count:
+        if returned_count == expected_count:
             return data
     raise ProcessingError(
         code="PARTIAL_PREDICTION",
@@ -192,9 +194,12 @@ def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.Da
     partition lacks a height (GDAM requires it). Always surfaces the selected
     `columns` so the partition's schema matches the declared ``meta``.
 
-    Sends a 0-based index to GDAM (which always returns 0-based indices) and
-    restores the partition's original index before calling ``fill_missing`` so
-    row alignment is preserved across partitions.
+    GDAM returns predictions 0-based and aligned to the sent batch by position
+    (it ignores the index it was sent). Those positions are mapped back onto
+    this partition's original index before ``fill_missing`` so the join is by
+    index — correct even when the partition's index isn't 0-based (every
+    partition after the first) and even if GDAM returns rows in a different
+    order than they were sent.
     """
     null_height = int(pdf["height"].isna().sum())
     if null_height:
@@ -217,9 +222,9 @@ def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.Da
         return out
 
     payload = build_batch_payload(pdf, source_crs_str)
-    data = _predict(payload, range(len(pdf)))
+    data = _predict(payload, len(pdf))
     predicted = parse_gdam_response(data)
-    predicted.index = pdf.index
+    predicted.index = pdf.index[predicted.index.to_numpy()]
     return fill_missing(pdf, predicted, columns)
 
 

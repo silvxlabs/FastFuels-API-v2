@@ -469,6 +469,51 @@ class TestHandleGdam:
             expected_dbh = row["height"] / 0.3048 * 2.54
             assert row["dbh"] == pytest.approx(expected_dbh, rel=1e-6)
 
+    def test_reordered_response_aligns_by_returned_index(self, mock_domain_gdf):
+        """GDAM may return rows out of order; predictions follow the returned index.
+
+        Each tree gets a distinct DIA, and the response is returned reversed (rows
+        AND index together, the way the returned index labels each row's sent
+        position). Each prediction must still land on the correct source row — a
+        positional assignment would swap them. This is the test that distinguishes
+        the index-mapping restore (``pdf.index[predicted.index]``) from a plain
+        positional one (``predicted.index = pdf.index``).
+        """
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0, 500030.0],
+                "y": [4500000.0, 4500030.0],
+                "height": [10.0, 12.0],
+                "dbh": [np.nan, np.nan],
+            }
+        )
+
+        def reordered(url, json=None, timeout=None):
+            # 0-based, ascending by sent position: pos 0 -> DIA 10in/SPCD 122,
+            # pos 1 -> DIA 20in/SPCD 202.
+            idx = list(range(len(json["trees"]["index"])))
+            rows = [[10.0, 40.0, 122.0, 1.0], [20.0, 40.0, 202.0, 1.0]]
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            resp.json.return_value = {
+                "predictions": {
+                    "columns": ["DIA", "CR", "SPCD", "inference_time_ms"],
+                    "index": idx[::-1],
+                    "data": rows[::-1],
+                }
+            }
+            return resp
+
+        with _patched(frame, reordered) as (saved, _):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        by_x = saved["df"].set_index("x")
+        assert by_x.loc[500000.0, "dbh"] == pytest.approx(10.0 * 2.54)
+        assert by_x.loc[500030.0, "dbh"] == pytest.approx(20.0 * 2.54)
+        assert int(by_x.loc[500000.0, "fia_species_code"]) == 122
+        assert int(by_x.loc[500030.0, "fia_species_code"]) == 202
+
     def test_transport_error_raises_gdam_request_failed(self, mock_domain_gdf):
         frame = pd.DataFrame({"x": [1.0], "y": [1.0], "height": [10.0]})
 

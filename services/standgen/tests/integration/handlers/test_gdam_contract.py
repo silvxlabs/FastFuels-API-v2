@@ -16,9 +16,14 @@ Contract pinned:
   * one prediction row per sent tree                  -> _predict count check
   * a fresh 0-based positional index, NOT an echo of
     the request index                                 -> _process_partition's
-                                                         ``predicted.index = pdf.index``
-  * rows returned in request order (via echoed HT)    -> the positional restore is
-                                                         only valid if order holds
+                                                         ``pdf.index[predicted.index]``
+                                                         restore (needs 0-based
+                                                         positions, not an echo)
+  * rows returned in request order (via echoed HT)    -> canary only: the restore
+                                                         maps by returned index, so
+                                                         correctness survives a
+                                                         reorder; this pins that
+                                                         GDAM doesn't reorder today
   * DIA / CR / SPCD present *by name* (cols reorder)  -> parse_gdam_response
   * CR is a 0-100 percent, not a 0-1 fraction         -> parse_gdam_response's /100
   * SPCD is a positive FIA code                       -> fia_species_code mapping
@@ -88,24 +93,32 @@ def test_index_is_zero_based_not_echoed(gdam_contract_response):
     idx = list(body["predictions"]["index"])
     assert idx == list(range(len(_HEIGHTS_M))), (
         f"GDAM index is no longer 0-based positional (got {idx}). "
-        "_process_partition restores the source index positionally — revisit it."
+        "_process_partition maps it back via pdf.index[predicted.index], which "
+        "assumes the returned index is 0-based positions — revisit it."
     )
     assert idx != payload["trees"]["index"], (
-        "GDAM now echoes the request index. If it ALSO stopped preserving row "
-        "order, the positional restore in _process_partition would misalign."
+        "GDAM now echoes the request index. _process_partition uses the returned "
+        "index as positions into pdf.index, so an echoed (non-0-based) index "
+        "would index out of bounds."
     )
 
 
 def test_rows_returned_in_request_order(gdam_contract_response):
-    """Echoed HT (ft) must match the sent HT in order — proves positional align."""
+    """Canary: GDAM returns rows in request order (echoed HT matches sent HT).
+
+    The handler no longer depends on this — it aligns by the returned index via
+    pdf.index[predicted.index], so a reorder is handled correctly. This pins the
+    simpler invariant GDAM provides today; the 'reordered' unit test is what
+    actually exercises the out-of-order path.
+    """
     _, body = gdam_contract_response
     frame = _frame(body["predictions"])
     assert "HT" in frame.columns, "GDAM no longer echoes HT; can't verify row order."
     sent_ht_ft = [h / _M_PER_FT for h in _HEIGHTS_M]
     returned_ht_ft = frame["HT"].to_numpy(dtype=float)
     assert returned_ht_ft == pytest.approx(sent_ht_ft, rel=1e-3), (
-        "GDAM did not return rows in request order — the positional alignment in "
-        "_process_partition (predicted.index = pdf.index) is no longer safe."
+        "GDAM no longer returns rows in request order. Alignment is still correct "
+        "via pdf.index[predicted.index], but the contract has shifted."
     )
 
 

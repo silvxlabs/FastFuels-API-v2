@@ -248,10 +248,17 @@ def _noop_progress(*args, **kwargs):
 
 
 def _predictions(index, dia=11.811, cr=40.0, spcd=122.0):
-    """A GDAM predictions block echoing `index` (columns reordered vs request).
+    """A GDAM predictions block with a faithful 0-based index (columns reordered).
+
+    The live GDAM API always returns a fresh 0-based index regardless of the
+    request's index (verified by the planning probe), so this mock does too:
+    `index` is consumed only for its row *count*, never echoed back. Modelling
+    the echo here is exactly what let the partition index-mismatch bug slip
+    past the unit suite.
 
     DIA 11.811 in -> ~30 cm, CR 40 percent -> 0.40 fraction, SPCD 122.
     """
+    n = len(list(index))
     return {
         "predictions": {
             "columns": [
@@ -264,8 +271,8 @@ def _predictions(index, dia=11.811, cr=40.0, spcd=122.0):
                 "SPCD",
                 "inference_time_ms",
             ],
-            "index": list(index),
-            "data": [[10.0, 0, 0, 0, dia, cr, spcd, 1.0] for _ in index],
+            "index": list(range(n)),
+            "data": [[10.0, 0, 0, 0, dia, cr, spcd, 1.0] for _ in range(n)],
         }
     }
 
@@ -395,6 +402,117 @@ class TestHandleGdam:
         assert len(result) == 5
         assert result["dbh"].notna().all()
         assert sorted(result.index) == [0, 1, 2, 3, 4]
+
+    def test_multi_partition_aligns_predictions_to_source_rows(self, mock_domain_gdf):
+        """Each tree gets ITS prediction even though GDAM returns a 0-based index.
+
+        Regression for the partition index-mismatch bug. With batch size 2, the
+        second partition carries a non-zero source index ([2, 3]) while GDAM's
+        response is always 0-based ([0, 1]). The handler must restore the source
+        index positionally so predictions land on the right rows — and must not
+        raise PARTIAL_PREDICTION. The mock encodes each tree's height into DIA, so
+        any misalignment surfaces as a dbh that doesn't match the row's height.
+
+        Pre-fix, this fails: the second partition's {2, 3} index is absent from
+        the 0-based response and trips PARTIAL_PREDICTION.
+        """
+        heights = [10.0, 20.0, 30.0, 40.0]
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0 + i for i in range(4)],
+                "y": [4500000.0] * 4,
+                "height": heights,
+                "dbh": [np.nan] * 4,
+            }
+        )
+
+        def distinct_post(url, json=None, timeout=None):
+            """Faithful 0-based GDAM mock; DIA(in) == each row's HT(ft)."""
+            trees = json["trees"]
+            ht_pos = trees["columns"].index("HT")
+            rows = trees["data"]
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            resp.json.return_value = {
+                "predictions": {
+                    "columns": [
+                        "HT",
+                        "elevation",
+                        "slope",
+                        "aspect",
+                        "DIA",
+                        "CR",
+                        "SPCD",
+                        "inference_time_ms",
+                    ],
+                    "index": list(range(len(rows))),
+                    "data": [
+                        [r[ht_pos], 0, 0, 0, r[ht_pos], 40.0, 122.0, 1.0] for r in rows
+                    ],
+                }
+            }
+            return resp
+
+        with patch.object(gdam.config, "GDAM_BATCH_SIZE", 2):
+            with _patched(frame, distinct_post) as (saved, mock_post):
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+
+        result = saved["df"]
+        assert mock_post.call_count == 2  # 4 trees / batch 2 -> 2 partitions
+        assert len(result) == 4
+        assert result["dbh"].notna().all()
+        # dbh(cm) = DIA(in) * 2.54 = HT(ft) * 2.54 = height(m) / 0.3048 * 2.54.
+        # Asserting per row proves each prediction reached its own source tree.
+        for _, row in result.iterrows():
+            expected_dbh = row["height"] / 0.3048 * 2.54
+            assert row["dbh"] == pytest.approx(expected_dbh, rel=1e-6)
+
+    def test_reordered_response_aligns_by_returned_index(self, mock_domain_gdf):
+        """GDAM may return rows out of order; predictions follow the returned index.
+
+        Each tree gets a distinct DIA, and the response is returned reversed (rows
+        AND index together, the way the returned index labels each row's sent
+        position). Each prediction must still land on the correct source row — a
+        positional assignment would swap them. This is the test that distinguishes
+        the index-mapping restore (``pdf.index[predicted.index]``) from a plain
+        positional one (``predicted.index = pdf.index``).
+        """
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0, 500030.0],
+                "y": [4500000.0, 4500030.0],
+                "height": [10.0, 12.0],
+                "dbh": [np.nan, np.nan],
+            }
+        )
+
+        def reordered(url, json=None, timeout=None):
+            # 0-based, ascending by sent position: pos 0 -> DIA 10in/SPCD 122,
+            # pos 1 -> DIA 20in/SPCD 202.
+            idx = list(range(len(json["trees"]["index"])))
+            rows = [[10.0, 40.0, 122.0, 1.0], [20.0, 40.0, 202.0, 1.0]]
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            resp.json.return_value = {
+                "predictions": {
+                    "columns": ["DIA", "CR", "SPCD", "inference_time_ms"],
+                    "index": idx[::-1],
+                    "data": rows[::-1],
+                }
+            }
+            return resp
+
+        with _patched(frame, reordered) as (saved, _):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        by_x = saved["df"].set_index("x")
+        assert by_x.loc[500000.0, "dbh"] == pytest.approx(10.0 * 2.54)
+        assert by_x.loc[500030.0, "dbh"] == pytest.approx(20.0 * 2.54)
+        assert int(by_x.loc[500000.0, "fia_species_code"]) == 122
+        assert int(by_x.loc[500030.0, "fia_species_code"]) == 202
 
     def test_transport_error_raises_gdam_request_failed(self, mock_domain_gdf):
         frame = pd.DataFrame({"x": [1.0], "y": [1.0], "height": [10.0]})

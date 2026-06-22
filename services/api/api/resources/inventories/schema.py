@@ -142,6 +142,48 @@ CHM_INVENTORY_COLUMNS = [
 ]
 
 
+class FIASpeciesGroupShare(BaseModel):
+    """Basal area share for a single FIA species group."""
+
+    spgrpcd: int = Field(..., description="FIA Species Group Code (SPGRPCD).")
+    name: str = Field(..., description="Common group name, e.g. 'Douglas-fir'.")
+    basal_area_share: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of total stand basal area, 0..1.",
+    )
+
+
+class TreeForestryMetrics(BaseModel):
+    """Stand-level forestry scalars for a tree inventory."""
+
+    type: Literal["tree"]
+    tree_count: int = Field(..., description="Total trees in the inventory.")
+    basal_area_per_area: float | None = Field(
+        ..., description="Stand basal area divided by domain area. Unit: ft**2/acre."
+    )
+    tree_density: float | None = Field(
+        ..., description="Trees per unit domain area (TPA). Unit: 1/acre."
+    )
+    quadratic_mean_diameter: float | None = Field(
+        ..., description="Quadratic mean DBH. Unit: in."
+    )
+    dominant_species_groups: list[FIASpeciesGroupShare] = Field(
+        default_factory=list,
+        description=(
+            "Top N FIA species groups by basal area share, sorted descending. "
+            "N defaults to 5; the tail rolls up into the last entry as needed."
+        ),
+    )
+
+
+ForestryMetrics = Annotated[
+    TreeForestryMetrics,  # union grows with InventoryType
+    Field(discriminator="type"),
+]
+
+
 class InventoryGeoreference(BaseModel):
     """Spatial reference for an inventory, computed from the domain geometry."""
 
@@ -184,6 +226,7 @@ class Inventory(BaseModel):
     modifications: list[InventoryModification] = Field(default_factory=list)
     treatments: list[InventoryTreatment] = Field(default_factory=list)
     columns: list[Column] = Field(default_factory=list)
+    forestry_metrics: ForestryMetrics | None = None
     georeference: InventoryGeoreference | None = Field(
         default=None,
         description="Spatial reference. Null until backend completes processing.",

@@ -45,7 +45,6 @@ from api.resources.inventories.schema import (
     InventoryDataMetadata,
     InventoryDataResponse,
     InventoryJsonOrientation,
-    InventoryPartitionInfo,
     InventorySortField,
     InventoryType,
     ListInventoriesResponse,
@@ -599,9 +598,9 @@ async def get_inventory_data_metadata(
     """
     # Get Inventory Data Metadata
 
-    Returns partition count, total rows, per-partition row counts, and column
-    names for a completed inventory. Reads only the `_metadata` file from GCS
-    (cached after first access).
+    Returns the partition count, total row count, and column names for a
+    completed inventory (cached after first access). To get a single partition's
+    rows — and its row count — fetch it from the partition data endpoint below.
 
     ## Path Parameters
 
@@ -611,10 +610,10 @@ async def get_inventory_data_metadata(
     ## Response
 
     - **inventory_id**: The inventory ID.
-    - **num_partitions**: Number of Parquet partitions.
+    - **num_partitions**: Number of Parquet partitions (addressable as `0` to
+      `num_partitions - 1` via the partition data endpoint).
     - **total_rows**: Total row count across all partitions.
     - **columns**: List of column names.
-    - **partitions**: Per-partition index and row count.
 
     ## Error Responses
 
@@ -647,10 +646,6 @@ async def get_inventory_data_metadata(
         num_partitions=meta.num_partitions,
         total_rows=meta.total_rows,
         columns=meta.columns,
-        partitions=[
-            InventoryPartitionInfo(index=p.index, num_rows=p.num_rows)
-            for p in meta.partitions
-        ],
     )
 
 
@@ -748,8 +743,7 @@ async def get_inventory_data(
                 detail=(f"Columns not found: {missing}. Available: {meta.columns}"),
             )
 
-    partition = meta.partitions[partition_index]
-    df = await read_partition(inventory_id, partition.path, columns=requested_columns)
+    df = await read_partition(inventory_id, partition_index, columns=requested_columns)
 
     col_names = list(df.columns)
 

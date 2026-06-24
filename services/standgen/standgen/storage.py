@@ -1,5 +1,6 @@
 """Storage utilities for Standgen."""
 
+import io
 import logging
 
 import dask.dataframe as dd
@@ -8,8 +9,7 @@ import pyarrow.parquet as pq
 import xarray as xr
 
 from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
-from lib.errors import ProcessingError
-from lib.gcs import delete_directory, exists, get_gcsfs_client
+from lib.gcs import delete_directory, get_gcsfs_client
 from lib.zarr_utils import load_zarr
 
 logger = logging.getLogger(__name__)
@@ -57,63 +57,95 @@ def save_parquet(inventory_id: str, ddf: dd.DataFrame) -> str:
     return path
 
 
-def save_parquet_replace(inventory_id: str, ddf: dd.DataFrame) -> str:
-    """Replace an inventory's Parquet data in place with ``ddf``.
+def write_changed_partitions(inventory_id: str, transform) -> str:
+    """Apply ``transform`` to each Parquet partition; overwrite only those that change.
 
-    ``ddf`` is typically derived by reading the inventory's *own* current
-    Parquet (an in-place modification). Writing straight back to the live path
-    would corrupt the data: ``dd.read_parquet`` is lazy, so the read executes
-    during this write and would race the overwrite. Instead write to a staging
-    prefix, then swap it into place once the write (and its read) have
-    completed:
+    ``transform`` is a per-partition ``DataFrame -> DataFrame`` callable (e.g.
+    ``lambda df: apply_modifications(df, mods)``). Every partition is read in one
+    concurrent ``cat`` batch; ``transform`` is applied to each; only the partitions
+    whose content actually changes are written back, in one concurrent ``pipe``
+    batch, under their existing file names. A modification scoped to part of the
+    domain therefore rewrites only the partitions it overlaps.
 
-    1. write ``ddf`` to ``{id}__rev`` (reads the live ``{id}`` here),
-    2. delete the live ``{id}`` directory,
-    3. server-side copy ``{id}__rev`` -> ``{id}`` (same bucket, no egress),
-    4. delete the staging ``{id}__rev`` directory.
+    The transform is per-partition and must not change the schema (modifications
+    only transform values or drop rows). ``_metadata`` is intentionally left
+    untouched: both the API (``pd.read_parquet`` per file) and dask
+    (``dd.read_parquet`` re-reads each file footer) read the part files directly,
+    so a stale ``_metadata`` never corrupts a read — it only affects the row
+    counts the ``/data`` metadata endpoint reports after a row-removing mod.
     """
-    live_rel = f"{INVENTORIES_BUCKET}/{inventory_id}"
-    staging_rel = f"{INVENTORIES_BUCKET}/{inventory_id}__rev"
-    staging_uri = f"gs://{staging_rel}"
-
-    # Clear any staging dir left behind by a previously failed attempt.
-    if exists(staging_uri):
-        delete_directory(staging_uri)
-
-    _write_parquet(ddf, staging_uri)
-
     fs = get_gcsfs_client()
+    base = f"{INVENTORIES_BUCKET}/{inventory_id}"
+    n = _apply_changed_partitions(fs, base, transform)
+    logger.info(f"Rewrote {n} changed partition(s) for inventory {inventory_id}")
+    return f"gs://{base}"
 
-    # dask wrote staging through its own gcsfs instance, and the exists() probe
-    # above cached this client's listing of the (then-absent) staging dir. Drop
-    # the stale cache so the copy and the count check below list staging fresh.
+
+def _apply_changed_partitions(fs, base: str, transform) -> int:
+    """Core of :func:`write_changed_partitions`, parameterized on the filesystem
+    so it can be tested against local files. Returns the number of partitions
+    rewritten."""
+    part_paths = sorted(p for p in fs.find(base) if p.endswith(".parquet"))
+    blobs = fs.cat(part_paths)  # one concurrent read of all partitions
+
+    changed: dict[str, bytes] = {}
+    for path in part_paths:
+        old_df = pd.read_parquet(io.BytesIO(blobs[path]))
+        # Copy so an in-place transform (apply_action mutates) leaves old_df
+        # pristine for the change comparison.
+        new_df = transform(old_df.copy())
+        if not new_df.equals(old_df):
+            buf = io.BytesIO()
+            new_df.to_parquet(buf, index=False)
+            changed[path] = buf.getvalue()
+
+    if changed:
+        fs.pipe(changed)  # one concurrent write of the changed partitions
+    return len(changed)
+
+
+def write_full_partitions(
+    inventory_id: str, df: pd.DataFrame, rows_per_partition: int = 100_000
+) -> str:
+    """Replace an inventory's Parquet with a materialized DataFrame.
+
+    Used for global (basal-area) treatments, whose result is a whole-stand
+    reduction that re-partitions the data — so a per-partition diff does not
+    apply. ``df`` must already be in memory (the caller computed it), so writing
+    back over the live path does not race a lazy read. Because the partition set
+    changes, the aggregated ``_metadata`` is removed (its file list would be
+    wrong and dask trusts it for the file set) along with any stale part files
+    from a larger previous partitioning; readers then list the directory fresh.
+    """
+    fs = get_gcsfs_client()
+    base = f"{INVENTORIES_BUCKET}/{inventory_id}"
+    n = _write_full(fs, base, df, rows_per_partition)
+    logger.info(f"Wrote {n} partition(s) for inventory {inventory_id}")
+    return f"gs://{base}"
+
+
+def _write_full(fs, base: str, df: pd.DataFrame, rows_per_partition: int) -> int:
+    """Core of :func:`write_full_partitions`, parameterized on the filesystem so
+    it can be tested against local files. Returns the partition count written."""
+    n = max(1, -(-len(df) // rows_per_partition))  # ceil division
+    new: dict[str, bytes] = {}
+    for k in range(n):
+        chunk = df.iloc[k * rows_per_partition : (k + 1) * rows_per_partition]
+        buf = io.BytesIO()
+        chunk.to_parquet(buf, index=False)
+        new[f"{base}/part.{k}.parquet"] = buf.getvalue()
+
+    fs.pipe(new)  # one concurrent write of all partitions
     fs.invalidate_cache()
-    staged_files = fs.find(staging_rel)
-
-    delete_directory(f"gs://{live_rel}")
-    # Recursive copy keeps fsspec's default on_error="ignore". gcsfs's
-    # expand_path includes a synthetic directory-marker entry for the staging
-    # prefix that 404s on rewrite; "ignore" skips it (only FileNotFoundError is
-    # swallowed, so transient errors still raise). That same leniency would also
-    # skip a genuinely missing part file, so verify completeness by file count
-    # before deleting staging — never mark an incomplete dataset completed.
-    fs.copy(staging_rel, live_rel, recursive=True)
-    fs.invalidate_cache()
-    live_files = fs.find(live_rel)
-    if len(live_files) != len(staged_files):
-        raise ProcessingError(
-            code="INVENTORY_REWRITE_INCOMPLETE",
-            message=(
-                f"In-place rewrite of inventory {inventory_id} copied "
-                f"{len(live_files)} of {len(staged_files)} files; staging "
-                f"({staging_rel}) is preserved for recovery."
-            ),
-            suggestion="Retry the modification.",
-        )
-    delete_directory(staging_uri)
-
-    logger.info(f"Replaced inventory data at gs://{live_rel}")
-    return f"gs://{live_rel}"
+    obsolete = [
+        p
+        for p in fs.find(base)
+        if (p.endswith(".parquet") and p not in new)
+        or p.rsplit("/", 1)[-1] in ("_metadata", "_common_metadata")
+    ]
+    if obsolete:
+        fs.rm(obsolete)
+    return n
 
 
 def count_inventory_rows(inventory_id: str) -> int | None:

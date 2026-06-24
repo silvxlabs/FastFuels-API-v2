@@ -1,0 +1,2 @@
+# Benchmark result files (timestamped, carry run-specific resource IDs).
+bench_inplace_*.json

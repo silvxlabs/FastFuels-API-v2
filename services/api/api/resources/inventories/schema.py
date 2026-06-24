@@ -211,17 +211,11 @@ class InventoryJsonOrientation(StrEnum):
     records = "records"
 
 
-class InventoryPartitionInfo(BaseModel):
-    index: int
-    num_rows: int
-
-
 class InventoryDataMetadata(BaseModel):
     inventory_id: str
     num_partitions: int
     total_rows: int
     columns: list[str]
-    partitions: list[InventoryPartitionInfo]
 
 
 class InventoryDataResponse(BaseModel):

@@ -1,14 +1,14 @@
 """
 Unit tests for standgen/handlers/modifications.py
 
-Tests the in-place modifications handler with mocked I/O (GCS). Verifies it
-loads the inventory's own data, applies only the pending delta, replaces the
-data in place, and carries over the existing georeference.
+The in-place modifications handler resolves spatial conditions once, then hands a
+per-partition transform to ``write_changed_partitions`` (which rewrites only the
+partitions whose content changes). These tests mock the storage call and
+exercise the captured transform against a sample partition.
 """
 
 from unittest.mock import MagicMock, patch
 
-import dask.dataframe as dd
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -18,11 +18,11 @@ from standgen.handlers.modifications import apply_in_place_modifications
 
 
 @pytest.fixture
-def sample_ddf():
-    """Sample dask DataFrame that load_inventory_parquet would return."""
+def sample_partition() -> pd.DataFrame:
+    """A single inventory partition, as read off Parquet."""
     rng = np.random.default_rng(42)
     n = 50
-    df = pd.DataFrame(
+    return pd.DataFrame(
         {
             "x": rng.uniform(500000, 501000, n),
             "y": rng.uniform(5200000, 5201000, n),
@@ -33,7 +33,6 @@ def sample_ddf():
             "crown_ratio": rng.uniform(0.1, 0.9, n),
         }
     )
-    return dd.from_pandas(df, npartitions=3)
 
 
 @pytest.fixture
@@ -72,63 +71,46 @@ def base_inventory():
 
 
 class TestApplyInPlaceModifications:
-    @patch("standgen.handlers.modifications.save_parquet_replace")
-    @patch("standgen.handlers.modifications.load_inventory_parquet")
-    def test_loads_own_data_replaces_in_place_and_carries_georeference(
-        self, mock_load, mock_save, base_inventory, sample_ddf, domain_gdf
+    @patch("standgen.handlers.modifications.write_changed_partitions")
+    def test_keys_off_inventory_id_and_carries_georeference(
+        self, mock_write, base_inventory, domain_gdf
     ):
-        """Loads the inventory's own data, replaces it in place, returns the
-        existing georeference unchanged."""
-        mock_load.return_value = sample_ddf
-        progress = MagicMock()
+        """Writes against the inventory's own ID; returns the existing
+        georeference unchanged (modifications never move the footprint)."""
+        result = apply_in_place_modifications(base_inventory, domain_gdf, MagicMock())
 
-        result = apply_in_place_modifications(base_inventory, domain_gdf, progress)
-
-        # Load and replace both key off the inventory's own ID (in place).
-        mock_load.assert_called_once_with("inventory-id")
-        mock_save.assert_called_once()
-        assert mock_save.call_args[0][0] == "inventory-id"
-        assert isinstance(mock_save.call_args[0][1], dd.DataFrame)
-
-        # Georeference is carried over verbatim — not recomputed.
+        mock_write.assert_called_once()
+        assert mock_write.call_args[0][0] == "inventory-id"
+        assert callable(mock_write.call_args[0][1])
         assert result["georeference"] == base_inventory["georeference"]
 
-    @patch("standgen.handlers.modifications.save_parquet_replace")
-    @patch("standgen.handlers.modifications.load_inventory_parquet")
-    def test_applies_only_the_pending_delta(
-        self, mock_load, mock_save, base_inventory, sample_ddf, domain_gdf
+    @patch("standgen.handlers.modifications.write_changed_partitions")
+    def test_transform_applies_pending_delta(
+        self, mock_write, base_inventory, domain_gdf, sample_partition
     ):
-        """Only pending_modifications is applied to the current data."""
-        mock_load.return_value = sample_ddf
-        progress = MagicMock()
+        """The captured transform applies only the pending delta (remove dbh<5)."""
+        apply_in_place_modifications(base_inventory, domain_gdf, MagicMock())
 
-        apply_in_place_modifications(base_inventory, domain_gdf, progress)
+        transform = mock_write.call_args[0][1]
+        out = transform(sample_partition.copy())
 
-        result_df = mock_save.call_args[0][1].compute()
-        # The pending delta removes dbh < 5.0.
-        assert (result_df["dbh"] >= 5.0).all()
-        assert len(result_df) < len(sample_ddf.compute())
+        assert (out["dbh"] >= 5.0).all()
+        assert len(out) < len(sample_partition)
 
-    @patch("standgen.handlers.modifications.save_parquet_replace")
-    @patch("standgen.handlers.modifications.load_inventory_parquet")
-    def test_reports_progress(
-        self, mock_load, mock_save, base_inventory, sample_ddf, domain_gdf
-    ):
-        mock_load.return_value = sample_ddf
+    @patch("standgen.handlers.modifications.write_changed_partitions")
+    def test_reports_progress(self, mock_write, base_inventory, domain_gdf):
         progress = MagicMock()
 
         apply_in_place_modifications(base_inventory, domain_gdf, progress)
 
         messages = [c[0][0] for c in progress.call_args_list]
-        assert "Loading inventory..." in messages
         assert "Applying modifications..." in messages
         assert "Writing modified inventory..." in messages
         assert "Complete" in messages
 
-    @patch("standgen.handlers.modifications.save_parquet_replace")
-    @patch("standgen.handlers.modifications.load_inventory_parquet")
+    @patch("standgen.handlers.modifications.write_changed_partitions")
     def test_multiply_delta_preserves_row_count(
-        self, mock_load, mock_save, domain_gdf, sample_ddf
+        self, mock_write, domain_gdf, sample_partition
     ):
         inventory = {
             "id": "inventory-id",
@@ -147,18 +129,16 @@ class TestApplyInPlaceModifications:
                 }
             ],
         }
-        mock_load.return_value = sample_ddf
-        progress = MagicMock()
 
-        apply_in_place_modifications(inventory, domain_gdf, progress)
+        apply_in_place_modifications(inventory, domain_gdf, MagicMock())
 
-        result_df = mock_save.call_args[0][1].compute()
-        assert len(result_df) == len(sample_ddf.compute())
+        transform = mock_write.call_args[0][1]
+        out = transform(sample_partition.copy())
+        assert len(out) == len(sample_partition)
 
-    @patch("standgen.handlers.modifications.save_parquet_replace")
-    @patch("standgen.handlers.modifications.load_inventory_parquet")
+    @patch("standgen.handlers.modifications.write_changed_partitions")
     def test_multiple_pending_modifications_applied_sequentially(
-        self, mock_load, mock_save, domain_gdf, sample_ddf
+        self, mock_write, domain_gdf, sample_partition
     ):
         inventory = {
             "id": "inventory-id",
@@ -183,11 +163,10 @@ class TestApplyInPlaceModifications:
                 },
             ],
         }
-        mock_load.return_value = sample_ddf
-        progress = MagicMock()
 
-        apply_in_place_modifications(inventory, domain_gdf, progress)
+        apply_in_place_modifications(inventory, domain_gdf, MagicMock())
 
-        result_df = mock_save.call_args[0][1].compute()
-        assert (result_df["dbh"] >= 3.0).all()
-        assert len(result_df) < len(sample_ddf.compute())
+        transform = mock_write.call_args[0][1]
+        out = transform(sample_partition.copy())
+        assert (out["dbh"] >= 3.0).all()
+        assert len(out) < len(sample_partition)

@@ -506,8 +506,8 @@ class TestForestryMetrics:
             "tree_density": 200.0,
             "quadratic_mean_diameter": 9.3,
             "dominant_species_groups": [
-                {"spgrpcd": 10, "name": "Douglas-fir", "basal_area_share": 0.6},
-                {"spgrpcd": 20, "name": "Ponderosa pine", "basal_area_share": 0.4},
+                {"spgrpcd": 5, "name": "Douglas-fir", "basal_area_share": 0.6},
+                {"spgrpcd": 4, "name": "Pine", "basal_area_share": 0.4},
             ],
         }
         defaults.update(overrides)

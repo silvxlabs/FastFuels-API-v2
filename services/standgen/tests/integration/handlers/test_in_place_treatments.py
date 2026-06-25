@@ -448,3 +448,19 @@ def test_feature_diameter_only_thins_trees_inside_feature(
     )
     # ... and every out-of-region tree is untouched (count preserved).
     assert int((~survivors_inside).sum()) == outside_count
+
+
+def test_column_summaries_reflect_data(treatments_runner):
+    """Column summaries reflect the post-treatment parquet data."""
+    threshold = 15.0
+    treatments = [{"metric": "diameter", "method": "from_below", "value": threshold}]
+    _, treated = treatments_runner(treatments)
+
+    treated_df = _load_df(treated["id"])
+    if len(treated_df) == 0:
+        pytest.skip("No trees after treatment")
+
+    cols = {col["key"]: col["summary"] for col in treated["columns"]}
+    assert cols["dbh"]["count"] == len(treated_df)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == treated_df["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == treated_df["dbh"].max()

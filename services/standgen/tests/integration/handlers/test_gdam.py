@@ -143,6 +143,9 @@ def completed_gdam_inventory(gdam_source):
     assert inventory["status"] == "completed", (
         f"GDAM inventory not completed: {inventory.get('error')}"
     )
+    assert inventory.get("columns") is not None
+    for col in inventory["columns"]:
+        assert col["summary"] is not None
 
     yield inventory, source_df, source_id
 
@@ -223,3 +226,13 @@ def test_filled_values_are_sensible(completed_gdam_inventory):
     assert result["crown_ratio"].min() >= 0
     assert result["crown_ratio"].max() <= 1  # fraction, not percent
     assert (result["fia_species_code"].astype(float) > 0).all()
+
+
+def test_column_summaries_reflect_data(completed_gdam_inventory):
+    """Column summaries reflect the actual parquet data."""
+    inventory, _, _ = completed_gdam_inventory
+    result = _result_df(inventory)
+    cols = {col["key"]: col["summary"] for col in inventory["columns"]}
+    assert cols["dbh"]["count"] == len(result)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == result["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == result["dbh"].max()

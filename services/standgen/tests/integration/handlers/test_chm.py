@@ -383,3 +383,18 @@ def process_inventory_request_local(inventory_id: str) -> None:
     from standgen.main import process_inventory_request
 
     process_inventory_request(MockRequest(data={"id": inventory_id}))
+
+
+def test_column_summaries_reflect_data(shared_chm_inventory, shared_chm_df):
+    """Column summaries reflect the actual parquet data."""
+    if len(shared_chm_df) == 0:
+        pytest.skip("No trees generated; skipping value validation")
+
+    cols = {col["key"]: col["summary"] for col in shared_chm_inventory["columns"]}
+    assert cols["height"]["count"] == len(shared_chm_df)
+    assert (
+        pytest.approx(cols["height"]["min"], rel=1e-4) == shared_chm_df["height"].min()
+    )
+    assert (
+        pytest.approx(cols["height"]["max"], rel=1e-4) == shared_chm_df["height"].max()
+    )

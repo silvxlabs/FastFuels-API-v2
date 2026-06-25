@@ -560,3 +560,25 @@ def test_feature_remove_drops_trees_inside_buffered_geometry(
     )
     # ... and the survivor count equals the originally-outside count.
     assert len(mod_trees) == int((~inside).sum())
+
+
+def test_column_summaries_reflect_data(modifications_runner):
+    """Column summaries reflect the post-modification parquet data."""
+    modifications = [
+        {
+            "conditions": [{"attribute": "dbh", "operator": "lt", "value": 30.0}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+    _, mod_inventory = modifications_runner(modifications)
+
+    mod_df = dd.read_parquet(
+        f"gs://{INVENTORIES_BUCKET}/{mod_inventory['id']}"
+    ).compute()
+    if len(mod_df) == 0:
+        pytest.skip("No trees after modification")
+
+    cols = {col["key"]: col["summary"] for col in mod_inventory["columns"]}
+    assert cols["dbh"]["count"] == len(mod_df)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == mod_df["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == mod_df["dbh"].max()

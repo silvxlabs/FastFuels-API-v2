@@ -143,6 +143,7 @@ def treatment_runner(treatment_env):
                 "source_pim_grid_id": grid_id,
             },
             "columns": baseline["columns"],
+            "type": "tree",
             "treatments": _stringify_treatments(treatments),
         }
         set_document(INVENTORIES_COLLECTION, treated_id, treated_data)
@@ -160,6 +161,7 @@ def treatment_runner(treatment_env):
         assert treated.get("columns") is not None
         for col in treated["columns"]:
             assert col["summary"] is not None
+        assert treated.get("forestry_metrics") is not None
         return baseline, treated
 
     yield _run
@@ -285,3 +287,21 @@ def test_column_summaries_reflect_data(treatment_runner):
     assert cols["dbh"]["count"] == len(treated_df)
     assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == treated_df["dbh"].min()
     assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == treated_df["dbh"].max()
+
+
+def test_forestry_metrics_updated_after_treatment(treatment_runner):
+    """Forestry metrics reflect the post-treatment population."""
+    limit = 15.0
+    treatments = [{"metric": "diameter", "method": "from_below", "value": limit}]
+    baseline, treated = treatment_runner(treatments)
+
+    base_df = _load_df(baseline["id"])
+    if len(base_df) == 0:
+        pytest.skip("Baseline PIM produced 0 trees (sparse grid)")
+
+    treated_df = _load_df(treated["id"])
+    base_fm = baseline["forestry_metrics"]
+    treated_fm = treated["forestry_metrics"]
+
+    assert treated_fm["tree_count"] == len(treated_df)
+    assert treated_fm["tree_count"] <= base_fm["tree_count"]

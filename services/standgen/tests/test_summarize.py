@@ -10,7 +10,7 @@ import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 import pytest
-from standgen.summarize import _build_column_stats_graph
+from standgen.summarize import _build_column_stats_graph, _build_tree_forestry_graph
 
 
 @pytest.fixture
@@ -21,6 +21,28 @@ def continuous_column():
 @pytest.fixture
 def categorical_column():
     return {"key": "fia_species_code", "type": "categorical"}
+
+
+@pytest.fixture
+def three_tree_ddf():
+    df = pd.DataFrame(
+        {
+            "dbh": [10.0, 20.0, 30.0],
+            "fia_species_code": [202, 202, 202],
+        }
+    )
+    return dd.from_pandas(df, npartitions=1)
+
+
+@pytest.fixture
+def multi_group_ddf():
+    df = pd.DataFrame(
+        {
+            "dbh": [10.0, 20.0, 30.0, 15.0, 25.0],
+            "fia_species_code": [202, 202, 122, 119, 71],
+        }
+    )
+    return dd.from_pandas(df, npartitions=1)
 
 
 def _compute(ddf, columns):
@@ -105,3 +127,69 @@ class TestMissingColumn:
         stats = _compute(ddf, columns)
 
         assert "nonexistent" not in stats
+
+
+class TestBuildTreeForestryGraph:
+    def test_known_dbh_fixture(self, three_tree_ddf, domain_gdf):
+        result = _build_tree_forestry_graph(three_tree_ddf, domain_gdf).compute()
+
+        assert result["tree_count"] == 3
+        assert (
+            pytest.approx(result["basal_area_per_area"], rel=1e-6)
+            == 0.005055932222011232
+        )
+        assert pytest.approx(result["tree_density"], rel=1e-6) == 0.012815469056219202
+        assert (
+            pytest.approx(result["quadratic_mean_diameter"], rel=1e-6)
+            == 8.504909053028689
+        )
+
+    def test_empty_inventory(self, domain_gdf):
+        ddf = dd.from_pandas(
+            pd.DataFrame(
+                {
+                    "dbh": pd.Series([], dtype=float),
+                    "fia_species_code": pd.Series([], dtype=int),
+                }
+            ),
+            npartitions=1,
+        )
+        result = _build_tree_forestry_graph(ddf, domain_gdf).compute()
+
+        assert result["tree_count"] == 0
+        assert result["basal_area_per_area"] is None
+        assert result["tree_density"] is None
+        assert result["quadratic_mean_diameter"] is None
+        assert result["dominant_species_groups"] == []
+
+    def test_single_species_basal_area_share(self, three_tree_ddf, domain_gdf):
+        result = _build_tree_forestry_graph(three_tree_ddf, domain_gdf).compute()
+
+        assert len(result["dominant_species_groups"]) == 1
+        assert (
+            pytest.approx(
+                result["dominant_species_groups"][0]["basal_area_share"], rel=1e-6
+            )
+            == 1.0
+        )
+        assert result["dominant_species_groups"][0]["spgrpcd"] == 2
+        assert result["dominant_species_groups"][0]["name"] == "Douglas-fir"
+
+    def test_multi_group_rollup(self, multi_group_ddf, domain_gdf):
+        result = _build_tree_forestry_graph(multi_group_ddf, domain_gdf).compute()
+
+        shares = [g["basal_area_share"] for g in result["dominant_species_groups"]]
+        assert shares == sorted(shares, reverse=True)
+        assert pytest.approx(sum(shares), rel=1e-6) == 1.0
+        group_4 = next(
+            g for g in result["dominant_species_groups"] if g["spgrpcd"] == 4
+        )
+        assert group_4["basal_area_share"] > 0  # combined 122 and 119
+        assert len(result["dominant_species_groups"]) == 3
+
+    def test_top_n_truncation(self, multi_group_ddf, domain_gdf):
+        result = _build_tree_forestry_graph(
+            multi_group_ddf, domain_gdf, top_species_groups=2
+        ).compute()
+
+        assert len(result["dominant_species_groups"]) == 2

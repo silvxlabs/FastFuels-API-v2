@@ -41,8 +41,8 @@ def handle_chm(
         progress: Callback for progress reporting
 
     Returns:
-        Dict with 'georeference' key and 'columns' key with per-column
-        summary statistics populated.
+        Dict with 'georeference', 'columns' with per-column summary statistics,
+        and 'forestry_metrics' with stand-level forestry scalars or None.
     """
     inventory_id = inventory["id"]
 
@@ -175,7 +175,9 @@ def handle_chm(
     # as that would run the entire local-maxima graph an extra time over the
     # full CHM.
     progress("Writing inventory data...", 90)
-    _, stats = save_parquet_with_summary(inventory_id, ddf, inventory["columns"])
+    _, stats, forestry_metrics = save_parquet_with_summary(
+        inventory_id, ddf, inventory["columns"], inventory["type"], domain_gdf
+    )
 
     # Read the tree count from the written Parquet footer (footer-only, no recompute).
     # This reflects rows actually persisted (post-modification), which is the
@@ -200,4 +202,5 @@ def handle_chm(
         "columns": [
             {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
         ],
+        "forestry_metrics": forestry_metrics,
     }

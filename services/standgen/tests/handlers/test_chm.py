@@ -31,6 +31,7 @@ def mock_inventory_lmf():
         },
         "modifications": [],
         "columns": CHM_INVENTORY_COLUMNS,
+        "type": "tree",
     }
 
 
@@ -51,6 +52,7 @@ def mock_inventory_vwf():
         },
         "modifications": [],
         "columns": CHM_INVENTORY_COLUMNS,
+        "type": "tree",
     }
 
 
@@ -98,7 +100,7 @@ class TestHandleChm:
         self._setup_mock_grid(mock_get, mock_load, resolution=1.0)
         mock_fixed_filter.return_value = mock_trees_ddf
         mock_count.return_value = 2
-        mock_save.return_value = ("gs://test-bucket/test-inv-123", {})
+        mock_save.return_value = ("gs://test-bucket/test-inv-123", {}, None)
         progress = MagicMock()
 
         # Execute
@@ -144,7 +146,7 @@ class TestHandleChm:
         """Handler correctly routes VWF and passes exact parameters."""
         self._setup_mock_grid(mock_get, mock_load, resolution=0.5)
         mock_var_filter.return_value = mock_trees_ddf
-        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {})
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
         mock_count.return_value = 2
         progress = MagicMock()
 

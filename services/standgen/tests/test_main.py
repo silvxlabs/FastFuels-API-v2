@@ -55,6 +55,14 @@ def test_happy_path(
                 },
             }
         ],
+        "forestry_metrics": {
+            "type": "tree",
+            "tree_count": 100,
+            "basal_area_per_area": 120.5,
+            "tree_density": 200.0,
+            "quadratic_mean_diameter": 9.3,
+            "dominant_species_groups": [],
+        },
     }
 
     request = MockRequest({"id": "test-inventory-123"})
@@ -83,6 +91,14 @@ def test_happy_path(
                 },
             }
         ],
+        forestry_metrics={
+            "type": "tree",
+            "tree_count": 100,
+            "basal_area_per_area": 120.5,
+            "tree_density": 200.0,
+            "quadratic_mean_diameter": 9.3,
+            "dominant_species_groups": [],
+        },
         extra=None,
     )
 

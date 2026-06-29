@@ -79,7 +79,13 @@ def update_progress(inventory_id, message, percent=None):
 
 
 def update_status(
-    inventory_id, status, georeference=None, columns=None, error=None, extra=None
+    inventory_id,
+    status,
+    georeference=None,
+    columns=None,
+    forestry_metrics=None,
+    error=None,
+    extra=None,
 ):
     """Update inventory status.
 
@@ -102,6 +108,8 @@ def update_status(
         data["georeference"] = georeference
     if columns is not None:
         data["columns"] = columns
+    if forestry_metrics is not None:
+        data["forestry_metrics"] = forestry_metrics
     if error is not None:
         data["error"] = error
     if extra:
@@ -234,6 +242,7 @@ def process_inventory_request(request: Request):
             "completed",
             georeference=result["georeference"],
             columns=result["columns"],
+            forestry_metrics=result.get("forestry_metrics"),
             extra=completion_extra,
         )
         logger.info("Processing complete", extra=ids)

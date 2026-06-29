@@ -250,7 +250,8 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     executes once, at ``save_parquet_with_summary`` — so the whole inventory is
     never held in memory and each GDAM request covers one partition.
 
-    Returns ``{"georeference": ..., "columns": ...}`` for main.py to persist.
+    Dict with 'georeference', 'columns' with per-column summary statistics,
+    and 'forestry_metrics' with stand-level forestry scalars or None.
     """
     inventory_id = inventory["id"]
     source_id = source["source_tree_inventory_id"]
@@ -299,7 +300,9 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     # save_parquet triggers the single execution of the lazy graph above (this is
     # where the GDAM calls actually run).
     progress("Writing inventory...", 90)
-    _, stats = save_parquet_with_summary(inventory_id, result_ddf, inventory["columns"])
+    _, stats, forestry_metrics = save_parquet_with_summary(
+        inventory_id, result_ddf, inventory["columns"], inventory["type"], domain_gdf
+    )
     logger.info(f"GDAM imputed {total} trees", extra={"inventory_id": inventory_id})
 
     georeference = {
@@ -312,4 +315,5 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
         "columns": [
             {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
         ],
+        "forestry_metrics": forestry_metrics,
     }

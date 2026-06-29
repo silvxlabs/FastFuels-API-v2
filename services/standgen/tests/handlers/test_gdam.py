@@ -249,6 +249,7 @@ _INVENTORY = {
         {"key": "crown_ratio", "type": "continuous"},
         {"key": "fia_species_code", "type": "categorical"},
     ],
+    "type": "tree",
 }
 _SOURCE = {"source_tree_inventory_id": "src"}
 
@@ -307,11 +308,11 @@ def _patched(source_frame, post_side_effect):
     ddf = dd.from_pandas(source_frame, npartitions=1)
     saved = {}
 
-    def fake_save(inventory_id, result_ddf, columns):
+    def fake_save(inventory_id, result_ddf, columns, inventory_type, domain_gdf):
         saved["id"] = inventory_id
         saved["df"] = result_ddf.compute(scheduler="synchronous")
         saved["columns"] = columns
-        return f"gs://test/{inventory_id}", {}
+        return f"gs://test/{inventory_id}", {}, None
 
     with (
         patch.object(gdam, "load_inventory_parquet", return_value=ddf),
@@ -386,7 +387,9 @@ class TestHandleGdam:
         with (
             patch.object(gdam, "load_inventory_parquet", side_effect=FileNotFoundError),
             patch.object(
-                gdam, "save_parquet_with_summary", return_value=("gs://test/newinv", {})
+                gdam,
+                "save_parquet_with_summary",
+                return_value=("gs://test/newinv", {}, None),
             ),
             patch.object(gdam.httpx, "post", side_effect=_ok_post),
         ):

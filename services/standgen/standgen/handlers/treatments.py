@@ -38,8 +38,8 @@ def apply_in_place_treatments(
         progress: Callback for progress reporting.
 
     Returns:
-        Dict with 'georeference' key (the inventory's existing georeference)
-        and 'columns' key with per-column summary statistics populated.
+        Dict with 'georeference', 'columns' with per-column summary statistics,
+        and 'forestry_metrics' with stand-level forestry scalars or None.
     """
     inventory_id = inventory["id"]
     treatments = inventory.get("pending_treatments", [])
@@ -80,8 +80,8 @@ def apply_in_place_treatments(
 
     # Replace the inventory's Parquet in place (staging swap — see storage.py).
     progress("Writing treated inventory...", 70)
-    _, stats = save_parquet_replace_with_summary(
-        inventory_id, ddf, inventory["columns"]
+    _, stats, forestry_metrics = save_parquet_replace_with_summary(
+        inventory_id, ddf, inventory["columns"], inventory["type"], domain_gdf
     )
 
     progress("Complete", 100)
@@ -91,4 +91,5 @@ def apply_in_place_treatments(
         "columns": [
             {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
         ],
+        "forestry_metrics": forestry_metrics,
     }

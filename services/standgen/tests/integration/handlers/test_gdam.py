@@ -146,6 +146,8 @@ def completed_gdam_inventory(gdam_source):
     assert inventory.get("columns") is not None
     for col in inventory["columns"]:
         assert col["summary"] is not None
+    assert inventory.get("forestry_metrics") is not None
+    assert inventory["forestry_metrics"]["tree_count"] >= 0
 
     yield inventory, source_df, source_id
 
@@ -236,3 +238,14 @@ def test_column_summaries_reflect_data(completed_gdam_inventory):
     assert cols["dbh"]["count"] == len(result)
     assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == result["dbh"].min()
     assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == result["dbh"].max()
+
+
+def test_forestry_metrics_populated(completed_gdam_inventory):
+    inventory, _, _ = completed_gdam_inventory
+    result = _result_df(inventory)
+    fm = inventory["forestry_metrics"]
+    assert fm["tree_count"] == len(result)
+    assert fm["basal_area_per_area"] > 0
+    assert fm["tree_density"] > 0
+    assert fm["quadratic_mean_diameter"] > 0
+    assert len(fm["dominant_species_groups"]) > 0

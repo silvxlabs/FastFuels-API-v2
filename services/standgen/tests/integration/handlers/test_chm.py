@@ -84,6 +84,7 @@ def shared_chm_inventory(module_chm_grid):
     assert inventory.get("columns") is not None
     for col in inventory["columns"]:
         assert col["summary"] is not None
+    assert inventory.get("forestry_metrics") is None
 
     yield inventory
 

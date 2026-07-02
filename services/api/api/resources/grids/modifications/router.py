@@ -16,6 +16,7 @@ from google.cloud import firestore
 
 from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.modifications.examples import (
     APPLY_GRID_MODIFICATIONS_OPENAPI_EXAMPLES,
 )
@@ -58,6 +59,7 @@ def _referenced_band_keys(body: ApplyGridModificationsRequest) -> list[str]:
     response_model=Grid,
     status_code=status.HTTP_200_OK,
     summary="Apply modifications to a grid in place",
+    responses=QUOTA_429_RESPONSE,
 )
 async def apply_grid_modifications(
     request: Request,
@@ -157,9 +159,15 @@ async def apply_grid_modifications(
       grid (apply modifications to the source tree inventory and re-voxelize
       instead); a referenced `feature_id` is missing, cross-domain, or not
       completed; or a referenced band does not exist on this grid.
+    - **429 Too Many Requests**: You have too many active grid jobs in progress
+      (your `max_active_grids` quota). Wait for jobs to complete or delete
+      unneeded grids, then retry. The response detail names the exact `quota`
+      and includes a `Retry-After` header.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
 

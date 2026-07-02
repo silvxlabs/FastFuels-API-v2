@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.resample.examples import CREATE_RESAMPLE_OPENAPI_EXAMPLES
 from api.resources.grids.resample.schema import (
     CreateResampleRequest,
@@ -38,6 +39,7 @@ COLLECTION = GRIDS_COLLECTION
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid by resampling an existing grid",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_resample(
     request: Request,
@@ -74,6 +76,8 @@ async def create_resample(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
 

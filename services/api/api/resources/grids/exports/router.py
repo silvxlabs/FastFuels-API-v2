@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.exports.schema import (
     Export,
     ExportGridRequest,
@@ -44,6 +45,7 @@ router = APIRouter()
     response_model=Export,
     status_code=status.HTTP_201_CREATED,
     summary="Export a grid",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_grid_export(
     request: Request,
@@ -71,6 +73,8 @@ async def create_grid_export(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(EXPORTS_COLLECTION, request)
 
     # Validate grid exists, is owned, belongs to domain, and is completed
     _, grid_snapshot = await get_document_async(

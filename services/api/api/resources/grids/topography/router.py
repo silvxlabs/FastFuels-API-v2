@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, Query, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.topography.examples import (
     CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES,
@@ -48,6 +49,7 @@ COLLECTION = GRIDS_COLLECTION
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from LANDFIRE topographic data",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_landfire_topography(
     request: Request,
@@ -85,6 +87,8 @@ async def create_landfire_topography(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
@@ -130,6 +134,7 @@ async def create_landfire_topography(
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from 3DEP topographic data",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_3dep_topography(
     request: Request,
@@ -175,6 +180,8 @@ async def create_3dep_topography(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)

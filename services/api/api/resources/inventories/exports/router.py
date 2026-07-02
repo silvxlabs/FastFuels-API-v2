@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.exports.schema import (
     Export,
     ExportInventoryRequest,
@@ -42,6 +43,7 @@ router = APIRouter()
     response_model=Export,
     status_code=status.HTTP_201_CREATED,
     summary="Export an inventory",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_inventory_export(
     request: Request,
@@ -67,6 +69,8 @@ async def create_inventory_export(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(EXPORTS_COLLECTION, request)
 
     # Validate inventory exists, is owned, belongs to domain, and is completed
     _, inventory_snapshot = await get_document_async(

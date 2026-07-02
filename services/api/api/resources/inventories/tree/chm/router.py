@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.chm.examples import CREATE_CHM_OPENAPI_EXAMPLES
 from api.resources.inventories.tree.chm.schema import (
@@ -39,6 +40,7 @@ COLLECTION = INVENTORIES_COLLECTION
     response_model=Inventory,
     status_code=status.HTTP_201_CREATED,
     summary="Create an inventory from a Canopy Height Model (CHM)",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_chm_inventory(
     request: Request,
@@ -75,6 +77,8 @@ async def create_chm_inventory(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_feature_conditions(
         [*body.modifications, *body.treatments], owner_id, domain_id

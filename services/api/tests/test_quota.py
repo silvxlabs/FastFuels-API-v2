@@ -5,9 +5,14 @@ Covers the quota vocabulary defaults, the tier presets, the phase-1 resolver,
 and the 429 error-detail shape. No server or Firestore required.
 """
 
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from api.quota import TIER_PRESETS, QuotaExceededDetail, Quotas, resolve_quotas
 from api.resources.keys.schema import Access
+
+from lib.config import APPLICATIONS_COLLECTION, USERS_COLLECTION
 
 
 class TestQuotasDefaults:
@@ -60,15 +65,86 @@ class TestTierPresets:
         assert q.failed_resource_ttl_days == 14
 
 
+def _fake_firestore(*, exists: bool, data: dict | None = None) -> MagicMock:
+    """A firestore_client stand-in whose single-document read returns a snapshot."""
+    snapshot = MagicMock()
+    snapshot.exists = exists
+    snapshot.to_dict.return_value = data or {}
+    client = MagicMock()
+    client.collection.return_value.document.return_value.get = AsyncMock(
+        return_value=snapshot
+    )
+    return client
+
+
 class TestResolveQuotas:
     pytestmark = pytest.mark.anyio
 
-    async def test_personal_resolves_to_standard(self):
-        assert await resolve_quotas("owner-1", Access.PERSONAL) == Quotas()
+    # Each test uses a unique owner id because resolve_quotas is @lru-cached.
 
-    async def test_application_resolves_to_standard(self):
-        # Phase 1: applications also default to standard; tier grants are phase 2.
-        assert await resolve_quotas("app-1", Access.APPLICATION) == Quotas()
+    async def test_missing_doc_resolves_to_defaults(self):
+        client = _fake_firestore(exists=False)
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-missing", Access.PERSONAL)
+        assert result == Quotas()
+        client.collection.assert_called_once_with(USERS_COLLECTION)
+
+    async def test_application_access_reads_applications_collection(self):
+        client = _fake_firestore(exists=False)
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-app-missing", Access.APPLICATION)
+        assert result == Quotas()
+        client.collection.assert_called_once_with(APPLICATIONS_COLLECTION)
+
+    async def test_tier_preset_is_applied(self):
+        client = _fake_firestore(exists=True, data={"tier": "application"})
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-tier", Access.APPLICATION)
+        assert result == Quotas(**TIER_PRESETS["application"])
+        assert result.max_active_grids == 100
+
+    async def test_overrides_beat_tier_and_defaults(self):
+        data = {"tier": "standard", "quota_overrides": {"max_active_grids": 3}}
+        client = _fake_firestore(exists=True, data=data)
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-override", Access.PERSONAL)
+        assert result.max_active_grids == 3
+        assert result.max_active_features == Quotas().max_active_features
+
+    async def test_suspended_tier_zeroes_create_limits(self):
+        client = _fake_firestore(exists=True, data={"tier": "suspended"})
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-suspended", Access.PERSONAL)
+        assert result.max_active_grids == 0
+        assert result.max_grids == 0
+
+    async def test_unknown_tier_falls_back_to_defaults(self):
+        client = _fake_firestore(exists=True, data={"tier": "platinum"})
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-bad-tier", Access.PERSONAL)
+        assert result == Quotas()
+
+    async def test_unknown_override_key_is_ignored(self):
+        data = {"quota_overrides": {"not_a_quota": 5, "max_active_features": 2}}
+        client = _fake_firestore(exists=True, data=data)
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-bad-key", Access.PERSONAL)
+        assert result.max_active_features == 2
+
+    async def test_malformed_override_value_falls_back_to_defaults(self, caplog):
+        data = {"quota_overrides": {"max_active_features": "not-an-int"}}
+        client = _fake_firestore(exists=True, data=data)
+        with caplog.at_level(logging.ERROR):
+            with patch("api.quota.firestore_client", client):
+                result = await resolve_quotas("owner-bad-value", Access.PERSONAL)
+        assert result == Quotas()
+        assert "Malformed quota config" in caplog.text
+
+    async def test_non_dict_overrides_falls_back_to_defaults(self):
+        client = _fake_firestore(exists=True, data={"quota_overrides": "nope"})
+        with patch("api.quota.firestore_client", client):
+            result = await resolve_quotas("owner-bad-overrides", Access.PERSONAL)
+        assert result == Quotas()
 
 
 class TestQuotaExceededDetail:

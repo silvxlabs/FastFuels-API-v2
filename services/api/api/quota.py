@@ -1,34 +1,33 @@
 """
 api/quota.py
 
-Per-owner usage quotas (epic #340, phase 1).
+Per-owner usage quotas (epic #340).
 
-Default limits apply to every owner. Each resource-creating endpoint calls
-``enforce_create_quotas()`` before writing; if the owner already has too many
-jobs in flight, a 429 with a structured, human-readable detail is raised.
-
-Later phases extend this module without touching the call sites: phase 2 makes
-``resolve_quotas()`` read a per-owner ``tier`` / ``quota_overrides`` from the
-owner document; phase 3 adds total-count and per-type storage checks to
-``enforce_create_quotas()``.
+Each resource-creating endpoint calls ``enforce_create_quotas()`` before
+writing; if the owner is over an active-jobs limit, a structured 429 is raised.
+The limits come from ``resolve_quotas()``, which layers an owner's tier and
+overrides on top of the defaults. Phase 3 will add count and storage checks.
 """
 
 import logging
 
 from fastapi import HTTPException, Request, status
 from google.cloud.firestore import FieldFilter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from ring import lru
 
 from api.db.documents import firestore_client
 from api.resources.keys.schema import Access
 from api.schema import JobStatus
 from lib.config import (
+    APPLICATIONS_COLLECTION,
     EXPORTS_COLLECTION,
     FEATURES_COLLECTION,
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,
     POINT_CLOUDS_COLLECTION,
     SUPPORT_EMAIL,
+    USERS_COLLECTION,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,15 +91,28 @@ TIER_PRESETS: dict[str, dict] = {
 _DEFAULT_TIER = "standard"
 
 
+@lru(force_asyncio=True, expire=300)
 async def resolve_quotas(owner_id: str, access: Access) -> Quotas:
-    """Resolve the quota set for an owner.
+    """Resolve an owner's quotas from its owner document.
 
-    Phase 1: every owner resolves to the default tier — no Firestore read, no
-    per-owner overrides. The signature is final; phase 2 fills in the body to
-    read ``tier`` / ``quota_overrides`` from the owner document (keyed on
-    ``access``) and cache the result.
+    Applies the owner's tier preset and any ``quota_overrides`` on top of the
+    defaults. A missing or malformed document resolves to the defaults.
     """
-    return Quotas(**TIER_PRESETS[_DEFAULT_TIER])
+    collection = (
+        USERS_COLLECTION if access == Access.PERSONAL else APPLICATIONS_COLLECTION
+    )
+    doc = await firestore_client.collection(collection).document(owner_id).get()
+    data = doc.to_dict() if doc.exists else {}
+
+    preset = TIER_PRESETS.get(data.get("tier") or _DEFAULT_TIER, {})
+    overrides = data.get("quota_overrides") or {}
+    try:
+        return Quotas(**{**preset, **overrides})
+    except (TypeError, ValidationError):
+        logger.error(
+            "Malformed quota config for owner %s; using tier defaults", owner_id
+        )
+        return Quotas(**preset)
 
 
 # Collection -> (active-jobs quota field, singular resource label). Collections

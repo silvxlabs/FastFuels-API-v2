@@ -27,6 +27,11 @@ class TestCreateApplicationRequest:
         req = CreateApplicationRequest(name="My App", description="A description")
         assert req.description == "A description"
 
+    def test_rejects_quota_config(self):
+        """Admin-only fields cannot be set via the create request."""
+        with pytest.raises(Exception):
+            CreateApplicationRequest(name="My App", tier="partner")
+
 
 class TestUpdateApplicationRequest:
     def test_all_fields_optional(self):

@@ -24,6 +24,7 @@ from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.gcs import storage_size
 from lib.grids import compute_chunks_doc
 
 CHUNK_SHAPE = (512, 512)
@@ -116,6 +117,7 @@ def update_status(
     status: str,
     georeference: dict | None = None,
     chunks: dict | None = None,
+    size_bytes: int | None = None,
     error: dict | None = None,
     extra: dict | None = None,
 ) -> None:
@@ -126,6 +128,8 @@ def update_status(
         status: New status ("running", "completed", "failed")
         georeference: Optional georeference dict (for completed status)
         chunks: Optional chunks layout dict (for completed status)
+        size_bytes: Optional GCS artifact footprint in bytes (for completed
+            status), for per-owner storage quota accounting (#342)
         error: Optional error dict (for failed status)
         extra: Optional additional fields written in the same update, for
             changes that must land atomically with the status transition
@@ -152,6 +156,9 @@ def update_status(
 
     if chunks is not None:
         data["chunks"] = chunks
+
+    if size_bytes is not None:
+        data["size_bytes"] = size_bytes
 
     if error is not None:
         data["error"] = error
@@ -357,7 +364,7 @@ def process_grid_request(request: Request):
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)
-        save_zarr(grid_id, result, chunk_shape=chunk_shape)
+        zarr_path = save_zarr(grid_id, result, chunk_shape=chunk_shape)
 
         # Update status to completed with georeference and chunks layout
         transform = result.rio.transform()
@@ -371,6 +378,7 @@ def process_grid_request(request: Request):
                 "shape": list(grid_shape),
             },
             chunks=compute_chunks_doc(grid_shape, chunk_shape),
+            size_bytes=storage_size(zarr_path),
             extra=completion_extra,
         )
 

@@ -335,6 +335,8 @@ def griddle_runner():
         assert len(geo["transform"]) == 6
         assert len(geo["shape"]) == 2
         assert all(s > 0 for s in geo["shape"])
+        # The zarr store's GCS footprint is recorded on completion (#342).
+        assert grid["size_bytes"] > 0
         _assert_band_summaries(grid)
 
         # Open zarr and return the dataset for test-specific assertions

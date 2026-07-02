@@ -370,7 +370,12 @@ class TestCheckRoleAlignment:
                 fire_grid,
             )
         assert exc.value.status_code == 422
-        assert "cell size" in exc.value.detail
+        detail = exc.value.detail
+        # Message names both resolutions and offers a copy-pasteable fix.
+        assert "resolution mismatch" in detail
+        assert "30.0 m" in detail  # the grid's resolution
+        assert "2.0 m" in detail  # the fire-grid resolution
+        assert '"alignment": {"dx": 30.0, "dy": 30.0}' in detail
 
     def test_off_lattice_origin_rejected(self, fire_grid):
         # Shifted by 0.5 m — half a cell. Not on the 2 m lattice.

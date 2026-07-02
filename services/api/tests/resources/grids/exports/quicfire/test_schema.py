@@ -120,6 +120,17 @@ class TestAlignmentOnRequest:
         assert request.alignment.dy == 2.0
         assert request.alignment.dz == 1.0
 
+    def test_partial_alignment_defaults_target_to_domain(self):
+        # `target` may be omitted when alignment is supplied — it defaults to
+        # "domain" so `{"dx": 1, "dy": 1}` is accepted.
+        kwargs = _minimal_request_kwargs()
+        kwargs["alignment"] = {"dx": 1.0, "dy": 1.0}
+        request = QuicfireExportRequest(**kwargs)
+        assert request.alignment.target == "domain"
+        assert request.alignment.dx == 1.0
+        assert request.alignment.dy == 1.0
+        assert request.alignment.dz == 1.0  # vertical default preserved
+
     def test_unknown_target_rejected(self):
         kwargs = _minimal_request_kwargs()
         kwargs["alignment"] = {"target": "native", "dx": 2.0, "dy": 2.0, "dz": 1.0}

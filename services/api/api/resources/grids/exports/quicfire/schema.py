@@ -227,6 +227,20 @@ class QuicfireExportRequest(BaseModel):
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _default_alignment_target(cls, data: object) -> object:
+        """Default ``alignment.target`` to ``"domain"`` when omitted.
+
+        ``alignment`` is a discriminated union on ``target``, so Pydantic
+        requires the tag even though the domain target is the only default.
+        Filling it here lets callers pass just ``{"dx": 1, "dy": 1}`` instead
+        of repeating ``"target": "domain"``.
+        """
+        if isinstance(data, dict) and isinstance(data.get("alignment"), dict):
+            data["alignment"].setdefault("target", "domain")
+        return data
+
     @model_validator(mode="after")
     def savr_pair_or_none(self) -> "QuicfireExportRequest":
         if (self.canopy_savr is None) != (self.surface_savr is None):

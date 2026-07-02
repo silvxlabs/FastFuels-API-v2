@@ -22,7 +22,7 @@ from lib.firestore import DocumentNotFoundError, get_document, update_document
 from standgen.dispatch import dispatch_handler
 from standgen.handlers.modifications import apply_in_place_modifications
 from standgen.handlers.treatments import apply_in_place_treatments
-from standgen.storage import delete_parquet
+from standgen.storage import delete_parquet, inventory_size
 
 
 class StructuredLogHandler(logging.Handler):
@@ -78,11 +78,15 @@ def update_progress(inventory_id, message, percent=None):
         raise CancelledException(f"Inventory {inventory_id} was cancelled")
 
 
-def update_status(inventory_id, status, georeference=None, error=None, extra=None):
+def update_status(
+    inventory_id, status, georeference=None, size_bytes=None, error=None, extra=None
+):
     """Update inventory status.
 
     ``extra`` merges additional fields into the update — used to clear the
     ``pending_modifications`` work queue once an in-place modification completes.
+    ``size_bytes`` is the GCS artifact footprint recorded on completion for
+    per-owner storage quota accounting (#342).
     """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
@@ -91,6 +95,8 @@ def update_status(inventory_id, status, georeference=None, error=None, extra=Non
         data["progress"] = {"message": "Failed", "percent": 100}
     if georeference is not None:
         data["georeference"] = georeference
+    if size_bytes is not None:
+        data["size_bytes"] = size_bytes
     if error is not None:
         data["error"] = error
     if extra:
@@ -222,6 +228,7 @@ def process_inventory_request(request: Request):
             inventory_id,
             "completed",
             georeference=result["georeference"],
+            size_bytes=inventory_size(inventory_id),
             extra=completion_extra,
         )
         logger.info("Processing complete", extra=ids)

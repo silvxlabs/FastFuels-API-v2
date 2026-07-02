@@ -117,6 +117,8 @@ class TestPointCloudUpload:
             _, snap = get_document(POINT_CLOUDS_COLLECTION, pc_id)
             result = snap.to_dict()
             assert result["status"] == "completed"
+            # The stored cloud.laz footprint is recorded on completion (#342).
+            assert result["size_bytes"] > 0
             assert result["georeference"]["crs"] == DOMAIN_CRS
             assert len(result["georeference"]["bounds"]) == 6
             assert result["summary"]["point_count"] == 100

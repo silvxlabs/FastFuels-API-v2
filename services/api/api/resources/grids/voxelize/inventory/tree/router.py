@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.schema import Grid
 from api.resources.grids.voxelize.inventory.tree.examples import (
     CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES,
@@ -43,6 +44,7 @@ COLLECTION = GRIDS_COLLECTION
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a 3D tree fuel grid from a tree inventory",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_tree_inventory_grid(
     request: Request,
@@ -100,6 +102,8 @@ async def create_tree_inventory_grid(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     # Validate source inventory: exists, owned, in this domain, and completed.
     _, inventory_snapshot = await get_document_async(

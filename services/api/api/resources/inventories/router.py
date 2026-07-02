@@ -33,6 +33,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.inventories.cache import get_inventory_metadata, read_partition
 from api.resources.inventories.exports.router import router as exports_router
 from api.resources.inventories.modifications.router import (
@@ -481,6 +482,7 @@ async def _copy_inventory_data(
     response_model=Inventory,
     status_code=status.HTTP_201_CREATED,
     summary="Duplicate an inventory",
+    responses=QUOTA_429_RESPONSE,
 )
 async def duplicate_inventory(
     request: Request,
@@ -524,9 +526,15 @@ async def duplicate_inventory(
       caller, or is not in this domain.
     - **422 Unprocessable Content**: The source inventory exists but is not yet
       `completed`, so there is no finished artifact to copy.
+    - **429 Too Many Requests**: You have too many active inventory jobs in
+      progress (your `max_active_inventories` quota). Wait for jobs to complete
+      or delete unneeded inventories, then retry. The response detail names the
+      exact `quota` and includes a `Retry-After` header.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     # Source must exist, be owned, in this domain, and completed.
     _, source_snapshot = await get_document_async(

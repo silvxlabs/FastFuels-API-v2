@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.exports.schema import Export
 from api.resources.grids.exports.quicfire.examples import (
     CREATE_QUICFIRE_EXPORT_OPENAPI_EXAMPLES,
@@ -36,6 +37,7 @@ router = APIRouter()
     response_model=Export,
     status_code=status.HTTP_201_CREATED,
     summary="Export combined fuel + topography grids to QUIC-Fire format",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_quicfire_export(
     request: Request,
@@ -59,6 +61,8 @@ async def create_quicfire_export(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(EXPORTS_COLLECTION, request)
 
     source = await validate_quicfire_request(body, owner_id, domain)
 

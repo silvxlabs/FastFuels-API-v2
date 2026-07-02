@@ -113,6 +113,15 @@ class QuicfireExportRequest(BaseModel):
     fire grid and cover its full extent; otherwise the request is rejected.
     The exporter only crops oversized roles by integer slicing — it never
     resamples or reprojects.
+
+    The output resolution is set here, on the export, via `alignment.dx`/`dy`
+    (default 2 m, QUIC-Fire's recommended value). It is a separate setting
+    from the resolution of each grid you built — changing your grids does not
+    change the export, and vice versa. Because the exporter never resamples,
+    every role grid must already be built at the fire-grid resolution. To
+    export at 1 m, for example, set `dx`/`dy` to 1 and build all role grids at
+    1 m (2D grids at 1 m via their `alignment.resolution`, and the 3D tree
+    grid at 1 m via `resolution.horizontal` — 3D grids cannot be resampled).
     """
 
     alignment: QUICFireExportAlignmentSpec = Field(

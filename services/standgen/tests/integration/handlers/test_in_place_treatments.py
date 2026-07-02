@@ -153,6 +153,11 @@ def treatments_runner(shared_pim_source):
         # data), never duplicated or dropped (#319).
         assert treated_inventory.get("pending_treatments") == []
         assert treated_inventory.get("treatments") == prior_treatments + treatments
+        # The Parquet footprint is recorded on the in-place replace path too and
+        # reflects the current dataset — a thinning treatment rewrites the whole
+        # store, so it never accumulates onto the source footprint (#342).
+        assert treated_inventory["size_bytes"] > 0
+        assert treated_inventory["size_bytes"] < pim_inventory["size_bytes"] * 2
 
         return pim_inventory, treated_inventory
 

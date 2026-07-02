@@ -26,12 +26,18 @@ def mock_feature():
     }
 
 
+@patch("etcher.main.feature_size")
 @patch("etcher.main._load_domain")
 @patch("etcher.main.dispatch_handler")
 @patch("etcher.main.update_status")
 @patch("etcher.main.load_feature")
 def test_happy_path(
-    mock_load, mock_status, mock_dispatch, mock_load_domain, mock_feature
+    mock_load,
+    mock_status,
+    mock_dispatch,
+    mock_load_domain,
+    mock_feature_size,
+    mock_feature,
 ):
     from etcher.main import process_feature_request
 
@@ -40,6 +46,7 @@ def test_happy_path(
     mock_dispatch.return_value = {
         "georeference": {"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
     }
+    mock_feature_size.return_value = 4096
 
     request = MockRequest({"id": "test-feature-123"})
     response, status_code = process_feature_request(request)
@@ -47,10 +54,13 @@ def test_happy_path(
     assert status_code == 200
     assert response == "OK"
     mock_status.assert_any_call("test-feature-123", "running")
+    # The feature's GeoParquet footprint is recorded on completion (#342).
+    mock_feature_size.assert_called_once_with("test-domain-456", "test-feature-123")
     mock_status.assert_any_call(
         "test-feature-123",
         "completed",
         georeference={"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
+        size_bytes=4096,
     )
 
 

@@ -20,6 +20,7 @@ from exporter.errors import CancelledException, ProcessingError
 from exporter.storage import delete_export_files, generate_signed_download
 from lib.config import EXPORTS_COLLECTION
 from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.gcs import storage_size
 
 
 class StructuredLogHandler(logging.Handler):
@@ -83,9 +84,14 @@ def update_status(
     export_id: str,
     status: str,
     signed_url: str | None = None,
+    size_bytes: int | None = None,
     error: dict | None = None,
 ) -> None:
-    """Update export status."""
+    """Update export status.
+
+    size_bytes is the GCS artifact footprint of the export in bytes, recorded
+    on completion for per-owner storage quota accounting (#342).
+    """
     data = {
         "status": status,
         "modified_on": datetime.now(UTC),
@@ -98,6 +104,9 @@ def update_status(
 
     if signed_url is not None:
         data["signed_url"] = signed_url
+
+    if size_bytes is not None:
+        data["size_bytes"] = size_bytes
 
     if error is not None:
         data["error"] = error
@@ -180,7 +189,12 @@ def process_export_request(request: Request):
         progress_callback("Generating signed URL...", 90)
 
         signed_url = generate_signed_download(gcs_path, expiration_days)
-        update_status(export_id, "completed", signed_url=signed_url)
+        update_status(
+            export_id,
+            "completed",
+            signed_url=signed_url,
+            size_bytes=storage_size(gcs_path),
+        )
 
         logger.info("Processing complete", extra=ids)
         return "OK", 200

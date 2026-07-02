@@ -97,6 +97,8 @@ class TestProcessFeatureRequest:
         feature = snapshot.to_dict()
         assert feature["status"] == "completed"
         assert feature["georeference"] is not None
+        # The feature GeoParquet's GCS footprint is recorded on completion (#342).
+        assert feature["size_bytes"] > 0
 
     def test_parquet_written_to_gcs(self, firestore_domain, firestore_feature):
         """Processing should write a GeoParquet file to GCS."""

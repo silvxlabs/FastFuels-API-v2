@@ -186,6 +186,8 @@ class TestNetcdf2DUpload:
             result = snap.to_dict()
 
             assert result["status"] == "completed"
+            # The written zarr store's footprint is recorded on completion (#342).
+            assert result["size_bytes"] > 0
             assert result["georeference"]["crs"] == DOMAIN_CRS
             assert len(result["georeference"]["shape"]) == 2
             assert "z_resolution" not in result["georeference"]

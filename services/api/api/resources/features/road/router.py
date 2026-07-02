@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.features.road.examples import CREATE_ROAD_OPENAPI_EXAMPLES
 from api.resources.features.road.schema import (
     CreateOsmRoadFeatureRequest,
@@ -36,6 +37,7 @@ COLLECTION = FEATURES_COLLECTION
     response_model=Feature,
     status_code=status.HTTP_201_CREATED,
     summary="Create a road feature from OpenStreetMap",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_osm_road_feature(
     request: Request,
@@ -79,6 +81,8 @@ async def create_osm_road_feature(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     feature_id = uuid.uuid4().hex
     request_time = datetime.now()

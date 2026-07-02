@@ -38,7 +38,7 @@ from lib.config import (
 )
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
-from lib.gcs import delete_file, get_gcsfs_client
+from lib.gcs import delete_file, get_gcsfs_client, storage_size
 
 _OUTPUT_FILENAME = "cloud.laz"
 # ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
@@ -101,6 +101,7 @@ def handle_point_cloud(
                     "point_classes": stats["point_classes"],
                     "density": stats["density"],
                 },
+                "size_bytes": storage_size(dest),
                 "progress": {"message": "Complete", "percent": 100},
             },
         )

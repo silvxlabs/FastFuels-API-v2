@@ -253,6 +253,8 @@ def exporter_runner():
             f"error={export.get('error')}"
         )
         assert export["signed_url"] is not None, "signed_url should be set"
+        # The export artifact's GCS footprint is recorded on completion (#342).
+        assert export["size_bytes"] > 0
 
         return export
 
@@ -351,6 +353,8 @@ def inventory_exporter_runner():
             f"error={export.get('error')}"
         )
         assert export["signed_url"] is not None, "signed_url should be set"
+        # The export artifact's GCS footprint is recorded on completion (#342).
+        assert export["size_bytes"] > 0
 
         return export
 
@@ -493,6 +497,8 @@ def quicfire_exporter_runner():
             f"error={export.get('error')}"
         )
         assert export["signed_url"] is not None, "signed_url should be set"
+        # The export artifact's GCS footprint is recorded on completion (#342).
+        assert export["size_bytes"] > 0
         return export
 
     yield _run

@@ -178,6 +178,8 @@ class TestSingleBandUpload:
             result = snap.to_dict()
 
             assert result["status"] == "completed"
+            # The written zarr store's footprint is recorded on completion (#342).
+            assert result["size_bytes"] > 0
             assert result["georeference"] is not None
             assert result["georeference"]["crs"] == DOMAIN_CRS
             assert len(result["georeference"]["transform"]) == 6

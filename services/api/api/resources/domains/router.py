@@ -28,6 +28,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain, invalidate_domain_cache
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.domains.examples import CREATE_DOMAIN_OPENAPI_EXAMPLES
 from api.resources.domains.schema import (
     CreateDomainRequestBody,
@@ -79,6 +80,7 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Create a new domain",
     response_model_exclude_none=True,
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_domain(
     request: Request,
@@ -206,6 +208,8 @@ async def create_domain(
       - "Invalid spatial extent. Area must be less than 16 square kilometers."
       - "Invalid spatial extent. The domain must be entirely within CONUS."
     """
+    await enforce_create_quotas(DOMAINS_COLLECTION, request)
+
     # Validate domain geometry (parses GeoJSON, validates CRS, area, CONUS check)
     # Raises HTTPException if validation fails
     validation_result = validate_domain(body.model_dump())

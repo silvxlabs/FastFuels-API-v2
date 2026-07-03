@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import pytest
 from api.quota import Quotas
+from api.resources.domains.examples import EXAMPLE_WGS84_DEFAULT
 from google.cloud.firestore_v1.base_query import FieldFilter
 from httpx import Client
 
@@ -139,7 +140,11 @@ def owner_env(firestore_client):
     created: list[tuple[str, str]] = []
     clients: list[Client] = []
 
-    def _make(users_doc: dict | None = None, features: dict | None = None):
+    def _make(
+        users_doc: dict | None = None,
+        features: dict | None = None,
+        feature_size_bytes: int | None = None,
+    ):
         owner_id = f"test-{uuid4().hex}"
 
         key = make_key_data(owner_id=owner_id, scopes=["read", "write"])
@@ -164,6 +169,8 @@ def owner_env(firestore_client):
                 feat = make_feature_data(
                     domain_id=domain["id"], owner_id=owner_id, status=feature_status
                 )
+                if feature_size_bytes is not None:
+                    feat["size_bytes"] = feature_size_bytes
                 firestore_client.collection(FEATURES_COLLECTION).document(
                     feat["id"]
                 ).set(feat)
@@ -232,3 +239,73 @@ class TestOwnerQuotaConfig:
 
         assert owner_client.get(f"/domains/{domain_id}").status_code == 200
         assert owner_client.delete(f"/domains/{domain_id}").status_code == 204
+
+
+class TestCountAndStorageQuota:
+    """Phase 3: total-count and per-type storage limits.
+
+    Fresh owner per test (uncached quotas). The feature cases exercise the
+    combined count + sum(size_bytes) aggregation, which needs an
+    (owner_id, size_bytes) composite index on features-v2; a missing index
+    surfaces here as a 500 rather than the expected 429.
+    """
+
+    def test_count_over_limit_returns_429_without_retry_after(self, owner_env):
+        """A completed resource doesn't count as an active job, so the
+        total-count limit (not the active-jobs limit) is what rejects."""
+        owner_client, domain_id = owner_env(
+            users_doc={"quota_overrides": {"max_features": 1}},
+            features={"completed": 1},
+        )
+        response = owner_client.post(
+            ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
+        )
+        assert response.status_code == 429
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["quota"] == "max_features"
+        assert detail["limit"] == 1
+        assert detail["current"] == 1
+
+    def test_storage_over_limit_returns_429_without_retry_after(self, owner_env):
+        """Summed size_bytes over the per-type storage limit rejects the create."""
+        owner_client, domain_id = owner_env(
+            users_doc={"quota_overrides": {"max_feature_storage_bytes": 1000}},
+            features={"completed": 1},
+            feature_size_bytes=2000,
+        )
+        response = owner_client.post(
+            ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
+        )
+        assert response.status_code == 429
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["quota"] == "max_feature_storage_bytes"
+        assert detail["limit"] == 1000
+        assert detail["current"] == 2000
+
+    def test_domain_count_over_limit_returns_429(self, owner_env):
+        """owner_env already creates one domain, so max_domains=1 rejects the
+        next domain create — proving domain create is wired to the quota check."""
+        owner_client, _ = owner_env(users_doc={"quota_overrides": {"max_domains": 1}})
+        response = owner_client.post("/domains", json=EXAMPLE_WGS84_DEFAULT)
+        assert response.status_code == 429
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["quota"] == "max_domains"
+        assert detail["limit"] == 1
+        assert detail["current"] == 1
+
+    def test_active_jobs_rejection_keeps_retry_after(self, owner_env):
+        """Regression: the active-jobs limit still carries Retry-After with the
+        new count/storage checks in place."""
+        owner_client, domain_id = owner_env(
+            users_doc={"quota_overrides": {"max_active_features": 1}},
+            features={"pending": 1},
+        )
+        response = owner_client.post(
+            ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
+        )
+        assert response.status_code == 429
+        assert response.headers.get("Retry-After") == "60"
+        assert response.json()["detail"]["quota"] == "max_active_features"

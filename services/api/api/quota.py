@@ -5,8 +5,7 @@ Per-owner usage quotas (epic #340).
 
 Each resource-creating endpoint calls ``enforce_create_quotas()`` before
 writing; if the owner is over an active-jobs limit, a structured 429 is raised.
-The limits come from ``resolve_quotas()``, which layers an owner's tier and
-overrides on top of the defaults. Phase 3 will add count and storage checks.
+The limits come from ``resolve_quotas()``, which layers an owner's tier and overrides on top of the defaults.
 """
 
 import logging

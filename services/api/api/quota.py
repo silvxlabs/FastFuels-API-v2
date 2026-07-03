@@ -8,7 +8,9 @@ writing; if the owner is over an active-jobs limit, a structured 429 is raised.
 The limits come from ``resolve_quotas()``, which layers an owner's tier and overrides on top of the defaults.
 """
 
+import asyncio
 import logging
+from dataclasses import dataclass
 
 from fastapi import HTTPException, Request, status
 from google.cloud.firestore import FieldFilter
@@ -20,6 +22,7 @@ from api.resources.keys.schema import Access
 from api.schema import JobStatus
 from lib.config import (
     APPLICATIONS_COLLECTION,
+    DOMAINS_COLLECTION,
     EXPORTS_COLLECTION,
     FEATURES_COLLECTION,
     GRIDS_COLLECTION,
@@ -114,15 +117,45 @@ async def resolve_quotas(owner_id: str, access: Access) -> Quotas:
         return Quotas(**preset)
 
 
-# Collection -> (active-jobs quota field, singular resource label). Collections
-# absent here have no active-jobs limit (domains and API keys are count-limited
-# only, which arrives in phase 3).
-_ACTIVE_JOB_QUOTAS: dict[str, tuple[str, str]] = {
-    GRIDS_COLLECTION: ("max_active_grids", "grid"),
-    EXPORTS_COLLECTION: ("max_active_exports", "export"),
-    INVENTORIES_COLLECTION: ("max_active_inventories", "inventory"),
-    FEATURES_COLLECTION: ("max_active_features", "feature"),
-    POINT_CLOUDS_COLLECTION: ("max_active_pointclouds", "point cloud"),
+@dataclass(frozen=True)
+class _ResourceQuota:
+    """The quota fields checked when creating a resource of one type.
+
+    ``active_field`` and ``storage_field`` are ``None`` for types without that
+    limit (a domain has no in-flight job and no stored artifact).
+    """
+
+    label: str  # singular noun for user messages ("grid", "point cloud")
+    active_field: str | None  # max_active_<type>: concurrent pending/running jobs
+    count_field: str  # max_<type> / max_domains: total resources owned
+    storage_field: str | None  # max_<type>_storage_bytes: summed artifact bytes
+
+
+# Collection -> the quota fields enforced on create. A collection absent here is
+# not quota-checked (API keys are pending a metering-identity decision).
+_RESOURCE_QUOTAS: dict[str, _ResourceQuota] = {
+    GRIDS_COLLECTION: _ResourceQuota(
+        "grid", "max_active_grids", "max_grids", "max_grid_storage_bytes"
+    ),
+    EXPORTS_COLLECTION: _ResourceQuota(
+        "export", "max_active_exports", "max_exports", "max_export_storage_bytes"
+    ),
+    INVENTORIES_COLLECTION: _ResourceQuota(
+        "inventory",
+        "max_active_inventories",
+        "max_inventories",
+        "max_inventory_storage_bytes",
+    ),
+    FEATURES_COLLECTION: _ResourceQuota(
+        "feature", "max_active_features", "max_features", "max_feature_storage_bytes"
+    ),
+    POINT_CLOUDS_COLLECTION: _ResourceQuota(
+        "point cloud",
+        "max_active_pointclouds",
+        "max_pointclouds",
+        "max_pointcloud_storage_bytes",
+    ),
+    DOMAINS_COLLECTION: _ResourceQuota("domain", None, "max_domains", None),
 }
 
 # A job is "in flight" while pending or running; both count so the limit caps
@@ -160,42 +193,107 @@ QUOTA_429_RESPONSE: dict = {
 }
 
 
+def _raise_quota_exceeded(
+    *, quota: str, message: str, current: int, limit: int, retry_after: bool
+) -> None:
+    """Raise a structured 429. ``retry_after`` adds the header for limits that
+    clear by waiting (active jobs) and omits it for those that need deletion
+    (count, storage)."""
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=QuotaExceededDetail(
+            quota=quota, message=message, current=current, limit=limit
+        ).model_dump(),
+        headers={"Retry-After": str(RETRY_AFTER_SECONDS)} if retry_after else None,
+    )
+
+
 async def enforce_create_quotas(collection: str, request: Request) -> None:
     """Check create-time quotas for the authenticated owner; raise 429 if over.
 
     Called at the top of every resource-creating endpoint, before any validation
-    or Firestore write. Phase 1 enforces the active-jobs limit only:
-    ``count(owner_id ==, status in {pending, running}) >= max_active_<type>``.
-    Collections without an active-jobs limit (domains, API keys) are a no-op.
+    or Firestore write. Runs up to three aggregation queries concurrently over
+    ``owner_id ==``: the active-jobs count (also filtered ``status in {pending,
+    running}``), the total-resource count, and the summed ``size_bytes``. The sum
+    is a separate query because its ``(owner_id, size_bytes)`` index is sparse —
+    docs without ``size_bytes`` are absent from it — so folding it into the count
+    would undercount in-flight resources. Checks are evaluated active-jobs ->
+    count -> storage; the first over its limit raises. Collections absent from
+    ``_RESOURCE_QUOTAS`` are a no-op.
     """
-    quota = _ACTIVE_JOB_QUOTAS.get(collection)
-    if quota is None:
+    spec = _RESOURCE_QUOTAS.get(collection)
+    if spec is None:
         return
-    field, label = quota
 
     owner_id = request.state.id
     quotas = await resolve_quotas(owner_id, request.state.access)
-    limit = getattr(quotas, field)
-
-    query = (
-        firestore_client.collection(collection)
-        .where(filter=FieldFilter("owner_id", "==", owner_id))
-        .where(filter=FieldFilter("status", "in", _ACTIVE_STATUSES))
+    base = firestore_client.collection(collection).where(
+        filter=FieldFilter("owner_id", "==", owner_id)
     )
-    current = (await query.count().get())[0][0].value
 
-    if current >= limit:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=QuotaExceededDetail(
-                quota=field,
-                message=(
-                    f"You have {current} {label} jobs in progress (limit {limit}). "
-                    f"Wait for jobs to complete or delete unneeded {label}s, then "
-                    f"retry. To request a higher limit, contact {SUPPORT_EMAIL}."
-                ),
-                current=current,
+    # Each check is its own aggregation query, run concurrently. count() over
+    # owner_id== counts every doc the owner has (non-sparse single-field index).
+    # The storage sum needs the (owner_id, size_bytes) composite index, which is
+    # sparse — it omits docs that lack size_bytes (still-in-flight jobs) — so it
+    # can NOT be folded into count() without undercounting; it stays separate.
+    aggregations = {"count": base.count(alias="count")}
+    if spec.active_field:
+        aggregations["active"] = base.where(
+            filter=FieldFilter("status", "in", _ACTIVE_STATUSES)
+        ).count(alias="active")
+    if spec.storage_field:
+        aggregations["bytes"] = base.sum("size_bytes", alias="bytes")
+
+    names = list(aggregations)
+    results = await asyncio.gather(*(aggregations[n].get() for n in names))
+    values = {n: res[0][0].value for n, res in zip(names, results)}
+
+    count = values["count"]
+    active = values.get("active")
+    total_bytes = values.get("bytes") or 0
+
+    if spec.active_field:
+        limit = getattr(quotas, spec.active_field)
+        if active >= limit:
+            _raise_quota_exceeded(
+                quota=spec.active_field,
+                current=active,
                 limit=limit,
-            ).model_dump(),
-            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+                retry_after=True,
+                message=(
+                    f"You have {active} {spec.label} jobs in progress (limit "
+                    f"{limit}). Wait for jobs to complete or delete unneeded "
+                    f"{spec.label}s, then retry. To request a higher limit, "
+                    f"contact {SUPPORT_EMAIL}."
+                ),
+            )
+
+    limit = getattr(quotas, spec.count_field)
+    if count >= limit:
+        _raise_quota_exceeded(
+            quota=spec.count_field,
+            current=count,
+            limit=limit,
+            retry_after=False,
+            message=(
+                f"You have {count} {spec.label}s (limit {limit}). Delete unneeded "
+                f"{spec.label}s, then retry. To request a higher limit, contact "
+                f"{SUPPORT_EMAIL}."
+            ),
         )
+
+    if spec.storage_field:
+        limit = getattr(quotas, spec.storage_field)
+        if total_bytes >= limit:
+            _raise_quota_exceeded(
+                quota=spec.storage_field,
+                current=total_bytes,
+                limit=limit,
+                retry_after=False,
+                message=(
+                    f"Your {spec.label}s use {total_bytes / GiB:.1f} GiB of storage "
+                    f"(limit {limit / GiB:.0f} GiB). Delete unneeded {spec.label}s "
+                    f"to free space, then retry. To request a higher limit, contact "
+                    f"{SUPPORT_EMAIL}."
+                ),
+            )

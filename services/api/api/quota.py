@@ -27,6 +27,7 @@ from lib.config import (
     FEATURES_COLLECTION,
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,
+    KEYS_COLLECTION,
     POINT_CLOUDS_COLLECTION,
     SUPPORT_EMAIL,
     USERS_COLLECTION,
@@ -93,12 +94,23 @@ TIER_PRESETS: dict[str, dict] = {
 _DEFAULT_TIER = "standard"
 
 
+@dataclass(frozen=True)
+class OwnerQuotaConfig:
+    """An owner's resolved quota configuration: the effective tier and limits."""
+
+    tier: str  # always a known TIER_PRESETS key (the tier actually in effect)
+    quotas: Quotas
+
+
 @lru(force_asyncio=True, expire=300)
-async def resolve_quotas(owner_id: str, access: Access) -> Quotas:
-    """Resolve an owner's quotas from its owner document.
+async def resolve_owner_config(owner_id: str, access: Access) -> OwnerQuotaConfig:
+    """Resolve an owner's tier and quotas from its owner document.
 
     Applies the owner's tier preset and any ``quota_overrides`` on top of the
-    defaults. A missing or malformed document resolves to the defaults.
+    defaults. A missing or malformed document resolves to the default tier. The
+    reported ``tier`` is always a known preset — an unrecognized stored value
+    reports (and applies) the default tier, so ``tier`` and ``quotas`` never
+    disagree.
     """
     collection = (
         USERS_COLLECTION if access == Access.PERSONAL else APPLICATIONS_COLLECTION
@@ -106,15 +118,24 @@ async def resolve_quotas(owner_id: str, access: Access) -> Quotas:
     doc = await firestore_client.collection(collection).document(owner_id).get()
     data = doc.to_dict() if doc.exists else {}
 
-    preset = TIER_PRESETS.get(data.get("tier") or _DEFAULT_TIER, {})
+    tier = data.get("tier") or _DEFAULT_TIER
+    if tier not in TIER_PRESETS:
+        tier = _DEFAULT_TIER
+    preset = TIER_PRESETS[tier]
     overrides = data.get("quota_overrides") or {}
     try:
-        return Quotas(**{**preset, **overrides})
+        quotas = Quotas(**{**preset, **overrides})
     except (TypeError, ValidationError):
         logger.error(
             "Malformed quota config for owner %s; using tier defaults", owner_id
         )
-        return Quotas(**preset)
+        quotas = Quotas(**preset)
+    return OwnerQuotaConfig(tier=tier, quotas=quotas)
+
+
+async def resolve_quotas(owner_id: str, access: Access) -> Quotas:
+    """Resolve an owner's usage limits (see :func:`resolve_owner_config`)."""
+    return (await resolve_owner_config(owner_id, access)).quotas
 
 
 @dataclass(frozen=True)
@@ -297,3 +318,87 @@ async def enforce_create_quotas(collection: str, request: Request) -> None:
                     f"{SUPPORT_EMAIL}."
                 ),
             )
+
+
+# Output-key -> collection for GET /users/me/usage. The keys are the JSON field
+# names the read API exposes (e.g. "pointclouds", not the "point cloud" message
+# label in _RESOURCE_QUOTAS); order sets the response order. API keys are handled
+# separately because their metering identity depends on the caller (see below).
+_USAGE_COLLECTIONS: dict[str, str] = {
+    "grids": GRIDS_COLLECTION,
+    "exports": EXPORTS_COLLECTION,
+    "inventories": INVENTORIES_COLLECTION,
+    "features": FEATURES_COLLECTION,
+    "pointclouds": POINT_CLOUDS_COLLECTION,
+    "domains": DOMAINS_COLLECTION,
+}
+
+
+async def get_usage(owner_id: str, access: Access) -> dict:
+    """Compute an owner's current usage against their resolved limits.
+
+    Backs ``GET /users/me/usage``. Runs the same aggregations enforcement uses —
+    a total ``count()`` per resource type, an active-jobs ``count()`` and a
+    ``sum(size_bytes)`` where those limits apply, and an API-key ``count()`` —
+    all concurrently in one ``asyncio.gather``. Not on any hot path. Returns the
+    §9 usage shape; ``lifecycle.next_expiry_on`` is ``None`` until the retention
+    sweeper ships (phase 5).
+    """
+    quotas = (await resolve_owner_config(owner_id, access)).quotas
+
+    # Build every aggregation up front, keyed by (output-key, metric), so they
+    # can be gathered together and reassembled by key.
+    jobs: dict[tuple[str, str], object] = {}
+    for out_key, collection in _USAGE_COLLECTIONS.items():
+        spec = _RESOURCE_QUOTAS[collection]
+        base = firestore_client.collection(collection).where(
+            filter=FieldFilter("owner_id", "==", owner_id)
+        )
+        jobs[(out_key, "total")] = base.count(alias="v").get()
+        if spec.active_field:
+            jobs[(out_key, "active")] = (
+                base.where(filter=FieldFilter("status", "in", _ACTIVE_STATUSES))
+                .count(alias="v")
+                .get()
+            )
+        if spec.storage_field:
+            jobs[(out_key, "bytes")] = base.sum("size_bytes", alias="v").get()
+
+    # API keys: mirror the keys list endpoint's identity — personal callers own
+    # keys by creator_id (they may have created application keys too), while an
+    # application owns keys by owner_id.
+    key_field = "creator_id" if access == Access.PERSONAL else "owner_id"
+    jobs[("api_keys", "total")] = (
+        firestore_client.collection(KEYS_COLLECTION)
+        .where(filter=FieldFilter(key_field, "==", owner_id))
+        .count(alias="v")
+        .get()
+    )
+
+    keys = list(jobs)
+    results = await asyncio.gather(*(jobs[k] for k in keys))
+    values = {k: res[0][0].value for k, res in zip(keys, results)}
+
+    def _count(usage: object, limit_field: str) -> dict:
+        return {"usage": int(usage or 0), "limit": getattr(quotas, limit_field)}
+
+    usage: dict = {}
+    for out_key, collection in _USAGE_COLLECTIONS.items():
+        spec = _RESOURCE_QUOTAS[collection]
+        entry = {"total": _count(values[(out_key, "total")], spec.count_field)}
+        if spec.active_field:
+            entry["active"] = _count(values[(out_key, "active")], spec.active_field)
+        if spec.storage_field:
+            entry["storage"] = {
+                "usage_bytes": int(values[(out_key, "bytes")] or 0),
+                "limit_bytes": getattr(quotas, spec.storage_field),
+            }
+        usage[out_key] = entry
+
+    usage["api_keys"] = {"total": _count(values[("api_keys", "total")], "max_api_keys")}
+    usage["lifecycle"] = {
+        "resource_ttl_days": quotas.resource_ttl_days,
+        "failed_resource_ttl_days": quotas.failed_resource_ttl_days,
+        "next_expiry_on": None,
+    }
+    return usage

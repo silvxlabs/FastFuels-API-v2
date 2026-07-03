@@ -19,6 +19,7 @@ from api.resources.point_clouds.router import router as point_clouds_router
 from api.resources.point_clouds.router import (
     wildcard_router as point_clouds_wildcard_router,
 )
+from api.resources.users.router import router as users_router
 from lib.config import DEPLOYMENT_ENV
 
 CORS_ORIGINS = {
@@ -104,6 +105,10 @@ OPENAPI_TAGS = [
     {
         "name": "Applications",
         "description": "Applications registered against the FastFuels API.",
+    },
+    {
+        "name": "Users",
+        "description": "The authenticated owner's identity, tier, quotas, and current usage.",
     },
 ]
 
@@ -230,6 +235,7 @@ api_router.include_router(keys_router, prefix="/keys", tags=["Keys"])
 api_router.include_router(
     applications_router, prefix="/applications", tags=["Applications"]
 )
+api_router.include_router(users_router, prefix="/users", tags=["Users"])
 
 # Features
 api_router.include_router(

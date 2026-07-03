@@ -9,10 +9,19 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from api.quota import TIER_PRESETS, QuotaExceededDetail, Quotas, resolve_quotas
+from api.quota import (
+    _RESOURCE_QUOTAS,
+    RETRY_AFTER_SECONDS,
+    TIER_PRESETS,
+    QuotaExceededDetail,
+    Quotas,
+    _raise_quota_exceeded,
+    resolve_quotas,
+)
 from api.resources.keys.schema import Access
+from fastapi import HTTPException
 
-from lib.config import APPLICATIONS_COLLECTION, USERS_COLLECTION
+from lib.config import APPLICATIONS_COLLECTION, DOMAINS_COLLECTION, USERS_COLLECTION
 
 
 class TestQuotasDefaults:
@@ -160,3 +169,66 @@ class TestQuotaExceededDetail:
             "current": 25,
             "limit": 25,
         }
+
+
+class TestResourceQuotas:
+    """The table driving enforce_create_quotas must name real Quotas fields."""
+
+    def test_every_field_exists_on_quotas(self):
+        for collection, spec in _RESOURCE_QUOTAS.items():
+            assert spec.count_field in Quotas.model_fields, collection
+            if spec.active_field is not None:
+                assert spec.active_field in Quotas.model_fields, collection
+            if spec.storage_field is not None:
+                assert spec.storage_field in Quotas.model_fields, collection
+
+    def test_storage_tracked_types_have_active_and_storage(self):
+        # The five async job types carry all three limits.
+        storage_types = [
+            s for s in _RESOURCE_QUOTAS.values() if s.storage_field is not None
+        ]
+        assert len(storage_types) == 5
+        for spec in storage_types:
+            assert spec.active_field is not None
+
+    def test_domains_are_count_only(self):
+        spec = _RESOURCE_QUOTAS[DOMAINS_COLLECTION]
+        assert spec.active_field is None
+        assert spec.storage_field is None
+        assert spec.count_field == "max_domains"
+
+
+class TestRaiseQuotaExceeded:
+    """Retry-After is present only for limits that clear by waiting."""
+
+    def test_retry_after_true_sets_header(self):
+        with pytest.raises(HTTPException) as exc:
+            _raise_quota_exceeded(
+                quota="max_active_grids",
+                message="msg",
+                current=25,
+                limit=25,
+                retry_after=True,
+            )
+        assert exc.value.status_code == 429
+        assert exc.value.headers["Retry-After"] == str(RETRY_AFTER_SECONDS)
+        assert exc.value.detail == {
+            "reason": "QUOTA_EXCEEDED",
+            "quota": "max_active_grids",
+            "message": "msg",
+            "current": 25,
+            "limit": 25,
+        }
+
+    def test_retry_after_false_omits_header(self):
+        with pytest.raises(HTTPException) as exc:
+            _raise_quota_exceeded(
+                quota="max_grids",
+                message="msg",
+                current=1000,
+                limit=1000,
+                retry_after=False,
+            )
+        assert exc.value.status_code == 429
+        assert exc.value.headers is None
+        assert exc.value.detail["quota"] == "max_grids"

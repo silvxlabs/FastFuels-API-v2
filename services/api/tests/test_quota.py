@@ -13,9 +13,11 @@ from api.quota import (
     _RESOURCE_QUOTAS,
     RETRY_AFTER_SECONDS,
     TIER_PRESETS,
+    OwnerQuotaConfig,
     QuotaExceededDetail,
     Quotas,
     _raise_quota_exceeded,
+    resolve_owner_config,
     resolve_quotas,
 )
 from api.resources.keys.schema import Access
@@ -154,6 +156,53 @@ class TestResolveQuotas:
         with patch("api.quota.firestore_client", client):
             result = await resolve_quotas("owner-bad-overrides", Access.PERSONAL)
         assert result == Quotas()
+
+
+class TestResolveOwnerConfig:
+    pytestmark = pytest.mark.anyio
+
+    # resolve_owner_config surfaces the effective tier alongside the quotas.
+    # Each test uses a unique owner id because it is @lru-cached.
+
+    async def test_reports_effective_tier_and_quotas(self):
+        client = _fake_firestore(exists=True, data={"tier": "application"})
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("cfg-app", Access.APPLICATION)
+        assert isinstance(cfg, OwnerQuotaConfig)
+        assert cfg.tier == "application"
+        assert cfg.quotas.max_active_grids == 100
+
+    async def test_missing_doc_reports_standard(self):
+        client = _fake_firestore(exists=False)
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("cfg-missing", Access.PERSONAL)
+        assert cfg.tier == "standard"
+        assert cfg.quotas == Quotas()
+
+    async def test_unknown_tier_normalizes_to_standard(self):
+        # An unrecognized stored tier reports the tier actually in effect, so
+        # tier and quotas never disagree.
+        client = _fake_firestore(exists=True, data={"tier": "platinum"})
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("cfg-bad-tier", Access.PERSONAL)
+        assert cfg.tier == "standard"
+        assert cfg.quotas == Quotas()
+
+    async def test_malformed_overrides_keep_tier_use_defaults(self):
+        data = {"tier": "standard", "quota_overrides": {"max_active_features": "x"}}
+        client = _fake_firestore(exists=True, data=data)
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("cfg-bad-value", Access.PERSONAL)
+        assert cfg.tier == "standard"
+        assert cfg.quotas == Quotas()
+
+    async def test_resolve_quotas_wraps_owner_config(self):
+        data = {"quota_overrides": {"max_active_grids": 3}}
+        client = _fake_firestore(exists=True, data=data)
+        with patch("api.quota.firestore_client", client):
+            quotas = await resolve_quotas("cfg-wrap", Access.PERSONAL)
+        assert isinstance(quotas, Quotas)
+        assert quotas.max_active_grids == 3
 
 
 class TestQuotaExceededDetail:

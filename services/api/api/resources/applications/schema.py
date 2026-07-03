@@ -10,15 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.schema import PaginatedResponse
 
-# Reject unknown fields so an attempt to set an admin-only field (tier,
-# quota_overrides) is a 422, not a silent no-op.
-_REQUEST_CONFIG = ConfigDict(extra="forbid")
-
 
 class CreateApplicationRequest(BaseModel):
     """Request body for creating an application."""
 
-    model_config = _REQUEST_CONFIG
+    # Reject unknown fields so setting an admin-only field (tier,
+    # quota_overrides) is a 422, not a silent no-op.
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., max_length=255, description="Name of the application.")
     description: str | None = Field(
@@ -29,7 +27,7 @@ class CreateApplicationRequest(BaseModel):
 class UpdateApplicationRequest(BaseModel):
     """Request body for updating an application."""
 
-    model_config = _REQUEST_CONFIG
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(
         None, max_length=255, description="New name for the application."

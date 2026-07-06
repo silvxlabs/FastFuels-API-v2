@@ -29,9 +29,16 @@ TTL_FLOOR_DAYS = _int("WALLE_TTL_FLOOR_DAYS", 7)
 # per-candidate doc re-check instead (see cleanup.py).
 ORPHAN_MIN_AGE_HOURS = _int("WALLE_ORPHAN_MIN_AGE_HOURS", 24)
 
+# Ephemeral integration-test resources (id prefix "test-", but NOT the persistent
+# "static-test-" fixtures) get a short retention. Real ids are server-generated
+# uuid4 hex (never "test-"), so this only ever reaps test artifacts; the window
+# is far longer than any test run, so an in-flight test is never raced.
+TEST_TTL_DAYS = _int("WALLE_TEST_TTL_DAYS", 7)
+
 # Per-category dry-run switches. Default enforce (delete); set true to log
 # candidates without deleting — used to validate a category locally before
 # shipping (deployed walle runs enforce).
 ORPHAN_BLOBS_DRY_RUN = _flag("WALLE_ORPHAN_BLOBS_DRY_RUN")
 ORPHAN_DOCS_DRY_RUN = _flag("WALLE_ORPHAN_DOCS_DRY_RUN")
 TTL_DRY_RUN = _flag("WALLE_TTL_DRY_RUN")
+TEST_PURGE_DRY_RUN = _flag("WALLE_TEST_PURGE_DRY_RUN")

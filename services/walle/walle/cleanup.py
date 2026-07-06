@@ -10,11 +10,12 @@ idempotent GCS-then-doc routine:
 
 Docs are deleted synchronously by the API, so orphaned blobs (category 1) are
 the common case; categories 2 and 3 are the durable backstop and the retention
-policy. Deletion order is GCS first, then the Firestore doc, so a crash between
-the two leaves the doc behind and the next run re-reaps it — both idempotent.
+policy. All Firestore re-checks and owner lookups are batched through
+``get_all``; the run accumulates the deletions and executes them in bulk at the
+end — every GCS artifact first, then every Firestore doc — so a crash between
+the two leaves the docs behind and the next run re-reaps them (both idempotent).
 """
 
-import functools
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
@@ -37,7 +38,7 @@ from walle.layouts import (
     RESOURCE_LAYOUTS,
     ResourceLayout,
     artifact_path,
-    delete_artifact,
+    delete_artifacts,
     list_artifact_ids,
 )
 
@@ -52,16 +53,17 @@ logger = logging.getLogger(__name__)
 FAILED_STATUS = "failed"
 DEFAULT_RESOURCE_TTL_DAYS = 180
 DEFAULT_FAILED_RESOURCE_TTL_DAYS = 14
+_DEFAULT_TTLS = (DEFAULT_RESOURCE_TTL_DAYS, DEFAULT_FAILED_RESOURCE_TTL_DAYS)
 _TIER_TTL_OVERRIDES: dict[str, dict] = {"application": {"resource_ttl_days": None}}
 
 # Firestore fields the single scan projects — everything the three categories need.
 _SCAN_FIELDS = ["domain_id", "owner_id", "status", "modified_on", "size_bytes"]
 
-# The orphan-blob re-check is batched through get_all in chunks of this size. A
-# fresh, mostly-orphaned bucket can have thousands of candidates; chunking bounds
-# each BatchGetDocuments request (reads have no 500-doc write-batch limit — the
-# cap is the 10 MiB request size, and doc paths are tiny) while avoiding
-# per-candidate round-trips.
+# Firestore batched reads (get_all) are chunked at this size. A fresh,
+# mostly-orphaned bucket can have thousands of candidates; chunking bounds each
+# BatchGetDocuments request (reads have no 500-doc write-batch limit — the cap is
+# the 10 MiB request size, and doc paths are tiny) while avoiding per-candidate
+# round-trips.
 _GET_ALL_CHUNK = 1000
 
 
@@ -84,30 +86,47 @@ class Summary:
 
     deleted: Counter = field(default_factory=Counter)
     dry_run: Counter = field(default_factory=Counter)
-    skipped: Counter = field(default_factory=Counter)
     freed_bytes: int = 0
 
     def as_dict(self) -> dict:
         return {
             "deleted": dict(self.deleted),
             "dry_run": dict(self.dry_run),
-            "skipped": dict(self.skipped),
             "freed_bytes": self.freed_bytes,
         }
+
+
+# --- batched Firestore reads ----------------------------------------------
+
+
+def _existing_ids(collection: str, ids) -> set[str]:
+    """The subset of ``ids`` whose documents exist, via batched get_all."""
+    coll = firestore_client.collection(collection)
+    ids = list(ids)
+    live: set[str] = set()
+    for start in range(0, len(ids), _GET_ALL_CHUNK):
+        refs = [coll.document(i) for i in ids[start : start + _GET_ALL_CHUNK]]
+        live.update(snap.id for snap in firestore_client.get_all(refs) if snap.exists)
+    return live
+
+
+def _get_all_docs(collection: str, ids: list[str]) -> dict[str, dict]:
+    """``{doc_id: data}`` for the documents that exist, via batched get_all."""
+    coll = firestore_client.collection(collection)
+    out: dict[str, dict] = {}
+    for start in range(0, len(ids), _GET_ALL_CHUNK):
+        refs = [coll.document(i) for i in ids[start : start + _GET_ALL_CHUNK]]
+        for snap in firestore_client.get_all(refs):
+            if snap.exists:
+                out[snap.id] = snap.to_dict() or {}
+    return out
 
 
 # --- owner TTL resolution -------------------------------------------------
 
 
-@functools.cache
-def resolve_owner_ttls(owner_id: str | None) -> tuple[int | None, int | None]:
-    """(resource_ttl_days, failed_resource_ttl_days) for an owner.
-
-    Owner-kind probe: an application always has an ``applications-v2`` document,
-    so check there first; a miss means a user (whose ``users-v2`` doc may be
-    absent → standard defaults). Cached for the process — one nightly run.
-    """
-    data = _owner_doc(owner_id) if owner_id else {}
+def _ttls_from_doc(data: dict) -> tuple[int | None, int | None]:
+    """(resource_ttl_days, failed_resource_ttl_days) from an owner document's data."""
     tier = data.get("tier") or "standard"
     base = {
         "resource_ttl_days": DEFAULT_RESOURCE_TTL_DAYS,
@@ -121,17 +140,35 @@ def resolve_owner_ttls(owner_id: str | None) -> tuple[int | None, int | None]:
     )
 
 
-def _owner_doc(owner_id: str) -> dict:
+def resolve_owner_ttls_bulk(
+    owner_ids,
+) -> dict[str, tuple[int | None, int | None]]:
+    """Resolve TTLs for many owners with batched reads.
+
+    Owner-kind probe: check ``applications-v2`` first (an application always has
+    a document), then ``users-v2`` for the misses; anything still missing gets
+    the standard defaults. Two batched ``get_all`` passes instead of a serial
+    one-or-two ``get()`` per owner.
+    """
+    remaining = [o for o in dict.fromkeys(owner_ids) if o]
+    result: dict[str, tuple[int | None, int | None]] = {}
     for collection in (APPLICATIONS_COLLECTION, USERS_COLLECTION):
-        snap = firestore_client.collection(collection).document(owner_id).get()
-        if snap.exists:
-            return snap.to_dict() or {}
-    return {}
+        if not remaining:
+            break
+        docs = _get_all_docs(collection, remaining)
+        for owner_id, data in docs.items():
+            result[owner_id] = _ttls_from_doc(data)
+        remaining = [o for o in remaining if o not in docs]
+    for owner_id in remaining:
+        result[owner_id] = _DEFAULT_TTLS
+    return result
 
 
-def _effective_ttl_days(rec: Record) -> int | None:
+def _effective_ttl_days(
+    rec: Record, owner_ttls: dict[str, tuple[int | None, int | None]]
+) -> int | None:
     """The retention window that applies to ``rec``, or None if it never expires."""
-    resource_ttl, failed_ttl = resolve_owner_ttls(rec.owner_id)
+    resource_ttl, failed_ttl = owner_ttls.get(rec.owner_id, _DEFAULT_TTLS)
     ttl = failed_ttl if rec.status == FAILED_STATUS else resource_ttl
     if ttl is None:
         return None
@@ -203,7 +240,22 @@ def find_orphan_docs(
     return out
 
 
-def find_expired(records: list[Record], now: datetime) -> list[Record]:
+def confirm_orphan_docs(candidates: list[Record]) -> list[Record]:
+    """Drop candidates whose domain actually still exists.
+
+    ``find_orphan_docs`` already excluded domains present in the streamed
+    domain-id set; this batched re-check catches a domain missed in that stream
+    (Firestore eventual consistency) before anything is reaped.
+    """
+    domains = _existing_ids(DOMAINS_COLLECTION, {r.domain_id for r in candidates})
+    return [r for r in candidates if r.domain_id not in domains]
+
+
+def find_expired(
+    records: list[Record],
+    now: datetime,
+    owner_ttls: dict[str, tuple[int | None, int | None]],
+) -> list[Record]:
     """Docs older than their owner's resolved TTL."""
     out = []
     for rec in records:
@@ -211,7 +263,7 @@ def find_expired(records: list[Record], now: datetime) -> list[Record]:
             continue
         if rec.modified_on is None:
             continue
-        ttl_days = _effective_ttl_days(rec)
+        ttl_days = _effective_ttl_days(rec, owner_ttls)
         if ttl_days is None:
             continue
         if rec.modified_on < now - timedelta(days=ttl_days):
@@ -228,22 +280,12 @@ def find_orphan_blobs(
     before being returned: a doc missed in the collection stream (Firestore
     eventual consistency) must never have its live artifact reaped. Docs are
     always written before their GCS, so "artifact, no doc" is otherwise a
-    reliable orphan signal.
-
-    The re-check is batched through ``get_all`` — a fresh, mostly-orphaned
-    bucket can have thousands of candidates, and a per-candidate ``get()`` would
-    be thousands of serial round-trips.
+    reliable orphan signal. The re-check is batched — a mostly-orphaned bucket
+    can have thousands of candidates.
     """
     candidate_ids = [i for i in set(artifacts) - live_ids if not _is_protected(i)]
-    coll = firestore_client.collection(layout.collection)
-    live: set[str] = set()
-    for start in range(0, len(candidate_ids), _GET_ALL_CHUNK):
-        refs = [
-            coll.document(doc_id)
-            for doc_id in candidate_ids[start : start + _GET_ALL_CHUNK]
-        ]
-        live.update(snap.id for snap in firestore_client.get_all(refs) if snap.exists)
-    return {doc_id: artifacts[doc_id] for doc_id in candidate_ids if doc_id not in live}
+    still_live = _existing_ids(layout.collection, candidate_ids)
+    return {i: artifacts[i] for i in candidate_ids if i not in still_live}
 
 
 # --- reaping --------------------------------------------------------------
@@ -254,14 +296,20 @@ def _age_days(ts: datetime | None, now: datetime) -> float | None:
 
 
 def _reap_blob(
-    layout: ResourceLayout, doc_id: str, path: str, *, dry_run: bool, summary: Summary
+    layout: ResourceLayout,
+    doc_id: str,
+    path: str,
+    *,
+    dry_run: bool,
+    summary: Summary,
+    gcs_deletes: list[str],
 ) -> None:
     if dry_run:
         logger.info("DRY-RUN orphan_blob %s/%s -> %s", layout.name, doc_id, path)
         summary.dry_run["orphan_blob"] += 1
         return
     logger.info("delete orphan_blob %s/%s -> %s", layout.name, doc_id, path)
-    delete_artifact(path)
+    gcs_deletes.append(path)
     summary.deleted["orphan_blob"] += 1
 
 
@@ -269,25 +317,13 @@ def _reap_doc(
     layout: ResourceLayout,
     rec: Record,
     now: datetime,
-    bulk_writer,
     *,
     category: str,
     dry_run: bool,
     summary: Summary,
+    gcs_deletes: list[str],
+    doc_deletes: list,
 ) -> None:
-    # Re-check the containment edge for orphaned-doc reaps: a domain missed in
-    # the domain listing must not orphan its live children.
-    if category == "orphan_doc":
-        dom = (
-            firestore_client.collection(DOMAINS_COLLECTION)
-            .document(rec.domain_id)
-            .get()
-        )
-        if dom.exists:
-            summary.skipped[category] += 1
-            return
-
-    path = artifact_path(layout, rec.doc_id, rec.domain_id)
     age = _age_days(rec.modified_on, now)
     age_str = f"{age:.1f}d" if age is not None else "unknown"
 
@@ -312,38 +348,53 @@ def _reap_doc(
         age_str,
         rec.size_bytes,
     )
-    delete_artifact(path)  # GCS first
-    bulk_writer.delete(
-        firestore_client.collection(layout.collection).document(rec.doc_id)
-    )
+    gcs_deletes.append(artifact_path(layout, rec.doc_id, rec.domain_id))
+    doc_deletes.append(firestore_client.collection(rec.collection).document(rec.doc_id))
     summary.deleted[category] += 1
     summary.freed_bytes += rec.size_bytes or 0
+
+
+def _bulk_delete_docs(refs: list) -> None:
+    """Delete many Firestore docs through one throttled BulkWriter."""
+    if not refs:
+        return
+    bulk_writer = firestore_client.bulk_writer()
+    for ref in refs:
+        bulk_writer.delete(ref)
+    bulk_writer.close()
 
 
 def run() -> dict:
     """Run one reconciliation pass over every resource type. Returns a summary."""
     now = datetime.now(UTC)
-    resolve_owner_ttls.cache_clear()
     domain_ids = live_domain_ids()
     summary = Summary()
+    owner_ttls: dict[str, tuple[int | None, int | None]] = {}
+    gcs_deletes: list[str] = []
+    doc_deletes: list = []
     logger.info("walle start: %d domains", len(domain_ids))
-
-    # One BulkWriter batches/throttles every doc delete across all collections;
-    # GCS deletes happen inline (before their doc is queued), so a crash before
-    # close() leaves docs behind for the next run.
-    bulk_writer = firestore_client.bulk_writer()
 
     for layout in RESOURCE_LAYOUTS:
         records = scan_collection(layout)
         live_ids = {r.doc_id for r in records}
 
+        # Batch-resolve any owners not seen in an earlier collection.
+        new_owners = [
+            r.owner_id for r in records if r.owner_id and r.owner_id not in owner_ttls
+        ]
+        owner_ttls.update(resolve_owner_ttls_bulk(new_owners))
+
         orphan_docs = (
-            find_orphan_docs(records, domain_ids, now)
+            confirm_orphan_docs(find_orphan_docs(records, domain_ids, now))
             if layout.orphan_on_missing_domain
             else []
         )
         orphan_ids = {r.doc_id for r in orphan_docs}
-        expired = [r for r in find_expired(records, now) if r.doc_id not in orphan_ids]
+        expired = [
+            r
+            for r in find_expired(records, now, owner_ttls)
+            if r.doc_id not in orphan_ids
+        ]
         artifacts = list_artifact_ids(layout)
         orphan_blobs = find_orphan_blobs(layout, artifacts, live_ids)
 
@@ -359,29 +410,40 @@ def run() -> dict:
 
         for doc_id, path in orphan_blobs.items():
             _reap_blob(
-                layout, doc_id, path, dry_run=ORPHAN_BLOBS_DRY_RUN, summary=summary
+                layout,
+                doc_id,
+                path,
+                dry_run=ORPHAN_BLOBS_DRY_RUN,
+                summary=summary,
+                gcs_deletes=gcs_deletes,
             )
         for rec in orphan_docs:
             _reap_doc(
                 layout,
                 rec,
                 now,
-                bulk_writer,
                 category="orphan_doc",
                 dry_run=ORPHAN_DOCS_DRY_RUN,
                 summary=summary,
+                gcs_deletes=gcs_deletes,
+                doc_deletes=doc_deletes,
             )
         for rec in expired:
             _reap_doc(
                 layout,
                 rec,
                 now,
-                bulk_writer,
                 category="ttl",
                 dry_run=TTL_DRY_RUN,
                 summary=summary,
+                gcs_deletes=gcs_deletes,
+                doc_deletes=doc_deletes,
             )
 
-    bulk_writer.close()  # flush all queued doc deletes
+    # Execute the accumulated deletes in bulk: every GCS artifact first, then the
+    # docs, so a crash between leaves the docs behind for the next run to re-reap.
+    delete_artifacts(gcs_deletes)
+    _bulk_delete_docs(doc_deletes)
+
     logger.info("walle done: %s", summary.as_dict())
     return summary.as_dict()

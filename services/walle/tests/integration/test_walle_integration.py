@@ -55,21 +55,19 @@ def test_list_artifact_ids_finds_seeded_prefix(grid_layout):
         fs.rm(prefix, recursive=True)
 
 
-def test_resolve_owner_ttls_reads_application_doc():
+def test_resolve_owner_ttls_bulk_reads_application_doc():
     owner_id = f"test-{uuid.uuid4().hex}"
     ref = firestore_client.collection(APPLICATIONS_COLLECTION).document(owner_id)
     ref.set({"tier": "application"})
     try:
-        cleanup.resolve_owner_ttls.cache_clear()
-        assert cleanup.resolve_owner_ttls(owner_id) == (None, 14)
+        assert cleanup.resolve_owner_ttls_bulk([owner_id]) == {owner_id: (None, 14)}
     finally:
         ref.delete()
-        cleanup.resolve_owner_ttls.cache_clear()
 
 
-def test_resolve_owner_ttls_absent_owner_is_standard():
-    cleanup.resolve_owner_ttls.cache_clear()
-    assert cleanup.resolve_owner_ttls(f"test-{uuid.uuid4().hex}") == (180, 14)
+def test_resolve_owner_ttls_bulk_absent_owner_is_standard():
+    owner_id = f"test-{uuid.uuid4().hex}"
+    assert cleanup.resolve_owner_ttls_bulk([owner_id]) == {owner_id: (180, 14)}
 
 
 def test_scan_collection_projects_seeded_doc(grid_layout):

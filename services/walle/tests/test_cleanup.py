@@ -1,14 +1,14 @@
-"""Unit tests for walle's cleanup logic (finders, TTL resolution, blob re-check).
+"""Unit tests for walle's cleanup logic (finders, TTL resolution, batched reaping).
 
 The pure finders take in-memory records, so they run without GCP; the Firestore
-touching helpers are exercised with a monkeypatched client. The full ``run()``
-pass is deliberately not exercised here — it reconciles whole buckets and would
-act on real project data — its behaviour is covered by these piece-wise tests.
+and GCS touching helpers are exercised with monkeypatched clients. The full
+``run()`` pass is deliberately not exercised here — it reconciles whole buckets
+and would act on real project data — its behaviour is covered piece-wise.
 """
 
 from datetime import UTC, datetime, timedelta
 
-from walle import cleanup
+from walle import cleanup, layouts
 from walle.cleanup import (
     Record,
     find_expired,
@@ -19,6 +19,7 @@ from walle.config import TTL_FLOOR_DAYS
 from walle.layouts import RESOURCE_LAYOUTS
 
 NOW = datetime(2026, 7, 6, tzinfo=UTC)
+STD = {"o1": (180, 14)}  # standard TTLs for rec()'s default owner "o1"
 
 
 def rec(**kw) -> Record:
@@ -59,63 +60,85 @@ def test_orphan_skips_null_domain():
     assert find_orphan_docs([r], {"d1"}, NOW) == []
 
 
+def test_confirm_orphan_docs_drops_live_domains(monkeypatch):
+    # Batched re-check: "d-live" still exists (missed in the stream) -> its child
+    # is spared; "d-gone" is genuinely absent -> its child is confirmed orphan.
+    monkeypatch.setattr(cleanup, "_existing_ids", lambda _c, ids: {"d-live"} & set(ids))
+    kept = rec(doc_id="c1", domain_id="d-gone")
+    dropped = rec(doc_id="c2", domain_id="d-live")
+    assert cleanup.confirm_orphan_docs([kept, dropped]) == [kept]
+
+
 # --- TTL expiry -----------------------------------------------------------
 
 
-def test_expired_past_standard_ttl(monkeypatch):
-    monkeypatch.setattr(cleanup, "resolve_owner_ttls", lambda _o: (180, 14))
+def test_expired_past_standard_ttl():
     old = rec(modified_on=NOW - timedelta(days=200))
     fresh = rec(modified_on=NOW - timedelta(days=10))
-    assert find_expired([old, fresh], NOW) == [old]
+    assert find_expired([old, fresh], NOW, STD) == [old]
 
 
-def test_failed_uses_failed_clock(monkeypatch):
-    monkeypatch.setattr(cleanup, "resolve_owner_ttls", lambda _o: (180, 14))
+def test_failed_uses_failed_clock():
     expired = rec(status="failed", modified_on=NOW - timedelta(days=20))
     fresh = rec(status="failed", modified_on=NOW - timedelta(days=10))
-    assert find_expired([expired, fresh], NOW) == [expired]
+    assert find_expired([expired, fresh], NOW, STD) == [expired]
 
 
-def test_application_tier_never_expires(monkeypatch):
-    monkeypatch.setattr(cleanup, "resolve_owner_ttls", lambda _o: (None, 14))
+def test_application_tier_never_expires():
     ancient = rec(modified_on=NOW - timedelta(days=9999))
-    assert find_expired([ancient], NOW) == []
+    assert find_expired([ancient], NOW, {"o1": (None, 14)}) == []
 
 
-def test_null_modified_on_never_expires(monkeypatch):
-    monkeypatch.setattr(cleanup, "resolve_owner_ttls", lambda _o: (180, 14))
-    assert find_expired([rec(modified_on=None)], NOW) == []
+def test_null_modified_on_never_expires():
+    assert find_expired([rec(modified_on=None)], NOW, STD) == []
 
 
-def test_ttl_clamped_to_floor(monkeypatch):
+def test_unknown_owner_falls_back_to_defaults():
+    # An owner absent from the resolved map uses the standard defaults.
+    old = rec(owner_id="not-resolved", modified_on=NOW - timedelta(days=200))
+    assert find_expired([old], NOW, {}) == [old]
+
+
+def test_ttl_clamped_to_floor():
     # An override below the floor is clamped up, so it can't sweep too eagerly.
-    monkeypatch.setattr(cleanup, "resolve_owner_ttls", lambda _o: (3, 3))
-    assert cleanup._effective_ttl_days(rec()) == TTL_FLOOR_DAYS
+    ttls = {"o1": (3, 3)}
+    assert cleanup._effective_ttl_days(rec(), ttls) == TTL_FLOOR_DAYS
     just_inside = rec(modified_on=NOW - timedelta(days=TTL_FLOOR_DAYS - 1))
-    assert find_expired([just_inside], NOW) == []
+    assert find_expired([just_inside], NOW, ttls) == []
 
 
 # --- owner TTL resolution -------------------------------------------------
 
 
-def test_resolve_ttls_standard(monkeypatch):
-    cleanup.resolve_owner_ttls.cache_clear()
-    monkeypatch.setattr(cleanup, "_owner_doc", lambda _o: {})
-    assert cleanup.resolve_owner_ttls("u-std") == (180, 14)
+def test_ttls_from_doc_standard():
+    assert cleanup._ttls_from_doc({}) == (180, 14)
 
 
-def test_resolve_ttls_application(monkeypatch):
-    cleanup.resolve_owner_ttls.cache_clear()
-    monkeypatch.setattr(cleanup, "_owner_doc", lambda _o: {"tier": "application"})
-    assert cleanup.resolve_owner_ttls("a-app") == (None, 14)
+def test_ttls_from_doc_application():
+    assert cleanup._ttls_from_doc({"tier": "application"}) == (None, 14)
 
 
-def test_resolve_ttls_honours_overrides(monkeypatch):
-    cleanup.resolve_owner_ttls.cache_clear()
-    monkeypatch.setattr(
-        cleanup, "_owner_doc", lambda _o: {"quota_overrides": {"resource_ttl_days": 30}}
-    )
-    assert cleanup.resolve_owner_ttls("u-ovr") == (30, 14)
+def test_ttls_from_doc_honours_overrides():
+    data = {"quota_overrides": {"resource_ttl_days": 30}}
+    assert cleanup._ttls_from_doc(data) == (30, 14)
+
+
+def test_resolve_owner_ttls_bulk(monkeypatch):
+    def fake_get_all_docs(collection, ids):
+        if collection == cleanup.APPLICATIONS_COLLECTION:
+            return {"a1": {"tier": "application"}} if "a1" in ids else {}
+        if collection == cleanup.USERS_COLLECTION:
+            return (
+                {"u1": {"quota_overrides": {"resource_ttl_days": 30}}}
+                if "u1" in ids
+                else {}
+            )
+        return {}
+
+    monkeypatch.setattr(cleanup, "_get_all_docs", fake_get_all_docs)
+    # None is dropped, "a1" deduped; "x1" is in neither collection -> defaults.
+    result = cleanup.resolve_owner_ttls_bulk(["a1", "u1", "x1", None, "a1"])
+    assert result == {"a1": (None, 14), "u1": (30, 14), "x1": (180, 14)}
 
 
 def test_ttl_defaults_match_api_contract():
@@ -126,7 +149,7 @@ def test_ttl_defaults_match_api_contract():
     assert cleanup._TIER_TTL_OVERRIDES["application"]["resource_ttl_days"] is None
 
 
-# --- orphaned blobs (with the pre-delete re-check) ------------------------
+# --- orphaned blobs (with the batched re-check) ---------------------------
 
 
 def test_orphan_blob_diff_and_recheck(monkeypatch):
@@ -184,6 +207,54 @@ def test_static_test_fixtures_protected_both_directions(monkeypatch):
     assert find_orphan_docs([orphan], {"d1"}, NOW) == []
 
     # ...nor as TTL-expired, however old.
-    monkeypatch.setattr(cleanup, "resolve_owner_ttls", lambda _o: (180, 14))
     ancient = rec(doc_id="static-test-fixture", modified_on=NOW - timedelta(days=999))
-    assert find_expired([ancient], NOW) == []
+    assert find_expired([ancient], NOW, STD) == []
+
+
+# --- batched reaping (accumulate, then bulk-delete) -----------------------
+
+
+def test_reap_blob_accumulates_only_in_enforce():
+    layout = RESOURCE_LAYOUTS[0]
+    summary = cleanup.Summary()
+    gcs: list[str] = []
+
+    cleanup._reap_blob(
+        layout, "b1", "grids/b1", dry_run=False, summary=summary, gcs_deletes=gcs
+    )
+    assert gcs == ["grids/b1"]
+    assert summary.deleted["orphan_blob"] == 1
+
+    # Dry-run logs but never accumulates a delete.
+    cleanup._reap_blob(
+        layout, "b2", "grids/b2", dry_run=True, summary=summary, gcs_deletes=gcs
+    )
+    assert gcs == ["grids/b1"]
+    assert summary.dry_run["orphan_blob"] == 1
+
+
+def test_delete_artifacts_batches_and_tolerates_missing(monkeypatch):
+    calls = []
+
+    class _FS:
+        def rm(self, paths, recursive):
+            calls.append(paths)
+            names = paths if isinstance(paths, list) else [paths]
+            if "missing" in names:  # simulate an already-gone path
+                raise FileNotFoundError
+
+    monkeypatch.setattr(layouts, "get_gcsfs_client", lambda: _FS())
+    monkeypatch.setattr(layouts, "_RM_CHUNK", 2)  # force chunking
+
+    layouts.delete_artifacts(["a", "b", "missing", "c"])
+
+    assert ["a", "b"] in calls  # first chunk deleted as one batch
+    # second chunk raised on "missing" -> retried per path so "c" still deletes
+    assert "missing" in calls and "c" in calls
+
+
+def test_delete_artifacts_empty_is_noop(monkeypatch):
+    monkeypatch.setattr(
+        layouts, "get_gcsfs_client", lambda: (_ for _ in ()).throw(AssertionError)
+    )
+    layouts.delete_artifacts([])  # must not touch GCS

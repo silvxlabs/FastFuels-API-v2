@@ -9,7 +9,6 @@ from typing import Annotated
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Body,
     HTTPException,
     Query,
@@ -18,7 +17,6 @@ from fastapi import (
 )
 from google.cloud.firestore import FieldFilter
 
-from api.db.blobs import delete_directory_safe
 from api.db.documents import (
     delete_document_async,
     firestore_client,
@@ -46,29 +44,24 @@ from api.resources.domains.validate import (
 )
 from lib.config import (
     DOMAINS_COLLECTION,
-    GRIDS_BUCKET,
+    FEATURES_COLLECTION,
     GRIDS_COLLECTION,
-    INVENTORIES_BUCKET,
     INVENTORIES_COLLECTION,
+    POINT_CLOUDS_COLLECTION,
 )
 from lib.domain_utils import parse_domain_gdf
 
 # Child resource types that cascade-delete when a domain is force-deleted.
-# Each entry defines a Firestore collection, the foreign key linking to the
-# domain, and an optional GCS bucket for storage cleanup.
-# Exports are deliberately excluded — they survive domain deletion as
-# standalone provenance artifacts.
+# Each entry is a Firestore collection and the foreign key linking it to the
+# domain. Child docs are deleted synchronously (keeping quota accurate); walle
+# reclaims their GCS artifacts. Exports are deliberately excluded — they survive
+# domain deletion as standalone provenance artifacts (walle likewise never
+# orphan-reaps an export by a missing domain).
 CHILD_RESOURCES = [
-    {
-        "collection": GRIDS_COLLECTION,
-        "foreign_key": "domain_id",
-        "bucket": GRIDS_BUCKET,
-    },
-    {
-        "collection": INVENTORIES_COLLECTION,
-        "foreign_key": "domain_id",
-        "bucket": INVENTORIES_BUCKET,
-    },
+    {"collection": GRIDS_COLLECTION, "foreign_key": "domain_id"},
+    {"collection": INVENTORIES_COLLECTION, "foreign_key": "domain_id"},
+    {"collection": FEATURES_COLLECTION, "foreign_key": "domain_id"},
+    {"collection": POINT_CLOUDS_COLLECTION, "foreign_key": "domain_id"},
 ]
 
 router = APIRouter()
@@ -767,7 +760,6 @@ async def update_domain(
 async def delete_domain(
     request: Request,
     domain_id: str,
-    background_tasks: BackgroundTasks,
     force: bool = Query(
         False,
         description=(
@@ -851,10 +843,6 @@ async def delete_domain(
                 batch = firestore_client.batch()
                 for doc in all_docs:
                     batch.delete(doc.reference)
-                    if resource.get("bucket"):
-                        background_tasks.add_task(
-                            delete_directory_safe, resource["bucket"], doc.id
-                        )
                 await batch.commit()
 
     # Delete the domain document

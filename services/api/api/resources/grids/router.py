@@ -10,7 +10,6 @@ from datetime import datetime
 import numpy as np
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     HTTPException,
     Query,
     Request,
@@ -18,7 +17,6 @@ from fastapi import (
     status,
 )
 
-from api.db.blobs import delete_directory_safe
 from api.db.documents import (
     delete_document_async,
     get_document_async,
@@ -63,7 +61,7 @@ from api.resources.grids.utils import (
 )
 from api.resources.grids.voxelize.router import router as voxelize_router
 from api.schema import SortOrder
-from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
+from lib.config import GRIDS_COLLECTION
 
 router = APIRouter()
 wildcard_router = APIRouter()
@@ -421,7 +419,6 @@ async def delete_grid(
     request: Request,
     domain: VerifiedDomain,
     grid_id: str,
-    background_tasks: BackgroundTasks,
 ):
     """
     # Delete Grid Endpoint
@@ -450,8 +447,6 @@ async def delete_grid(
         collection=COLLECTION,
         document_id=grid_id,
     )
-
-    background_tasks.add_task(delete_directory_safe, GRIDS_BUCKET, grid_id)
 
 
 @router.get(

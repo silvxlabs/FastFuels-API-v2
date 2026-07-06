@@ -61,13 +61,9 @@ mirroring v1 walle) runs it, and that trigger is provisioned **out-of-band**.
 The job's service account needs Firestore access and GCS object-delete on the
 five artifact buckets.
 
-**Gate on the scheduler, not the code.** All categories default to enforce, so
-before creating the nightly trigger:
-
-1. Run locally with all categories dry-run and validate the candidates (above).
-2. Enable blob + doc reconciliation — safe, they only touch already-orphaned
-   records.
-3. TTL deletes live user data. Per design §10.2 (retention-on-by-default), the
-   expiry-warning emails must ship before it enforces on a schedule; until then,
-   run the scheduled job with `WALLE_TTL_DRY_RUN=true` so blob/doc reconciliation
-   runs while TTL only logs.
+All categories default to enforce. Before creating the nightly trigger, run
+walle locally with the categories in dry-run and check the candidates against
+reality (above); once they look right, schedule it. Retention (180 days
+standard / never for applications) is a documented contract from a resource's
+first day and is visible on `GET /users/me`, so TTL expiry needs no separate
+gate.

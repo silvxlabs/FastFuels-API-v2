@@ -1,19 +1,22 @@
 """The nightly reconciliation pass.
 
 One projected scan per collection produces light records; from those shared
-reads walle derives three deletion categories and reaps them through one
+reads walle derives four deletion categories and reaps them through one
 idempotent GCS-then-doc routine:
 
 1. Orphaned GCS blobs — an artifact whose owning doc is gone (blob only).
 2. Orphaned child docs — a child whose ``domain_id`` is gone (doc + artifact).
 3. TTL-expired docs — a doc past its owner's resolved retention (doc + artifact).
+4. Stale test resources — an ephemeral ``test-`` doc past a short retention
+   window (doc + artifact; test domains are purged doc-only).
 
 Docs are deleted synchronously by the API, so orphaned blobs (category 1) are
-the common case; categories 2 and 3 are the durable backstop and the retention
-policy. All Firestore re-checks and owner lookups are batched through
-``get_all``; the run accumulates the deletions and executes them in bulk at the
-end — every GCS artifact first, then every Firestore doc — so a crash between
-the two leaves the docs behind and the next run re-reaps them (both idempotent).
+the common case; 2 and 3 are the durable backstop and the retention policy; 4
+sweeps the ephemeral integration-test junk that CI leaves in the shared project.
+All Firestore re-checks and owner lookups are batched through ``get_all``; the
+run accumulates the deletions and executes them in bulk at the end — every GCS
+artifact first, then every Firestore doc — so a crash between the two leaves the
+docs behind and the next run re-reaps them (both idempotent).
 """
 
 import logging
@@ -31,6 +34,8 @@ from walle.config import (
     ORPHAN_BLOBS_DRY_RUN,
     ORPHAN_DOCS_DRY_RUN,
     ORPHAN_MIN_AGE_HOURS,
+    TEST_PURGE_DRY_RUN,
+    TEST_TTL_DAYS,
     TTL_DRY_RUN,
     TTL_FLOOR_DAYS,
 )
@@ -56,7 +61,7 @@ DEFAULT_FAILED_RESOURCE_TTL_DAYS = 14
 _DEFAULT_TTLS = (DEFAULT_RESOURCE_TTL_DAYS, DEFAULT_FAILED_RESOURCE_TTL_DAYS)
 _TIER_TTL_OVERRIDES: dict[str, dict] = {"application": {"resource_ttl_days": None}}
 
-# Firestore fields the single scan projects — everything the three categories need.
+# Firestore fields the single scan projects — everything the four categories need.
 _SCAN_FIELDS = ["domain_id", "owner_id", "status", "modified_on", "size_bytes"]
 
 # Firestore batched reads (get_all) are chunked at this size. A fresh,
@@ -69,7 +74,7 @@ _GET_ALL_CHUNK = 1000
 
 @dataclass(frozen=True)
 class Record:
-    """A projected view of one resource doc — all three categories read from this."""
+    """A projected view of one resource doc — all categories read from this."""
 
     collection: str
     doc_id: str
@@ -201,12 +206,28 @@ def scan_collection(layout: ResourceLayout) -> list[Record]:
     return records
 
 
-def live_domain_ids() -> set[str]:
-    """Every existing domain id (projected to ids only)."""
+def scan_domains() -> list[Record]:
+    """Stream domain docs (id + modified_on).
+
+    Serves both the live-domain set (for orphaned-child detection) and the
+    test-resource purge. Domains have no GCS artifact, so the other fields are
+    left empty.
+    """
     stream = (
-        firestore_client.collection(DOMAINS_COLLECTION).select(["owner_id"]).stream()
+        firestore_client.collection(DOMAINS_COLLECTION).select(["modified_on"]).stream()
     )
-    return {snap.id for snap in stream}
+    return [
+        Record(
+            collection=DOMAINS_COLLECTION,
+            doc_id=snap.id,
+            domain_id=None,
+            owner_id=None,
+            status=None,
+            modified_on=(snap.to_dict() or {}).get("modified_on"),
+            size_bytes=None,
+        )
+        for snap in stream
+    ]
 
 
 # --- category finders -----------------------------------------------------
@@ -221,6 +242,21 @@ def _is_protected(doc_id: str) -> bool:
     return doc_id.startswith(_PROTECTED_ID_PREFIXES)
 
 
+def _is_test(doc_id: str) -> bool:
+    # Ephemeral test resources. "static-test-" starts with "static-", not
+    # "test-", so the persistent fixtures are naturally excluded.
+    return doc_id.startswith("test-")
+
+
+def _older_than(ts, cutoff: datetime) -> bool:
+    """Whether ``ts`` is a real datetime strictly before ``cutoff``.
+
+    Some legacy domain docs store ``modified_on`` as a string; a non-datetime
+    value is treated as "age unknown" and is never old enough to reap.
+    """
+    return isinstance(ts, datetime) and ts < cutoff
+
+
 def find_orphan_docs(
     records: list[Record], domain_ids: set[str], now: datetime
 ) -> list[Record]:
@@ -232,9 +268,10 @@ def find_orphan_docs(
             continue
         if rec.domain_id is None or rec.domain_id in domain_ids:
             continue
-        # Skip very recently modified docs so a resource mid-creation is never
-        # mistaken for an orphan.
-        if rec.modified_on is not None and rec.modified_on > cutoff:
+        # Skip provably-recent docs so a resource mid-creation is never mistaken
+        # for an orphan (unknown age is not skipped — the missing domain already
+        # marks it an orphan).
+        if isinstance(rec.modified_on, datetime) and rec.modified_on > cutoff:
             continue
         out.append(rec)
     return out
@@ -261,14 +298,27 @@ def find_expired(
     for rec in records:
         if _is_protected(rec.doc_id):
             continue
-        if rec.modified_on is None:
-            continue
         ttl_days = _effective_ttl_days(rec, owner_ttls)
         if ttl_days is None:
             continue
-        if rec.modified_on < now - timedelta(days=ttl_days):
+        if _older_than(rec.modified_on, now - timedelta(days=ttl_days)):
             out.append(rec)
     return out
+
+
+def find_stale_test(records: list[Record], now: datetime) -> list[Record]:
+    """Ephemeral ``test-`` docs older than the short test-retention window.
+
+    Real ids are server-generated uuid4 hex (never ``test-``), so this only ever
+    matches integration-test artifacts; the window is far longer than any test
+    run, so it never races an in-flight test.
+    """
+    cutoff = now - timedelta(days=TEST_TTL_DAYS)
+    return [
+        rec
+        for rec in records
+        if _is_test(rec.doc_id) and _older_than(rec.modified_on, cutoff)
+    ]
 
 
 def find_orphan_blobs(
@@ -314,8 +364,9 @@ def _reap_blob(
 
 
 def _reap_doc(
-    layout: ResourceLayout,
+    resource_name: str,
     rec: Record,
+    path: str | None,
     now: datetime,
     *,
     category: str,
@@ -324,6 +375,7 @@ def _reap_doc(
     gcs_deletes: list[str],
     doc_deletes: list,
 ) -> None:
+    """Reap one doc (+ its artifact if ``path`` is given). Domains pass ``path=None``."""
     age = _age_days(rec.modified_on, now)
     age_str = f"{age:.1f}d" if age is not None else "unknown"
 
@@ -331,7 +383,7 @@ def _reap_doc(
         logger.info(
             "DRY-RUN %s %s/%s owner=%s age=%s",
             category,
-            layout.name,
+            resource_name,
             rec.doc_id,
             rec.owner_id,
             age_str,
@@ -342,13 +394,14 @@ def _reap_doc(
     logger.info(
         "delete %s %s/%s owner=%s age=%s bytes=%s",
         category,
-        layout.name,
+        resource_name,
         rec.doc_id,
         rec.owner_id,
         age_str,
         rec.size_bytes,
     )
-    gcs_deletes.append(artifact_path(layout, rec.doc_id, rec.domain_id))
+    if path is not None:
+        gcs_deletes.append(path)
     doc_deletes.append(firestore_client.collection(rec.collection).document(rec.doc_id))
     summary.deleted[category] += 1
     summary.freed_bytes += rec.size_bytes or 0
@@ -367,7 +420,8 @@ def _bulk_delete_docs(refs: list) -> None:
 def run() -> dict:
     """Run one reconciliation pass over every resource type. Returns a summary."""
     now = datetime.now(UTC)
-    domain_ids = live_domain_ids()
+    domain_records = scan_domains()
+    domain_ids = {r.doc_id for r in domain_records}
     summary = Summary()
     owner_ttls: dict[str, tuple[int | None, int | None]] = {}
     gcs_deletes: list[str] = []
@@ -384,28 +438,35 @@ def run() -> dict:
         ]
         owner_ttls.update(resolve_owner_ttls_bulk(new_owners))
 
+        # Categories on live docs, deduped so a doc is reaped under one reason.
         orphan_docs = (
             confirm_orphan_docs(find_orphan_docs(records, domain_ids, now))
             if layout.orphan_on_missing_domain
             else []
         )
-        orphan_ids = {r.doc_id for r in orphan_docs}
+        reaped_ids = {r.doc_id for r in orphan_docs}
         expired = [
             r
             for r in find_expired(records, now, owner_ttls)
-            if r.doc_id not in orphan_ids
+            if r.doc_id not in reaped_ids
         ]
+        reaped_ids |= {r.doc_id for r in expired}
+        stale_test = [
+            r for r in find_stale_test(records, now) if r.doc_id not in reaped_ids
+        ]
+
         artifacts = list_artifact_ids(layout)
         orphan_blobs = find_orphan_blobs(layout, artifacts, live_ids)
 
         logger.info(
-            "%s: %d docs, %d artifacts | orphan_blobs=%d orphan_docs=%d expired=%d",
+            "%s: %d docs, %d artifacts | orphan_blobs=%d orphan_docs=%d expired=%d test=%d",
             layout.name,
             len(records),
             len(artifacts),
             len(orphan_blobs),
             len(orphan_docs),
             len(expired),
+            len(stale_test),
         )
 
         for doc_id, path in orphan_blobs.items():
@@ -417,28 +478,41 @@ def run() -> dict:
                 summary=summary,
                 gcs_deletes=gcs_deletes,
             )
-        for rec in orphan_docs:
-            _reap_doc(
-                layout,
-                rec,
-                now,
-                category="orphan_doc",
-                dry_run=ORPHAN_DOCS_DRY_RUN,
-                summary=summary,
-                gcs_deletes=gcs_deletes,
-                doc_deletes=doc_deletes,
-            )
-        for rec in expired:
-            _reap_doc(
-                layout,
-                rec,
-                now,
-                category="ttl",
-                dry_run=TTL_DRY_RUN,
-                summary=summary,
-                gcs_deletes=gcs_deletes,
-                doc_deletes=doc_deletes,
-            )
+        for category, dry_run, batch in (
+            ("orphan_doc", ORPHAN_DOCS_DRY_RUN, orphan_docs),
+            ("ttl", TTL_DRY_RUN, expired),
+            ("test_stale", TEST_PURGE_DRY_RUN, stale_test),
+        ):
+            for rec in batch:
+                _reap_doc(
+                    layout.name,
+                    rec,
+                    artifact_path(layout, rec.doc_id, rec.domain_id),
+                    now,
+                    category=category,
+                    dry_run=dry_run,
+                    summary=summary,
+                    gcs_deletes=gcs_deletes,
+                    doc_deletes=doc_deletes,
+                )
+
+    # Ephemeral test domains carry no artifact — purge them doc-only.
+    stale_test_domains = find_stale_test(domain_records, now)
+    logger.info(
+        "domains: %d docs | test=%d", len(domain_records), len(stale_test_domains)
+    )
+    for rec in stale_test_domains:
+        _reap_doc(
+            "domains",
+            rec,
+            None,
+            now,
+            category="test_stale",
+            dry_run=TEST_PURGE_DRY_RUN,
+            summary=summary,
+            gcs_deletes=gcs_deletes,
+            doc_deletes=doc_deletes,
+        )
 
     # Execute the accumulated deletes in bulk: every GCS artifact first, then the
     # docs, so a crash between leaves the docs behind for the next run to re-reap.

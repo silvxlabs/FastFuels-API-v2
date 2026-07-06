@@ -12,9 +12,8 @@ the API stays free of GDAL/PDAL at runtime.
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Query, Request, status
+from fastapi import APIRouter, Query, Request, status
 
-from api.db.blobs import delete_directory_safe
 from api.db.documents import (
     delete_document_async,
     get_document_async,
@@ -31,7 +30,7 @@ from api.resources.point_clouds.schema import (
 )
 from api.resources.point_clouds.upload.router import router as upload_router
 from api.schema import SortOrder
-from lib.config import POINT_CLOUDS_BUCKET, POINT_CLOUDS_COLLECTION
+from lib.config import POINT_CLOUDS_COLLECTION
 
 router = APIRouter()
 wildcard_router = APIRouter()
@@ -352,7 +351,6 @@ async def delete_point_cloud(
     request: Request,
     domain: VerifiedDomain,
     point_cloud_id: str,
-    background_tasks: BackgroundTasks,
 ):
     """
     # Delete Point Cloud
@@ -380,8 +378,4 @@ async def delete_point_cloud(
     await delete_document_async(
         collection=COLLECTION,
         document_id=point_cloud_id,
-    )
-
-    background_tasks.add_task(
-        delete_directory_safe, POINT_CLOUDS_BUCKET, point_cloud_id
     )

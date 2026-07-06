@@ -23,7 +23,7 @@ from fastapi import (
 )
 from google.api_core.exceptions import NotFound
 
-from api.db.blobs import copy_directory_verified, delete_directory_safe
+from api.db.blobs import copy_directory_verified
 from api.db.documents import (
     delete_document_async,
     firestore_client,
@@ -378,7 +378,6 @@ async def delete_inventory(
     request: Request,
     domain: VerifiedDomain,
     inventory_id: str,
-    background_tasks: BackgroundTasks,
 ):
     """
     # Delete Inventory Endpoint
@@ -407,8 +406,6 @@ async def delete_inventory(
         collection=COLLECTION,
         document_id=inventory_id,
     )
-
-    background_tasks.add_task(delete_directory_safe, INVENTORIES_BUCKET, inventory_id)
 
 
 async def _copy_inventory_data(

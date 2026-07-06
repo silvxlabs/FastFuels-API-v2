@@ -144,3 +144,30 @@ def delete_artifact(path: str) -> None:
         fs.rm(path, recursive=True)
     except FileNotFoundError:
         pass
+
+
+# gcsfs expands and batch-deletes a list of paths in one call; chunking bounds
+# each request. The first enforce run can have thousands of artifacts to reap.
+_RM_CHUNK = 100
+
+
+def delete_artifacts(paths: list[str]) -> None:
+    """Delete many GCS artifacts (prefixes or objects) in batched rm() calls.
+
+    Idempotent: a path already gone (a prior crashed run) is tolerated. If a
+    batch hits a missing path it is retried per-path so one absence doesn't
+    abort the whole chunk.
+    """
+    if not paths:
+        return
+    fs = get_gcsfs_client()
+    for start in range(0, len(paths), _RM_CHUNK):
+        chunk = paths[start : start + _RM_CHUNK]
+        try:
+            fs.rm(chunk, recursive=True)
+        except FileNotFoundError:
+            for path in chunk:
+                try:
+                    fs.rm(path, recursive=True)
+                except FileNotFoundError:
+                    pass

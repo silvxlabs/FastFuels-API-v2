@@ -39,6 +39,7 @@ from api.resources.grids.utils import (
     validate_grid_has_georeference,
 )
 from lib.config import GRIDS_COLLECTION
+from lib.crs import crs_equal
 
 # Per-role unit and dimensionality contract.
 _ROLE_CONTRACT: dict[str, tuple[int, str]] = {
@@ -184,7 +185,7 @@ def _check_role_alignment(
     fire_maxx = fire_minx + fire_grid["nx"] * dx
     fire_miny = fire_maxy - fire_grid["ny"] * dx
 
-    if gcrs != fire_crs:
+    if not crs_equal(gcrs, fire_crs):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"QUIC-Fire export CRS mismatch: grid '{role_name}' ({src.grid_id}) "

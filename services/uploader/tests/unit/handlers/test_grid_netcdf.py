@@ -201,6 +201,17 @@ class TestCrs:
             _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)
         assert exc.value.code == "CRS_MISMATCH"
 
+    def test_equivalent_crs_spelling_passes(self, tmp_path):
+        # netCDF in the domain CRS passes even when the domain CRS is stored in
+        # OGC URN form rather than the file's EPSG spelling (regression).
+        ds = _build_2d_dataset(crs=DOMAIN_CRS)
+        path = _write_nc(ds, tmp_path / "urn_domain.nc")
+
+        result = _build_netcdf_dataset(
+            path, "urn:ogc:def:crs:EPSG::32611", DOMAIN_GDF, 0
+        )
+        assert len(result.data_vars) > 0
+
 
 class TestUnits:
     def test_invalid_units(self, tmp_path):

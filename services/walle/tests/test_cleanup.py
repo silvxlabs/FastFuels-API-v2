@@ -133,23 +133,26 @@ def test_orphan_blob_diff_and_recheck(monkeypatch):
     layout = RESOURCE_LAYOUTS[0]  # grids, PREFIX
     artifacts = {"a": "b/a", "b": "b/b", "live": "b/live"}
 
-    class _Snap:
-        def __init__(self, exists):
-            self.exists = exists
-
-    class _Doc:
+    class _Ref:
         def __init__(self, doc_id):
-            self._id = doc_id
-
-        def get(self):
-            # "b" still has a live doc (missed in the stream) -> must be spared.
-            return _Snap(self._id == "b")
+            self.id = doc_id
 
     class _Coll:
         def document(self, doc_id):
-            return _Doc(doc_id)
+            return _Ref(doc_id)
+
+    class _Snap:
+        def __init__(self, doc_id, exists):
+            self.id = doc_id
+            self.exists = exists
 
     monkeypatch.setattr(cleanup.firestore_client, "collection", lambda _c: _Coll())
+    # Batched re-check: "b" still has a live doc (missed in the stream) -> spared.
+    monkeypatch.setattr(
+        cleanup.firestore_client,
+        "get_all",
+        lambda refs: [_Snap(r.id, r.id == "b") for r in refs],
+    )
 
     # "live" is filtered by the id set; "b" is spared by the re-check; only "a".
     assert find_orphan_blobs(layout, artifacts, {"live"}) == {"a": "b/a"}
@@ -160,3 +163,27 @@ def test_exports_layout_exempt_from_orphan_docs():
     assert exports.orphan_on_missing_domain is False
     others = [x for x in RESOURCE_LAYOUTS if x.name != "exports"]
     assert all(x.orphan_on_missing_domain for x in others)
+
+
+def test_static_test_fixtures_protected_both_directions(monkeypatch):
+    layout = RESOURCE_LAYOUTS[0]
+
+    # A static-test GCS blob with no live doc must not be reaped. get_all returns
+    # [] (no live docs), so if it weren't filtered it would come back as an
+    # orphan — the empty result proves it was excluded before the re-check.
+    monkeypatch.setattr(cleanup.firestore_client, "get_all", lambda refs: [])
+    artifacts = {"static-test-blue-mtn": "b/static-test-blue-mtn"}
+    assert find_orphan_blobs(layout, artifacts, set()) == {}
+
+    # A static-test doc must not be reaped as an orphaned child (domain gone)...
+    orphan = rec(
+        doc_id="static-test-fixture",
+        domain_id="gone",
+        modified_on=NOW - timedelta(days=5),
+    )
+    assert find_orphan_docs([orphan], {"d1"}, NOW) == []
+
+    # ...nor as TTL-expired, however old.
+    monkeypatch.setattr(cleanup, "resolve_owner_ttls", lambda _o: (180, 14))
+    ancient = rec(doc_id="static-test-fixture", modified_on=NOW - timedelta(days=999))
+    assert find_expired([ancient], NOW) == []

@@ -57,6 +57,13 @@ _TIER_TTL_OVERRIDES: dict[str, dict] = {"application": {"resource_ttl_days": Non
 # Firestore fields the single scan projects — everything the three categories need.
 _SCAN_FIELDS = ["domain_id", "owner_id", "status", "modified_on", "size_bytes"]
 
+# The orphan-blob re-check is batched through get_all in chunks of this size. A
+# fresh, mostly-orphaned bucket can have thousands of candidates; chunking bounds
+# each BatchGetDocuments request (reads have no 500-doc write-batch limit — the
+# cap is the 10 MiB request size, and doc paths are tiny) while avoiding
+# per-candidate round-trips.
+_GET_ALL_CHUNK = 1000
+
 
 @dataclass(frozen=True)
 class Record:
@@ -167,6 +174,15 @@ def live_domain_ids() -> set[str]:
 
 # --- category finders -----------------------------------------------------
 
+# Persistent integration-test fixtures live in the shared project under this id
+# prefix — often as GCS artifacts with no live doc. walle must never reap them,
+# or a run would delete the fixtures the test suite depends on.
+_PROTECTED_ID_PREFIXES = ("static-test-",)
+
+
+def _is_protected(doc_id: str) -> bool:
+    return doc_id.startswith(_PROTECTED_ID_PREFIXES)
+
 
 def find_orphan_docs(
     records: list[Record], domain_ids: set[str], now: datetime
@@ -175,6 +191,8 @@ def find_orphan_docs(
     cutoff = now - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
     out = []
     for rec in records:
+        if _is_protected(rec.doc_id):
+            continue
         if rec.domain_id is None or rec.domain_id in domain_ids:
             continue
         # Skip very recently modified docs so a resource mid-creation is never
@@ -189,6 +207,8 @@ def find_expired(records: list[Record], now: datetime) -> list[Record]:
     """Docs older than their owner's resolved TTL."""
     out = []
     for rec in records:
+        if _is_protected(rec.doc_id):
+            continue
         if rec.modified_on is None:
             continue
         ttl_days = _effective_ttl_days(rec)
@@ -204,18 +224,26 @@ def find_orphan_blobs(
 ) -> dict[str, str]:
     """Artifact id -> path for artifacts whose owning doc is gone.
 
-    Each candidate's doc is re-checked directly before it is returned: a doc
-    missed in the collection stream (Firestore eventual consistency) must never
-    have its live artifact reaped. Docs are always written before their GCS, so
-    "artifact, no doc" is otherwise a reliable orphan signal.
+    Candidates (artifact id not in the live-id set) are re-checked directly
+    before being returned: a doc missed in the collection stream (Firestore
+    eventual consistency) must never have its live artifact reaped. Docs are
+    always written before their GCS, so "artifact, no doc" is otherwise a
+    reliable orphan signal.
+
+    The re-check is batched through ``get_all`` — a fresh, mostly-orphaned
+    bucket can have thousands of candidates, and a per-candidate ``get()`` would
+    be thousands of serial round-trips.
     """
-    confirmed = {}
-    for doc_id in set(artifacts) - live_ids:
-        snap = firestore_client.collection(layout.collection).document(doc_id).get()
-        if snap.exists:
-            continue
-        confirmed[doc_id] = artifacts[doc_id]
-    return confirmed
+    candidate_ids = [i for i in set(artifacts) - live_ids if not _is_protected(i)]
+    coll = firestore_client.collection(layout.collection)
+    live: set[str] = set()
+    for start in range(0, len(candidate_ids), _GET_ALL_CHUNK):
+        refs = [
+            coll.document(doc_id)
+            for doc_id in candidate_ids[start : start + _GET_ALL_CHUNK]
+        ]
+        live.update(snap.id for snap in firestore_client.get_all(refs) if snap.exists)
+    return {doc_id: artifacts[doc_id] for doc_id in candidate_ids if doc_id not in live}
 
 
 # --- reaping --------------------------------------------------------------

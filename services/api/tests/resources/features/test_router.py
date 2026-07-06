@@ -4,21 +4,10 @@ Integration tests for api/v2/resources/features/router.py
 Tests the standard CRUD endpoints (GET, LIST, PATCH, DELETE).
 """
 
-from unittest.mock import patch
-
 import pytest
 
 from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION
 from tests.fixtures import make_domain_data, make_feature_data
-
-
-# Mocks
-# Mock out GCS blob deletion so background tasks don't hang the test server
-@pytest.fixture(autouse=True)
-def mock_gcs_delete():
-    with patch("api.resources.features.router.delete_document_async") as mock:
-        yield mock
-
 
 # Fixtures
 

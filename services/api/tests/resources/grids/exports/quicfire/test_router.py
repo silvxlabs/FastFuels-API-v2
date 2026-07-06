@@ -542,9 +542,9 @@ class TestQuicfireExportValidation:
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
-        assert (
-            "cell size" in response.text.lower() or "resample" in response.text.lower()
-        )
+        detail = response.json()["detail"]
+        assert "resolution mismatch" in detail.lower()
+        assert '"alignment": {"dx": 30.0, "dy": 30.0}' in detail
 
     def test_savr_pair_required_canopy_only_returns_422(
         self,

@@ -45,6 +45,7 @@ from lib.config import (
     GRIDDLE_SERVICE,
     GRIDS_COLLECTION,
 )
+from lib.crs import crs_equal
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 from lib.units import canonicalize_unit
 
@@ -119,7 +120,7 @@ def _validate_alignment(
         grid_id = input_by_alias[alias].grid_id
         _shape_rank(grid_data, grid_id)
         georef = grid_data["georeference"]
-        if georef.get("crs") != first_georef.get("crs"):
+        if not crs_equal(georef.get("crs"), first_georef.get("crs")):
             raise _http_422("All compose input grids must have the same CRS.")
         if tuple(georef.get("shape", ())) != tuple(first_georef.get("shape", ())):
             raise _http_422("All compose input grids must have the same shape.")

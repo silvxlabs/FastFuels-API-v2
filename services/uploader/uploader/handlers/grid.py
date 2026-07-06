@@ -20,6 +20,7 @@ import xarray as xr
 from rioxarray.exceptions import NoDataInBounds
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_BUCKET, GRIDS_COLLECTION
+from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
@@ -141,7 +142,7 @@ def _build_dataset(
             ),
         )
 
-    if str(da.rio.crs) != domain_crs_str:
+    if not crs_equal(str(da.rio.crs), domain_crs_str):
         raise ProcessingError(
             code="CRS_MISMATCH",
             message=(
@@ -350,7 +351,7 @@ def _build_netcdf_dataset(
                 "'spatial_ref') on each data variable."
             ),
         )
-    if str(ds.rio.crs) != domain_crs_str:
+    if not crs_equal(str(ds.rio.crs), domain_crs_str):
         raise ProcessingError(
             code="CRS_MISMATCH",
             message=(

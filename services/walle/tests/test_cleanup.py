@@ -15,7 +15,7 @@ from walle.cleanup import (
     find_orphan_blobs,
     find_orphan_docs,
 )
-from walle.config import TTL_FLOOR_DAYS
+from walle.config import TEST_TTL_DAYS, TTL_FLOOR_DAYS
 from walle.layouts import RESOURCE_LAYOUTS
 
 NOW = datetime(2026, 7, 6, tzinfo=UTC)
@@ -105,6 +105,40 @@ def test_ttl_clamped_to_floor():
     assert cleanup._effective_ttl_days(rec(), ttls) == TTL_FLOOR_DAYS
     just_inside = rec(modified_on=NOW - timedelta(days=TTL_FLOOR_DAYS - 1))
     assert find_expired([just_inside], NOW, ttls) == []
+
+
+# --- stale test resources -------------------------------------------------
+
+
+def test_find_stale_test_matches_old_test_ids():
+    old = rec(doc_id="test-abc", modified_on=NOW - timedelta(days=TEST_TTL_DAYS + 1))
+    assert cleanup.find_stale_test([old], NOW) == [old]
+
+
+def test_find_stale_test_age_guard_spares_recent():
+    # A test in flight (created minutes/hours ago) must never be raced.
+    recent = rec(doc_id="test-abc", modified_on=NOW - timedelta(days=1))
+    assert cleanup.find_stale_test([recent], NOW) == []
+
+
+def test_find_stale_test_ignores_real_and_static_ids():
+    # Real ids are server uuid4 (no prefix); static-test- fixtures are protected.
+    real = rec(doc_id="abc123def", modified_on=NOW - timedelta(days=999))
+    static = rec(doc_id="static-test-blue-mtn", modified_on=NOW - timedelta(days=999))
+    assert cleanup.find_stale_test([real, static], NOW) == []
+
+
+def test_find_stale_test_null_modified_on_spared():
+    r = rec(doc_id="test-abc", modified_on=None)
+    assert cleanup.find_stale_test([r], NOW) == []
+
+
+def test_non_datetime_modified_on_spared_everywhere():
+    # Some legacy domain docs store modified_on as a string; age comparisons must
+    # treat that as unknown age (never reaped) rather than crash.
+    s = "2020-01-01T00:00:00Z"
+    assert cleanup.find_stale_test([rec(doc_id="test-x", modified_on=s)], NOW) == []
+    assert find_expired([rec(modified_on=s)], NOW, STD) == []
 
 
 # --- owner TTL resolution -------------------------------------------------

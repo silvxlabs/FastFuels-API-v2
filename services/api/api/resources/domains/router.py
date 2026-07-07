@@ -9,7 +9,6 @@ from typing import Annotated
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Body,
     HTTPException,
     Query,
@@ -18,7 +17,6 @@ from fastapi import (
 )
 from google.cloud.firestore import FieldFilter
 
-from api.db.blobs import delete_directory_safe
 from api.db.documents import (
     delete_document_async,
     firestore_client,
@@ -28,6 +26,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain, invalidate_domain_cache
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.domains.examples import CREATE_DOMAIN_OPENAPI_EXAMPLES
 from api.resources.domains.schema import (
     CreateDomainRequestBody,
@@ -45,29 +44,24 @@ from api.resources.domains.validate import (
 )
 from lib.config import (
     DOMAINS_COLLECTION,
-    GRIDS_BUCKET,
+    FEATURES_COLLECTION,
     GRIDS_COLLECTION,
-    INVENTORIES_BUCKET,
     INVENTORIES_COLLECTION,
+    POINT_CLOUDS_COLLECTION,
 )
 from lib.domain_utils import parse_domain_gdf
 
 # Child resource types that cascade-delete when a domain is force-deleted.
-# Each entry defines a Firestore collection, the foreign key linking to the
-# domain, and an optional GCS bucket for storage cleanup.
-# Exports are deliberately excluded — they survive domain deletion as
-# standalone provenance artifacts.
+# Each entry is a Firestore collection and the foreign key linking it to the
+# domain. Child docs are deleted synchronously (keeping quota accurate); walle
+# reclaims their GCS artifacts. Exports are deliberately excluded — they survive
+# domain deletion as standalone provenance artifacts (walle likewise never
+# orphan-reaps an export by a missing domain).
 CHILD_RESOURCES = [
-    {
-        "collection": GRIDS_COLLECTION,
-        "foreign_key": "domain_id",
-        "bucket": GRIDS_BUCKET,
-    },
-    {
-        "collection": INVENTORIES_COLLECTION,
-        "foreign_key": "domain_id",
-        "bucket": INVENTORIES_BUCKET,
-    },
+    {"collection": GRIDS_COLLECTION, "foreign_key": "domain_id"},
+    {"collection": INVENTORIES_COLLECTION, "foreign_key": "domain_id"},
+    {"collection": FEATURES_COLLECTION, "foreign_key": "domain_id"},
+    {"collection": POINT_CLOUDS_COLLECTION, "foreign_key": "domain_id"},
 ]
 
 router = APIRouter()
@@ -79,6 +73,7 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Create a new domain",
     response_model_exclude_none=True,
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_domain(
     request: Request,
@@ -206,6 +201,8 @@ async def create_domain(
       - "Invalid spatial extent. Area must be less than 16 square kilometers."
       - "Invalid spatial extent. The domain must be entirely within CONUS."
     """
+    await enforce_create_quotas(DOMAINS_COLLECTION, request)
+
     # Validate domain geometry (parses GeoJSON, validates CRS, area, CONUS check)
     # Raises HTTPException if validation fails
     validation_result = validate_domain(body.model_dump())
@@ -763,7 +760,6 @@ async def update_domain(
 async def delete_domain(
     request: Request,
     domain_id: str,
-    background_tasks: BackgroundTasks,
     force: bool = Query(
         False,
         description=(
@@ -847,10 +843,6 @@ async def delete_domain(
                 batch = firestore_client.batch()
                 for doc in all_docs:
                     batch.delete(doc.reference)
-                    if resource.get("bucket"):
-                        background_tasks.add_task(
-                            delete_directory_safe, resource["bucket"], doc.id
-                        )
                 await batch.commit()
 
     # Delete the domain document

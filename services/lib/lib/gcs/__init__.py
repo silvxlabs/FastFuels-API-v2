@@ -10,6 +10,7 @@ from lib.gcs.blobs import (
     download_file,
     exists,
     get_gcsfs_client,
+    storage_size,
     upload_file,
 )
 from lib.gcs.signed_urls import (
@@ -27,6 +28,7 @@ __all__ = [
     "delete_file",
     "delete_directory",
     "exists",
+    "storage_size",
     "generate_upload_signed_url",
     "generate_download_signed_url",
     "upload_required_headers",

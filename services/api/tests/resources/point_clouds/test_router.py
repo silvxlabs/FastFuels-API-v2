@@ -8,8 +8,8 @@ no create endpoint yet (#328/#329), so documents are seeded directly.
 
 import pytest
 
-from lib.config import POINT_CLOUDS_COLLECTION
-from tests.fixtures import make_point_cloud_data
+from lib.config import DOMAINS_COLLECTION, POINT_CLOUDS_COLLECTION
+from tests.fixtures import make_domain_data, make_point_cloud_data
 
 # GET /domains/{domain_id}/pointclouds/{point_cloud_id} Tests
 
@@ -572,3 +572,66 @@ class TestDeletePointCloud:
 
         response2 = client.delete(f"{self.route(domain_for_testing['id'])}/{pc_id}")
         assert response2.status_code == 404
+
+
+class TestDomainCascadeDeletePointClouds:
+    """Domain force-delete cascade-deletes child point clouds (walle owns their GCS)."""
+
+    route = "/domains"
+
+    def test_domain_with_point_cloud_children_returns_412(
+        self, client, firestore_client
+    ):
+        """Delete domain with child point clouds without force returns 412."""
+        domain_data = make_domain_data(name="Domain with point cloud children")
+        domain_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+            domain_data["id"]
+        )
+        domain_ref.set(domain_data)
+
+        pc_data = make_point_cloud_data(domain_id=domain_data["id"])
+        pc_ref = firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
+            pc_data["id"]
+        )
+        pc_ref.set(pc_data)
+
+        try:
+            response = client.delete(f"{self.route}/{domain_data['id']}")
+            assert response.status_code == 412
+            assert "child resources" in response.json()["detail"].lower()
+        finally:
+            pc_ref.delete()
+            doc = domain_ref.get()
+            if doc.exists:
+                domain_ref.delete()
+
+    def test_domain_force_delete_cascades_point_clouds(self, client, firestore_client):
+        """Delete domain with force=true cascade-deletes child point clouds."""
+        domain_data = make_domain_data(name="Domain for point cloud cascade")
+        domain_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+            domain_data["id"]
+        )
+        domain_ref.set(domain_data)
+
+        pc_ids = []
+        for i in range(3):
+            pc_data = make_point_cloud_data(
+                domain_id=domain_data["id"], name=f"Child point cloud {i}"
+            )
+            pc_ref = firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
+                pc_data["id"]
+            )
+            pc_ref.set(pc_data)
+            pc_ids.append(pc_data["id"])
+
+        response = client.delete(f"{self.route}/{domain_data['id']}?force=true")
+        assert response.status_code == 204
+        assert not domain_ref.get().exists
+
+        for pc_id in pc_ids:
+            doc = (
+                firestore_client.collection(POINT_CLOUDS_COLLECTION)
+                .document(pc_id)
+                .get()
+            )
+            assert not doc.exists

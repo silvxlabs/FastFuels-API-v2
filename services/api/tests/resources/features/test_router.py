@@ -4,21 +4,10 @@ Integration tests for api/v2/resources/features/router.py
 Tests the standard CRUD endpoints (GET, LIST, PATCH, DELETE).
 """
 
-from unittest.mock import patch
-
 import pytest
 
-from lib.config import FEATURES_COLLECTION
-from tests.fixtures import make_feature_data
-
-
-# Mocks
-# Mock out GCS blob deletion so background tasks don't hang the test server
-@pytest.fixture(autouse=True)
-def mock_gcs_delete():
-    with patch("api.resources.features.router.delete_document_async") as mock:
-        yield mock
-
+from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION
+from tests.fixtures import make_domain_data, make_feature_data
 
 # Fixtures
 
@@ -369,3 +358,62 @@ class TestDeleteFeature:
 
         response_2 = client.delete(f"{self.route(domain_for_testing['id'])}/{feat_id}")
         assert response_2.status_code == 404
+
+
+class TestDomainCascadeDeleteFeatures:
+    """Domain force-delete cascade-deletes child features (walle owns their GCS)."""
+
+    route = "/domains"
+
+    def test_domain_with_feature_children_returns_412(self, client, firestore_client):
+        """Delete domain with child features without force returns 412."""
+        domain_data = make_domain_data(name="Domain with feature children")
+        domain_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+            domain_data["id"]
+        )
+        domain_ref.set(domain_data)
+
+        feat_data = make_feature_data(domain_id=domain_data["id"])
+        feat_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feat_data["id"]
+        )
+        feat_ref.set(feat_data)
+
+        try:
+            response = client.delete(f"{self.route}/{domain_data['id']}")
+            assert response.status_code == 412
+            assert "child resources" in response.json()["detail"].lower()
+        finally:
+            feat_ref.delete()
+            doc = domain_ref.get()
+            if doc.exists:
+                domain_ref.delete()
+
+    def test_domain_force_delete_cascades_features(self, client, firestore_client):
+        """Delete domain with force=true cascade-deletes child features."""
+        domain_data = make_domain_data(name="Domain for feature cascade")
+        domain_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+            domain_data["id"]
+        )
+        domain_ref.set(domain_data)
+
+        feat_ids = []
+        for i in range(3):
+            feat_data = make_feature_data(
+                domain_id=domain_data["id"], name=f"Child feature {i}"
+            )
+            feat_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+                feat_data["id"]
+            )
+            feat_ref.set(feat_data)
+            feat_ids.append(feat_data["id"])
+
+        response = client.delete(f"{self.route}/{domain_data['id']}?force=true")
+        assert response.status_code == 204
+        assert not domain_ref.get().exists
+
+        for feat_id in feat_ids:
+            doc = (
+                firestore_client.collection(FEATURES_COLLECTION).document(feat_id).get()
+            )
+            assert not doc.exists

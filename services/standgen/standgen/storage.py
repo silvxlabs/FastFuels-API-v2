@@ -9,7 +9,7 @@ import xarray as xr
 
 from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
 from lib.errors import ProcessingError
-from lib.gcs import delete_directory, exists, get_gcsfs_client
+from lib.gcs import delete_directory, exists, get_gcsfs_client, storage_size
 from lib.zarr_utils import load_zarr
 
 logger = logging.getLogger(__name__)
@@ -138,6 +138,17 @@ def count_inventory_rows(inventory_id: str) -> int | None:
             f"No Parquet _metadata for inventory {inventory_id}; skipping row count"
         )
         return None
+
+
+def inventory_size(inventory_id: str) -> int:
+    """Total GCS bytes of an inventory's Parquet dataset — its absolute footprint.
+
+    Sums every object under the inventory's prefix (all part files plus the
+    ``_metadata``/``_common_metadata`` footers). Because it measures the live
+    prefix, an in-place replace (:func:`save_parquet_replace`) reads as the new
+    footprint, never an accumulation (#342).
+    """
+    return storage_size(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
 
 
 def delete_parquet(inventory_id: str) -> None:

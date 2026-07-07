@@ -17,7 +17,7 @@ from flask import Request
 
 from etcher.dispatch import dispatch_handler
 from etcher.errors import CancelledException, ProcessingError
-from etcher.storage import delete_features
+from etcher.storage import delete_features, feature_size
 from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.firestore import DocumentNotFoundError, get_document, update_document
@@ -76,8 +76,12 @@ def update_progress(feature_id, message, percent=None):
         raise CancelledException(f"Feature {feature_id} was cancelled")
 
 
-def update_status(feature_id, status, georeference=None, error=None):
-    """Update feature status."""
+def update_status(feature_id, status, georeference=None, size_bytes=None, error=None):
+    """Update feature status.
+
+    ``size_bytes`` is the GCS artifact footprint recorded on completion for
+    per-owner storage quota accounting (#342).
+    """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
         data["progress"] = {"message": "Complete", "percent": 100}
@@ -85,6 +89,8 @@ def update_status(feature_id, status, georeference=None, error=None):
         data["progress"] = {"message": "Failed", "percent": 100}
     if georeference is not None:
         data["georeference"] = georeference
+    if size_bytes is not None:
+        data["size_bytes"] = size_bytes
     if error is not None:
         data["error"] = error
     try:
@@ -187,6 +193,7 @@ def process_feature_request(request: Request):
             feature_id,
             "completed",
             georeference=result.get("georeference"),
+            size_bytes=feature_size(domain_id, feature_id),
         )
         logger.info("Processing complete", extra=ids)
         return "OK", 200

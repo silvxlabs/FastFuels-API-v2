@@ -26,12 +26,18 @@ def mock_inventory():
     }
 
 
+@patch("standgen.main.inventory_size")
 @patch("standgen.main._load_domain")
 @patch("standgen.main.dispatch_handler")
 @patch("standgen.main.update_status")
 @patch("standgen.main.load_inventory")
 def test_happy_path(
-    mock_load, mock_status, mock_dispatch, mock_load_domain, mock_inventory
+    mock_load,
+    mock_status,
+    mock_dispatch,
+    mock_load_domain,
+    mock_inventory_size,
+    mock_inventory,
 ):
     from standgen.main import process_inventory_request
 
@@ -40,6 +46,7 @@ def test_happy_path(
     mock_dispatch.return_value = {
         "georeference": {"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
     }
+    mock_inventory_size.return_value = 4096
 
     request = MockRequest({"id": "test-inventory-123"})
     response, status_code = process_inventory_request(request)
@@ -47,10 +54,13 @@ def test_happy_path(
     assert status_code == 200
     assert response == "OK"
     mock_status.assert_any_call("test-inventory-123", "running")
+    # The inventory's Parquet footprint is recorded on completion (#342).
+    mock_inventory_size.assert_called_once_with("test-inventory-123")
     mock_status.assert_any_call(
         "test-inventory-123",
         "completed",
         georeference={"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
+        size_bytes=4096,
         extra=None,
     )
 

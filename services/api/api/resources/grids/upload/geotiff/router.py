@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.schema import Grid
 from api.resources.grids.upload.geotiff.examples import (
     CREATE_GRID_UPLOAD_OPENAPI_EXAMPLES,
@@ -36,6 +37,7 @@ _CONTENT_TYPE = "image/tiff"
     response_model=GridUploadCreatedResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from a direct GeoTIFF upload",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_geotiff_upload(
     request: Request,
@@ -89,6 +91,9 @@ async def create_geotiff_upload(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(GRIDS_COLLECTION, request)
+
     grid_id = uuid.uuid4().hex
     request_time = datetime.now(UTC)
 

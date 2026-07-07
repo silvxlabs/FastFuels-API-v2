@@ -5,7 +5,7 @@ import logging
 import geopandas as gpd
 
 from lib.config import FEATURES_BUCKET
-from lib.gcs import delete_file
+from lib.gcs import delete_file, storage_size
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,11 @@ def save_features(domain_id: str, feature_id: str, gdf: gpd.GeoDataFrame) -> str
     logger.info(f"Saved feature Parquet to {path}")
 
     return path
+
+
+def feature_size(domain_id: str, feature_id: str) -> int:
+    """Total GCS bytes of a feature's GeoParquet artifact — its footprint (#342)."""
+    return storage_size(f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet")
 
 
 def delete_features(domain_id: str, feature_id: str) -> None:

@@ -31,9 +31,10 @@ ORPHAN_MIN_AGE_HOURS = _int("WALLE_ORPHAN_MIN_AGE_HOURS", 24)
 
 # Ephemeral integration-test resources (id prefix "test-", but NOT the persistent
 # "static-test-" fixtures) get a short retention. Real ids are server-generated
-# uuid4 hex (never "test-"), so this only ever reaps test artifacts; the window
-# is far longer than any test run, so an in-flight test is never raced.
-TEST_TTL_DAYS = _int("WALLE_TEST_TTL_DAYS", 7)
+# uuid4 hex (never "test-"), so this only ever reaps test artifacts. The API test
+# suite no longer sweeps its own data (#353), so walle is the sole reclaimer; the
+# window is still far longer than any test run, so an in-flight test is never raced.
+TEST_TTL_DAYS = _int("WALLE_TEST_TTL_DAYS", 2)
 
 # Per-category dry-run switches. Default enforce (delete); set true to log
 # candidates without deleting — used to validate a category locally before

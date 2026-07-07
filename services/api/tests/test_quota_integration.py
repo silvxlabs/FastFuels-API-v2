@@ -8,8 +8,9 @@ once the active-jobs limit is reached.
 
 Features are the exercised resource: they have the simplest create (only a
 domain is required, no source resource) and a default active limit of 10. The
-active-jobs count is owner-wide, so each test starts from a clean slate of the
-owner's feature docs to keep the counts exact.
+active-jobs count is owner-wide, so every test uses a fresh, isolated owner (see
+``owner_env``) — never the shared test owner — to keep the counts exact and
+independent of that owner's tier.
 """
 
 from unittest.mock import patch
@@ -18,7 +19,6 @@ from uuid import uuid4
 import pytest
 from api.quota import Quotas
 from api.resources.domains.examples import EXAMPLE_WGS84_DEFAULT
-from google.cloud.firestore_v1.base_query import FieldFilter
 from httpx import Client
 
 from lib.config import (
@@ -42,40 +42,20 @@ def mock_create_task():
         yield mock
 
 
-@pytest.fixture
-def seed_features(firestore_client, test_owner_id):
-    """Start from a clean slate of the owner's feature docs, provide a seeder,
-    and remove everything the test seeded or created on teardown."""
-
-    def _clear():
-        query = firestore_client.collection(FEATURES_COLLECTION).where(
-            filter=FieldFilter("owner_id", "==", test_owner_id)
-        )
-        for doc in query.stream():
-            doc.reference.delete()
-
-    def _seed(count, status, domain_id):
-        for _ in range(count):
-            data = make_feature_data(domain_id=domain_id, status=status)
-            firestore_client.collection(FEATURES_COLLECTION).document(data["id"]).set(
-                data
-            )
-
-    _clear()
-    yield _seed
-    _clear()
-
-
 class TestActiveJobQuota:
-    def test_over_active_limit_returns_429(
-        self, client, domain_for_testing, seed_features
-    ):
+    """Active-jobs limit, exercised on a fresh isolated owner (standard limits).
+
+    Uses ``owner_env`` rather than the shared test owner so the assertions never
+    depend on that owner's tier — the shared owner is quota-exempt, which would
+    otherwise let an over-limit create through.
+    """
+
+    def test_over_active_limit_returns_429(self, owner_env):
         """At the active-jobs limit, a create is rejected with a structured 429
         carrying Retry-After and the correct quota/current/limit."""
-        domain_id = domain_for_testing["id"]
-        seed_features(FEATURE_ACTIVE_LIMIT, "pending", domain_id)
+        owner_client, domain_id = owner_env(features={"pending": FEATURE_ACTIVE_LIMIT})
 
-        response = client.post(
+        response = owner_client.post(
             ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
         )
 
@@ -87,44 +67,37 @@ class TestActiveJobQuota:
         assert detail["current"] == FEATURE_ACTIVE_LIMIT
         assert detail["limit"] == FEATURE_ACTIVE_LIMIT
 
-    def test_running_also_counts_as_active(
-        self, client, domain_for_testing, seed_features
-    ):
+    def test_running_also_counts_as_active(self, owner_env):
         """`running` jobs count toward the active limit, not just `pending`."""
-        domain_id = domain_for_testing["id"]
-        seed_features(FEATURE_ACTIVE_LIMIT, "running", domain_id)
+        owner_client, domain_id = owner_env(features={"running": FEATURE_ACTIVE_LIMIT})
 
-        response = client.post(
+        response = owner_client.post(
             ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
         )
 
         assert response.status_code == 429
         assert response.json()["detail"]["quota"] == "max_active_features"
 
-    def test_completed_and_failed_do_not_count(
-        self, client, domain_for_testing, seed_features, firestore_client
-    ):
+    def test_completed_and_failed_do_not_count(self, owner_env):
         """Inactive (completed/failed) docs do not count toward the active
         limit, so a create is allowed even well past the limit in raw count."""
-        domain_id = domain_for_testing["id"]
-        seed_features(FEATURE_ACTIVE_LIMIT, "completed", domain_id)
-        seed_features(FEATURE_ACTIVE_LIMIT, "failed", domain_id)
+        owner_client, domain_id = owner_env(
+            features={"completed": FEATURE_ACTIVE_LIMIT, "failed": FEATURE_ACTIVE_LIMIT}
+        )
 
-        response = client.post(
+        response = owner_client.post(
             ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
         )
 
         assert response.status_code == 201
-        # The teardown clears all owner feature docs, including this one.
 
-    def test_under_active_limit_is_allowed(
-        self, client, domain_for_testing, seed_features
-    ):
+    def test_under_active_limit_is_allowed(self, owner_env):
         """One below the limit still creates successfully."""
-        domain_id = domain_for_testing["id"]
-        seed_features(FEATURE_ACTIVE_LIMIT - 1, "pending", domain_id)
+        owner_client, domain_id = owner_env(
+            features={"pending": FEATURE_ACTIVE_LIMIT - 1}
+        )
 
-        response = client.post(
+        response = owner_client.post(
             ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
         )
 

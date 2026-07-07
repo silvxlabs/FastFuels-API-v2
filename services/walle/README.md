@@ -65,10 +65,13 @@ uv run pytest tests/integration/ -v          # live Firestore + GCS
 
 ## Deployment
 
-`.github/workflows/walle.yml` builds the image and rolls the Cloud Run **job**
-`walle-v2-<env>` (`gcloud run jobs deploy`). Deploying the image does **not** run
-it — a nightly Cloud Scheduler trigger (HTTP `POST .../jobs/walle-v2-<env>:run`,
-mirroring v1 walle) runs it, and that trigger is provisioned **out-of-band**.
+`.github/workflows/walle.yml` (on push to `main`) builds the image and rolls the
+single Cloud Run **job** `walle-v2` (`gcloud run jobs deploy`). walle reconciles
+the shared Firestore + GCS state, so there is one job — not a per-environment
+pair; a second instance would only race the first over identical data. Deploying
+the image does **not** run it — a nightly Cloud Scheduler trigger (HTTP
+`POST .../jobs/walle-v2:run`, mirroring v1 walle) runs it, and that trigger is
+provisioned **out-of-band**.
 
 The job's service account needs Firestore access and GCS object-delete on the
 five artifact buckets.

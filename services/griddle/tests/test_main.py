@@ -114,6 +114,7 @@ class TestProcessGridRequest:
 
         assert status_code == 200
 
+    @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
     @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
@@ -132,6 +133,7 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
         mock_summarize,
+        mock_storage_size,
     ):
         """Successful processing returns 200 and updates status to complete."""
         mock_load_grid.return_value = {
@@ -155,6 +157,7 @@ class TestProcessGridRequest:
         mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
         mock_result.shape = (100, 100)
         mock_dispatch.return_value = mock_result
+        mock_storage_size.return_value = 4096
 
         request = MockRequest(json_data={"id": "test-grid-id"})
 
@@ -166,7 +169,11 @@ class TestProcessGridRequest:
         second_call = mock_update_status.call_args_list[1]
         assert first_call[0] == ("test-grid-id", "running")
         assert second_call[0][1] == "completed"
+        # The zarr store's GCS footprint is recorded on completion (#342).
+        mock_storage_size.assert_called_once_with(mock_save_zarr.return_value)
+        assert second_call.kwargs["size_bytes"] == 4096
 
+    @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
     @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
@@ -185,6 +192,7 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
         mock_summarize,
+        mock_storage_size,
     ):
         """chunks.shape from grid doc is passed to save_zarr."""
         mock_load_grid.return_value = {
@@ -228,6 +236,7 @@ class TestProcessGridRequest:
             "count_by_axis": {"y": 1, "x": 1},
         }
 
+    @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
     @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
@@ -246,6 +255,7 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
         mock_summarize,
+        mock_storage_size,
     ):
         """chunk shape defaults to (512, 512) for grids without chunks set."""
         mock_load_grid.return_value = {

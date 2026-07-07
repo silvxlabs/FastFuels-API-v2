@@ -107,6 +107,8 @@ class TestProcessInventoryRequest:
         inventory = snapshot.to_dict()
         assert inventory["status"] == "completed"
         assert inventory["georeference"] is not None
+        # The inventory Parquet's GCS footprint is recorded on completion (#342).
+        assert inventory["size_bytes"] > 0
 
     @pytest.mark.parametrize("source_pim_grid", [STATIC_PIM_GRID], indirect=True)
     def test_parquet_written_to_gcs(

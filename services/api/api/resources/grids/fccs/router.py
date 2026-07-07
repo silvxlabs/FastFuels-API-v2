@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.fccs.examples import (
     CREATE_LANDFIRE_FCCS_OPENAPI_EXAMPLES,
 )
@@ -40,6 +41,7 @@ COLLECTION = GRIDS_COLLECTION
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from LANDFIRE FCCS",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_landfire_fccs(
     request: Request,
@@ -76,6 +78,8 @@ async def create_landfire_fccs(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)

@@ -122,10 +122,51 @@ def test_find_stale_test_age_guard_spares_recent():
 
 
 def test_find_stale_test_ignores_real_and_static_ids():
-    # Real ids are server uuid4 (no prefix); static-test- fixtures are protected.
+    # A real resource (bare-hex id under a real owner) and a static fixture are
+    # both spared: no "test-" id prefix, "o1" is not a test owner, and
+    # static-test- is protected.
     real = rec(doc_id="abc123def", modified_on=NOW - timedelta(days=999))
     static = rec(doc_id="static-test-blue-mtn", modified_on=NOW - timedelta(days=999))
     assert cleanup.find_stale_test([real, static], NOW) == []
+
+
+def test_find_stale_test_matches_test_owned_bare_hex_id():
+    # Created through the API as the test owner -> server-generated bare-hex id
+    # (no "test-" prefix). Caught by owner, which the id check alone misses.
+    leaked = rec(
+        doc_id="abc123def456",
+        owner_id="test-owner",
+        modified_on=NOW - timedelta(days=TEST_TTL_DAYS + 1),
+    )
+    assert cleanup.find_stale_test([leaked], NOW) == [leaked]
+
+
+def test_find_stale_test_matches_per_test_owner_prefix():
+    # Per-test isolated owners are "test-<uuid4hex>"; their resources reap too.
+    leaked = rec(
+        doc_id="deadbeef",
+        owner_id="test-0123456789abcdef",
+        modified_on=NOW - timedelta(days=TEST_TTL_DAYS + 1),
+    )
+    assert cleanup.find_stale_test([leaked], NOW) == [leaked]
+
+
+def test_find_stale_test_spares_static_fixture_under_test_owner():
+    # A protected static fixture owned by the test owner is still never reaped.
+    static = rec(
+        doc_id="static-test-blue-mtn",
+        owner_id="test-owner",
+        modified_on=NOW - timedelta(days=999),
+    )
+    assert cleanup.find_stale_test([static], NOW) == []
+
+
+def test_find_stale_test_owner_match_respects_age_guard():
+    # Owner-matched but recently modified -> an in-flight test is never raced.
+    recent = rec(
+        doc_id="abc123", owner_id="test-owner", modified_on=NOW - timedelta(days=1)
+    )
+    assert cleanup.find_stale_test([recent], NOW) == []
 
 
 def test_find_stale_test_null_modified_on_spared():

@@ -257,13 +257,13 @@ class TestCreateChmInventory:
         finally:
             doc_ref.delete()
 
-    def test_non_canopy_grid_returns_422(
+    def test_grid_without_chm_band_returns_422(
         self, client, firestore_client, domain_for_testing
     ):
-        """Source grid that is not a canopy grid returns 422."""
+        """Source grid that lacks a 'chm' band returns 422."""
         grid_data = make_grid_data(
             domain_id=domain_for_testing["id"],
-            name="PIM Grid (not canopy)",
+            name="PIM Grid (no chm band)",
             status="completed",
             source={"name": "pim", "product": "treemap"},
             bands=[{"key": "tm_id", "type": "categorical"}],
@@ -279,7 +279,64 @@ class TestCreateChmInventory:
                 json={"source_chm_grid_id": grid_data["id"]},
             )
             assert response.status_code == 422
-            assert "not a canopy grid" in response.json()["detail"].lower()
+            assert "missing required bands" in response.json()["detail"].lower()
+        finally:
+            doc_ref.delete()
+
+    def test_chm_grid_with_non_meter_unit_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A 'chm' band in a non-meter unit is rejected — the stem-isolation
+        algorithm assumes meters and never converts."""
+        grid_data = make_grid_data(
+            domain_id=domain_for_testing["id"],
+            name="CHM in feet",
+            status="completed",
+            source={"name": "upload", "format": "geotiff"},
+            bands=[{"key": "chm", "type": "continuous", "unit": "ft", "index": 0}],
+        )
+        doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+            grid_data["id"]
+        )
+        doc_ref.set(grid_data)
+
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"source_chm_grid_id": grid_data["id"]},
+            )
+            assert response.status_code == 422
+            detail = response.json()["detail"].lower()
+            assert "'ft'" in detail and "'m'" in detail
+        finally:
+            doc_ref.delete()
+
+    def test_uploaded_chm_grid_is_accepted(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A user-uploaded grid (source.name != 'canopy') with a 'chm' band is
+        accepted — the endpoint validates band content, not provenance."""
+        grid_data = make_grid_data(
+            domain_id=domain_for_testing["id"],
+            name="Uploaded ALS CHM",
+            status="completed",
+            source={"name": "upload", "format": "geotiff"},
+            bands=[{"key": "chm", "type": "continuous", "unit": "m", "index": 0}],
+        )
+        doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+            grid_data["id"]
+        )
+        doc_ref.set(grid_data)
+
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"source_chm_grid_id": grid_data["id"]},
+            )
+            assert response.status_code == 201
+            data = response.json()
+            assert data["source"]["name"] == "chm"
+            assert data["source"]["source_chm_grid_id"] == grid_data["id"]
         finally:
             doc_ref.delete()
 

@@ -10,6 +10,11 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from fastfuels_core.voxelization import (
+    compute_crown_probability_field,
+    sample_occupancy,
+    sample_occupied_cells,
+)
 from treevox import voxelize
 
 # Fixtures
@@ -508,7 +513,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -559,7 +571,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -612,7 +631,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -660,7 +686,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -691,6 +724,44 @@ class TestBuildChunkCache:
 
         with pytest.raises(NotImplementedError, match=component):
             voxelize.build_chunk_cache(df, 1.0, 1.0, cfg, np.random.default_rng(0))
+
+
+# field hoist equivalence (#399)
+
+
+class TestFieldHoistEquivalence:
+    """The hoisted seam must be byte-identical to the one-shot wrapper (#399).
+
+    build_chunk_cache computes the crown-probability field once per bin and
+    draws each realization via `sample_occupancy`; this must reproduce exactly
+    what the old per-realization `sample_occupied_cells` produced for the same
+    seed. Runs against real fastfuels-core (no mocks) so it guards the
+    equivalence treevox now relies on for its per-bin EDT hoist.
+    """
+
+    def test_sample_occupancy_matches_wrapper_on_real_crown(self):
+        tree = voxelize.build_tree(
+            pd.Series(
+                {
+                    "fia_species_code": 122,
+                    "fia_status_code": 1,
+                    "dbh": 25.0,
+                    "height": 18.0,
+                    "crown_ratio": 0.5,
+                    "x": 5.0,
+                    "y": 5.0,
+                }
+            ),
+            base_source_config(),
+        )
+        mask = voxelize.discretize_crown_profile(tree, 0.5, 0.5)
+        assert np.count_nonzero(mask) > 0
+
+        field, n = compute_crown_probability_field(mask, alpha=0.5, beta=0.5)
+        for seed in (1, 7, 42, 2**31 - 2):
+            hoisted = sample_occupancy(mask, field, n, seed=seed)
+            wrapper = sample_occupied_cells(mask, alpha=0.5, beta=0.5, seed=seed)
+            assert np.array_equal(hoisted, wrapper)
 
 
 # voxelize_chunk (mocked cache)

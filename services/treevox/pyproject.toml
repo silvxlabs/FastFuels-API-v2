@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "functions-framework>=3.10.0",
     "lib[firestore,gcs,zarr,raster]",
-    "fastfuels-core>=0.11.1",
+    "fastfuels-core>=0.12.0",
     "pyarrow>=18.0.0",
 ]
 

@@ -737,7 +737,7 @@ def _apply_bands(
     buffers: dict[str, np.ndarray],
     buf_slices: tuple[slice, slice, slice],
     biomass_clip: np.ndarray,
-    lad_clip: np.ndarray,
+    lad_clip: np.ndarray | None,
     species_code: int,
     foliage_sav: float,
     tree_id: int,
@@ -766,10 +766,9 @@ def _apply_bands(
         Non-zero values mark voxels the tree occupies; values are kg/m**3
         of foliage biomass.
     lad_clip
-        The source-slice view into the bin's LAD array, i.e.
-        `lad_array[source_slices]`. Same shape as `buf[buf_slices]`.
-        Non-zero values mark voxels the tree occupies; values are m**2/m**3
-        of leaf area density.
+        Per-voxel leaf area density (m**2/m**3) for the tree, same shape as
+        `buf[buf_slices]`, or `None` when the `leaf_area_density` band was
+        not requested. Only read when that band is present in `buffers`.
     species_code
         FIA species code (int), from `CacheEntry.species_code`. Written
         into the `spcd` band.
@@ -900,13 +899,13 @@ def voxelize_chunk(
     2. Picks one biomass realization from `entry.biomass_arrays` — the
        sole array when there's one, else a uniformly-sampled choice via
        `rng.integers`.
-    3. Computes leaf area density using chosen biomaass array and specific
-       leaf area from cache.
-    4. `_tree_cell_indices` — stem world coords → absolute cell indices.
-    5. `_place_biomass` — computes matched `(buffer_slices,
+    3. `_tree_cell_indices` — stem world coords → absolute cell indices.
+    4. `_place_biomass` — computes matched `(buffer_slices,
        source_slices)` with vertical anchor at
        `entry.crown_base_height`; returns `None` if the crown is fully
        outside this chunk buffer.
+    5. When `leaf_area_density` is requested, derives the tree's LAD clip
+       as `biomass_clip * entry.specific_leaf_area`; otherwise skips it.
     6. `_apply_bands` — writes the tree's contribution into every
        requested band buffer with the appropriate accumulate/overwrite
        rule.
@@ -943,11 +942,6 @@ def voxelize_chunk(
             arrays[0] if len(arrays) == 1 else arrays[int(rng.integers(len(arrays)))]
         )
 
-        if entry.specific_leaf_area is not None:
-            lad_array = (
-                biomass_array * entry.specific_leaf_area
-            )  # Use per tree specific leaf area. This may change later if we implement per-voxel SLA
-
         abs_col, abs_row = _tree_cell_indices(
             float(row["x"]), float(row["y"]), x_origin, y_origin, hr
         )
@@ -965,11 +959,22 @@ def voxelize_chunk(
             continue
 
         buf_slices, src_slices = placement
+        biomass_clip = biomass_array[src_slices]
+
+        # Leaf area density = foliage biomass density * per-tree specific leaf
+        # area (m**2/m**3). Only derived when requested; skipped otherwise so
+        # jobs that don't ask for the band pay nothing. (May become per-voxel
+        # SLA later.) `biomass_clip` is the foliage component today — see
+        # `distribute_component_biomass`.
+        lad_clip = None
+        if "leaf_area_density" in buffers:
+            lad_clip = biomass_clip * entry.specific_leaf_area
+
         _apply_bands(
             buffers,
             buf_slices,
-            biomass_array[src_slices],
-            lad_array[src_slices],
+            biomass_clip,
+            lad_clip,
             entry.species_code,
             entry.foliage_sav,
             int(row["tree_id"]),

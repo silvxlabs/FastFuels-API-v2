@@ -93,7 +93,14 @@ def _patch_fastfuels(monkeypatch, canopy_shape=(2, 3, 3), biomass_value=1.0):
     monkeypatch.setattr(
         voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
     )
-    monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+    monkeypatch.setattr(
+        voxelize,
+        "compute_crown_probability_field",
+        lambda m, **kw: (m, int(np.count_nonzero(m))),
+    )
+    monkeypatch.setattr(
+        voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+    )
 
     class FakeVT:
         def __init__(self, tree, mask, hr, vr):
@@ -173,13 +180,18 @@ class TestDeterminism:
         """
         canopy = np.ones((3, 3, 3), dtype="float32")
 
-        def fake_sample(m, seed=None, **kw):
+        def fake_sample(m, field, n, seed=None, **kw):
             return m.copy() * (1.0 + (float(seed or 1) % 100) * 0.1)
 
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", fake_sample)
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(voxelize, "sample_occupancy", fake_sample)
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):

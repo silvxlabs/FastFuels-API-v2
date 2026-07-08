@@ -22,13 +22,19 @@ from api.resources.domains.examples import EXAMPLE_WGS84_DEFAULT
 from httpx import Client
 
 from lib.config import (
+    APPLICATIONS_COLLECTION,
     DOMAINS_COLLECTION,
     FEATURES_COLLECTION,
     KEYS_COLLECTION,
     USERS_COLLECTION,
 )
 from tests.conftest import TEST_URL
-from tests.fixtures import make_domain_data, make_feature_data, make_key_data
+from tests.fixtures import (
+    make_application_data,
+    make_domain_data,
+    make_feature_data,
+    make_key_data,
+)
 
 FEATURE_ACTIVE_LIMIT = Quotas().max_active_features
 ROAD_ROUTE = "/domains/{domain_id}/features/road/osm"
@@ -117,6 +123,7 @@ def owner_env(firestore_client):
         users_doc: dict | None = None,
         features: dict | None = None,
         feature_size_bytes: int | None = None,
+        applications: int | None = None,
     ):
         owner_id = f"test-{uuid4().hex}"
 
@@ -148,6 +155,13 @@ def owner_env(firestore_client):
                     feat["id"]
                 ).set(feat)
                 created.append((FEATURES_COLLECTION, feat["id"]))
+
+        for _ in range(applications or 0):
+            app = make_application_data(owner_id=owner_id)
+            firestore_client.collection(APPLICATIONS_COLLECTION).document(
+                app["id"]
+            ).set(app)
+            created.append((APPLICATIONS_COLLECTION, app["id"]))
 
         owner_client = Client(base_url=TEST_URL, headers={"API-KEY": secret})
         clients.append(owner_client)
@@ -266,6 +280,22 @@ class TestCountAndStorageQuota:
         assert "Retry-After" not in response.headers
         detail = response.json()["detail"]
         assert detail["quota"] == "max_domains"
+        assert detail["limit"] == 1
+        assert detail["current"] == 1
+
+    def test_application_count_over_limit_returns_429(self, owner_env):
+        """A personal owner at max_applications is rejected from creating
+        another application — capping the fresh quota buckets one user can mint
+        by spinning up applications as independent resource owners."""
+        owner_client, _ = owner_env(
+            users_doc={"quota_overrides": {"max_applications": 1}},
+            applications=1,
+        )
+        response = owner_client.post("/applications", json={"name": "over-limit"})
+        assert response.status_code == 429
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["quota"] == "max_applications"
         assert detail["limit"] == 1
         assert detail["current"] == 1
 

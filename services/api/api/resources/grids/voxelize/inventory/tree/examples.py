@@ -294,9 +294,10 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_WITH_LAD,
         "summary": "Request leaf area density band",
         "description": (
-            "Produces a leaf area density (LAD) (m^2/m^3) band using canopy "
-            "bulk density (kg/m^3) and a species-derived specific leaf area "
-            "(SLA) (m^2/kg). SLA per tree is calculated in fastfuels-core "
+            "Produces a leaf area density (LAD) band (leaf area m**2 per m**3 "
+            "of canopy volume, reported in the canonical 1/m) using canopy "
+            "bulk density (kg/m**3) and a species-derived specific leaf area "
+            "(SLA) (m**2/kg). SLA per tree is calculated in fastfuels-core "
             "(https://github.com/silvxlabs/fastfuels-core/blob/main/fastfuels_core/trees.py) "
             "using a database of per species SLA assembled from TRY Plant "
             "Trait Database (https://www.try-db.org/TryWeb/Home.php) data, "

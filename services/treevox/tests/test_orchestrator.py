@@ -886,6 +886,7 @@ class TestHaloMergeAcrossChunks:
             return SimpleNamespace(
                 crown_base_height=1.0,
                 foliage_sav=2000.0,
+                specific_leaf_area=5.0,
                 species_code=131,
             )
 

@@ -12,6 +12,7 @@ env:
 # would only race the prod one over identical data. There is exactly one walle
 # job, deployed from main.
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -46,6 +47,7 @@ jobs:
           tags: |
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:latest
             ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:prod
           file: services/walle/Dockerfile
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -69,7 +71,7 @@ jobs:
       - name: Deploy Cloud Run Job
         run: |
           gcloud run jobs deploy ${{ env.SERVICE_NAME }} \
-            --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:latest \
+            --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:prod \
             --region ${{ env.REGION }} \
             --update-env-vars="\
               DEPLOYMENT_ENV=prod,\

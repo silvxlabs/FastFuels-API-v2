@@ -91,9 +91,10 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
     TreeBand.leaf_area_density: {
         "key": "leaf_area_density",
         "name": "Leaf Area Density",
-        "description": "Per-voxel leaf surface area.",
+        "description": "Per-voxel one-sided leaf area per unit canopy volume "
+        "(m**2 of leaf area per m**3), which reduces to the canonical 1/m.",
         "type": BandType.continuous,
-        "unit": "m**2/m**3",
+        "unit": "1/m",
     },
     TreeBand.fuel_moisture_live: {
         "key": "fuel_moisture.live",

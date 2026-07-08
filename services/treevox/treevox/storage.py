@@ -39,6 +39,7 @@ BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "bulk_density.branchwood.dead": ("float32", 0.0),
     "bulk_density.fine.live": ("float32", 0.0),
     "bulk_density.fine.dead": ("float32", 0.0),
+    "leaf_area_density": ("float32", 0.0),
     "savr.foliage": ("float32", 0.0),
     "fuel_moisture.live": ("float32", 0.0),
     "fuel_moisture.dead": ("float32", 0.0),
@@ -55,6 +56,7 @@ ADDITIVE_BANDS = frozenset(
         "bulk_density.branchwood.dead",
         "bulk_density.fine.live",
         "bulk_density.fine.dead",
+        "leaf_area_density",
     }
 )
 

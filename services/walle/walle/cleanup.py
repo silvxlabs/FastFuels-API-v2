@@ -207,27 +207,33 @@ def scan_collection(layout: ResourceLayout) -> list[Record]:
 
 
 def scan_domains() -> list[Record]:
-    """Stream domain docs (id + modified_on).
+    """Stream domain docs (id + modified_on + owner_id).
 
     Serves both the live-domain set (for orphaned-child detection) and the
-    test-resource purge. Domains have no GCS artifact, so the other fields are
-    left empty.
+    test-resource purge. ``owner_id`` is projected so the purge can match domains
+    created through the API as a test owner (bare-hex ids). Domains have no GCS
+    artifact, so the remaining fields are left empty.
     """
     stream = (
-        firestore_client.collection(DOMAINS_COLLECTION).select(["modified_on"]).stream()
+        firestore_client.collection(DOMAINS_COLLECTION)
+        .select(["modified_on", "owner_id"])
+        .stream()
     )
-    return [
-        Record(
-            collection=DOMAINS_COLLECTION,
-            doc_id=snap.id,
-            domain_id=None,
-            owner_id=None,
-            status=None,
-            modified_on=(snap.to_dict() or {}).get("modified_on"),
-            size_bytes=None,
+    records = []
+    for snap in stream:
+        d = snap.to_dict() or {}
+        records.append(
+            Record(
+                collection=DOMAINS_COLLECTION,
+                doc_id=snap.id,
+                domain_id=None,
+                owner_id=d.get("owner_id"),
+                status=None,
+                modified_on=d.get("modified_on"),
+                size_bytes=None,
+            )
         )
-        for snap in stream
-    ]
+    return records
 
 
 # --- category finders -----------------------------------------------------
@@ -242,10 +248,17 @@ def _is_protected(doc_id: str) -> bool:
     return doc_id.startswith(_PROTECTED_ID_PREFIXES)
 
 
-def _is_test(doc_id: str) -> bool:
-    # Ephemeral test resources. "static-test-" starts with "static-", not
-    # "test-", so the persistent fixtures are naturally excluded.
-    return doc_id.startswith("test-")
+def _is_test_record(rec: Record) -> bool:
+    """Whether ``rec`` is an ephemeral integration-test artifact.
+
+    Two independent markers: an id minted by the suite (``test-`` prefix), or
+    ownership by a test owner. Test owner_ids are themselves ``test-``-prefixed
+    (``test-owner`` and the per-test ``test-<uuid4hex>`` owners), so resources
+    created through the API as a test owner — which get server-generated bare-hex
+    ids the id check alone misses — are still caught. ``static-test-`` fixtures
+    are excluded by the caller via ``_is_protected``.
+    """
+    return rec.doc_id.startswith("test-") or (rec.owner_id or "").startswith("test-")
 
 
 def _older_than(ts, cutoff: datetime) -> bool:
@@ -307,17 +320,19 @@ def find_expired(
 
 
 def find_stale_test(records: list[Record], now: datetime) -> list[Record]:
-    """Ephemeral ``test-`` docs older than the short test-retention window.
+    """Ephemeral test docs older than the short test-retention window.
 
-    Real ids are server-generated uuid4 hex (never ``test-``), so this only ever
-    matches integration-test artifacts; the window is far longer than any test
-    run, so it never races an in-flight test.
+    Matches by suite-minted id or by test-owner ownership (see
+    ``_is_test_record``), excluding protected ``static-test-`` fixtures. The
+    window is far longer than any test run, so it never races an in-flight test.
     """
     cutoff = now - timedelta(days=TEST_TTL_DAYS)
     return [
         rec
         for rec in records
-        if _is_test(rec.doc_id) and _older_than(rec.modified_on, cutoff)
+        if not _is_protected(rec.doc_id)
+        and _is_test_record(rec)
+        and _older_than(rec.modified_on, cutoff)
     ]
 
 

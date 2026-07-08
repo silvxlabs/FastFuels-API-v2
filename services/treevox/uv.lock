@@ -584,7 +584,7 @@ wheels = [
 
 [[package]]
 name = "fastfuels-core"
-version = "0.11.1"
+version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dask", extra = ["dataframe"] },
@@ -600,9 +600,9 @@ dependencies = [
     { name = "shapely" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/5b/ff5523f5f8f9505432b802408c4a14ea67e68eee1fdb8470b7d81dc1475a/fastfuels_core-0.11.1.tar.gz", hash = "sha256:446edf5579ac59f12544c097ededa6d524d5cf69ca25b69a82d84b9604a801a2", size = 931049, upload-time = "2026-06-17T17:43:33.219Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/87/a966ba98f39f469d7906297875132dc39b0077ec75d1a7e7523c879e5bde/fastfuels_core-0.12.0.tar.gz", hash = "sha256:4f77ce39b57b550fd829a02ce6f769acbab2d0ba0502a0fd47398a3553a0550c", size = 946772, upload-time = "2026-07-08T15:57:43.942Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/4d/569874647d9efefee0d16428c639262f931ca3f266327c670458d5b266fc/fastfuels_core-0.11.1-py3-none-any.whl", hash = "sha256:019749c085cafea89dacfe185d75f62bac35a4ac22b52022e48358a5138f3b34", size = 750658, upload-time = "2026-06-17T17:43:31.861Z" },
+    { url = "https://files.pythonhosted.org/packages/31/54/1c69bb62dccaa12dcdd059b18c006f16dc6e7fb5936a16e5be6ee085c393/fastfuels_core-0.12.0-py3-none-any.whl", hash = "sha256:7848c4336347b644c7ae05edacd1ada911f0f312accb4964e81b0b4c706f6e53", size = 767389, upload-time = "2026-07-08T15:57:42.65Z" },
 ]
 
 [[package]]
@@ -2501,7 +2501,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastfuels-core", specifier = ">=0.11.1" },
+    { name = "fastfuels-core", specifier = ">=0.12.0" },
     { name = "functions-framework", specifier = ">=3.10.0" },
     { name = "google-cloud-run", marker = "extra == 'test'", specifier = ">=0.10.0" },
     { name = "google-cloud-tasks", marker = "extra == 'test'", specifier = ">=2.16.0" },

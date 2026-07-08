@@ -17,8 +17,9 @@ import pandas as pd
 from fastfuels_core.trees import Tree
 from fastfuels_core.voxelization import (
     VoxelizedTree,
+    compute_crown_probability_field,
     discretize_crown_profile,
-    sample_occupied_cells,
+    sample_occupancy,
 )
 
 
@@ -456,7 +457,7 @@ def build_chunk_cache(
         `build_tree`.
     rng
         Seeded numpy Generator. Used twice per cache entry: once to draw
-        a per-realization int seed for `sample_occupied_cells` (so each
+        a per-realization int seed for `sample_occupancy` (so each
         realization varies deterministically), and once downstream in
         `voxelize_chunk` to pick which realization a given tree row uses.
         Seeded from `source.seed + (row_chunk, col_chunk)` in the
@@ -470,18 +471,22 @@ def build_chunk_cache(
        "bin-representative").
     2. Calls `discretize_crown_profile(tree, hr, vr)` to get a 3D mask of
        which voxels the tree's crown occupies.
-    3. Computes how many independent biomass realizations to cache via
+    3. Computes the deterministic crown-probability field once per bin via
+       `compute_crown_probability_field(canopy_mask, alpha=0.5, beta=0.5)`.
+       The field (and its EDT) depends only on the mask, so it is shared by
+       every realization of the bin rather than recomputed per draw (#399).
+    4. Computes how many independent biomass realizations to cache via
        `calculate_arrays_to_cache(nonzero_voxels, group_size)`.
-    4. For each realization:
+    5. For each realization:
          a. Draws a seed from `rng`.
-         b. `sample_occupied_cells(canopy_mask, alpha=0.5, beta=0.5, seed)`
-            — stochastic sub-voxel occupancy.
+         b. `sample_occupancy(canopy_mask, field, n, seed)` — one stochastic
+            sub-voxel occupancy draw from the shared field.
          c. `VoxelizedTree(tree, sampled, hr, vr).distribute_biomass()` →
             per-voxel kg/m**3 array.
          d. Sanitizes non-finite values (`foliage_biomass / 0 volume`
             edge case inside fastfuels-core) to zero so the downstream
             zarr store never receives NaN/Inf.
-    5. Packs the realizations plus the bin-representative's
+    6. Packs the realizations plus the bin-representative's
        `crown_base_height`, `foliage_sav`, , 'specific_leaf_area', and
        `species_code` into one `CacheEntry`.
 
@@ -510,21 +515,27 @@ def build_chunk_cache(
         try:
             tree = build_tree(first_row, source_config)
             canopy_mask = discretize_crown_profile(tree, hr, vr)
+            nonzero = int(np.count_nonzero(canopy_mask))
+            if nonzero == 0:
+                # Empty crown — no voxels to distribute biomass into.
+                continue
+            # The crown-probability field (and its EDT) is deterministic in
+            # (mask, alpha, beta) — identical across a bin's realizations, which
+            # differ only by the stochastic voxel draw. Compute it once per bin
+            # and draw every realization from it, rather than recomputing the
+            # field per realization inside sample_occupied_cells (#399).
+            field, n_occupied = compute_crown_probability_field(
+                canopy_mask, alpha=0.5, beta=0.5
+            )
         except Exception:
             # Degenerate tree (e.g. allometric failure) — skip entry, like v1.
-            continue
-        nonzero = int(np.count_nonzero(canopy_mask))
-        if nonzero == 0:
-            # Empty crown — no voxels to distribute biomass into.
             continue
         num_to_cache = calculate_arrays_to_cache(nonzero, len(group))
         arrays: list[np.ndarray] = []
         for _ in range(num_to_cache):
             seed = int(rng.integers(1, 2**31 - 1))
             try:
-                sampled = sample_occupied_cells(
-                    canopy_mask, alpha=0.5, beta=0.5, seed=seed
-                )
+                sampled = sample_occupancy(canopy_mask, field, n_occupied, seed=seed)
                 vt = VoxelizedTree(tree, sampled, hr, vr)
                 biomass = distribute_component_biomass(vt, biomass_component)
             except NotImplementedError:

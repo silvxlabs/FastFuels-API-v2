@@ -16,6 +16,7 @@ suite tolerates accumulation (list assertions use ``>=`` / membership).
 
 import os
 import threading
+from uuid import uuid4
 
 import pytest
 from api.auth import hash_api_key
@@ -28,7 +29,7 @@ from lib.config import (
     KEYS_COLLECTION,
 )
 from tests import fixtures
-from tests.fixtures import make_application_data, make_domain_data
+from tests.fixtures import make_application_data, make_domain_data, make_key_data
 
 TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080")
 TEST_API_KEY = os.environ.get("TEST_API_KEY", "")
@@ -75,6 +76,35 @@ def _warmup_api(client):
 def firestore_client():
     """Session-scoped Firestore client for direct database operations."""
     return firestore.Client()
+
+
+@pytest.fixture
+def isolated_owner(firestore_client):
+    """A fresh owner (standard quota) with its own API key and HTTP client.
+
+    Owner-wide list/count assertions (``GET /domains``, ``/applications``,
+    ``/keys``) must run against an owner whose only resources are the ones the
+    test seeds — never the shared owner, whose accumulated test data buries a
+    seeded resource past the first page between walle sweeps. Yields
+    ``(client, owner_id, seed)``; ``seed(collection, doc)`` writes and tracks a
+    doc, and every tracked doc plus the key is removed on teardown.
+    """
+    owner_id = f"test-{uuid4().hex}"
+    key = make_key_data(owner_id=owner_id, scopes=["read", "write"])
+    secret = key.pop("_test_secret")
+    firestore_client.collection(KEYS_COLLECTION).document(key["id"]).set(key)
+    tracked = [(KEYS_COLLECTION, key["id"])]
+
+    def seed(collection: str, doc: dict) -> dict:
+        firestore_client.collection(collection).document(doc["id"]).set(doc)
+        tracked.append((collection, doc["id"]))
+        return doc
+
+    with Client(base_url=TEST_URL, headers={"API-KEY": secret}, timeout=30.0) as c:
+        yield c, owner_id, seed
+
+    for collection, doc_id in tracked:
+        firestore_client.collection(collection).document(doc_id).delete()
 
 
 @pytest.fixture(scope="session")

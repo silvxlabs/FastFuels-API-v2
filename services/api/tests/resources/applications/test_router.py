@@ -117,13 +117,18 @@ class TestListApplications:
         assert "total_items" in data
         assert isinstance(data["applications"], list)
 
-    def test_includes_user_apps(self, client, application_for_testing):
+    def test_includes_user_apps(self, isolated_owner):
+        # Fresh isolated owner: the listing is bounded to the seeded app and
+        # never buried by the shared owner's accumulated test applications.
+        client, owner_id, seed = isolated_owner
+        app = seed(APPLICATIONS_COLLECTION, make_application_data(owner_id=owner_id))
+
         response = client.get(self.route)
         assert response.status_code == 200
 
         data = response.json()
         app_ids = [a["id"] for a in data["applications"]]
-        assert application_for_testing["id"] in app_ids
+        assert app["id"] in app_ids
 
     def test_excludes_other_users_apps(self, client, application_with_different_owner):
         response = client.get(self.route)

@@ -8,7 +8,8 @@ Requires a running local API server (http://127.0.0.1:8080).
 import pytest
 from api.auth import hash_api_key
 
-from lib.config import KEYS_COLLECTION
+from lib.config import APPLICATIONS_COLLECTION, KEYS_COLLECTION
+from tests.fixtures import make_application_data, make_key_data
 
 
 class TestCreateKey:
@@ -121,27 +122,6 @@ class TestCreateKey:
 class TestListKeys:
     route = "/keys"
 
-    @pytest.fixture(scope="class")
-    def keys_for_listing(self, client, application_for_testing):
-        """Create a personal key and an application key for list tests."""
-        personal = client.post(self.route, json={"name": "List Personal Key"})
-        assert personal.status_code == 201
-
-        app_key = client.post(
-            self.route,
-            json={
-                "name": "List App Key",
-                "access": "application",
-                "application_id": application_for_testing["id"],
-            },
-        )
-        assert app_key.status_code == 201
-
-        return {
-            "personal": personal.json(),
-            "application": app_key.json(),
-        }
-
     def test_returns_paginated_response(self, client):
         response = client.get(self.route)
         assert response.status_code == 200
@@ -153,14 +133,35 @@ class TestListKeys:
         assert "total_items" in data
         assert isinstance(data["keys"], list)
 
-    def test_includes_personal_and_application_keys(self, client, keys_for_listing):
+    def test_includes_personal_and_application_keys(self, isolated_owner):
+        # Fresh isolated owner: keys are listed by creator_id, so the seeded pair
+        # is bounded to this owner and not buried by accumulated test keys.
+        client, owner_id, seed = isolated_owner
+
+        personal = make_key_data(
+            owner_id=owner_id, creator_id=owner_id, name="List Personal Key"
+        )
+        personal.pop("_test_secret")
+        seed(KEYS_COLLECTION, personal)
+
+        app = seed(APPLICATIONS_COLLECTION, make_application_data(owner_id=owner_id))
+        app_key = make_key_data(
+            owner_id=app["id"],
+            creator_id=owner_id,
+            name="List App Key",
+            access="application",
+            application_id=app["id"],
+        )
+        app_key.pop("_test_secret")
+        seed(KEYS_COLLECTION, app_key)
+
         response = client.get(self.route)
         assert response.status_code == 200
 
         data = response.json()
         key_ids = [k["id"] for k in data["keys"]]
-        assert keys_for_listing["personal"]["id"] in key_ids
-        assert keys_for_listing["application"]["id"] in key_ids
+        assert personal["id"] in key_ids
+        assert app_key["id"] in key_ids
 
     def test_page_param(self, client):
         response = client.get(f"{self.route}?page=0&size=1")

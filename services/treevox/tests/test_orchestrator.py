@@ -901,7 +901,14 @@ class TestHaloMergeAcrossChunks:
         monkeypatch.setattr(
             vmod, "discretize_crown_profile", lambda *a, **kw: mask.copy()
         )
-        monkeypatch.setattr(vmod, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            vmod,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            vmod, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
         monkeypatch.setattr(vmod, "VoxelizedTree", FakeVT)
 
     def _build_union(self, layout, batch, keys):

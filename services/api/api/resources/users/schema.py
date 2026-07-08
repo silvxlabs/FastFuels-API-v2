@@ -59,7 +59,7 @@ class JobResourceUsage(BaseModel):
 
 
 class CountUsage(BaseModel):
-    """Usage for a count-only resource type (domains, API keys)."""
+    """Usage for a count-only resource type (domains, applications, API keys)."""
 
     total: UsageCount = Field(
         ..., description="Total resources of this type vs. the count limit."
@@ -92,5 +92,6 @@ class Usage(BaseModel):
     features: JobResourceUsage
     pointclouds: JobResourceUsage
     domains: CountUsage
+    applications: CountUsage
     api_keys: CountUsage
     lifecycle: UsageLifecycle

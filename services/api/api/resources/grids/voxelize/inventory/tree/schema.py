@@ -36,6 +36,7 @@ class TreeBand(StrEnum):
     bulk_density_branchwood_dead = "bulk_density.branchwood.dead"
     bulk_density_fine_live = "bulk_density.fine.live"
     bulk_density_fine_dead = "bulk_density.fine.dead"
+    leaf_area_density = "leaf_area_density"
     fuel_moisture_live = "fuel_moisture.live"
     fuel_moisture_dead = "fuel_moisture.dead"
     savr_foliage = "savr.foliage"
@@ -86,6 +87,13 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
         "description": "Per-voxel bulk density of dead fine fuels (foliage + fine branchwood).",
         "type": BandType.continuous,
         "unit": "kg/m**3",
+    },
+    TreeBand.leaf_area_density: {
+        "key": "leaf_area_density",
+        "name": "Leaf Area Density",
+        "description": "Per-voxel leaf surface area.",
+        "type": BandType.continuous,
+        "unit": "m**2/m**3",
     },
     TreeBand.fuel_moisture_live: {
         "key": "fuel_moisture.live",

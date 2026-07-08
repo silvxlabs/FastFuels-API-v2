@@ -50,6 +50,7 @@ class TestBandSpecs:
             "bulk_density.branchwood.dead",
             "bulk_density.fine.live",
             "bulk_density.fine.dead",
+            "leaf_area_density",
             "savr.foliage",
             "fuel_moisture.live",
             "fuel_moisture.dead",

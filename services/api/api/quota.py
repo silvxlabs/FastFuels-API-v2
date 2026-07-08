@@ -56,6 +56,7 @@ class Quotas(BaseModel):
     max_features: int = 500
     max_pointclouds: int = 50
     max_api_keys: int = 50
+    max_applications: int = 5
 
     # Storage: GCS artifact bytes per resource type (enforced in phase 3).
     max_grid_storage_bytes: int = 50 * GiB
@@ -177,6 +178,9 @@ _RESOURCE_QUOTAS: dict[str, _ResourceQuota] = {
         "max_pointcloud_storage_bytes",
     ),
     DOMAINS_COLLECTION: _ResourceQuota("domain", None, "max_domains", None),
+    APPLICATIONS_COLLECTION: _ResourceQuota(
+        "application", None, "max_applications", None
+    ),
 }
 
 # A job is "in flight" while pending or running; both count so the limit caps
@@ -331,6 +335,7 @@ _USAGE_COLLECTIONS: dict[str, str] = {
     "features": FEATURES_COLLECTION,
     "pointclouds": POINT_CLOUDS_COLLECTION,
     "domains": DOMAINS_COLLECTION,
+    "applications": APPLICATIONS_COLLECTION,
 }
 
 

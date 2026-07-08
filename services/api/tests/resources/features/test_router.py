@@ -111,14 +111,32 @@ class TestListFeaturesWildcard:
     def route(self):
         return "/domains/-/features"
 
-    def test_wildcard_returns_features_from_all_domains(
-        self, client, features_across_domains
-    ):
+    def test_wildcard_returns_features_from_all_domains(self, isolated_owner):
+        """Features from multiple domains are all returned, bounded to a fresh
+        isolated owner so the wildcard result isn't buried past the first page
+        by the shared owner's accumulated test data.
+        """
+        client, owner_id, seed = isolated_owner
+        seeded = []
+        for i in range(2):
+            domain = seed(
+                DOMAINS_COLLECTION,
+                make_domain_data(owner_id=owner_id, name=f"WC Domain {i}"),
+            )
+            seeded.append(
+                seed(
+                    FEATURES_COLLECTION,
+                    make_feature_data(
+                        domain_id=domain["id"], owner_id=owner_id, name=f"Feat {i}"
+                    ),
+                )
+            )
+
         response = client.get(self.route())
         assert response.status_code == 200
 
         feature_ids = [f["id"] for f in response.json()["features"]]
-        for feat in features_across_domains:
+        for feat in seeded:
             assert feat["id"] in feature_ids
 
     def test_wildcard_excludes_other_users_features(

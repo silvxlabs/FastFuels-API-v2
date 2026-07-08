@@ -478,15 +478,34 @@ class TestListInventoriesWildcard:
         response = client.get(self.route())
         assert response.status_code == 200
 
-    def test_wildcard_returns_inventories_from_all_domains(
-        self, client, inventories_across_domains
-    ):
-        """Inventories from multiple domains are all returned."""
+    def test_wildcard_returns_inventories_from_all_domains(self, isolated_owner):
+        """Inventories from multiple domains are all returned.
+
+        Runs on a fresh isolated owner so the wildcard result is bounded to the
+        seeded set and never buried past the first page by the shared owner's
+        accumulated test data.
+        """
+        client, owner_id, seed = isolated_owner
+        seeded = []
+        for i in range(2):
+            domain = seed(
+                DOMAINS_COLLECTION,
+                make_domain_data(owner_id=owner_id, name=f"WC Domain {i}"),
+            )
+            seeded.append(
+                seed(
+                    INVENTORIES_COLLECTION,
+                    make_inventory_data(
+                        domain_id=domain["id"], owner_id=owner_id, name=f"Inv {i}"
+                    ),
+                )
+            )
+
         response = client.get(self.route())
         assert response.status_code == 200
 
         inv_ids = [i["id"] for i in response.json()["inventories"]]
-        for inv in inventories_across_domains:
+        for inv in seeded:
             assert inv["id"] in inv_ids
 
     def test_wildcard_excludes_other_users_inventories(

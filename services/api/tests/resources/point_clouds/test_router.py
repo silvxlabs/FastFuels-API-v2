@@ -115,15 +115,32 @@ class TestListPointCloudsWildcard:
         response = client.get(self.route())
         assert response.status_code == 200
 
-    def test_wildcard_returns_point_clouds_from_all_domains(
-        self, client, point_clouds_across_domains
-    ):
-        """Point clouds from multiple domains are all returned."""
+    def test_wildcard_returns_point_clouds_from_all_domains(self, isolated_owner):
+        """Point clouds from multiple domains are all returned, bounded to a
+        fresh isolated owner so the wildcard result isn't buried past the first
+        page by the shared owner's accumulated test data.
+        """
+        client, owner_id, seed = isolated_owner
+        seeded = []
+        for i in range(2):
+            domain = seed(
+                DOMAINS_COLLECTION,
+                make_domain_data(owner_id=owner_id, name=f"WC Domain {i}"),
+            )
+            seeded.append(
+                seed(
+                    POINT_CLOUDS_COLLECTION,
+                    make_point_cloud_data(
+                        domain_id=domain["id"], owner_id=owner_id, name=f"PC {i}"
+                    ),
+                )
+            )
+
         response = client.get(self.route())
         assert response.status_code == 200
 
         pc_ids = [p["id"] for p in response.json()["point_clouds"]]
-        for pc in point_clouds_across_domains:
+        for pc in seeded:
             assert pc["id"] in pc_ids
 
     def test_wildcard_excludes_other_users_point_clouds(

@@ -1068,14 +1068,9 @@ class TestVoxelizeChunk:
         )
 
         assert buffers["bulk_density.foliage.live"].sum() > 0
-        exception_raised = False
-        try:
-            assert buffers["leaf_area_density"].min() == 0.0
-        except KeyError:
-            exception_raised = (
-                True  # This should raise KeyError because LAD should not be computed
-            )
-        assert exception_raised
+        # LAD is skipped entirely when the band isn't requested, so no
+        # buffer is allocated for it.
+        assert "leaf_area_density" not in buffers
 
 
 # Geometric placement helpers

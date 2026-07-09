@@ -5,6 +5,7 @@ import math
 
 import dask
 import dask.dataframe as dd
+import geopandas as gpd
 import pandas as pd
 import pyarrow.parquet as pq
 import xarray as xr
@@ -13,7 +14,7 @@ from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
 from lib.errors import ProcessingError
 from lib.gcs import delete_directory, exists, get_gcsfs_client, storage_size
 from lib.zarr_utils import load_zarr
-from standgen.summarize import _build_column_stats_graph
+from standgen.summarize import _build_column_stats_graph, _build_tree_forestry_graph
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +55,11 @@ def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:
     return dd.read_parquet(path)
 
 
-def _compute_write_and_stats(
-    write_delayed, stats_graph: dict[str, dict]
-) -> dict[str, dict]:
+def _fused_compute(
+    write_delayed,
+    stats_graph: dict[str, dict],
+    forestry_delayed=None,
+) -> tuple[dict[str, dict], dict | None]:
     """Flatten lazy reductions and a deferred parquet write into a single
     dask.compute call, then reassemble the stats dict.
 
@@ -66,9 +69,10 @@ def _compute_write_and_stats(
     Args:
         write_delayed: Deferred parquet write from ``ddf.to_parquet(..., compute=False)``.
         stats_graph: Dict of lazy reductions from ``_build_column_stats_graph``.
+        forestry_delayed: Optional dask.delayed from ``_build_tree_forestry_graph``.
 
     Returns:
-        Dict keyed by column key with computed summary stats.
+        Tuple of (stats dict, forestry metrics dict or None).
     """
     # Collect all lazy objects alongside their (col_key, stat_key) address
     flat_lazy = []
@@ -80,8 +84,13 @@ def _compute_write_and_stats(
             flat_lazy.append(val)
             flat_keys.append((k, s))
 
-    results = dask.compute(write_delayed, *flat_lazy)
-    computed_values = results[1:]
+    to_compute = [write_delayed, *flat_lazy]
+    if forestry_delayed is not None:
+        to_compute.append(forestry_delayed)
+
+    results = dask.compute(*to_compute)
+    computed_values = results[1 : 1 + len(flat_lazy)]
+    forestry_metrics = results[-1] if forestry_delayed is not None else None
 
     stats = {}
     for i, (k, s) in enumerate(flat_keys):
@@ -93,7 +102,7 @@ def _compute_write_and_stats(
         else:
             stats[k][s] = int(val)
 
-    return stats
+    return stats, forestry_metrics
 
 
 def _write_parquet(ddf: dd.DataFrame, path: str) -> None:
@@ -111,32 +120,75 @@ def _write_parquet(ddf: dd.DataFrame, path: str) -> None:
     )
 
 
+def _build_delayed_graph(
+    ddf: dd.DataFrame,
+    path: str,
+    columns: list[dict],
+    inventory_type: str,
+    domain_gdf: gpd.GeoDataFrame | None,
+    top_species_groups: int,
+):
+    write_delayed = _write_parquet(ddf, path)
+    stats_graph = _build_column_stats_graph(ddf, columns)
+    forestry_delayed = (
+        _build_tree_forestry_graph(ddf, domain_gdf, top_species_groups)
+        if inventory_type == "tree"
+        and domain_gdf is not None
+        and "dbh" in ddf.columns
+        and "fia_species_code" in ddf.columns
+        else None
+    )
+    return _fused_compute(write_delayed, stats_graph, forestry_delayed)
+
+
 def save_parquet_with_summary(
     inventory_id: str,
     ddf: dd.DataFrame,
     columns: list[dict],
-) -> tuple[str, dict[str, dict]]:
+    inventory_type: str = "tree",
+    domain_gdf: gpd.GeoDataFrame | None = None,
+    top_species_groups: int = 5,
+) -> tuple[str, dict[str, dict], dict | None]:
     """Write partitions to GCS and compute per-column summaries in one pass.
 
     Flattens all lazy scalar reductions from ``_build_column_stats_graph``
     alongside the deferred parquet write into a single ``dask.compute`` call.
     Because the scalars and the write share the same dask expression graph,
     each partition is materialized exactly once.
+
+    For tree inventories, also computes stand-level forestry metrics in the same
+    fused pass via _build_tree_forestry_graph. Requires ``domain_gdf`` for
+    per-area metrics; if absent, forestry metrics return ``None``.
+
+    Args:
+        inventory_id: Inventory document ID.
+        ddf: Lazy dask DataFrame to write and summarize.
+        columns: List of column metadata dicts with 'key' and 'type' fields.
+        inventory_type: Inventory type string.
+        domain_gdf: Domain geometry for per-area forestry metric computation.
+        top_species_groups: Number of top FIA species groups to include in
+            dominant species list. Defaults to 5.
+
+    Returns:
+        Three-tuple of (GCS path, per-column stats dict, forestry metrics dict or None).
     """
     path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-    write_delayed = _write_parquet(ddf, path)
-    stats_graph = _build_column_stats_graph(ddf, columns)
-    stats = _compute_write_and_stats(write_delayed, stats_graph)
+    stats, forestry_metrics = _build_delayed_graph(
+        ddf, path, columns, inventory_type, domain_gdf, top_species_groups
+    )
 
     logger.info(f"Saved inventory data with summaries to {path}")
-    return path, stats
+    return path, stats, forestry_metrics
 
 
 def save_parquet_replace_with_summary(
     inventory_id: str,
     ddf: dd.DataFrame,
     columns: list[dict],
-) -> tuple[str, dict[str, dict]]:
+    inventory_type: str = "tree",
+    domain_gdf: gpd.GeoDataFrame | None = None,
+    top_species_groups: int = 5,
+) -> tuple[str, dict[str, dict], dict | None]:
     """Replace an inventory's Parquet data in place with ``ddf`` and compute
     per-column summaries in one pass.
 
@@ -144,14 +196,31 @@ def save_parquet_replace_with_summary(
     Parquet (an in-place modification). Writing straight back to the live path
     would corrupt the data: ``dd.read_parquet`` is lazy, so the read executes
     during this write and would race the overwrite. Instead, the stats
-    reductions and the write are fused into a single dask.compute call against
-    a staging prefix, then swapped into place once complete:
+    reductions, forestry metrics (for tree inventories), and the write are fused
+    into a single ``dask.compute`` call against a staging prefix, then swapped
+    into place once complete:
 
-    1. fuse write + stats reductions to ``{id}__rev`` in a single ``dask.compute``
-       call by flattening lazy scalars alongside the deferred write,
+    1. fuse write + stats reductions + forestry metrics to ``{id}__rev`` in a
+       single ``dask.compute`` call by flattening lazy scalars alongside the
+       deferred write,
     2. delete the live ``{id}`` directory,
     3. server-side copy ``{id}__rev`` -> ``{id}`` (same bucket, no egress),
     4. delete the staging ``{id}__rev`` directory.
+
+    Requires ``domain_gdf`` for per-area forestry metrics; if absent, forestry
+    metrics return ``None``.
+
+    Args:
+        inventory_id: Inventory document ID.
+        ddf: Lazy dask DataFrame to write and summarize.
+        columns: List of column metadata dicts with 'key' and 'type' fields.
+        inventory_type: Inventory type string.
+        domain_gdf: Domain geometry for per-area forestry metric computation.
+        top_species_groups: Number of top FIA species groups to include in
+            dominant species list. Defaults to 5.
+
+    Returns:
+        Three-tuple of (GCS path, per-column stats dict, forestry metrics dict or None).
     """
     live_rel = f"{INVENTORIES_BUCKET}/{inventory_id}"
     staging_rel = f"{INVENTORIES_BUCKET}/{inventory_id}__rev"
@@ -161,9 +230,9 @@ def save_parquet_replace_with_summary(
     if exists(staging_uri):
         delete_directory(staging_uri)
 
-    write_delayed = _write_parquet(ddf, staging_uri)
-    stats_graph = _build_column_stats_graph(ddf, columns)
-    stats = _compute_write_and_stats(write_delayed, stats_graph)
+    stats, forestry_metrics = _build_delayed_graph(
+        ddf, staging_uri, columns, inventory_type, domain_gdf, top_species_groups
+    )
 
     fs = get_gcsfs_client()
 
@@ -196,7 +265,7 @@ def save_parquet_replace_with_summary(
     delete_directory(staging_uri)
 
     logger.info(f"Replaced inventory data at gs://{live_rel}")
-    return f"gs://{live_rel}", stats
+    return f"gs://{live_rel}", stats, forestry_metrics
 
 
 def count_inventory_rows(inventory_id: str) -> int | None:

@@ -84,6 +84,8 @@ def shared_pim_inventory(module_pim_grid):
     assert inventory.get("columns") is not None
     for col in inventory["columns"]:
         assert col["summary"] is not None
+    assert inventory.get("forestry_metrics") is not None
+    assert inventory["forestry_metrics"]["tree_count"] >= 0
 
     yield inventory
 
@@ -231,3 +233,16 @@ def test_column_summaries_reflect_data(shared_pim_inventory, shared_pim_df):
     assert cols["dbh"]["count"] == len(shared_pim_df)
     assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == shared_pim_df["dbh"].min()
     assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == shared_pim_df["dbh"].max()
+
+
+def test_forestry_metrics_populated(shared_pim_inventory, shared_pim_df):
+    """Forestry metrics reflect the actual parquet data."""
+    if len(shared_pim_df) == 0:
+        pytest.skip("No trees generated (sparse grid)")
+
+    fm = shared_pim_inventory["forestry_metrics"]
+    assert fm["tree_count"] == len(shared_pim_df)
+    assert fm["basal_area_per_area"] > 0
+    assert fm["tree_density"] > 0
+    assert fm["quadratic_mean_diameter"] > 0
+    assert len(fm["dominant_species_groups"]) > 0

@@ -13,6 +13,7 @@ from api.resources.inventories.schema import (
     ColumnType,
     ContinuousColumnSummary,
     CreateInventoryRequestBase,
+    FIASpeciesGroupShare,
     Inventory,
     InventoryDataFormat,
     InventoryDataMetadata,
@@ -23,6 +24,7 @@ from api.resources.inventories.schema import (
     InventoryType,
     ListInventoriesResponse,
     PointProcess,
+    TreeForestryMetrics,
     UpdateInventoryRequestBody,
 )
 from api.resources.inventories.tree.pim.schema import (
@@ -30,6 +32,8 @@ from api.resources.inventories.tree.pim.schema import (
     PimInventorySource,
 )
 from pydantic import ValidationError
+
+from lib.units import validate_unit
 
 
 class TestInventoryType:
@@ -489,3 +493,86 @@ class TestColumnSummary:
                 type=ColumnType.continuous,
                 summary={"type": "unknown", "count": 1, "null_count": 0},
             )
+
+
+class TestForestryMetrics:
+    """Tests for FIASpeciesGroupShare, TreeForestryMetrics, and ForestryMetrics."""
+
+    def _make_tree_metrics(self, **overrides):
+        defaults = {
+            "type": "tree",
+            "tree_count": 42,
+            "basal_area_per_area": 120.5,
+            "tree_density": 200.0,
+            "quadratic_mean_diameter": 9.3,
+            "dominant_species_groups": [
+                {"spgrpcd": 5, "name": "Douglas-fir", "basal_area_share": 0.6},
+                {"spgrpcd": 4, "name": "Pine", "basal_area_share": 0.4},
+            ],
+        }
+        defaults.update(overrides)
+        return TreeForestryMetrics(**defaults)
+
+    def test_round_trip(self):
+        metrics = self._make_tree_metrics()
+        d = metrics.model_dump()
+        restored = TreeForestryMetrics(**d)
+        assert restored == metrics
+        assert restored.tree_count == 42
+        assert restored.dominant_species_groups[0].name == "Douglas-fir"
+
+    def test_inventory_with_forestry_metrics_round_trip(self):
+        """ForestryMetrics survives a full Inventory serialize/deserialize cycle."""
+        inv = Inventory(
+            id="abc",
+            domain_id="dom",
+            type="tree",
+            status="completed",
+            source={
+                "name": "pim",
+                "source_pim_grid_id": "g1",
+                "seed": 1,
+                "point_process": "inhomogeneous_poisson",
+            },
+            forestry_metrics={
+                "type": "tree",
+                "tree_count": 10,
+                "basal_area_per_area": 80.0,
+                "tree_density": 150.0,
+                "quadratic_mean_diameter": 7.5,
+            },
+        )
+        d = inv.model_dump()
+        restored = Inventory(**d)
+        assert isinstance(restored.forestry_metrics, TreeForestryMetrics)
+        assert restored.forestry_metrics.tree_count == 10
+
+    def test_forestry_metrics_defaults_to_none(self):
+        inv = Inventory(
+            id="abc",
+            domain_id="dom",
+            type="tree",
+            status="pending",
+            source={
+                "name": "pim",
+                "source_pim_grid_id": "g1",
+                "seed": 1,
+                "point_process": "inhomogeneous_poisson",
+            },
+        )
+        assert inv.forestry_metrics is None
+
+    def test_basal_area_share_out_of_range_rejected(self):
+        with pytest.raises(ValidationError):
+            FIASpeciesGroupShare(spgrpcd=10, name="Douglas-fir", basal_area_share=1.5)
+        with pytest.raises(ValidationError):
+            FIASpeciesGroupShare(spgrpcd=10, name="Douglas-fir", basal_area_share=-0.1)
+
+    def test_basal_area_share_boundary_values_accepted(self):
+        FIASpeciesGroupShare(spgrpcd=10, name="x", basal_area_share=0.0)
+        FIASpeciesGroupShare(spgrpcd=10, name="x", basal_area_share=1.0)
+
+    def test_unit_string_compliance(self):
+        validate_unit("ft**2/acre")
+        validate_unit("1/acre")
+        validate_unit("in")

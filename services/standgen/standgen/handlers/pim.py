@@ -64,8 +64,8 @@ def handle_pim(
         progress: Callback for progress reporting
 
     Returns:
-        Dict with 'georeference' key and 'columns' key with per-column
-        summary statistics populated.
+        Dict with 'georeference', 'columns' with per-column summary statistics,
+        and 'forestry_metrics' with stand-level forestry scalars or None.
     """
     inventory_id = inventory["id"]
     source_pim_grid_id = source["source_pim_grid_id"]
@@ -186,7 +186,9 @@ def handle_pim(
 
     # Write Parquet to GCS (lazy — each partition writes separately)
     progress("Writing inventory data...", 80)
-    _, stats = save_parquet_with_summary(inventory_id, ddf, inventory["columns"])
+    _, stats, forestry_metrics = save_parquet_with_summary(
+        inventory_id, ddf, inventory["columns"], inventory["type"], domain_gdf
+    )
 
     # Compute georeference from domain
     progress("Computing georeference...", 95)
@@ -199,6 +201,7 @@ def handle_pim(
         "columns": [
             {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
         ],
+        "forestry_metrics": forestry_metrics,
     }
 
 

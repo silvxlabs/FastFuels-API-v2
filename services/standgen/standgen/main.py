@@ -88,6 +88,7 @@ def update_status(
     status,
     georeference=None,
     columns=None,
+    forestry_metrics=None,
     size_bytes=None,
     error=None,
     extra=None,
@@ -99,6 +100,8 @@ def update_status(
         status: New status value ('pending', 'running', 'completed', 'failed').
         georeference: Spatial reference to write on completion.
         columns: Column list with populated summaries to write on completion.
+        forestry_metrics: Stand-level forestry scalars to write on completion
+            (None for inventories without tree morphology, e.g. CHM).
         size_bytes: GCS artifact footprint recorded on completion for per-owner
             storage quota accounting (#342).
         error: Error details to write on failure.
@@ -115,6 +118,8 @@ def update_status(
         data["georeference"] = georeference
     if columns is not None:
         data["columns"] = columns
+    if forestry_metrics is not None:
+        data["forestry_metrics"] = forestry_metrics
     if size_bytes is not None:
         data["size_bytes"] = size_bytes
     if error is not None:
@@ -249,6 +254,7 @@ def process_inventory_request(request: Request):
             "completed",
             georeference=result["georeference"],
             columns=result["columns"],
+            forestry_metrics=result.get("forestry_metrics"),
             size_bytes=inventory_size(inventory_id),
             extra=completion_extra,
         )

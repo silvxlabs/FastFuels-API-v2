@@ -70,6 +70,7 @@ def firestore_inventory():
                 {"key": "height", "type": "continuous", "unit": "m"},
                 {"key": "crown_ratio", "type": "continuous"},
             ],
+            "type": "tree",
         }
         set_document(INVENTORIES_COLLECTION, inventory_id, data)
         created_ids.append(inventory_id)

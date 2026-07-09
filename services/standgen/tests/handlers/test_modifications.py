@@ -58,6 +58,7 @@ def base_inventory():
             "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
         },
         "columns": BASE_INVENTORY_COLUMNS,
+        "type": "tree",
         "source": {"name": "pim", "source_pim_grid_id": "grid-id", "seed": 1},
         "modifications": [
             {
@@ -83,7 +84,7 @@ class TestApplyInPlaceModifications:
         """Loads the inventory's own data, replaces it in place, returns the
         existing georeference unchanged."""
         mock_load.return_value = sample_ddf
-        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {}, None)
         progress = MagicMock()
 
         result = apply_in_place_modifications(base_inventory, domain_gdf, progress)
@@ -108,7 +109,7 @@ class TestApplyInPlaceModifications:
     ):
         """Only pending_modifications is applied to the current data."""
         mock_load.return_value = sample_ddf
-        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {}, None)
         progress = MagicMock()
 
         apply_in_place_modifications(base_inventory, domain_gdf, progress)
@@ -124,7 +125,7 @@ class TestApplyInPlaceModifications:
         self, mock_load, mock_save, base_inventory, sample_ddf, domain_gdf
     ):
         mock_load.return_value = sample_ddf
-        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {}, None)
         progress = MagicMock()
 
         apply_in_place_modifications(base_inventory, domain_gdf, progress)
@@ -145,6 +146,7 @@ class TestApplyInPlaceModifications:
             "domain_id": "domain-123",
             "georeference": {"crs": "EPSG:32611", "bounds": [0, 0, 1, 1]},
             "columns": BASE_INVENTORY_COLUMNS,
+            "type": "tree",
             "source": {"name": "pim"},
             "modifications": [],
             "pending_modifications": [
@@ -159,7 +161,7 @@ class TestApplyInPlaceModifications:
             ],
         }
         mock_load.return_value = sample_ddf
-        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {}, None)
         progress = MagicMock()
 
         apply_in_place_modifications(inventory, domain_gdf, progress)
@@ -177,6 +179,7 @@ class TestApplyInPlaceModifications:
             "domain_id": "domain-123",
             "georeference": {"crs": "EPSG:32611", "bounds": [0, 0, 1, 1]},
             "columns": BASE_INVENTORY_COLUMNS,
+            "type": "tree",
             "source": {"name": "pim"},
             "modifications": [],
             "pending_modifications": [
@@ -197,7 +200,7 @@ class TestApplyInPlaceModifications:
             ],
         }
         mock_load.return_value = sample_ddf
-        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {}, None)
         progress = MagicMock()
 
         apply_in_place_modifications(inventory, domain_gdf, progress)

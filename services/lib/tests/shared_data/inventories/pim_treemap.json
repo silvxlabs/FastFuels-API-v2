@@ -9,6 +9,7 @@
     {"key": "height", "type": "continuous", "unit": "m"},
     {"key": "crown_ratio", "type": "continuous"}
     ],
+  "type": "tree",
   "name": "Test PIM Inventory",
   "source": {
     "name": "pim",

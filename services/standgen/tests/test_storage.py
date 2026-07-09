@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
-from standgen.storage import _compute_write_and_stats, _write_parquet
+from standgen.storage import _fused_compute, _write_parquet
 from standgen.summarize import _build_column_stats_graph
 
 
@@ -77,7 +77,8 @@ class TestComputeWriteAndStats:
 
     def _stats(self, ddf, columns, tmp_path):
         write = _write_parquet(ddf, str(tmp_path / "inv"))
-        return _compute_write_and_stats(write, _build_column_stats_graph(ddf, columns))
+        stats, _ = _fused_compute(write, _build_column_stats_graph(ddf, columns))
+        return stats
 
     def test_single_value_continuous_std_is_none(self, tmp_path):
         """Sample std (ddof=1) of a lone non-null value is NaN — a single-tree

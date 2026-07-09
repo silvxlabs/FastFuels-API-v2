@@ -132,6 +132,7 @@ def treatments_runner(shared_pim_source):
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),
+            "type": "tree",
             # The ledger holds only previously-applied treatments; the new delta
             # lives in pending_treatments until completion merges it in.
             "treatments": prior_treatments,
@@ -157,6 +158,7 @@ def treatments_runner(shared_pim_source):
         assert treated_inventory.get("columns") is not None
         for col in treated_inventory["columns"]:
             assert col["summary"] is not None
+        assert treated_inventory.get("forestry_metrics") is not None
         # The Parquet footprint is recorded on the in-place replace path too and
         # reflects the current dataset — a thinning treatment rewrites the whole
         # store, so it never accumulates onto the source footprint (#342).
@@ -359,6 +361,7 @@ def feature_treatments_runner(shared_pim_source):
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),
+            "type": "tree",
             # Ledger starts empty; the delta is queued and merged on completion.
             "treatments": [],
             "pending_treatments": resolved,
@@ -382,6 +385,8 @@ def feature_treatments_runner(shared_pim_source):
         assert treated_inventory.get("columns") is not None
         for col in treated_inventory["columns"]:
             assert col["summary"] is not None
+        assert treated_inventory.get("forestry_metrics") is not None
+
         return pim_inventory, treated_inventory
 
     yield _run
@@ -469,3 +474,21 @@ def test_column_summaries_reflect_data(treatments_runner):
     assert cols["dbh"]["count"] == len(treated_df)
     assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == treated_df["dbh"].min()
     assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == treated_df["dbh"].max()
+
+
+def test_forestry_metrics_updated_after_treatment(treatments_runner):
+    """Forestry metrics reflect the post-treatment population."""
+    threshold = 15.0
+    treatments = [{"metric": "diameter", "method": "from_below", "value": threshold}]
+    pim_inventory, treated = treatments_runner(treatments)
+
+    pim_df = _load_df(pim_inventory["id"])
+    if len(pim_df) == 0:
+        pytest.skip("Source PIM produced 0 trees (sparse grid)")
+
+    treated_df = _load_df(treated["id"])
+    pim_fm = pim_inventory["forestry_metrics"]
+    treated_fm = treated["forestry_metrics"]
+
+    assert treated_fm["tree_count"] == len(treated_df)
+    assert treated_fm["tree_count"] <= pim_fm["tree_count"]

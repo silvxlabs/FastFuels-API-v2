@@ -132,6 +132,7 @@ def modifications_runner(shared_pim_source):
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),
+            "type": "tree",
             # The ledger holds only previously-applied rules; the new delta lives
             # in pending_modifications until completion merges it in.
             "modifications": prior_modifications,
@@ -152,6 +153,7 @@ def modifications_runner(shared_pim_source):
         assert mod_inventory.get("columns") is not None
         for col in mod_inventory["columns"]:
             assert col["summary"] is not None
+        assert mod_inventory.get("forestry_metrics") is not None
         # The delta is applied; on completion the work queue is cleared and the
         # delta is merged onto the end of the ledger (ledger == applied data),
         # never duplicated or dropped (#319).
@@ -470,6 +472,7 @@ def feature_modifications_runner(shared_pim_source):
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),
+            "type": "tree",
             # Ledger starts empty; the delta is queued and merged on completion.
             "modifications": [],
             "pending_modifications": resolved_mods,
@@ -489,6 +492,7 @@ def feature_modifications_runner(shared_pim_source):
         assert mod_inventory.get("columns") is not None
         for col in mod_inventory["columns"]:
             assert col["summary"] is not None
+        assert mod_inventory.get("forestry_metrics") is not None
         # On completion the queued delta is merged into the ledger and the queue
         # cleared (#319).
         assert mod_inventory.get("pending_modifications") == []
@@ -582,3 +586,29 @@ def test_column_summaries_reflect_data(modifications_runner):
     assert cols["dbh"]["count"] == len(mod_df)
     assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == mod_df["dbh"].min()
     assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == mod_df["dbh"].max()
+
+
+def test_forestry_metrics_updated_after_modification(modifications_runner):
+    """Forestry metrics reflect the post-modification population."""
+    modifications = [
+        {
+            "conditions": [{"attribute": "dbh", "operator": "lt", "value": 30.0}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+    pim_inventory, mod_inventory = modifications_runner(modifications)
+
+    pim_df = dd.read_parquet(
+        f"gs://{INVENTORIES_BUCKET}/{pim_inventory['id']}"
+    ).compute()
+    if len(pim_df) == 0:
+        pytest.skip("Source PIM produced 0 trees (sparse grid)")
+
+    mod_df = dd.read_parquet(
+        f"gs://{INVENTORIES_BUCKET}/{mod_inventory['id']}"
+    ).compute()
+    pim_fm = pim_inventory["forestry_metrics"]
+    mod_fm = mod_inventory["forestry_metrics"]
+
+    assert mod_fm["tree_count"] == len(mod_df)
+    assert mod_fm["tree_count"] <= pim_fm["tree_count"]

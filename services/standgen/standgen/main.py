@@ -22,7 +22,7 @@ from lib.firestore import DocumentNotFoundError, get_document, update_document
 from standgen.dispatch import dispatch_handler
 from standgen.handlers.modifications import apply_in_place_modifications
 from standgen.handlers.treatments import apply_in_place_treatments
-from standgen.storage import delete_parquet
+from standgen.storage import delete_parquet, inventory_size
 
 
 class StructuredLogHandler(logging.Handler):
@@ -56,6 +56,11 @@ UNEXPECTED_FAILURE_MESSAGE = (
     "Job failed unexpectedly. Please try again or contact the development team."
 )
 
+SOURCE_NOT_FOUND_MESSAGE = (
+    "A required input resource was not found. It may have been deleted "
+    "before processing completed."
+)
+
 
 def load_inventory(inventory_id: str) -> dict:
     """Load inventory document from Firestore."""
@@ -79,7 +84,13 @@ def update_progress(inventory_id, message, percent=None):
 
 
 def update_status(
-    inventory_id, status, georeference=None, columns=None, error=None, extra=None
+    inventory_id,
+    status,
+    georeference=None,
+    columns=None,
+    size_bytes=None,
+    error=None,
+    extra=None,
 ):
     """Update inventory status.
 
@@ -88,6 +99,8 @@ def update_status(
         status: New status value ('pending', 'running', 'completed', 'failed').
         georeference: Spatial reference to write on completion.
         columns: Column list with populated summaries to write on completion.
+        size_bytes: GCS artifact footprint recorded on completion for per-owner
+            storage quota accounting (#342).
         error: Error details to write on failure.
         extra: Additional fields merged into the update — used to clear
             ``pending_modifications`` or ``pending_treatments`` once an
@@ -102,6 +115,8 @@ def update_status(
         data["georeference"] = georeference
     if columns is not None:
         data["columns"] = columns
+    if size_bytes is not None:
+        data["size_bytes"] = size_bytes
     if error is not None:
         data["error"] = error
     if extra:
@@ -234,6 +249,7 @@ def process_inventory_request(request: Request):
             "completed",
             georeference=result["georeference"],
             columns=result["columns"],
+            size_bytes=inventory_size(inventory_id),
             extra=completion_extra,
         )
         logger.info("Processing complete", extra=ids)
@@ -245,9 +261,28 @@ def process_inventory_request(request: Request):
         return "OK", 200
 
     except ProcessingError as e:
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=ids)
+        # Expected, handled terminal outcome — log at WARNING, not ERROR.
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=ids)
         try:
             update_status(inventory_id, "failed", error=e.to_dict())
+        except CancelledException:
+            delete_parquet(inventory_id)
+        return "OK", 200
+
+    except FileNotFoundError as e:
+        # A referenced input (source grid zarr, ...) was deleted while this
+        # job was queued or running — a benign race (user deleted the
+        # resource, or test teardown), not a system fault. zarr's
+        # GroupNotFoundError and the GCS 404 both subclass FileNotFoundError.
+        # Record a terminal failure and return 200: the object will never
+        # reappear, so a retry is wasted and only amplifies log noise.
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        try:
+            update_status(
+                inventory_id,
+                "failed",
+                error={"code": "SOURCE_NOT_FOUND", "message": SOURCE_NOT_FOUND_MESSAGE},
+            )
         except CancelledException:
             delete_parquet(inventory_id)
         return "OK", 200

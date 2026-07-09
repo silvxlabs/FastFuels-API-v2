@@ -114,6 +114,7 @@ class TestProcessGridRequest:
 
         assert status_code == 200
 
+    @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
     @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
@@ -132,6 +133,7 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
         mock_summarize,
+        mock_storage_size,
     ):
         """Successful processing returns 200 and updates status to complete."""
         mock_load_grid.return_value = {
@@ -155,6 +157,7 @@ class TestProcessGridRequest:
         mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
         mock_result.shape = (100, 100)
         mock_dispatch.return_value = mock_result
+        mock_storage_size.return_value = 4096
 
         request = MockRequest(json_data={"id": "test-grid-id"})
 
@@ -166,7 +169,11 @@ class TestProcessGridRequest:
         second_call = mock_update_status.call_args_list[1]
         assert first_call[0] == ("test-grid-id", "running")
         assert second_call[0][1] == "completed"
+        # The zarr store's GCS footprint is recorded on completion (#342).
+        mock_storage_size.assert_called_once_with(mock_save_zarr.return_value)
+        assert second_call.kwargs["size_bytes"] == 4096
 
+    @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
     @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
@@ -185,6 +192,7 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
         mock_summarize,
+        mock_storage_size,
     ):
         """chunks.shape from grid doc is passed to save_zarr."""
         mock_load_grid.return_value = {
@@ -228,6 +236,7 @@ class TestProcessGridRequest:
             "count_by_axis": {"y": 1, "x": 1},
         }
 
+    @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
     @patch("griddle.main.update_document")
     @patch("griddle.main.save_zarr")
@@ -246,6 +255,7 @@ class TestProcessGridRequest:
         mock_save_zarr,
         mock_update_document,
         mock_summarize,
+        mock_storage_size,
     ):
         """chunk shape defaults to (512, 512) for grids without chunks set."""
         mock_load_grid.return_value = {
@@ -331,3 +341,36 @@ class TestProcessGridRequest:
         assert status_code == 200
         last_call = mock_update_status.call_args_list[-1]
         assert last_call[0][1] == "failed"
+
+    @patch("griddle.main._load_domain")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.load_grid")
+    def test_missing_source_returns_200_not_retried(
+        self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
+    ):
+        """A deleted input surfaces as FileNotFoundError (zarr
+
+        GroupNotFoundError / GCS 404). It is a terminal not-found, not a
+        transient fault: mark failed with SOURCE_NOT_FOUND and return 200 so
+        Cloud Tasks does not retry a permanently-missing object.
+        """
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": {"name": "landfire", "product": "fbfm40"},
+            "domain_id": "test-domain-id",
+            "bands": [{"key": "fbfm", "type": "categorical"}],
+        }
+        mock_load_domain.return_value = MagicMock()
+        mock_dispatch.side_effect = FileNotFoundError(
+            "No group found in store 'gs://bucket/test-grid-id' at path ''"
+        )
+
+        request = MockRequest(json_data={"id": "test-grid-id"})
+
+        response, status_code = process_grid_request(request)
+
+        assert status_code == 200
+        last_call = mock_update_status.call_args_list[-1]
+        assert last_call[0][1] == "failed"
+        assert last_call[1]["error"]["code"] == "SOURCE_NOT_FOUND"

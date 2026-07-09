@@ -19,6 +19,7 @@ from api.db.documents import (
     set_document_async,
     update_document_async,
 )
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.applications.schema import (
     Application,
     CreateApplicationRequest,
@@ -37,6 +38,7 @@ router = APIRouter()
     response_model_exclude_none=True,
     status_code=status.HTTP_201_CREATED,
     summary="Create an application",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_application(
     request: Request,
@@ -49,6 +51,8 @@ async def create_application(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Applications cannot create other applications",
         )
+
+    await enforce_create_quotas(APPLICATIONS_COLLECTION, request)
 
     app_id = uuid.uuid4().hex
     request_time = datetime.now(UTC)

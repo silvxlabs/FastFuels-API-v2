@@ -122,6 +122,8 @@ class TestProcessInventoryRequest:
             assert col["summary"] is not None
             assert col["summary"]["count"] >= 0
             assert col["summary"]["null_count"] >= 0
+        # The inventory Parquet's GCS footprint is recorded on completion (#342).
+        assert inventory["size_bytes"] > 0
 
     @pytest.mark.parametrize("source_pim_grid", [STATIC_PIM_GRID], indirect=True)
     def test_parquet_written_to_gcs(

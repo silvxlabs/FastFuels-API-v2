@@ -26,12 +26,18 @@ def mock_inventory():
     }
 
 
+@patch("standgen.main.inventory_size")
 @patch("standgen.main._load_domain")
 @patch("standgen.main.dispatch_handler")
 @patch("standgen.main.update_status")
 @patch("standgen.main.load_inventory")
 def test_happy_path(
-    mock_load, mock_status, mock_dispatch, mock_load_domain, mock_inventory
+    mock_load,
+    mock_status,
+    mock_dispatch,
+    mock_load_domain,
+    mock_inventory_size,
+    mock_inventory,
 ):
     from standgen.main import process_inventory_request
 
@@ -56,6 +62,7 @@ def test_happy_path(
             }
         ],
     }
+    mock_inventory_size.return_value = 4096
 
     request = MockRequest({"id": "test-inventory-123"})
     response, status_code = process_inventory_request(request)
@@ -63,6 +70,8 @@ def test_happy_path(
     assert status_code == 200
     assert response == "OK"
     mock_status.assert_any_call("test-inventory-123", "running")
+    # The inventory's Parquet footprint is recorded on completion (#342).
+    mock_inventory_size.assert_called_once_with("test-inventory-123")
     mock_status.assert_any_call(
         "test-inventory-123",
         "completed",
@@ -83,6 +92,7 @@ def test_happy_path(
                 },
             }
         ],
+        size_bytes=4096,
         extra=None,
     )
 
@@ -195,6 +205,35 @@ def test_unexpected_error_returns_500(
     response, status_code = process_inventory_request(request)
 
     assert status_code == 500
+
+
+@patch("standgen.main._load_domain")
+@patch("standgen.main.dispatch_handler")
+@patch("standgen.main.update_status")
+@patch("standgen.main.load_inventory")
+def test_missing_source_returns_200_not_retried(
+    mock_load, mock_status, mock_dispatch, mock_load_domain, mock_inventory
+):
+    """A deleted input surfaces as FileNotFoundError (zarr GroupNotFoundError /
+
+    GCS 404) — a terminal not-found, not a transient fault. Mark failed with
+    SOURCE_NOT_FOUND and return 200 so the job is not retried.
+    """
+    from standgen.main import process_inventory_request
+
+    mock_load.return_value = mock_inventory
+    mock_load_domain.return_value = MagicMock()
+    mock_dispatch.side_effect = FileNotFoundError(
+        "No group found in store 'gs://bucket/test-grid' at path ''"
+    )
+
+    request = MockRequest({"id": "test-inventory-123"})
+    response, status_code = process_inventory_request(request)
+
+    assert status_code == 200
+    failed_calls = [c for c in mock_status.call_args_list if c[0][1] == "failed"]
+    assert len(failed_calls) == 1
+    assert failed_calls[-1][1]["error"]["code"] == "SOURCE_NOT_FOUND"
 
 
 @patch("standgen.main.update_status")

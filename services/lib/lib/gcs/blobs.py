@@ -87,6 +87,30 @@ def delete_directory(gcs_path: str) -> None:
     get_gcsfs_client().rm(normalized, recursive=True)
 
 
+def storage_size(gcs_path: str) -> int:
+    """
+    Total bytes stored under a GCS path — its absolute artifact footprint.
+
+    Sums the size of every object under ``gcs_path``, so a single object (a
+    ``.laz`` point cloud, an export archive) and a multi-object store (a zarr
+    grid, a partitioned-parquet inventory) are both handled the same way. The
+    listing cache is invalidated first so the count reflects objects just
+    written, and the result is the absolute current footprint — an in-place
+    rewrite that replaced the prefix reads as a replacement, never an
+    accumulation.
+
+    Args:
+        gcs_path: Full GCS path (gs://bucket/path or bucket/path).
+
+    Returns:
+        Total size in bytes of every object under the path.
+    """
+    normalized = _normalize_path(gcs_path)
+    client = get_gcsfs_client()
+    client.invalidate_cache(normalized)
+    return client.du(normalized, total=True)
+
+
 def exists(gcs_path: str) -> bool:
     """
     Check if a file or directory exists in GCS.

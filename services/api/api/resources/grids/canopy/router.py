@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.canopy.examples import (
     CREATE_LANDFIRE_CANOPY_OPENAPI_EXAMPLES,
     CREATE_META_CHM_OPENAPI_EXAMPLES,
@@ -47,6 +48,7 @@ COLLECTION = GRIDS_COLLECTION
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from Meta CHM",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_meta_chm(
     request: Request,
@@ -78,6 +80,8 @@ async def create_meta_chm(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
@@ -122,6 +126,7 @@ async def create_meta_chm(
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from NAIP CHM",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_naip_chm(
     request: Request,
@@ -149,6 +154,8 @@ async def create_naip_chm(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
@@ -192,6 +199,7 @@ async def create_naip_chm(
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from LANDFIRE canopy data",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_landfire_canopy(
     request: Request,
@@ -231,6 +239,8 @@ async def create_landfire_canopy(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)

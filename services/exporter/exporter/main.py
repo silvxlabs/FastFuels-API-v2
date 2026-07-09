@@ -50,6 +50,11 @@ UNEXPECTED_FAILURE_MESSAGE = (
     "Export failed unexpectedly. Please try again or contact the development team."
 )
 
+SOURCE_NOT_FOUND_MESSAGE = (
+    "A required input resource was not found. It may have been deleted "
+    "before processing completed."
+)
+
 
 def load_export(export_id: str) -> dict:
     """Load export document from Firestore."""
@@ -205,12 +210,31 @@ def process_export_request(request: Request):
         return "OK", 200
 
     except ProcessingError as e:
+        # Expected, handled terminal outcome — log at WARNING, not ERROR.
         log_extra = {**ids}
         if e.traceback:
             log_extra["traceback"] = e.traceback
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=log_extra)
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=log_extra)
         try:
             update_status(export_id, "failed", error=e.to_dict())
+        except CancelledException:
+            delete_export_files(export_id)
+        return "OK", 200
+
+    except FileNotFoundError as e:
+        # A referenced input (source grid zarr, ...) was deleted while this
+        # export was queued or running — a benign race (user deleted the
+        # resource, or test teardown), not a system fault. zarr's
+        # GroupNotFoundError and the GCS 404 both subclass FileNotFoundError.
+        # Record a terminal failure and return 200: the object will never
+        # reappear, so a retry is wasted and only amplifies log noise.
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        try:
+            update_status(
+                export_id,
+                "failed",
+                error={"code": "SOURCE_NOT_FOUND", "message": SOURCE_NOT_FOUND_MESSAGE},
+            )
         except CancelledException:
             delete_export_files(export_id)
         return "OK", 200

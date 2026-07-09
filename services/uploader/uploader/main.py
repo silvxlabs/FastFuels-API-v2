@@ -152,9 +152,33 @@ def process_upload(cloud_event: CloudEvent) -> None:
         logger.info("Cancelled during processing", extra=ids)
 
     except ProcessingError as e:
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=ids)
+        # Expected, handled terminal outcome — log at WARNING, not ERROR.
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=ids)
         try:
             update_status(collection, resource_id, "failed", error=e.to_dict())
+        except CancelledException:
+            pass
+
+    except FileNotFoundError as e:
+        # A referenced input was deleted while this job was queued or
+        # running — a benign race (user deleted the resource, or test
+        # teardown), not a system fault. Record a terminal failure and do
+        # NOT re-raise: re-raising makes Eventarc retry a permanently-missing
+        # object, wasting the attempt and amplifying log noise.
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        try:
+            update_status(
+                collection,
+                resource_id,
+                "failed",
+                error={
+                    "code": "SOURCE_NOT_FOUND",
+                    "message": (
+                        "A required input resource was not found. It may have "
+                        "been deleted before processing completed."
+                    ),
+                },
+            )
         except CancelledException:
             pass
 

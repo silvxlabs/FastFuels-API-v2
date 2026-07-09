@@ -90,7 +90,10 @@ class TestApplyGridModifications:
             .get()
             .to_dict()
         )
-        assert doc["status"] == "pending"
+        # The POST enqueues a real griddle task, so the worker may already have
+        # advanced the status (pending -> running -> failed; the test grid has no
+        # zarr). Exact "pending" is asserted on the POST response elsewhere.
+        assert doc["status"] in ("pending", "running", "failed")
         assert doc["modifications"] == []
         pending = doc["pending_modifications"]
         assert len(pending) == 1

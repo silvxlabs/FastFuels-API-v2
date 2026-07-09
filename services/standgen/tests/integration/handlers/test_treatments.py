@@ -142,6 +142,7 @@ def treatment_runner(treatment_env):
                 "seed": seed,
                 "source_pim_grid_id": grid_id,
             },
+            "columns": baseline["columns"],
             "treatments": _stringify_treatments(treatments),
         }
         set_document(INVENTORIES_COLLECTION, treated_id, treated_data)
@@ -156,6 +157,9 @@ def treatment_runner(treatment_env):
         assert treated["status"] == "completed", (
             f"Treated inventory not completed: {treated.get('error')}"
         )
+        assert treated.get("columns") is not None
+        for col in treated["columns"]:
+            assert col["summary"] is not None
         return baseline, treated
 
     yield _run
@@ -265,3 +269,19 @@ def test_output_columns_unchanged(treatment_runner):
     _, treated = treatment_runner(treatments)
     ddf = dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{treated['id']}")
     assert sorted(ddf.columns.tolist()) == sorted(BASE_COLUMNS)
+
+
+def test_column_summaries_reflect_data(treatment_runner):
+    """Column summaries reflect the post-treatment parquet data."""
+    limit = 15.0
+    treatments = [{"metric": "diameter", "method": "from_below", "value": limit}]
+    _, treated = treatment_runner(treatments)
+
+    treated_df = _load_df(treated["id"])
+    if len(treated_df) == 0:
+        pytest.skip("No trees after treatment")
+
+    cols = {col["key"]: col["summary"] for col in treated["columns"]}
+    assert cols["dbh"]["count"] == len(treated_df)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == treated_df["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == treated_df["dbh"].max()

@@ -29,7 +29,7 @@ import pyproj
 
 from lib.errors import ProcessingError
 from standgen import config
-from standgen.storage import load_inventory_parquet, save_parquet
+from standgen.storage import load_inventory_parquet, save_parquet_with_summary
 
 logger = logging.getLogger(__name__)
 
@@ -247,10 +247,10 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     Loads the source inventory parquet lazily, repartitions it so each partition
     is ~``GDAM_BATCH_SIZE`` trees, and maps every partition through GDAM
     (convert -> predict -> fill-missing) with ``map_partitions``. The lazy graph
-    executes once, at ``save_parquet`` — so the whole inventory is never held in
-    memory and each GDAM request covers one partition.
+    executes once, at ``save_parquet_with_summary`` — so the whole inventory is
+    never held in memory and each GDAM request covers one partition.
 
-    Returns ``{"georeference": ...}`` for main.py to persist.
+    Returns ``{"georeference": ..., "columns": ...}`` for main.py to persist.
     """
     inventory_id = inventory["id"]
     source_id = source["source_tree_inventory_id"]
@@ -299,7 +299,7 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     # save_parquet triggers the single execution of the lazy graph above (this is
     # where the GDAM calls actually run).
     progress("Writing inventory...", 90)
-    save_parquet(inventory_id, result_ddf)
+    _, stats = save_parquet_with_summary(inventory_id, result_ddf, inventory["columns"])
     logger.info(f"GDAM imputed {total} trees", extra={"inventory_id": inventory_id})
 
     georeference = {
@@ -307,4 +307,9 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
         "bounds": [float(b) for b in domain_gdf.total_bounds],
     }
     progress("Complete", 100)
-    return {"georeference": georeference}
+    return {
+        "georeference": georeference,
+        "columns": [
+            {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
+        ],
+    }

@@ -112,6 +112,14 @@ def completed_gdam_inventory(gdam_source):
         "source": {"name": "gdam", "source_tree_inventory_id": source_id},
         "modifications": [],
         "georeference": None,
+        "columns": [
+            {"key": "x", "type": "continuous", "unit": "m"},
+            {"key": "y", "type": "continuous", "unit": "m"},
+            {"key": "height", "type": "continuous", "unit": "m"},
+            {"key": "dbh", "type": "continuous", "unit": "cm"},
+            {"key": "crown_ratio", "type": "continuous"},
+            {"key": "fia_species_code", "type": "categorical"},
+        ],
     }
     set_document(INVENTORIES_COLLECTION, inventory_id, inventory_data)
 
@@ -135,6 +143,9 @@ def completed_gdam_inventory(gdam_source):
     assert inventory["status"] == "completed", (
         f"GDAM inventory not completed: {inventory.get('error')}"
     )
+    assert inventory.get("columns") is not None
+    for col in inventory["columns"]:
+        assert col["summary"] is not None
 
     yield inventory, source_df, source_id
 
@@ -148,6 +159,14 @@ def _result_df(inventory: dict) -> pd.DataFrame:
     """Load the completed inventory's parquet as a pandas DataFrame."""
     path = f"gs://{INVENTORIES_BUCKET}/{inventory['id']}"
     return dd.read_parquet(path).compute().reset_index(drop=True)
+
+
+def test_column_summaries_populated(completed_gdam_inventory):
+    """Column summaries are populated on completion."""
+    inventory, _, _ = completed_gdam_inventory
+    assert inventory.get("columns") is not None
+    for col in inventory["columns"]:
+        assert col["summary"] is not None
 
 
 def test_pipeline_completes_with_georeference(completed_gdam_inventory):
@@ -207,3 +226,13 @@ def test_filled_values_are_sensible(completed_gdam_inventory):
     assert result["crown_ratio"].min() >= 0
     assert result["crown_ratio"].max() <= 1  # fraction, not percent
     assert (result["fia_species_code"].astype(float) > 0).all()
+
+
+def test_column_summaries_reflect_data(completed_gdam_inventory):
+    """Column summaries reflect the actual parquet data."""
+    inventory, _, _ = completed_gdam_inventory
+    result = _result_df(inventory)
+    cols = {col["key"]: col["summary"] for col in inventory["columns"]}
+    assert cols["dbh"]["count"] == len(result)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == result["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == result["dbh"].max()

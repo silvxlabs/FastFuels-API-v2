@@ -239,7 +239,17 @@ class TestFillMissing:
 
 # --- handle_gdam orchestration (GDAM HTTP + storage mocked) ---
 
-_INVENTORY = {"id": "newinv"}
+_INVENTORY = {
+    "id": "newinv",
+    "columns": [
+        {"key": "x", "type": "continuous", "unit": "m"},
+        {"key": "y", "type": "continuous", "unit": "m"},
+        {"key": "height", "type": "continuous", "unit": "m"},
+        {"key": "dbh", "type": "continuous", "unit": "cm"},
+        {"key": "crown_ratio", "type": "continuous"},
+        {"key": "fia_species_code", "type": "categorical"},
+    ],
+}
 _SOURCE = {"source_tree_inventory_id": "src"}
 
 
@@ -297,13 +307,15 @@ def _patched(source_frame, post_side_effect):
     ddf = dd.from_pandas(source_frame, npartitions=1)
     saved = {}
 
-    def fake_save(inventory_id, result_ddf):
+    def fake_save(inventory_id, result_ddf, columns):
         saved["id"] = inventory_id
         saved["df"] = result_ddf.compute(scheduler="synchronous")
+        saved["columns"] = columns
+        return f"gs://test/{inventory_id}", {}
 
     with (
         patch.object(gdam, "load_inventory_parquet", return_value=ddf),
-        patch.object(gdam, "save_parquet", side_effect=fake_save),
+        patch.object(gdam, "save_parquet_with_summary", side_effect=fake_save),
         patch.object(gdam.httpx, "post", side_effect=post_side_effect) as mock_post,
     ):
         yield saved, mock_post
@@ -373,7 +385,9 @@ class TestHandleGdam:
     def test_source_not_found_raises(self, mock_domain_gdf):
         with (
             patch.object(gdam, "load_inventory_parquet", side_effect=FileNotFoundError),
-            patch.object(gdam, "save_parquet"),
+            patch.object(
+                gdam, "save_parquet_with_summary", return_value=("gs://test/newinv", {})
+            ),
             patch.object(gdam.httpx, "post", side_effect=_ok_post),
         ):
             with pytest.raises(ProcessingError) as exc:

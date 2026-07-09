@@ -84,14 +84,27 @@ def update_progress(inventory_id, message, percent=None):
 
 
 def update_status(
-    inventory_id, status, georeference=None, size_bytes=None, error=None, extra=None
+    inventory_id,
+    status,
+    georeference=None,
+    columns=None,
+    size_bytes=None,
+    error=None,
+    extra=None,
 ):
     """Update inventory status.
 
-    ``extra`` merges additional fields into the update — used to clear the
-    ``pending_modifications`` work queue once an in-place modification completes.
-    ``size_bytes`` is the GCS artifact footprint recorded on completion for
-    per-owner storage quota accounting (#342).
+    Args:
+        inventory_id: Inventory document ID.
+        status: New status value ('pending', 'running', 'completed', 'failed').
+        georeference: Spatial reference to write on completion.
+        columns: Column list with populated summaries to write on completion.
+        size_bytes: GCS artifact footprint recorded on completion for per-owner
+            storage quota accounting (#342).
+        error: Error details to write on failure.
+        extra: Additional fields merged into the update — used to clear
+            ``pending_modifications`` or ``pending_treatments`` once an
+            in-place handler completes.
     """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
@@ -100,6 +113,8 @@ def update_status(
         data["progress"] = {"message": "Failed", "percent": 100}
     if georeference is not None:
         data["georeference"] = georeference
+    if columns is not None:
+        data["columns"] = columns
     if size_bytes is not None:
         data["size_bytes"] = size_bytes
     if error is not None:
@@ -233,6 +248,7 @@ def process_inventory_request(request: Request):
             inventory_id,
             "completed",
             georeference=result["georeference"],
+            columns=result["columns"],
             size_bytes=inventory_size(inventory_id),
             extra=completion_extra,
         )

@@ -805,19 +805,30 @@ class TestListDomains:
         assert "total_items" in data
         assert isinstance(data["domains"], list)
 
-    def test_list_returns_user_domains(self, client, domains_for_listing):
-        """List returns domains belonging to the authenticated user."""
+    def test_list_returns_user_domains(self, isolated_owner):
+        """List returns exactly the authenticated owner's domains.
+
+        Runs on a fresh isolated owner so the result is bounded to the seeded
+        set and never buried by the shared owner's accumulated test data.
+        """
+        client, owner_id, seed = isolated_owner
+        seeded = [
+            seed(
+                DOMAINS_COLLECTION,
+                make_domain_data(
+                    owner_id=owner_id, name=f"List Test Domain {chr(65 + i)}"
+                ),
+            )
+            for i in range(3)
+        ]
+
         response = client.get(self.route)
 
         assert response.status_code == 200
         data = response.json()
-
-        # Should have at least the 3 domains we created
-        assert data["total_items"] >= 3
-
-        # Check that our test domains are in the results
+        assert data["total_items"] == 3
         domain_ids = [d["id"] for d in data["domains"]]
-        for domain in domains_for_listing:
+        for domain in seeded:
             assert domain["id"] in domain_ids
 
     def test_list_excludes_other_users_domains(
@@ -1553,21 +1564,27 @@ class TestDeleteDomain:
         response2 = client.delete(f"{self.route}/{domain_id}")
         assert response2.status_code == 404
 
-    def test_delete_does_not_appear_in_list(self, client, domain_for_delete):
-        """Deleted domain does not appear in list endpoint."""
-        domain_id = domain_for_delete["id"]
+    def test_delete_does_not_appear_in_list(self, isolated_owner):
+        """Deleted domain does not appear in list endpoint.
+
+        Runs on a fresh isolated owner so the pre-delete presence check isn't
+        defeated by the shared owner's accumulated test data.
+        """
+        client, owner_id, seed = isolated_owner
+        domain_id = seed(
+            DOMAINS_COLLECTION,
+            make_domain_data(owner_id=owner_id, name="Domain to Delete"),
+        )["id"]
 
         # Verify it appears in list before delete
-        list_response_before = client.get(self.route)
-        domain_ids_before = [d["id"] for d in list_response_before.json()["domains"]]
+        domain_ids_before = [d["id"] for d in client.get(self.route).json()["domains"]]
         assert domain_id in domain_ids_before
 
         # Delete the domain
         client.delete(f"{self.route}/{domain_id}")
 
         # Verify it no longer appears in list
-        list_response_after = client.get(self.route)
-        domain_ids_after = [d["id"] for d in list_response_after.json()["domains"]]
+        domain_ids_after = [d["id"] for d in client.get(self.route).json()["domains"]]
         assert domain_id not in domain_ids_after
 
     def test_delete_returns_no_body(self, client, domain_for_delete):

@@ -7,9 +7,8 @@ Creation endpoints are domain-scoped and live under grids/exports/.
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Query, Request, status
+from fastapi import APIRouter, Query, Request, status
 
-from api.db.blobs import delete_directory_safe
 from api.db.documents import (
     delete_document_async,
     get_document_async,
@@ -23,7 +22,7 @@ from api.resources.exports.schema import (
     UpdateExportRequestBody,
 )
 from api.schema import SortOrder
-from lib.config import EXPORTS_BUCKET, EXPORTS_COLLECTION
+from lib.config import EXPORTS_COLLECTION
 
 router = APIRouter()
 
@@ -218,7 +217,6 @@ async def update_export(
 async def delete_export(
     request: Request,
     export_id: str,
-    background_tasks: BackgroundTasks,
 ):
     """
     # Delete Export Endpoint
@@ -244,5 +242,3 @@ async def delete_export(
         collection=COLLECTION,
         document_id=export_id,
     )
-
-    background_tasks.add_task(delete_directory_safe, EXPORTS_BUCKET, export_id)

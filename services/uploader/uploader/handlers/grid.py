@@ -20,10 +20,11 @@ import xarray as xr
 from rioxarray.exceptions import NoDataInBounds
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_BUCKET, GRIDS_COLLECTION
+from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
-from lib.gcs import get_gcsfs_client
+from lib.gcs import get_gcsfs_client, storage_size
 from lib.grids import compute_chunks_doc
 from lib.units import validate_unit
 from lib.zarr_utils import save_zarr
@@ -81,6 +82,7 @@ def handle_grid_geotiff(
                 "shape": list(grid_shape),
             },
             "chunks": compute_chunks_doc(grid_shape, _CHUNK_SHAPE),
+            "size_bytes": storage_size(output_path),
             "progress": {"message": "Complete", "percent": 100},
         },
     )
@@ -140,7 +142,7 @@ def _build_dataset(
             ),
         )
 
-    if str(da.rio.crs) != domain_crs_str:
+    if not crs_equal(str(da.rio.crs), domain_crs_str):
         raise ProcessingError(
             code="CRS_MISMATCH",
             message=(
@@ -278,6 +280,7 @@ def handle_grid_netcdf(
                 "bands": bands,
                 "georeference": georeference,
                 "chunks": compute_chunks_doc(grid_shape, chunk_shape),
+                "size_bytes": storage_size(output_path),
                 "progress": {"message": "Complete", "percent": 100},
             },
         )
@@ -348,7 +351,7 @@ def _build_netcdf_dataset(
                 "'spatial_ref') on each data variable."
             ),
         )
-    if str(ds.rio.crs) != domain_crs_str:
+    if not crs_equal(str(ds.rio.crs), domain_crs_str):
         raise ProcessingError(
             code="CRS_MISMATCH",
             message=(

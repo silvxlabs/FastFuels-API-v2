@@ -6,7 +6,6 @@ real HTTP requests to the API and interact with Firestore and Cloud Tasks.
 """
 
 import pytest
-from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS
 from api.resources.inventories.tree.allometry.gdam.examples import (
     ALL_GDAM_EXAMPLE_VALUES,
 )
@@ -110,9 +109,17 @@ class TestCreateGdamInventory:
         assert data["source"]["source_tree_inventory_id"] == source_tree_inventory["id"]
         assert data["source"]["source_tree_inventory_checksum"] == _SOURCE_CHECKSUM
 
-        # GDAM produces a full inventory — the doc carries the base column set.
-        expected = [c.key for c in BASE_INVENTORY_COLUMNS]
-        assert [c["key"] for c in data["columns"]] == expected
+        # Columns reflect the source set plus exactly what GDAM imputes (all
+        # three by default) — not the full base set. fia_status_code is never
+        # imputed, so it must not appear.
+        assert [c["key"] for c in data["columns"]] == [
+            "x",
+            "y",
+            "height",
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+        ]
 
     def test_request_with_metadata(
         self, client, domain_for_testing, source_tree_inventory

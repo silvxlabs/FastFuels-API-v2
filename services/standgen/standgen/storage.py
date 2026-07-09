@@ -1,6 +1,7 @@
 """Storage utilities for Standgen."""
 
 import logging
+import math
 
 import dask
 import dask.dataframe as dd
@@ -11,7 +12,7 @@ import xarray as xr
 
 from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
 from lib.errors import ProcessingError
-from lib.gcs import delete_directory, exists, get_gcsfs_client
+from lib.gcs import delete_directory, exists, get_gcsfs_client, storage_size
 from lib.zarr_utils import load_zarr
 from standgen.summarize import _build_column_stats_graph, _build_tree_forestry_graph
 
@@ -19,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 
 FLOAT_STATS = {"min", "max", "mean", "std"}
+
+
+def _finite_or_none(value) -> float | None:
+    """Coerce a reduction result to float, mapping NaN/inf to None.
+
+    Continuous reductions can be non-finite: an all-null column yields NaN
+    min/max/mean/std, and a column with a single non-null value yields NaN
+    sample std (ddof=1). NaN/inf are not JSON-serializable — the API serves
+    inventories with a JSONResponse that uses ``allow_nan=False`` — so they
+    must not reach Firestore.
+    """
+    value = float(value)
+    return value if math.isfinite(value) else None
 
 
 def load_grid(grid_id: str) -> xr.Dataset:
@@ -84,13 +98,9 @@ def _fused_compute(
             stats[k] = {"type": stats_graph[k]["type"]}
         val = computed_values[i]
         if s in FLOAT_STATS:
-            stats[k][s] = float(val)
+            stats[k][s] = _finite_or_none(val)
         else:
             stats[k][s] = int(val)
-
-    for k, v in stats.items():
-        if v["type"] == "continuous" and v["count"] == 0:
-            v["min"] = v["max"] = v["mean"] = v["std"] = None
 
     return stats, forestry_metrics
 
@@ -280,6 +290,17 @@ def count_inventory_rows(inventory_id: str) -> int | None:
             f"No Parquet _metadata for inventory {inventory_id}; skipping row count"
         )
         return None
+
+
+def inventory_size(inventory_id: str) -> int:
+    """Total GCS bytes of an inventory's Parquet dataset — its absolute footprint.
+
+    Sums every object under the inventory's prefix (all part files plus the
+    ``_metadata``/``_common_metadata`` footers). Because it measures the live
+    prefix, an in-place replace (:func:`save_parquet_replace`) reads as the new
+    footprint, never an accumulation (#342).
+    """
+    return storage_size(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
 
 
 def delete_parquet(inventory_id: str) -> None:

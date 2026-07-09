@@ -35,6 +35,12 @@ EXAMPLE_QUICFIRE_EXPLICIT_DOMAIN = {
     "name": "QUIC-Fire inputs (1m horizontal, 1m vertical)",
 }
 
+EXAMPLE_QUICFIRE_SHORT_DOMAIN = {
+    **EXAMPLE_QUICFIRE_MINIMAL,
+    "alignment": {"dx": 1.0, "dy": 1.0},
+    "name": "QUIC-Fire inputs (1m, target omitted)",
+}
+
 EXAMPLE_QUICFIRE_EXPLICIT_MERGE = {
     **EXAMPLE_QUICFIRE_WITH_SAVR,
     "rhof_merge": "sum",
@@ -68,6 +74,15 @@ CREATE_QUICFIRE_EXPORT_OPENAPI_EXAMPLES = {
             "simulations (e.g. dx=4 m) or finer vertical resolution (e.g. "
             "dz=0.5 m). All role grids must still be lattice-aligned and "
             "cover the resulting fire-grid extent."
+        ),
+    },
+    "short_domain": {
+        "value": EXAMPLE_QUICFIRE_SHORT_DOMAIN,
+        "summary": "1 m fire grid, target omitted (shorthand)",
+        "description": (
+            "`alignment.target` defaults to `'domain'`, so you can pass just "
+            '`{"dx": 1, "dy": 1}` without repeating the target. Every role '
+            "grid must be built at 1 m."
         ),
     },
     "with_topography": {

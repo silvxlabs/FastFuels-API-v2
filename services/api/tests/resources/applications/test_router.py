@@ -11,7 +11,7 @@ import pytest
 from httpx import Client
 
 from lib.config import APPLICATIONS_COLLECTION, KEYS_COLLECTION
-from tests.fixtures import make_key_data
+from tests.fixtures import make_application_data, make_key_data
 
 
 class TestCreateApplication:
@@ -53,6 +53,13 @@ class TestCreateApplication:
         app_id = response.json()["id"]
         assert len(app_id) == 32
         int(app_id, 16)  # Should not raise — valid hex
+
+    def test_rejects_quota_config(self, client):
+        """tier / quota_overrides are admin-only and cannot be set at create (422)."""
+        response = client.post(
+            self.route, json={"name": "Quota App", "tier": "partner"}
+        )
+        assert response.status_code == 422
 
     def test_application_access_forbidden(
         self, client, firestore_client, test_owner_id
@@ -110,13 +117,18 @@ class TestListApplications:
         assert "total_items" in data
         assert isinstance(data["applications"], list)
 
-    def test_includes_user_apps(self, client, application_for_testing):
+    def test_includes_user_apps(self, isolated_owner):
+        # Fresh isolated owner: the listing is bounded to the seeded app and
+        # never buried by the shared owner's accumulated test applications.
+        client, owner_id, seed = isolated_owner
+        app = seed(APPLICATIONS_COLLECTION, make_application_data(owner_id=owner_id))
+
         response = client.get(self.route)
         assert response.status_code == 200
 
         data = response.json()
         app_ids = [a["id"] for a in data["applications"]]
-        assert application_for_testing["id"] in app_ids
+        assert app["id"] in app_ids
 
     def test_excludes_other_users_apps(self, client, application_with_different_owner):
         response = client.get(self.route)
@@ -163,6 +175,22 @@ class TestGetApplication:
         app_id = application_with_different_owner["id"]
         response = client.get(f"{self.route}/{app_id}")
         assert response.status_code == 404
+
+    def test_surfaces_quota_config(self, client, firestore_client, test_owner_id):
+        """tier / quota_overrides stored on the document are returned by GET."""
+        app = make_application_data(owner_id=test_owner_id, name="Quota Config App")
+        app["tier"] = "application"
+        app["quota_overrides"] = {"max_active_grids": 100}
+        ref = firestore_client.collection(APPLICATIONS_COLLECTION).document(app["id"])
+        ref.set(app)
+        try:
+            response = client.get(f"{self.route}/{app['id']}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["tier"] == "application"
+            assert data["quota_overrides"] == {"max_active_grids": 100}
+        finally:
+            ref.delete()
 
 
 class TestUpdateApplication:
@@ -219,6 +247,25 @@ class TestUpdateApplication:
         app_id = app_for_update["id"]
         response = client.patch(f"{self.route}/{app_id}", json={})
         assert response.status_code == 200
+
+    def test_patch_rejects_quota_config(self, client, firestore_client, app_for_update):
+        """tier / quota_overrides are admin-only: a PATCH carrying them is a 422,
+        and the stored document is left untouched."""
+        app_id = app_for_update["id"]
+        response = client.patch(
+            f"{self.route}/{app_id}",
+            json={"tier": "partner", "quota_overrides": {"max_active_grids": 9999}},
+        )
+        assert response.status_code == 422
+
+        stored = (
+            firestore_client.collection(APPLICATIONS_COLLECTION)
+            .document(app_id)
+            .get()
+            .to_dict()
+        )
+        assert stored.get("tier") is None
+        assert stored.get("quota_overrides") is None
 
     def test_nonexistent_returns_404(self, client):
         response = client.patch(

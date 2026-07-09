@@ -20,6 +20,7 @@ from exporter.errors import CancelledException, ProcessingError
 from exporter.storage import delete_export_files, generate_signed_download
 from lib.config import EXPORTS_COLLECTION
 from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.gcs import storage_size
 
 
 class StructuredLogHandler(logging.Handler):
@@ -47,6 +48,11 @@ logger.addHandler(StructuredLogHandler())
 
 UNEXPECTED_FAILURE_MESSAGE = (
     "Export failed unexpectedly. Please try again or contact the development team."
+)
+
+SOURCE_NOT_FOUND_MESSAGE = (
+    "A required input resource was not found. It may have been deleted "
+    "before processing completed."
 )
 
 
@@ -83,9 +89,14 @@ def update_status(
     export_id: str,
     status: str,
     signed_url: str | None = None,
+    size_bytes: int | None = None,
     error: dict | None = None,
 ) -> None:
-    """Update export status."""
+    """Update export status.
+
+    size_bytes is the GCS artifact footprint of the export in bytes, recorded
+    on completion for per-owner storage quota accounting (#342).
+    """
     data = {
         "status": status,
         "modified_on": datetime.now(UTC),
@@ -98,6 +109,9 @@ def update_status(
 
     if signed_url is not None:
         data["signed_url"] = signed_url
+
+    if size_bytes is not None:
+        data["size_bytes"] = size_bytes
 
     if error is not None:
         data["error"] = error
@@ -180,7 +194,12 @@ def process_export_request(request: Request):
         progress_callback("Generating signed URL...", 90)
 
         signed_url = generate_signed_download(gcs_path, expiration_days)
-        update_status(export_id, "completed", signed_url=signed_url)
+        update_status(
+            export_id,
+            "completed",
+            signed_url=signed_url,
+            size_bytes=storage_size(gcs_path),
+        )
 
         logger.info("Processing complete", extra=ids)
         return "OK", 200
@@ -191,12 +210,31 @@ def process_export_request(request: Request):
         return "OK", 200
 
     except ProcessingError as e:
+        # Expected, handled terminal outcome — log at WARNING, not ERROR.
         log_extra = {**ids}
         if e.traceback:
             log_extra["traceback"] = e.traceback
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=log_extra)
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=log_extra)
         try:
             update_status(export_id, "failed", error=e.to_dict())
+        except CancelledException:
+            delete_export_files(export_id)
+        return "OK", 200
+
+    except FileNotFoundError as e:
+        # A referenced input (source grid zarr, ...) was deleted while this
+        # export was queued or running — a benign race (user deleted the
+        # resource, or test teardown), not a system fault. zarr's
+        # GroupNotFoundError and the GCS 404 both subclass FileNotFoundError.
+        # Record a terminal failure and return 200: the object will never
+        # reappear, so a retry is wasted and only amplifies log noise.
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        try:
+            update_status(
+                export_id,
+                "failed",
+                error={"code": "SOURCE_NOT_FOUND", "message": SOURCE_NOT_FOUND_MESSAGE},
+            )
         except CancelledException:
             delete_export_files(export_id)
         return "OK", 200

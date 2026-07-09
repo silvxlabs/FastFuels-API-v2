@@ -1,0 +1,134 @@
+name: CI/CD Pipeline for Walle Service
+
+env:
+  SERVICE_NAME: walle-v2
+  REPO_NAME: v2
+  REGION: us-west1
+  PROJECT_ID: ${{ secrets.GCP_PROJECT }}
+
+# walle is a single global reconciliation job, not a per-environment service. It
+# mutates the shared Firestore + GCS state (one project, one default database
+# with -v2 collections, one set of bucket secrets), so a second "dev" instance
+# would only race the prod one over identical data. There is exactly one walle
+# job, deployed from main.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/walle/**'
+      - 'services/lib/**'
+      - '.github/workflows/walle.yml'
+
+jobs:
+  build:
+    name: Build Docker Image and Push to Artifact Registry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Google Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGION }}-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:latest
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+            ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:prod
+          file: services/walle/Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy Cloud Run Job
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      # Rolls the job image + env. The nightly Cloud Scheduler trigger that
+      # actually runs walle is provisioned out-of-band (see services/walle/README);
+      # deploying the image here does not run it.
+      - name: Deploy Cloud Run Job
+        run: |
+          gcloud run jobs deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:prod \
+            --region ${{ env.REGION }} \
+            --update-env-vars="\
+              DEPLOYMENT_ENV=prod,\
+              GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
+              GCP_REGION=${{ env.REGION }},\
+              GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
+              EXPORTS_BUCKET=${{ secrets.EXPORTS_BUCKET }},\
+              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
+              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
+              POINT_CLOUDS_BUCKET=${{ secrets.POINT_CLOUDS_BUCKET }}" \
+            --quiet
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: services/walle
+        run: uv sync --frozen --extra test
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Run unit tests
+        working-directory: services/walle
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GCP_REGION: ${{ env.REGION }}
+          GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
+          EXPORTS_BUCKET: ${{ secrets.EXPORTS_BUCKET }}
+          INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
+          FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
+          POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
+        run: uv run pytest tests/ --ignore=tests/integration -v
+
+      - name: Run integration tests
+        working-directory: services/walle
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GCP_REGION: ${{ env.REGION }}
+          GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
+          EXPORTS_BUCKET: ${{ secrets.EXPORTS_BUCKET }}
+          INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
+          FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
+          POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
+        run: uv run pytest tests/integration/ -v

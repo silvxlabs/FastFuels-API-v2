@@ -159,6 +159,11 @@ def treatments_runner(shared_pim_source):
         for col in treated_inventory["columns"]:
             assert col["summary"] is not None
         assert treated_inventory.get("forestry_metrics") is not None
+        # The Parquet footprint is recorded on the in-place replace path too and
+        # reflects the current dataset — a thinning treatment rewrites the whole
+        # store, so it never accumulates onto the source footprint (#342).
+        assert treated_inventory["size_bytes"] > 0
+        assert treated_inventory["size_bytes"] < pim_inventory["size_bytes"] * 2
 
         return pim_inventory, treated_inventory
 

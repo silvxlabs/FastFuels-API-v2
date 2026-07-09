@@ -17,7 +17,7 @@ from flask import Request
 
 from etcher.dispatch import dispatch_handler
 from etcher.errors import CancelledException, ProcessingError
-from etcher.storage import delete_features
+from etcher.storage import delete_features, feature_size
 from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.firestore import DocumentNotFoundError, get_document, update_document
@@ -54,6 +54,11 @@ UNEXPECTED_FAILURE_MESSAGE = (
     "Job failed unexpectedly. Please try again or contact the development team."
 )
 
+SOURCE_NOT_FOUND_MESSAGE = (
+    "A required input resource was not found. It may have been deleted "
+    "before processing completed."
+)
+
 
 def load_feature(feature_id: str) -> dict:
     """Load feature document from Firestore."""
@@ -76,8 +81,12 @@ def update_progress(feature_id, message, percent=None):
         raise CancelledException(f"Feature {feature_id} was cancelled")
 
 
-def update_status(feature_id, status, georeference=None, error=None):
-    """Update feature status."""
+def update_status(feature_id, status, georeference=None, size_bytes=None, error=None):
+    """Update feature status.
+
+    ``size_bytes`` is the GCS artifact footprint recorded on completion for
+    per-owner storage quota accounting (#342).
+    """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
         data["progress"] = {"message": "Complete", "percent": 100}
@@ -85,6 +94,8 @@ def update_status(feature_id, status, georeference=None, error=None):
         data["progress"] = {"message": "Failed", "percent": 100}
     if georeference is not None:
         data["georeference"] = georeference
+    if size_bytes is not None:
+        data["size_bytes"] = size_bytes
     if error is not None:
         data["error"] = error
     try:
@@ -187,6 +198,7 @@ def process_feature_request(request: Request):
             feature_id,
             "completed",
             georeference=result.get("georeference"),
+            size_bytes=feature_size(domain_id, feature_id),
         )
         logger.info("Processing complete", extra=ids)
         return "OK", 200
@@ -197,9 +209,28 @@ def process_feature_request(request: Request):
         return "OK", 200
 
     except ProcessingError as e:
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=ids)
+        # Expected, handled terminal outcome — log at WARNING, not ERROR.
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=ids)
         try:
             update_status(feature_id, "failed", error=e.to_dict())
+        except CancelledException:
+            delete_features(domain_id, feature_id)
+        return "OK", 200
+
+    except FileNotFoundError as e:
+        # A referenced input was deleted while this job was queued or
+        # running — a benign race (user deleted the resource, or test
+        # teardown), not a system fault. zarr's GroupNotFoundError and the
+        # GCS 404 both subclass FileNotFoundError. Record a terminal failure
+        # and return 200: the object will never reappear, so a retry is
+        # wasted and only amplifies log noise.
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        try:
+            update_status(
+                feature_id,
+                "failed",
+                error={"code": "SOURCE_NOT_FOUND", "message": SOURCE_NOT_FOUND_MESSAGE},
+            )
         except CancelledException:
             delete_features(domain_id, feature_id)
         return "OK", 200

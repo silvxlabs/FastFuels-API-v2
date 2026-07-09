@@ -169,6 +169,7 @@ def test_pending_modifications_replace_gr1_with_gr2_in_place(griddle_runner):
     result = griddle_runner("blue_mtn.json", "landfire_fbfm40.json")
     grid_id = result.grid_id
     base = result.ds["fbfm"].values.copy()
+    pre_size = get_document(GRIDS_COLLECTION, grid_id)[1].to_dict()["size_bytes"]
 
     # Pick the most common valid fuel model code, excluding GR1/GR2 so the
     # expected final counts are simple sums.
@@ -210,6 +211,11 @@ def test_pending_modifications_replace_gr1_with_gr2_in_place(griddle_runner):
     # The applied delta merged into the ledger atomically with completion.
     assert grid["pending_modifications"] == []
     assert grid["modifications"] == pending
+    # size_bytes reflects the current store — an in-place rewrite records the
+    # new footprint, never accumulates it (#342). Same grid shape, so the
+    # rewritten store stays close to the original footprint (never ~doubled).
+    assert grid["size_bytes"] > 0
+    assert grid["size_bytes"] < pre_size * 2
 
     ds = load_zarr(f"gs://{GRIDS_BUCKET}/{grid_id}")
     try:

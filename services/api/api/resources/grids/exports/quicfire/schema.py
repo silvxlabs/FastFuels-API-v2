@@ -113,6 +113,15 @@ class QuicfireExportRequest(BaseModel):
     fire grid and cover its full extent; otherwise the request is rejected.
     The exporter only crops oversized roles by integer slicing — it never
     resamples or reprojects.
+
+    The output resolution is set here, on the export, via `alignment.dx`/`dy`
+    (default 2 m, QUIC-Fire's recommended value). It is a separate setting
+    from the resolution of each grid you built — changing your grids does not
+    change the export, and vice versa. Because the exporter never resamples,
+    every role grid must already be built at the fire-grid resolution. To
+    export at 1 m, for example, set `dx`/`dy` to 1 and build all role grids at
+    1 m (2D grids at 1 m via their `alignment.resolution`, and the 3D tree
+    grid at 1 m via `resolution.horizontal` — 3D grids cannot be resampled).
     """
 
     alignment: QUICFireExportAlignmentSpec = Field(
@@ -217,6 +226,20 @@ class QuicfireExportRequest(BaseModel):
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_alignment_target(cls, data: object) -> object:
+        """Default ``alignment.target`` to ``"domain"`` when omitted.
+
+        ``alignment`` is a discriminated union on ``target``, so Pydantic
+        requires the tag even though the domain target is the only default.
+        Filling it here lets callers pass just ``{"dx": 1, "dy": 1}`` instead
+        of repeating ``"target": "domain"``.
+        """
+        if isinstance(data, dict) and isinstance(data.get("alignment"), dict):
+            data["alignment"].setdefault("target", "domain")
+        return data
 
     @model_validator(mode="after")
     def savr_pair_or_none(self) -> "QuicfireExportRequest":

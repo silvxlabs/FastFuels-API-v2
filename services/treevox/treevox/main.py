@@ -75,6 +75,11 @@ UNEXPECTED_FAILURE_MESSAGE = (
     "Job failed unexpectedly. Please try again or contact the development team."
 )
 
+SOURCE_NOT_FOUND_MESSAGE = (
+    "A required input resource was not found. It may have been deleted "
+    "before processing completed."
+)
+
 
 @functions_framework.http
 def process_grid_request(request: Request):
@@ -145,10 +150,30 @@ def process_grid_request(request: Request):
         return "OK", 200
 
     except ProcessingError as e:
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=ids)
+        # Expected, handled terminal outcome — log at WARNING, not ERROR.
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=ids)
         storage.delete_zarr(storage.gcs_path(grid_id))
         try:
             update_status(grid_id, "failed", error=e.to_dict())
+        except CancelledException:
+            pass
+        return "OK", 200
+
+    except FileNotFoundError as e:
+        # A referenced input was deleted while this job was queued or
+        # running — a benign race (user deleted the resource, or test
+        # teardown), not a system fault. zarr's GroupNotFoundError and the
+        # GCS 404 both subclass FileNotFoundError. Record a terminal failure
+        # and return 200: the object will never reappear, so a retry is
+        # wasted and only amplifies log noise.
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        storage.delete_zarr(storage.gcs_path(grid_id))
+        try:
+            update_status(
+                grid_id,
+                "failed",
+                error={"code": "SOURCE_NOT_FOUND", "message": SOURCE_NOT_FOUND_MESSAGE},
+            )
         except CancelledException:
             pass
         return "OK", 200

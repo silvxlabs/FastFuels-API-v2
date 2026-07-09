@@ -175,6 +175,35 @@ def test_unexpected_error_returns_500(
     assert status_code == 500
 
 
+@patch("standgen.main._load_domain")
+@patch("standgen.main.dispatch_handler")
+@patch("standgen.main.update_status")
+@patch("standgen.main.load_inventory")
+def test_missing_source_returns_200_not_retried(
+    mock_load, mock_status, mock_dispatch, mock_load_domain, mock_inventory
+):
+    """A deleted input surfaces as FileNotFoundError (zarr GroupNotFoundError /
+
+    GCS 404) — a terminal not-found, not a transient fault. Mark failed with
+    SOURCE_NOT_FOUND and return 200 so the job is not retried.
+    """
+    from standgen.main import process_inventory_request
+
+    mock_load.return_value = mock_inventory
+    mock_load_domain.return_value = MagicMock()
+    mock_dispatch.side_effect = FileNotFoundError(
+        "No group found in store 'gs://bucket/test-grid' at path ''"
+    )
+
+    request = MockRequest({"id": "test-inventory-123"})
+    response, status_code = process_inventory_request(request)
+
+    assert status_code == 200
+    failed_calls = [c for c in mock_status.call_args_list if c[0][1] == "failed"]
+    assert len(failed_calls) == 1
+    assert failed_calls[-1][1]["error"]["code"] == "SOURCE_NOT_FOUND"
+
+
 @patch("standgen.main.update_status")
 @patch("standgen.main.load_inventory")
 def test_cancelled_before_processing(mock_load, mock_status, mock_inventory):

@@ -63,6 +63,11 @@ UNEXPECTED_FAILURE_MESSAGE = (
     "Job failed unexpectedly. Please try again or contact the development team."
 )
 
+SOURCE_NOT_FOUND_MESSAGE = (
+    "A required input resource was not found. It may have been deleted "
+    "before processing completed."
+)
+
 
 def load_grid(grid_id: str) -> dict:
     """Load grid document from Firestore.
@@ -392,13 +397,34 @@ def process_grid_request(request: Request):
         return "OK", 200
 
     except ProcessingError as e:
-        # Handler raised a structured error
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=ids)
+        # Handler raised a structured error — an expected, handled terminal
+        # outcome (bad input / missing precondition), not a system fault.
+        # Log at WARNING so it stays out of the ERROR stream.
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=ids)
         try:
             update_status(grid_id, "failed", error=e.to_dict())
         except CancelledException:
             delete_zarr(grid_id)
         return "OK", 200  # Return 200 - error is recorded, no need to retry
+
+    except FileNotFoundError as e:
+        # A referenced input (source-grid zarr, feature parquet, ...) was
+        # deleted while this job was queued or running — a benign race
+        # (user deleted the resource, or test teardown), not a system fault.
+        # zarr's GroupNotFoundError and the GCS 404 both subclass
+        # FileNotFoundError. Record a clean terminal failure and return 200:
+        # the object will never reappear, so a Cloud Tasks retry is wasted
+        # and only triples the log noise (500 request-log + retry marker).
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        try:
+            update_status(
+                grid_id,
+                "failed",
+                error={"code": "SOURCE_NOT_FOUND", "message": SOURCE_NOT_FOUND_MESSAGE},
+            )
+        except CancelledException:
+            delete_zarr(grid_id)
+        return "OK", 200
 
     except Exception as e:
         # Unexpected error - let Cloud Tasks retry

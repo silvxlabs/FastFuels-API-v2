@@ -54,6 +54,11 @@ UNEXPECTED_FAILURE_MESSAGE = (
     "Job failed unexpectedly. Please try again or contact the development team."
 )
 
+SOURCE_NOT_FOUND_MESSAGE = (
+    "A required input resource was not found. It may have been deleted "
+    "before processing completed."
+)
+
 
 def load_feature(feature_id: str) -> dict:
     """Load feature document from Firestore."""
@@ -204,9 +209,28 @@ def process_feature_request(request: Request):
         return "OK", 200
 
     except ProcessingError as e:
-        logger.error(f"Processing failed: {e.code} - {e.message}", extra=ids)
+        # Expected, handled terminal outcome — log at WARNING, not ERROR.
+        logger.warning(f"Processing failed: {e.code} - {e.message}", extra=ids)
         try:
             update_status(feature_id, "failed", error=e.to_dict())
+        except CancelledException:
+            delete_features(domain_id, feature_id)
+        return "OK", 200
+
+    except FileNotFoundError as e:
+        # A referenced input was deleted while this job was queued or
+        # running — a benign race (user deleted the resource, or test
+        # teardown), not a system fault. zarr's GroupNotFoundError and the
+        # GCS 404 both subclass FileNotFoundError. Record a terminal failure
+        # and return 200: the object will never reappear, so a retry is
+        # wasted and only amplifies log noise.
+        logger.warning(f"Input not found (deleted during processing?): {e}", extra=ids)
+        try:
+            update_status(
+                feature_id,
+                "failed",
+                error={"code": "SOURCE_NOT_FOUND", "message": SOURCE_NOT_FOUND_MESSAGE},
+            )
         except CancelledException:
             delete_features(domain_id, feature_id)
         return "OK", 200

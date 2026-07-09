@@ -341,3 +341,36 @@ class TestProcessGridRequest:
         assert status_code == 200
         last_call = mock_update_status.call_args_list[-1]
         assert last_call[0][1] == "failed"
+
+    @patch("griddle.main._load_domain")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.load_grid")
+    def test_missing_source_returns_200_not_retried(
+        self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
+    ):
+        """A deleted input surfaces as FileNotFoundError (zarr
+
+        GroupNotFoundError / GCS 404). It is a terminal not-found, not a
+        transient fault: mark failed with SOURCE_NOT_FOUND and return 200 so
+        Cloud Tasks does not retry a permanently-missing object.
+        """
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": {"name": "landfire", "product": "fbfm40"},
+            "domain_id": "test-domain-id",
+            "bands": [{"key": "fbfm", "type": "categorical"}],
+        }
+        mock_load_domain.return_value = MagicMock()
+        mock_dispatch.side_effect = FileNotFoundError(
+            "No group found in store 'gs://bucket/test-grid-id' at path ''"
+        )
+
+        request = MockRequest(json_data={"id": "test-grid-id"})
+
+        response, status_code = process_grid_request(request)
+
+        assert status_code == 200
+        last_call = mock_update_status.call_args_list[-1]
+        assert last_call[0][1] == "failed"
+        assert last_call[1]["error"]["code"] == "SOURCE_NOT_FOUND"

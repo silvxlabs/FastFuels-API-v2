@@ -17,8 +17,9 @@ import pandas as pd
 from fastfuels_core.trees import Tree
 from fastfuels_core.voxelization import (
     VoxelizedTree,
+    compute_crown_probability_field,
     discretize_crown_profile,
-    sample_occupied_cells,
+    sample_occupancy,
 )
 
 
@@ -46,6 +47,9 @@ class CacheEntry:
         fastfuels-core from the bin-representative tree's species. Written
         verbatim into the `savr.foliage` band for every voxel the tree
         occupies.
+    specific_leaf_area
+        Leaf area per mass, m**2/kg. Derived by fastfuels-core from the tree's
+        species. Used to calculate leaf area density.
     species_code
         FIA species code (int). Written verbatim into the `spcd` band.
 
@@ -70,6 +74,7 @@ class CacheEntry:
     biomass_arrays: list[np.ndarray]
     crown_base_height: float
     foliage_sav: float
+    specific_leaf_area: float
     species_code: int
 
 
@@ -452,7 +457,7 @@ def build_chunk_cache(
         `build_tree`.
     rng
         Seeded numpy Generator. Used twice per cache entry: once to draw
-        a per-realization int seed for `sample_occupied_cells` (so each
+        a per-realization int seed for `sample_occupancy` (so each
         realization varies deterministically), and once downstream in
         `voxelize_chunk` to pick which realization a given tree row uses.
         Seeded from `source.seed + (row_chunk, col_chunk)` in the
@@ -466,20 +471,24 @@ def build_chunk_cache(
        "bin-representative").
     2. Calls `discretize_crown_profile(tree, hr, vr)` to get a 3D mask of
        which voxels the tree's crown occupies.
-    3. Computes how many independent biomass realizations to cache via
+    3. Computes the deterministic crown-probability field once per bin via
+       `compute_crown_probability_field(canopy_mask, alpha=0.5, beta=0.5)`.
+       The field (and its EDT) depends only on the mask, so it is shared by
+       every realization of the bin rather than recomputed per draw (#399).
+    4. Computes how many independent biomass realizations to cache via
        `calculate_arrays_to_cache(nonzero_voxels, group_size)`.
-    4. For each realization:
+    5. For each realization:
          a. Draws a seed from `rng`.
-         b. `sample_occupied_cells(canopy_mask, alpha=0.5, beta=0.5, seed)`
-            — stochastic sub-voxel occupancy.
+         b. `sample_occupancy(canopy_mask, field, n, seed)` — one stochastic
+            sub-voxel occupancy draw from the shared field.
          c. `VoxelizedTree(tree, sampled, hr, vr).distribute_biomass()` →
             per-voxel kg/m**3 array.
          d. Sanitizes non-finite values (`foliage_biomass / 0 volume`
             edge case inside fastfuels-core) to zero so the downstream
             zarr store never receives NaN/Inf.
-    5. Packs the realizations plus the bin-representative's
-       `crown_base_height`, `foliage_sav`, and `species_code` into one
-       `CacheEntry`.
+    6. Packs the realizations plus the bin-representative's
+       `crown_base_height`, `foliage_sav`, , 'specific_leaf_area', and
+       `species_code` into one `CacheEntry`.
 
     Skip rules (never raise, always log by omission so the job makes
     progress on partial failure):
@@ -506,21 +515,27 @@ def build_chunk_cache(
         try:
             tree = build_tree(first_row, source_config)
             canopy_mask = discretize_crown_profile(tree, hr, vr)
+            nonzero = int(np.count_nonzero(canopy_mask))
+            if nonzero == 0:
+                # Empty crown — no voxels to distribute biomass into.
+                continue
+            # The crown-probability field (and its EDT) is deterministic in
+            # (mask, alpha, beta) — identical across a bin's realizations, which
+            # differ only by the stochastic voxel draw. Compute it once per bin
+            # and draw every realization from it, rather than recomputing the
+            # field per realization inside sample_occupied_cells (#399).
+            field, n_occupied = compute_crown_probability_field(
+                canopy_mask, alpha=0.5, beta=0.5
+            )
         except Exception:
             # Degenerate tree (e.g. allometric failure) — skip entry, like v1.
-            continue
-        nonzero = int(np.count_nonzero(canopy_mask))
-        if nonzero == 0:
-            # Empty crown — no voxels to distribute biomass into.
             continue
         num_to_cache = calculate_arrays_to_cache(nonzero, len(group))
         arrays: list[np.ndarray] = []
         for _ in range(num_to_cache):
             seed = int(rng.integers(1, 2**31 - 1))
             try:
-                sampled = sample_occupied_cells(
-                    canopy_mask, alpha=0.5, beta=0.5, seed=seed
-                )
+                sampled = sample_occupancy(canopy_mask, field, n_occupied, seed=seed)
                 vt = VoxelizedTree(tree, sampled, hr, vr)
                 biomass = distribute_component_biomass(vt, biomass_component)
             except NotImplementedError:
@@ -538,6 +553,7 @@ def build_chunk_cache(
                 biomass_arrays=arrays,
                 crown_base_height=float(tree.crown_base_height),
                 foliage_sav=float(tree.foliage_sav),
+                specific_leaf_area=float(tree.specific_leaf_area),
                 species_code=int(tree.species_code),
             )
     return cache
@@ -732,6 +748,7 @@ def _apply_bands(
     buffers: dict[str, np.ndarray],
     buf_slices: tuple[slice, slice, slice],
     biomass_clip: np.ndarray,
+    lad_clip: np.ndarray | None,
     species_code: int,
     foliage_sav: float,
     tree_id: int,
@@ -759,6 +776,10 @@ def _apply_bands(
         `biomass_array[source_slices]`. Same shape as `buf[buf_slices]`.
         Non-zero values mark voxels the tree occupies; values are kg/m**3
         of foliage biomass.
+    lad_clip
+        Per-voxel leaf area density (m**2/m**3) for the tree, same shape as
+        `buf[buf_slices]`, or `None` when the `leaf_area_density` band was
+        not requested. Only read when that band is present in `buffers`.
     species_code
         FIA species code (int), from `CacheEntry.species_code`. Written
         into the `spcd` band.
@@ -784,6 +805,7 @@ def _apply_bands(
       |-----------------------|-----------|------------------------------|
       | volume_fraction       | accumulate| `region += mask`             |
       | bulk_density.<component>.<state> | accumulate| `region += biomass_clip * fraction` |
+      | leaf_area_density     | accumulate| `region += lad_clip`         |
       | savr.foliage          | overwrite | `region[mask] = foliage_sav` |
       | fuel_moisture.<state> | overwrite | `region[mask] = moisture`    |
       | spcd                  | overwrite | `region[mask] = species_code`|
@@ -810,6 +832,8 @@ def _apply_bands(
             region += (biomass_clip * component_state["live"]).astype(buf.dtype)
         elif key == f"bulk_density.{biomass_component}.dead":
             region += (biomass_clip * component_state["dead"]).astype(buf.dtype)
+        elif key == "leaf_area_density":
+            region += lad_clip.astype(buf.dtype)
         elif key == "savr.foliage":
             region[mask] = foliage_sav
         elif key == "fuel_moisture.live":
@@ -891,7 +915,9 @@ def voxelize_chunk(
        source_slices)` with vertical anchor at
        `entry.crown_base_height`; returns `None` if the crown is fully
        outside this chunk buffer.
-    5. `_apply_bands` — writes the tree's contribution into every
+    5. When `leaf_area_density` is requested, derives the tree's LAD clip
+       as `biomass_clip * entry.specific_leaf_area`; otherwise skips it.
+    6. `_apply_bands` — writes the tree's contribution into every
        requested band buffer with the appropriate accumulate/overwrite
        rule.
 
@@ -944,10 +970,22 @@ def voxelize_chunk(
             continue
 
         buf_slices, src_slices = placement
+        biomass_clip = biomass_array[src_slices]
+
+        # Leaf area density = foliage biomass density * per-tree specific leaf
+        # area (m**2/m**3). Only derived when requested; skipped otherwise so
+        # jobs that don't ask for the band pay nothing. (May become per-voxel
+        # SLA later.) `biomass_clip` is the foliage component today — see
+        # `distribute_component_biomass`.
+        lad_clip = None
+        if "leaf_area_density" in buffers:
+            lad_clip = biomass_clip * entry.specific_leaf_area
+
         _apply_bands(
             buffers,
             buf_slices,
-            biomass_array[src_slices],
+            biomass_clip,
+            lad_clip,
             entry.species_code,
             entry.foliage_sav,
             int(row["tree_id"]),

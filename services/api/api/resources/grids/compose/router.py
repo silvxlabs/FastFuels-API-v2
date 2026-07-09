@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import firestore_client, get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.compose.examples import CREATE_COMPOSE_OPENAPI_EXAMPLES
 from api.resources.grids.compose.schema import (
     CATEGORICAL_CONDITION_OPERATORS,
@@ -45,6 +46,7 @@ from lib.config import (
     GRIDDLE_SERVICE,
     GRIDS_COLLECTION,
 )
+from lib.crs import crs_equal
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 from lib.units import canonicalize_unit
 
@@ -119,7 +121,7 @@ def _validate_alignment(
         grid_id = input_by_alias[alias].grid_id
         _shape_rank(grid_data, grid_id)
         georef = grid_data["georeference"]
-        if georef.get("crs") != first_georef.get("crs"):
+        if not crs_equal(georef.get("crs"), first_georef.get("crs")):
             raise _http_422("All compose input grids must have the same CRS.")
         if tuple(georef.get("shape", ())) != tuple(first_georef.get("shape", ())):
             raise _http_422("All compose input grids must have the same shape.")
@@ -465,6 +467,7 @@ def _dump_operations_for_firestore(
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid by composing existing grids",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_compose_grid(
     request: Request,
@@ -482,6 +485,8 @@ async def create_compose_grid(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
     await _validate_compose_feature_conditions(

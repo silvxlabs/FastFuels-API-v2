@@ -13,6 +13,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.schema import Grid
 from api.resources.grids.upload.netcdf.examples import (
     CREATE_NETCDF_UPLOAD_OPENAPI_EXAMPLES,
@@ -37,6 +38,7 @@ _CONTENT_TYPE = "application/x-netcdf"
     response_model=GridUploadCreatedResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid from a direct netCDF upload",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_netcdf_upload(
     request: Request,
@@ -113,6 +115,9 @@ async def create_netcdf_upload(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(GRIDS_COLLECTION, request)
+
     grid_id = uuid.uuid4().hex
     request_time = datetime.now(UTC)
 

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.rasterize.layerset.examples import (
     CREATE_LAYERSET_RASTERIZE_OPENAPI_EXAMPLES,
 )
@@ -45,6 +46,7 @@ COLLECTION = GRIDS_COLLECTION
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Create a grid by rasterizing a layerset",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_layerset_rasterize(
     request: Request,
@@ -84,6 +86,8 @@ async def create_layerset_rasterize(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     # Validate alignment target grid (if any) — raises 404/422 inline.
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)

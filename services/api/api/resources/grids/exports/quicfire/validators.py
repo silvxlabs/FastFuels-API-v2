@@ -39,6 +39,7 @@ from api.resources.grids.utils import (
     validate_grid_has_georeference,
 )
 from lib.config import GRIDS_COLLECTION
+from lib.crs import crs_equal
 
 # Per-role unit and dimensionality contract.
 _ROLE_CONTRACT: dict[str, tuple[int, str]] = {
@@ -57,11 +58,6 @@ _TOL = 1e-6
 
 # Cap matches v1.
 _MAX_CELLS = 50_000_000
-
-_HINT = (
-    'Use POST /v2/domains/{domain_id}/grids/resample with alignment.target="grid" '
-    "to align this grid to the fire-grid lattice."
-)
 
 
 def _iter_roles(
@@ -189,20 +185,26 @@ def _check_role_alignment(
     fire_maxx = fire_minx + fire_grid["nx"] * dx
     fire_miny = fire_maxy - fire_grid["ny"] * dx
 
-    if gcrs != fire_crs:
+    if not crs_equal(gcrs, fire_crs):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Role '{role_name}' grid {src.grid_id}: CRS ({gcrs}) does not "
-            f"match fire-grid CRS ({fire_crs}). {_HINT}",
+            f"QUIC-Fire export CRS mismatch: grid '{role_name}' ({src.grid_id}) "
+            f"is in {gcrs}, but this export builds the QUIC-Fire grid in "
+            f"{fire_crs}. All role grids must be in {fire_crs}; rebuild this "
+            f"grid in that CRS.",
         )
 
     gdx = abs(float(gtransform[0]))
     gdy = abs(float(gtransform[4]))
     if not isclose(gdx, dx, abs_tol=_TOL) or not isclose(gdy, dx, abs_tol=_TOL):
+        grid_res = f"{gdx}" if isclose(gdx, gdy, abs_tol=_TOL) else f"{gdx}x{gdy}"
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Role '{role_name}' grid {src.grid_id}: cell size "
-            f"({gdx}, {gdy}) does not match fire-grid ({dx}, {dx}). {_HINT}",
+            f"QUIC-Fire export resolution mismatch: grid '{role_name}' "
+            f"({src.grid_id}) is {grid_res} m, but this export builds a "
+            f"{dx} m QUIC-Fire grid. To export at {gdx} m, add "
+            f'"alignment": {{"dx": {gdx}, "dy": {gdx}}} to your request; '
+            f"otherwise provide role grids built at {dx} m.",
         )
 
     offset_x = (float(gtransform[2]) - fire_minx) / dx
@@ -212,9 +214,11 @@ def _check_role_alignment(
     ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Role '{role_name}' grid {src.grid_id}: origin is not on the "
-            f"fire-grid lattice (x offset {offset_x:.6f} cells, y offset "
-            f"{offset_y:.6f} cells; must be integers). {_HINT}",
+            f"QUIC-Fire export lattice mismatch: grid '{role_name}' "
+            f"({src.grid_id}) is offset from the QUIC-Fire grid by a "
+            f"non-integer number of cells (x {offset_x:.3f}, y {offset_y:.3f}). "
+            f'Rebuild it domain-anchored (alignment.target="domain") or resample '
+            f"it onto the domain lattice so its origin lands on whole cells.",
         )
 
     gh, gw = int(geo["shape"][-2]), int(geo["shape"][-1])
@@ -230,8 +234,10 @@ def _check_role_alignment(
     ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Role '{role_name}' grid {src.grid_id}: bbox does not cover "
-            f"the fire-grid bbox. {_HINT}",
+            f"QUIC-Fire export coverage gap: grid '{role_name}' ({src.grid_id}) "
+            f"does not cover the full QUIC-Fire grid extent. Rebuild this grid "
+            f"over the whole domain (or with more buffer cells) so it spans the "
+            f"export area; resampling will not extend coverage.",
         )
 
 

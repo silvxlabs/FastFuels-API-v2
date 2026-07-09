@@ -24,6 +24,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.duplicate.schema import DuplicateGridRequest
 from api.resources.grids.schema import Grid
 from api.schema import JobStatus
@@ -104,6 +105,7 @@ async def _copy_grid_data(source_id: str, new_id: str, source_checksum: str) -> 
     response_model=Grid,
     status_code=status.HTTP_201_CREATED,
     summary="Duplicate a grid",
+    responses=QUOTA_429_RESPONSE,
 )
 async def duplicate_grid(
     request: Request,
@@ -149,9 +151,15 @@ async def duplicate_grid(
       caller, or is not in this domain.
     - **422 Unprocessable Content**: The source grid exists but is not yet
       `completed`, so there is no finished artifact to copy.
+    - **429 Too Many Requests**: You have too many active grid jobs in progress
+      (your `max_active_grids` quota). Wait for jobs to complete or delete
+      unneeded grids, then retry. The response detail names the exact `quota`
+      and includes a `Retry-After` header.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     # Source must exist, be owned, in this domain, and completed.
     _, source_snapshot = await get_document_async(

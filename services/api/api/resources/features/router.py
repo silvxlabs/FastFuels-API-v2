@@ -9,7 +9,6 @@ from datetime import datetime
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     HTTPException,
     Path,
     Query,
@@ -18,7 +17,6 @@ from fastapi import (
     status,
 )
 
-from api.db.blobs import delete_file_safe
 from api.db.documents import (
     delete_document_async,
     get_document_async,
@@ -46,7 +44,7 @@ from api.resources.features.schema import (
 )
 from api.resources.features.water.router import router as water_router
 from api.schema import SortOrder
-from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
+from lib.config import FEATURES_COLLECTION
 
 router = APIRouter()
 wildcard_router = APIRouter()
@@ -367,7 +365,6 @@ async def delete_feature(
     request: Request,
     domain: VerifiedDomain,
     feature_id: str,
-    background_tasks: BackgroundTasks,
 ):
     """
     # Delete Feature Endpoint
@@ -384,10 +381,6 @@ async def delete_feature(
         collection=FEATURES_COLLECTION,
         document_id=feature_id,
     )
-
-    # Delete the target Parquet blob asynchronously
-    file_path = f"{domain_id}/{feature_id}.parquet"
-    background_tasks.add_task(delete_file_safe, FEATURES_BUCKET, file_path)
 
 
 @router.get(

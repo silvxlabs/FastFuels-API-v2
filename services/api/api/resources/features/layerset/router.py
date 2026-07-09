@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.features.layerset.examples import CREATE_LAYERSET_OPENAPI_EXAMPLES
 from api.resources.features.layerset.schema import (
     CreateLayersetRequestBody,
@@ -33,6 +34,7 @@ router = APIRouter()
     response_model=Feature,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a custom Layerset",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_layerset(
     request: Request,
@@ -73,6 +75,9 @@ async def create_layerset(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(FEATURES_COLLECTION, request)
+
     feature_id = f"{owner_id[:8]}-{uuid4().hex}"
 
     # Validate the upload: parses + projected-CRS-checks (422 on geographic /

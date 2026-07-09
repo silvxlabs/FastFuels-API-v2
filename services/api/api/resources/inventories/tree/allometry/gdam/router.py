@@ -12,13 +12,15 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.resources.inventories.schema import Inventory
 from api.resources.inventories.tree.allometry.gdam.examples import (
     CREATE_GDAM_OPENAPI_EXAMPLES,
 )
 from api.resources.inventories.tree.allometry.gdam.schema import (
     CreateGdamInventoryRequest,
     GdamInventorySource,
+    resolve_gdam_columns,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -41,6 +43,7 @@ _REQUIRED_SOURCE_COLUMNS = ("x", "y", "height")
     response_model=Inventory,
     status_code=status.HTTP_201_CREATED,
     summary="Create an inventory by filling in another via GDAM",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_gdam_inventory(
     request: Request,
@@ -104,6 +107,8 @@ async def create_gdam_inventory(
     owner_id = request.state.id
     domain_id = domain["id"]
 
+    await enforce_create_quotas(COLLECTION, request)
+
     # Validate the source inventory exists, is owned, in this domain, and completed.
     # owner/domain/status filters return 404 on mismatch (no existence leak).
     _, source_snapshot = await get_document_async(
@@ -160,7 +165,7 @@ async def create_gdam_inventory(
         "modified_on": request_time,
         "source": source.model_dump(),
         "modifications": [],
-        "columns": [c.model_dump() for c in BASE_INVENTORY_COLUMNS],
+        "columns": resolve_gdam_columns(source_columns, body.impute_columns),
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,

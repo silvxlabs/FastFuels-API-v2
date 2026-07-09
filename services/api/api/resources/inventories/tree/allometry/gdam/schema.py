@@ -12,7 +12,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from api.resources.inventories.schema import CreateInventoryRequestBase
+from api.resources.inventories.schema import (
+    BASE_INVENTORY_COLUMNS,
+    CreateInventoryRequestBase,
+)
 
 # The morphology columns GDAM can impute. The caller selects a subset of these.
 ImputableColumn = Literal["dbh", "crown_ratio", "fia_species_code"]
@@ -81,3 +84,25 @@ class CreateGdamInventoryRequest(CreateInventoryRequestBase):
     @classmethod
     def validate_impute_columns(cls, v: list[str]) -> list[str]:
         return _validate_impute_columns(v)
+
+
+def resolve_gdam_columns(
+    source_columns: list[dict], impute_columns: list[str]
+) -> list[dict]:
+    """Columns an imputed inventory will carry: the source's columns plus the
+    columns GDAM actually imputes.
+
+    GDAM fills only `impute_columns` (a subset of `dbh` / `crown_ratio` /
+    `fia_species_code`), preserving existing values, so the stored `columns`
+    must reflect exactly the source set plus those. Hardcoding the full base
+    set instead over-claims columns the parquet never receives — any morphology
+    column left un-imputed, and `fia_status_code`, which GDAM never writes.
+    """
+    imputable_defs = {c.key: c.model_dump() for c in BASE_INVENTORY_COLUMNS}
+    resolved = [dict(c) for c in source_columns]
+    have = {c["key"] for c in resolved}
+    for key in impute_columns:
+        if key not in have:
+            resolved.append(imputable_defs[key])
+            have.add(key)
+    return resolved

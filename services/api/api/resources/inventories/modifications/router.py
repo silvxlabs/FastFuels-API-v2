@@ -16,6 +16,7 @@ from google.cloud import firestore
 
 from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.inventories.modifications.examples import (
     APPLY_MODIFICATIONS_OPENAPI_EXAMPLES,
 )
@@ -37,6 +38,7 @@ COLLECTION = INVENTORIES_COLLECTION
     response_model=Inventory,
     status_code=status.HTTP_200_OK,
     summary="Apply modifications to an inventory in place",
+    responses=QUOTA_429_RESPONSE,
 )
 async def apply_modifications(
     request: Request,
@@ -126,9 +128,15 @@ async def apply_modifications(
     - **422 Unprocessable Content**: The inventory is not in `completed` status
       (and is not a retryable failed modification); or a referenced `feature_id`
       is missing, cross-domain, or not completed.
+    - **429 Too Many Requests**: You have too many active inventory jobs in
+      progress (your `max_active_inventories` quota). Wait for jobs to complete
+      or delete unneeded inventories, then retry. The response detail names the
+      exact `quota` and includes a `Retry-After` header.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(COLLECTION, request)
 
     await validate_feature_conditions(body.modifications, owner_id, domain_id)
 

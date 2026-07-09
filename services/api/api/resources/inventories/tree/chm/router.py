@@ -8,10 +8,12 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.resources.grids.utils import validate_band_unit, validate_grid_has_band
 from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.chm.examples import CREATE_CHM_OPENAPI_EXAMPLES
 from api.resources.inventories.tree.chm.schema import (
@@ -39,6 +41,7 @@ COLLECTION = INVENTORIES_COLLECTION
     response_model=Inventory,
     status_code=status.HTTP_201_CREATED,
     summary="Create an inventory from a Canopy Height Model (CHM)",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_chm_inventory(
     request: Request,
@@ -76,6 +79,8 @@ async def create_chm_inventory(
     owner_id = request.state.id
     domain_id = domain["id"]
 
+    await enforce_create_quotas(COLLECTION, request)
+
     await validate_feature_conditions(
         [*body.modifications, *body.treatments], owner_id, domain_id
     )
@@ -90,30 +95,14 @@ async def create_chm_inventory(
     )
     source_grid_data = source_snapshot.to_dict()
 
-    # Verify it is a canopy grid (source.name == "canopy")
-    grid_source = source_grid_data.get("source", {})
-    if grid_source.get("name") != "canopy":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"Grid '{body.source_chm_grid_id}' is not a canopy grid. "
-                f"This endpoint requires a canopy grid (with a 'chm' band) as the source."
-            ),
-        )
-
-    # Verify the grid contains the actual 'chm' band
-    grid_bands = source_grid_data.get("bands", [])
-    band_keys = [b["key"] if isinstance(b, dict) else b for b in grid_bands]
-
-    if "chm" not in band_keys:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"Source grid is missing the required 'chm' band. "
-                f"Available bands: {band_keys}. "
-                f"This endpoint requires a grid containing a Canopy Height Model."
-            ),
-        )
+    # Any completed grid with a 'chm' band qualifies — a canopy-provider grid
+    # (Meta/NAIP/LANDFIRE) or a user-uploaded CHM (e.g. ALS/TLS-derived). The band
+    # must be in meters: the stem-isolation algorithm compares pixel values to a
+    # meter height threshold and sizes detection windows against the metric-CRS
+    # resolution without ever converting units, so a non-meter CHM would run but
+    # produce silently-wrong tree heights and windows.
+    validate_grid_has_band(source_grid_data, body.source_chm_grid_id, "chm")
+    validate_band_unit(source_grid_data, body.source_chm_grid_id, "chm", "m")
 
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now()

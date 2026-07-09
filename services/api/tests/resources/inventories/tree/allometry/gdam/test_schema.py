@@ -10,6 +10,7 @@ from api.resources.inventories.schema import InventoryType
 from api.resources.inventories.tree.allometry.gdam.schema import (
     CreateGdamInventoryRequest,
     GdamInventorySource,
+    resolve_gdam_columns,
 )
 from pydantic import ValidationError
 
@@ -145,3 +146,49 @@ class TestCreateGdamInventoryRequest:
                 source_tree_inventory_id="inv123",
                 impute_columns=["height"],
             )
+
+
+class TestResolveGdamColumns:
+    """`resolve_gdam_columns` reflects exactly what the imputed parquet carries:
+    the source columns plus the columns GDAM actually imputes — never a
+    hardcoded full set that over-claims un-imputed or never-written columns."""
+
+    CHM_COLUMNS = [
+        {"key": "x", "type": "continuous", "unit": "m"},
+        {"key": "y", "type": "continuous", "unit": "m"},
+        {"key": "height", "type": "continuous", "unit": "m"},
+    ]
+
+    def _keys(self, columns):
+        return [c["key"] for c in columns]
+
+    def test_full_impute_adds_all_three_not_status(self):
+        result = resolve_gdam_columns(
+            self.CHM_COLUMNS, ["dbh", "crown_ratio", "fia_species_code"]
+        )
+        assert self._keys(result) == [
+            "x",
+            "y",
+            "height",
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+        ]
+        # GDAM never writes the live/dead flag, so it must not be claimed.
+        assert "fia_status_code" not in self._keys(result)
+
+    def test_narrowed_impute_only_adds_requested(self):
+        result = resolve_gdam_columns(self.CHM_COLUMNS, ["fia_species_code"])
+        assert self._keys(result) == ["x", "y", "height", "fia_species_code"]
+        assert "dbh" not in self._keys(result)
+
+    def test_existing_column_not_duplicated(self):
+        source = self.CHM_COLUMNS + [{"key": "dbh", "type": "continuous", "unit": "cm"}]
+        result = resolve_gdam_columns(source, ["dbh", "fia_species_code"])
+        assert self._keys(result).count("dbh") == 1
+
+    def test_imputed_column_carries_type_and_unit(self):
+        result = resolve_gdam_columns(self.CHM_COLUMNS, ["dbh"])
+        dbh = next(c for c in result if c["key"] == "dbh")
+        assert dbh["type"] == "continuous"
+        assert dbh["unit"] == "cm"

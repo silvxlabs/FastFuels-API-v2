@@ -38,6 +38,16 @@ router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 
+# Columns a fastfuels-core Tree needs per row. `fia_status_code` is intentionally
+# excluded — treevox treats an absent status as live.
+VOXELIZE_REQUIRED_COLUMNS = frozenset(
+    {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
+)
+
+# Of those, the allometry endpoint imputes species / diameter / crown ratio from
+# position + height; position and height themselves cannot be imputed.
+ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
+
 
 @router.post(
     "",
@@ -123,6 +133,41 @@ async def create_tree_inventory_grid(
                 f"Inventory '{body.source_inventory_id}' has type "
                 f"'{inventory_data.get('type')}'. This endpoint requires "
                 f"a tree inventory."
+            ),
+        )
+
+    # Must carry the columns voxelization needs. An inventory can lack them for
+    # more than one reason — a CHM-derived inventory (position + height only) or
+    # an upload that omitted the optional morphology columns — so tailor the
+    # guidance to which columns are missing rather than assuming a source.
+    # Reject early rather than dispatching a job that fails on an opaque read.
+    have_columns = {
+        c["key"] if isinstance(c, dict) else c
+        for c in inventory_data.get("columns", [])
+    }
+    missing_columns = VOXELIZE_REQUIRED_COLUMNS - have_columns
+    if missing_columns:
+        imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
+        source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
+        guidance = []
+        if imputable_missing:
+            guidance.append(
+                f"Impute {imputable_missing} with the allometry endpoint (POST "
+                f"/domains/{domain_id}/inventories/tree/allometry/gdam with "
+                f"source_tree_inventory_id='{body.source_inventory_id}'), then "
+                f"voxelize the resulting inventory."
+            )
+        if source_only_missing:
+            guidance.append(
+                f"Column(s) {source_only_missing} cannot be imputed and must be "
+                f"present in the inventory's source data."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Inventory '{body.source_inventory_id}' is missing column(s) "
+                f"{sorted(missing_columns)} required for voxelization. "
+                + " ".join(guidance)
             ),
         )
 

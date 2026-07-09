@@ -172,8 +172,10 @@ class TreeForestryMetrics(BaseModel):
     dominant_species_groups: list[FIASpeciesGroupShare] = Field(
         default_factory=list,
         description=(
-            "Top N FIA species groups by basal area share, sorted descending. "
-            "N defaults to 5; the tail rolls up into the last entry as needed."
+            "The N FIA species groups with the largest basal area share, "
+            "sorted descending (N defaults to 5). Only the top N are returned; "
+            "any remaining groups are omitted, so the listed shares may sum to "
+            "less than 1."
         ),
     )
 

@@ -142,7 +142,10 @@ def _build_tree_forestry_graph(
                 "name": _FIA_SPECIES_GROUPS.loc[
                     _FIA_SPECIES_GROUPS["JENKINS_SPGRPCD"] == spgrpcd, "JENKINS_NAME"
                 ].iloc[0],
-                "basal_area_share": float(share),
+                # Clamp to 1.0: the group sum and total are two independent dask
+                # reductions, so FP rounding can push a dominant group's share a
+                # hair over 1.0 — which the API's le=1.0 validator rejects on read.
+                "basal_area_share": min(1.0, float(share)),
             }
             for spgrpcd, share in top.items()
             if spgrpcd != -1

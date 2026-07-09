@@ -1,6 +1,7 @@
 """Storage utilities for Standgen."""
 
 import logging
+import math
 
 import dask
 import dask.dataframe as dd
@@ -18,6 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 FLOAT_STATS = {"min", "max", "mean", "std"}
+
+
+def _finite_or_none(value) -> float | None:
+    """Coerce a reduction result to float, mapping NaN/inf to None.
+
+    Continuous reductions can be non-finite: an all-null column yields NaN
+    min/max/mean/std, and a column with a single non-null value yields NaN
+    sample std (ddof=1). NaN/inf are not JSON-serializable — the API serves
+    inventories with a JSONResponse that uses ``allow_nan=False`` — so they
+    must not reach Firestore.
+    """
+    value = float(value)
+    return value if math.isfinite(value) else None
 
 
 def load_grid(grid_id: str) -> xr.Dataset:
@@ -75,13 +89,9 @@ def _compute_write_and_stats(
             stats[k] = {"type": stats_graph[k]["type"]}
         val = computed_values[i]
         if s in FLOAT_STATS:
-            stats[k][s] = float(val)
+            stats[k][s] = _finite_or_none(val)
         else:
             stats[k][s] = int(val)
-
-    for k, v in stats.items():
-        if v["type"] == "continuous" and v["count"] == 0:
-            v["min"] = v["max"] = v["mean"] = v["std"] = None
 
     return stats
 

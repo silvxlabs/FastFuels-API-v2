@@ -282,6 +282,43 @@ class TestCreateTreeInventoryGrid:
         finally:
             doc_ref.delete()
 
+    def test_inventory_missing_morphology_returns_422_pointing_to_allometry(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """An inventory with only position + height (a CHM inventory, or an
+        upload that omitted morphology) can't be voxelized; the 422 names the
+        missing columns and the allometry endpoint — without assuming CHM."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory without morphology",
+            status="completed",
+            inventory_type="tree",
+        )
+        inv["columns"] = [
+            {"key": "x", "type": "continuous", "unit": "m"},
+            {"key": "y", "type": "continuous", "unit": "m"},
+            {"key": "height", "type": "continuous", "unit": "m"},
+        ]
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inv["id"]
+        )
+        doc_ref.set(inv)
+        try:
+            body = {
+                "source_inventory_id": inv["id"],
+                "resolution": {"horizontal": 2.0, "vertical": 1.0},
+                "bands": ["bulk_density.foliage.live"],
+            }
+            response = client.post(self.route(domain_for_testing["id"]), json=body)
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "dbh" in detail
+            assert "allometry/gdam" in detail
+            # Message must not assume the source was CHM.
+            assert "CHM" not in detail
+        finally:
+            doc_ref.delete()
+
     # --- Request body validation ---
 
     def test_missing_source_inventory_id_returns_422(self, client, domain_for_testing):

@@ -13,13 +13,14 @@ from fastapi import APIRouter, Body, HTTPException, Request, status
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
-from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
+from api.resources.inventories.schema import Inventory
 from api.resources.inventories.tree.allometry.gdam.examples import (
     CREATE_GDAM_OPENAPI_EXAMPLES,
 )
 from api.resources.inventories.tree.allometry.gdam.schema import (
     CreateGdamInventoryRequest,
     GdamInventorySource,
+    resolve_gdam_columns,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -164,7 +165,7 @@ async def create_gdam_inventory(
         "modified_on": request_time,
         "source": source.model_dump(),
         "modifications": [],
-        "columns": [c.model_dump() for c in BASE_INVENTORY_COLUMNS],
+        "columns": resolve_gdam_columns(source_columns, body.impute_columns),
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,

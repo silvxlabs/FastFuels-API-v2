@@ -20,6 +20,18 @@ from treevox.inventory_io import (
 
 
 class TestReadInventory:
+    @pytest.fixture(autouse=True)
+    def _status_column_present(self, monkeypatch):
+        """Default: the inventory carries every required column, so
+        `read_inventory` keeps its full projection and live-tree pushdown. This
+        also keeps these tests off GCS — the real schema probe reads a parquet
+        footer. Individual tests override the probe to exercise other paths."""
+        monkeypatch.setattr(
+            inventory_io,
+            "_inventory_column_names",
+            lambda inventory_id: set(REQUIRED_COLUMNS),
+        )
+
     def test_success_roundtrip(self, monkeypatch):
         df_in = pd.DataFrame(
             {
@@ -123,6 +135,67 @@ class TestReadInventory:
 
         read_inventory("inv1", crown_radius_column="dbh")
         assert captured["columns"].count("dbh") == 1
+
+    def test_missing_status_column_defaults_all_trees_live(self, monkeypatch):
+        """A CHM/GDAM inventory has no `fia_status_code` column: it must not be
+        projected or pushed as a filter, and every tree defaults to live (1)."""
+        present = [c for c in REQUIRED_COLUMNS if c != "fia_status_code"]
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: set(present)
+        )
+        df_in = pd.DataFrame({c: [1.0, 2.0] for c in present})
+
+        captured: dict = {}
+
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            captured["filters"] = filters
+            return df_in[columns].copy()
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        result = read_inventory("chm_inv")
+        assert "fia_status_code" not in captured["columns"]
+        assert captured["filters"] is None
+        assert list(result["fia_status_code"]) == [1, 1]
+
+    def test_schema_probe_failure_keeps_pushdown(self, monkeypatch):
+        """If the schema can't be read (probe returns None), fall back to the
+        historical projection + live-tree pushdown rather than dropping it."""
+        monkeypatch.setattr(inventory_io, "_inventory_column_names", lambda _id: None)
+
+        captured: dict = {}
+
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            captured["filters"] = filters
+            return pd.DataFrame({c: [1.0] for c in columns})
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        read_inventory("inv")
+        assert captured["columns"] == REQUIRED_COLUMNS
+        assert captured["filters"] == [("fia_status_code", "=", 1)]
+
+    def test_missing_morphology_columns_raises_actionable_error(self, monkeypatch):
+        """A CHM-only inventory (position + height, no morphology) raises a clear
+        error pointing at the allometry endpoint before any read is attempted."""
+        monkeypatch.setattr(
+            inventory_io,
+            "_inventory_column_names",
+            lambda _id: {"x", "y", "height"},
+        )
+
+        def fail(*a, **k):
+            raise AssertionError("read_parquet must not be called")
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fail)
+
+        with pytest.raises(ProcessingError) as exc:
+            read_inventory("chm_only")
+        assert exc.value.code == "INVENTORY_MISSING_MORPHOLOGY"
+        assert "dbh" in exc.value.message
+        assert "allometry" in exc.value.suggestion
 
     def test_missing_inventory_raises_processing_error(self, monkeypatch):
         def raising(path, **kwargs):

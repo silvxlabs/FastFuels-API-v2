@@ -360,6 +360,19 @@ class TestCheckRoleAlignment:
         assert exc.value.status_code == 422
         assert "CRS" in exc.value.detail
 
+    def test_equivalent_crs_spellings_pass(self, fire_grid):
+        # Grid georeference is stored as an EPSG string; the fire grid inherits
+        # its CRS from the domain, which is stored in OGC URN form. These are
+        # the same CRS and must not trip the mismatch guard (regression).
+        fire_grid["crs"] = "urn:ogc:def:crs:EPSG::32611"
+        doc = _surface_doc(crs="EPSG:32611")
+        _check_role_alignment(
+            doc,
+            FieldSource(grid_id="surface", band="fuel_load.1hr"),
+            "surface_fuel_load",
+            fire_grid,
+        )
+
     def test_cell_size_mismatch_rejected(self, fire_grid):
         doc = _surface_doc(transform=[30.0, 0.0, _ORIGIN_X, 0.0, -30.0, _ORIGIN_Y])
         with pytest.raises(HTTPException) as exc:
@@ -370,7 +383,12 @@ class TestCheckRoleAlignment:
                 fire_grid,
             )
         assert exc.value.status_code == 422
-        assert "cell size" in exc.value.detail
+        detail = exc.value.detail
+        # Message names both resolutions and offers a copy-pasteable fix.
+        assert "resolution mismatch" in detail
+        assert "30.0 m" in detail  # the grid's resolution
+        assert "2.0 m" in detail  # the fire-grid resolution
+        assert '"alignment": {"dx": 30.0, "dy": 30.0}' in detail
 
     def test_off_lattice_origin_rejected(self, fire_grid):
         # Shifted by 0.5 m — half a cell. Not on the 2 m lattice.

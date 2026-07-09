@@ -18,7 +18,7 @@ from lib.config import DOMAINS_COLLECTION, INVENTORIES_BUCKET, INVENTORIES_COLLE
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
-from lib.gcs import delete_file, download_file
+from lib.gcs import delete_file, download_file, storage_size
 
 _V2_COLUMNS = {
     "x",
@@ -131,6 +131,7 @@ def handle_inventory(
                 "modified_on": datetime.now(UTC),
                 "georeference": georeference,
                 "columns": columns,
+                "size_bytes": storage_size(path),
                 "progress": {"message": "Complete", "percent": 100},
             },
         )

@@ -10,6 +10,11 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from fastfuels_core.voxelization import (
+    compute_crown_probability_field,
+    sample_occupancy,
+    sample_occupied_cells,
+)
 from treevox import voxelize
 
 # Fixtures
@@ -508,7 +513,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -559,7 +571,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -612,7 +631,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -660,7 +686,14 @@ class TestBuildChunkCache:
         monkeypatch.setattr(
             voxelize, "discretize_crown_profile", lambda *a, **kw: canopy.copy()
         )
-        monkeypatch.setattr(voxelize, "sample_occupied_cells", lambda m, **kw: m.copy())
+        monkeypatch.setattr(
+            voxelize,
+            "compute_crown_probability_field",
+            lambda m, **kw: (m, int(np.count_nonzero(m))),
+        )
+        monkeypatch.setattr(
+            voxelize, "sample_occupancy", lambda m, field, n, **kw: m.copy()
+        )
 
         class FakeVT:
             def __init__(self, tree, mask, hr, vr):
@@ -691,6 +724,44 @@ class TestBuildChunkCache:
 
         with pytest.raises(NotImplementedError, match=component):
             voxelize.build_chunk_cache(df, 1.0, 1.0, cfg, np.random.default_rng(0))
+
+
+# field hoist equivalence (#399)
+
+
+class TestFieldHoistEquivalence:
+    """The hoisted seam must be byte-identical to the one-shot wrapper (#399).
+
+    build_chunk_cache computes the crown-probability field once per bin and
+    draws each realization via `sample_occupancy`; this must reproduce exactly
+    what the old per-realization `sample_occupied_cells` produced for the same
+    seed. Runs against real fastfuels-core (no mocks) so it guards the
+    equivalence treevox now relies on for its per-bin EDT hoist.
+    """
+
+    def test_sample_occupancy_matches_wrapper_on_real_crown(self):
+        tree = voxelize.build_tree(
+            pd.Series(
+                {
+                    "fia_species_code": 122,
+                    "fia_status_code": 1,
+                    "dbh": 25.0,
+                    "height": 18.0,
+                    "crown_ratio": 0.5,
+                    "x": 5.0,
+                    "y": 5.0,
+                }
+            ),
+            base_source_config(),
+        )
+        mask = voxelize.discretize_crown_profile(tree, 0.5, 0.5)
+        assert np.count_nonzero(mask) > 0
+
+        field, n = compute_crown_probability_field(mask, alpha=0.5, beta=0.5)
+        for seed in (1, 7, 42, 2**31 - 2):
+            hoisted = sample_occupancy(mask, field, n, seed=seed)
+            wrapper = sample_occupied_cells(mask, alpha=0.5, beta=0.5, seed=seed)
+            assert np.array_equal(hoisted, wrapper)
 
 
 # voxelize_chunk (mocked cache)
@@ -743,6 +814,7 @@ class TestVoxelizeChunk:
         value=1.0,
         crown_base_height=1.5,
         foliage_sav=1600.0,
+        specific_leaf_area=5.0,
         species_code=131,
     ):
         return {
@@ -750,6 +822,7 @@ class TestVoxelizeChunk:
                 biomass_arrays=[np.full(shape, value, dtype="float32")],
                 crown_base_height=crown_base_height,
                 foliage_sav=foliage_sav,
+                specific_leaf_area=specific_leaf_area,
                 species_code=species_code,
             )
         }
@@ -804,12 +877,14 @@ class TestVoxelizeChunk:
                 biomass_arrays=[arr],
                 crown_base_height=1.5,
                 foliage_sav=1600.0,
+                specific_leaf_area=5.0,
                 species_code=131,
             ),
             1: voxelize.CacheEntry(
                 biomass_arrays=[arr],
                 crown_base_height=1.5,
                 foliage_sav=1600.0,
+                specific_leaf_area=5.0,
                 species_code=202,
             ),
         }
@@ -1012,6 +1087,61 @@ class TestVoxelizeChunk:
             np.random.default_rng(0),
         )
         assert buffers["volume_fraction"].sum() > 0
+
+    def test_lad_is_computed(self):
+        dims, buffers = self._dims_and_buffers(
+            keys=("volume_fraction", "bulk_density.foliage.live", "leaf_area_density")
+        )
+        df = self._one_tree_df()
+        cache = self._deterministic_cache(
+            shape=(2, 3, 3), value=5.0, specific_leaf_area=5.0
+        )
+
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            cache,
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+
+        assert buffers["bulk_density.foliage.live"].sum() > 0
+        assert buffers["leaf_area_density"].min() >= 0
+        assert buffers["leaf_area_density"].max() == pytest.approx(25.0)
+
+    def test_lad_is_not_computed(self):
+        dims, buffers = self._dims_and_buffers(
+            keys=("volume_fraction", "bulk_density.foliage.live")
+        )
+        df = self._one_tree_df()
+        cache = self._deterministic_cache(
+            shape=(2, 3, 3), value=5.0, specific_leaf_area=5.0
+        )
+
+        voxelize.voxelize_chunk(
+            df,
+            buffers,
+            cache,
+            0,
+            0,
+            dims["hr"],
+            dims["vr"],
+            dims["x_origin"],
+            dims["y_origin"],
+            base_source_config(),
+            np.random.default_rng(0),
+        )
+
+        assert buffers["bulk_density.foliage.live"].sum() > 0
+        # LAD is skipped entirely when the band isn't requested, so no
+        # buffer is allocated for it.
+        assert "leaf_area_density" not in buffers
 
 
 # Geometric placement helpers
@@ -1271,10 +1401,12 @@ class TestApplyBands:
         shape = (2, 3, 3)
         bufs = self._buffers(("volume_fraction",), shape=shape)
         biomass = np.ones(shape, dtype="float32")
+        lad = np.ones(shape, dtype="float32")
         voxelize._apply_bands(
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             species_code=131,
             foliage_sav=2000.0,
             tree_id=7,
@@ -1287,10 +1419,12 @@ class TestApplyBands:
         shape = (2, 3, 3)
         bufs = self._buffers(("volume_fraction",), shape=shape)
         biomass = np.zeros(shape, dtype="float32")
+        lad = np.zeros(shape, dtype="float32")
         voxelize._apply_bands(
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             131,
             2000.0,
             0,
@@ -1303,10 +1437,12 @@ class TestApplyBands:
         shape = (2, 3, 3)
         bufs = self._buffers(("bulk_density.foliage.live",), shape=shape)
         biomass = np.full(shape, 0.5, dtype="float32")
+        lad = np.ones(shape, dtype="float32")
         voxelize._apply_bands(
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             131,
             2000.0,
             0,
@@ -1323,10 +1459,12 @@ class TestApplyBands:
             ("bulk_density.foliage.live", "bulk_density.foliage.dead"), shape=shape
         )
         biomass = np.full(shape, 2.0, dtype="float32")
+        lad = np.full(shape, 2.0, dtype="float32")
         voxelize._apply_bands(
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             131,
             2000.0,
             0,
@@ -1349,10 +1487,14 @@ class TestApplyBands:
         biomass = np.zeros(shape, dtype="float32")
         biomass[0, 1, 1] = 1.0  # single voxel
 
+        lad = np.zeros(shape, dtype="float32")
+        lad[0, 1, 1] = 1.0  # single voxel
+
         voxelize._apply_bands(
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             species_code=131,
             foliage_sav=2000.0,
             tree_id=7,
@@ -1372,11 +1514,13 @@ class TestApplyBands:
         shape = (1, 2, 2)
         bufs = self._buffers(("spcd", "tree_id"), shape=shape)
         biomass = np.ones(shape, dtype="float32")
+        lad = np.ones(shape, dtype="float32")
 
         voxelize._apply_bands(
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             131,
             2000.0,
             0,
@@ -1387,6 +1531,7 @@ class TestApplyBands:
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             202,
             2500.0,
             1,
@@ -1402,11 +1547,13 @@ class TestApplyBands:
             ("volume_fraction", "bulk_density.foliage.live"), shape=shape
         )
         biomass = np.ones(shape, dtype="float32")
+        lad = np.ones(shape, dtype="float32")
 
         voxelize._apply_bands(
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             131,
             2000.0,
             0,
@@ -1417,6 +1564,7 @@ class TestApplyBands:
             bufs,
             self._full_slice(shape),
             biomass,
+            lad,
             202,
             2500.0,
             1,
@@ -1431,15 +1579,17 @@ class TestApplyBands:
         shape = (1, 2, 2)
         bufs = self._buffers(("volume_fraction",), shape=shape)
         biomass = np.ones(shape, dtype="float32")
+        lad = np.ones(shape, dtype="float32")
         voxelize._apply_bands(
-            bufs,
-            self._full_slice(shape),
-            biomass,
-            131,
-            2000.0,
-            0,
-            self._moisture(),
-            self._component_state(),
+            buffers=bufs,
+            buf_slices=self._full_slice(shape),
+            biomass_clip=biomass,
+            lad_clip=lad,
+            species_code=131,
+            foliage_sav=2000.0,
+            tree_id=0,
+            moisture_values=self._moisture(),
+            component_state=self._component_state(),
         )
         assert list(bufs.keys()) == ["volume_fraction"]
         assert bufs["volume_fraction"].sum() == biomass.size
@@ -1448,12 +1598,14 @@ class TestApplyBands:
         """buf_slices narrower than buf shape → only that region is touched."""
         bufs = self._buffers(("spcd",), shape=(2, 4, 4))
         biomass = np.ones((2, 2, 2), dtype="float32")
+        lad = np.ones((2, 2, 2), dtype="float32")
         sub = (slice(0, 2), slice(1, 3), slice(1, 3))
 
         voxelize._apply_bands(
             bufs,
             sub,
             biomass,
+            lad_clip=lad,
             species_code=131,
             foliage_sav=0,
             tree_id=0,

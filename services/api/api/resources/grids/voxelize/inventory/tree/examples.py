@@ -151,6 +151,15 @@ EXAMPLE_WITH_SEED = {
     "seed": 42,
 }
 
+EXAMPLE_WITH_LAD = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
+    "bands": [
+        "bulk_density.foliage.live",
+        "leaf_area_density",
+    ],
+}
+
 CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_MINIMAL,
@@ -281,6 +290,25 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "deterministic against the stored seed)."
         ),
     },
+    "with_leaf_area_density": {
+        "value": EXAMPLE_WITH_LAD,
+        "summary": "Request leaf area density band",
+        "description": (
+            "Produces a leaf area density (LAD) band (leaf area m**2 per m**3 "
+            "of canopy volume, reported in the canonical 1/m) using canopy "
+            "bulk density (kg/m**3) and a species-derived specific leaf area "
+            "(SLA) (m**2/kg). SLA per tree is calculated in fastfuels-core "
+            "(https://github.com/silvxlabs/fastfuels-core/blob/main/fastfuels_core/trees.py) "
+            "using a database of per species SLA assembled from TRY Plant "
+            "Trait Database (https://www.try-db.org/TryWeb/Home.php) data, "
+            "with fallbacks for genus and Jenkin's group. Database values are "
+            "per species means with outliers removed, see "
+            "https://github.com/silvxlabs/fastfuels-core/blob/main/fastfuels_core/data/REF_TRY_DB_LEAF.csv "
+            "for full database. SLA is petiole excluded. "
+            "LAD can be used as an input into the LeafLux "
+            "light dynamics model (https://github.com/silvxlabs/leaflux-core). "
+        ),
+    },
 }
 
 ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
@@ -295,4 +323,5 @@ ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
     ("with_derived_fine_biomass", EXAMPLE_WITH_DERIVED_FINE_BIOMASS),
     ("with_inventory_crown_radius", EXAMPLE_WITH_INVENTORY_CROWN_RADIUS),
     ("with_seed", EXAMPLE_WITH_SEED),
+    ("with_leaf_area_density", EXAMPLE_WITH_LAD),
 ]

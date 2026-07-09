@@ -41,6 +41,7 @@ INVENTORIES_COLLECTION = os.getenv("INVENTORIES_COLLECTION", "inventories-v2")
 FEATURES_COLLECTION = os.getenv("FEATURES_COLLECTION", "features-v2")
 KEYS_COLLECTION = os.getenv("KEYS_COLLECTION", "keys-v2")
 APPLICATIONS_COLLECTION = os.getenv("APPLICATIONS_COLLECTION", "applications-v2")
+USERS_COLLECTION = os.getenv("USERS_COLLECTION", "users-v2")
 POINT_CLOUDS_COLLECTION = os.getenv("POINT_CLOUDS_COLLECTION", "pointclouds-v2")
 
 # Queue names

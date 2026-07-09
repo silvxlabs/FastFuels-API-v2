@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.point_clouds.schema import PointCloud
 from api.resources.point_clouds.upload.examples import (
     CREATE_UPLOAD_OPENAPI_EXAMPLES,
@@ -39,6 +40,7 @@ MAX_POINT_CLOUD_SIZE_BYTES = 1_073_741_824  # 1 GiB
     response_model=PointCloudUploadCreatedResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a point cloud from a direct file upload",
+    responses=QUOTA_429_RESPONSE,
 )
 async def create_point_cloud_upload(
     request: Request,
@@ -92,6 +94,9 @@ async def create_point_cloud_upload(
     """
     owner_id = request.state.id
     domain_id = domain["id"]
+
+    await enforce_create_quotas(POINT_CLOUDS_COLLECTION, request)
+
     point_cloud_id = uuid.uuid4().hex
     request_time = datetime.now(UTC)
 

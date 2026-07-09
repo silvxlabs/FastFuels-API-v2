@@ -1,0 +1,17 @@
+[project]
+name = "walle"
+version = "0.1.0"
+description = "Nightly lifecycle + reconciliation cleanup job for FastFuels API v2"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "lib[firestore,gcs]",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.2",
+]
+
+[tool.uv.sources]
+lib = { path = "../lib", editable = true }

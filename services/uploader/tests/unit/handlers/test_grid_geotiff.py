@@ -152,6 +152,17 @@ class TestBuildDataset:
 
         assert exc_info.value.code == "CRS_MISMATCH"
 
+    def test_equivalent_crs_spelling_passes(self, tmp_path):
+        """A GeoTIFF in the domain CRS passes even when the domain CRS is stored
+        in OGC URN form rather than the GeoTIFF's EPSG spelling (regression)."""
+        path = str(tmp_path / "urn_domain.tif")
+        _write_geotiff(path, n_bands=1)  # written in EPSG:32611
+
+        bands_spec = [{"key": "fbfm", "type": "categorical", "unit": None}]
+        ds = _build_dataset(path, bands_spec, "urn:ogc:def:crs:EPSG::32611", DOMAIN_GDF)
+
+        assert "fbfm" in ds.data_vars
+
     def test_no_overlap_with_domain_raises(self, tmp_path):
         """GeoTIFF entirely outside domain bounds raises NO_OVERLAP."""
         path = str(tmp_path / "outside.tif")

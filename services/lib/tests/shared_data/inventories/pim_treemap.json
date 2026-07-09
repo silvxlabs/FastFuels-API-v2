@@ -1,5 +1,14 @@
 {
   "description": "Integration test inventory using TreeMap 2022",
+  "columns": [
+    {"key": "x", "type": "continuous", "unit": "m"},
+    {"key": "y", "type": "continuous", "unit": "m"},
+    {"key": "fia_species_code", "type": "categorical"},
+    {"key": "fia_status_code", "type": "categorical"},
+    {"key": "dbh", "type": "continuous", "unit": "cm"},
+    {"key": "height", "type": "continuous", "unit": "m"},
+    {"key": "crown_ratio", "type": "continuous"}
+    ],
   "name": "Test PIM Inventory",
   "source": {
     "name": "pim",

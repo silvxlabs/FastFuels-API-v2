@@ -24,7 +24,7 @@ from standgen.modifications import (
     apply_modifications,
     resolve_spatial_conditions,
 )
-from standgen.storage import count_inventory_rows, load_grid, save_parquet
+from standgen.storage import count_inventory_rows, load_grid, save_parquet_with_summary
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,8 @@ def handle_chm(
         progress: Callback for progress reporting
 
     Returns:
-        Dict with 'georeference' key
+        Dict with 'georeference' key and 'columns' key with per-column
+        summary statistics populated.
     """
     inventory_id = inventory["id"]
 
@@ -168,11 +169,13 @@ def handle_chm(
             )
         ddf = ddf.map_partitions(apply_modifications, modifications)
 
-    # save_parquet is the single execution of the lazy ITD graph. Don't trigger a
-    # separate compute (e.g. `len(ddf)`) — with the chunked fastfuels-core filters
-    # that would run the entire local-maxima graph an extra time over the full CHM.
+    # save_parquet_with_summary is the single execution of the lazy ITD graph.
+    # Both the parquet write and the summary reductions are fused into one
+    # dask.compute call — don't trigger any separate compute (e.g. `len(ddf)`)
+    # as that would run the entire local-maxima graph an extra time over the
+    # full CHM.
     progress("Writing inventory data...", 90)
-    save_parquet(inventory_id, ddf)
+    _, stats = save_parquet_with_summary(inventory_id, ddf, inventory["columns"])
 
     # Read the tree count from the written Parquet footer (footer-only, no recompute).
     # This reflects rows actually persisted (post-modification), which is the
@@ -192,4 +195,9 @@ def handle_chm(
     }
 
     progress("Complete", 100)
-    return {"georeference": georeference}
+    return {
+        "georeference": georeference,
+        "columns": [
+            {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
+        ],
+    }

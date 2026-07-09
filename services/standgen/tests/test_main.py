@@ -45,6 +45,22 @@ def test_happy_path(
     mock_load_domain.return_value = MagicMock()
     mock_dispatch.return_value = {
         "georeference": {"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
+        "columns": [
+            {
+                "key": "x",
+                "type": "continuous",
+                "unit": "m",
+                "summary": {
+                    "type": "continuous",
+                    "count": 100,
+                    "null_count": 0,
+                    "min": 0.0,
+                    "max": 1000.0,
+                    "mean": 500.0,
+                    "std": 100.0,
+                },
+            }
+        ],
     }
     mock_inventory_size.return_value = 4096
 
@@ -60,6 +76,22 @@ def test_happy_path(
         "test-inventory-123",
         "completed",
         georeference={"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
+        columns=[
+            {
+                "key": "x",
+                "type": "continuous",
+                "unit": "m",
+                "summary": {
+                    "type": "continuous",
+                    "count": 100,
+                    "null_count": 0,
+                    "min": 0.0,
+                    "max": 1000.0,
+                    "mean": 500.0,
+                    "std": 100.0,
+                },
+            }
+        ],
         size_bytes=4096,
         extra=None,
     )

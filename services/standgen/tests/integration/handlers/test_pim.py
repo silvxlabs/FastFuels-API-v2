@@ -81,6 +81,9 @@ def shared_pim_inventory(module_pim_grid):
         f"Error: {inventory.get('error')}"
     )
     assert inventory.get("georeference") is not None
+    assert inventory.get("columns") is not None
+    for col in inventory["columns"]:
+        assert col["summary"] is not None
 
     yield inventory
 
@@ -217,3 +220,14 @@ def test_different_seed_different_count(
         )
 
     assert count_1 != count_2
+
+
+def test_column_summaries_reflect_data(shared_pim_inventory, shared_pim_df):
+    """Column summaries reflect the actual parquet data."""
+    if len(shared_pim_df) == 0:
+        pytest.skip("No trees generated (sparse grid)")
+
+    cols = {col["key"]: col["summary"] for col in shared_pim_inventory["columns"]}
+    assert cols["dbh"]["count"] == len(shared_pim_df)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == shared_pim_df["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == shared_pim_df["dbh"].max()

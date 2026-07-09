@@ -5,6 +5,7 @@ Processes uploaded inventory files (CSV, GeoJSON, GeoPackage), validates
 against the inventory schema, and writes Parquet to INVENTORIES_BUCKET.
 """
 
+import math
 import os
 from datetime import UTC, datetime
 
@@ -114,12 +115,18 @@ def handle_inventory(
                 float(df["y"].max()),
             ],
         }
-        # Record the columns the file actually provided. The create endpoint
-        # wrote a provisional full column list, and _validate pads the Parquet
-        # with all-null optional columns for schema compatibility — but an
-        # all-null dbh is not a column treatments can thin against.
+        # Record the columns the file actually provided, each with a summary
+        # over the persisted (domain-filtered) data. The create endpoint wrote a
+        # provisional full column list, and _validate pads the Parquet with
+        # all-null optional columns for schema compatibility — but an all-null
+        # dbh is not a column treatments can thin against.
         columns = [
-            {"key": key, "type": col_type, "unit": unit}
+            {
+                "key": key,
+                "type": col_type,
+                "unit": unit,
+                "summary": _column_summary(df[key], col_type),
+            }
             for key, (col_type, unit) in _COLUMN_METADATA.items()
             if key in provided_columns
         ]
@@ -143,6 +150,45 @@ def handle_inventory(
             pass
         if os.path.exists(local_path):
             os.remove(local_path)
+
+
+def _finite_or_none(value) -> float | None:
+    """Coerce a reduction result to float, mapping NaN/inf to None.
+
+    A single-value continuous column yields NaN sample std (ddof=1) and an
+    all-null column yields NaN min/max/mean/std. NaN/inf are not
+    JSON-serializable — the API serves inventories with a JSONResponse that
+    uses ``allow_nan=False`` — so they must not reach Firestore.
+    """
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def _column_summary(series: pd.Series, col_type: str) -> dict:
+    """Per-column summary matching the API's ColumnSummary schema.
+
+    Statistics are over non-null values; non-finite continuous stats are
+    sanitized to None. Mirrors the summary standgen writes for generated
+    inventories so both sources present an identical shape.
+    """
+    count = int(series.count())
+    null_count = int(series.isna().sum())
+    if col_type == "continuous":
+        return {
+            "type": "continuous",
+            "count": count,
+            "null_count": null_count,
+            "min": _finite_or_none(series.min()),
+            "max": _finite_or_none(series.max()),
+            "mean": _finite_or_none(series.mean()),
+            "std": _finite_or_none(series.std()),
+        }
+    return {
+        "type": "categorical",
+        "count": count,
+        "null_count": null_count,
+        "unique_count": int(series.nunique()),
+    }
 
 
 def _write_parquet(df: pd.DataFrame, path: str) -> None:

@@ -131,6 +131,7 @@ def treatments_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             # The ledger holds only previously-applied treatments; the new delta
             # lives in pending_treatments until completion merges it in.
             "treatments": prior_treatments,
@@ -153,6 +154,9 @@ def treatments_runner(shared_pim_source):
         # data), never duplicated or dropped (#319).
         assert treated_inventory.get("pending_treatments") == []
         assert treated_inventory.get("treatments") == prior_treatments + treatments
+        assert treated_inventory.get("columns") is not None
+        for col in treated_inventory["columns"]:
+            assert col["summary"] is not None
         # The Parquet footprint is recorded on the in-place replace path too and
         # reflects the current dataset — a thinning treatment rewrites the whole
         # store, so it never accumulates onto the source footprint (#342).
@@ -354,6 +358,7 @@ def feature_treatments_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             # Ledger starts empty; the delta is queued and merged on completion.
             "treatments": [],
             "pending_treatments": resolved,
@@ -374,6 +379,9 @@ def feature_treatments_runner(shared_pim_source):
         # cleared (#319).
         assert treated_inventory.get("pending_treatments") == []
         assert treated_inventory.get("treatments") == resolved
+        assert treated_inventory.get("columns") is not None
+        for col in treated_inventory["columns"]:
+            assert col["summary"] is not None
         return pim_inventory, treated_inventory
 
     yield _run
@@ -445,3 +453,19 @@ def test_feature_diameter_only_thins_trees_inside_feature(
     )
     # ... and every out-of-region tree is untouched (count preserved).
     assert int((~survivors_inside).sum()) == outside_count
+
+
+def test_column_summaries_reflect_data(treatments_runner):
+    """Column summaries reflect the post-treatment parquet data."""
+    threshold = 15.0
+    treatments = [{"metric": "diameter", "method": "from_below", "value": threshold}]
+    _, treated = treatments_runner(treatments)
+
+    treated_df = _load_df(treated["id"])
+    if len(treated_df) == 0:
+        pytest.skip("No trees after treatment")
+
+    cols = {col["key"]: col["summary"] for col in treated["columns"]}
+    assert cols["dbh"]["count"] == len(treated_df)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == treated_df["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == treated_df["dbh"].max()

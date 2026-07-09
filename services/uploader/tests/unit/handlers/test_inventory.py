@@ -5,12 +5,19 @@ Tests parsing and validation logic in isolation using temporary files.
 No GCP I/O — all file operations use local /tmp paths.
 """
 
+import math
+
 import geopandas as gpd
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 from shapely.geometry import MultiPoint, Point
-from uploader.handlers.inventory import _parse, _validate, _write_parquet
+from uploader.handlers.inventory import (
+    _column_summary,
+    _parse,
+    _validate,
+    _write_parquet,
+)
 
 from lib.errors import ProcessingError
 
@@ -322,6 +329,67 @@ class TestValidate:
         df = self._make_df(fia_species_code=[122, None, 15])
         result = _validate(df)
         assert pd.isna(result["fia_species_code"].iloc[1])
+
+
+class TestColumnSummary:
+    """Per-column summaries must match the API's ColumnSummary schema shape and
+    never carry a non-finite float — the API serves inventories with a
+    JSONResponse (allow_nan=False), so a NaN stat would 500 the GET."""
+
+    def test_continuous_summary_fields(self):
+        summary = _column_summary(pd.Series([2.0, 4.0, 6.0, None]), "continuous")
+        assert summary["type"] == "continuous"
+        assert summary["count"] == 3
+        assert summary["null_count"] == 1
+        assert summary["min"] == 2.0
+        assert summary["max"] == 6.0
+        assert summary["mean"] == 4.0
+        assert summary["std"] == pytest.approx(2.0)
+
+    def test_continuous_summary_shape(self):
+        summary = _column_summary(pd.Series([1.0, 2.0]), "continuous")
+        assert set(summary) == {
+            "type",
+            "count",
+            "null_count",
+            "min",
+            "max",
+            "mean",
+            "std",
+        }
+
+    def test_single_value_continuous_std_is_none(self):
+        """Sample std (ddof=1) of a lone value is NaN — a single-row upload.
+        It must be sanitized to None while the finite stats stay."""
+        summary = _column_summary(pd.Series([5.0]), "continuous")
+        assert summary["count"] == 1
+        assert summary["std"] is None
+        assert summary["min"] == 5.0
+        assert summary["mean"] == 5.0
+
+    def test_all_null_continuous_stats_are_none(self):
+        summary = _column_summary(
+            pd.Series([None, None], dtype="float64"), "continuous"
+        )
+        assert summary["count"] == 0
+        assert summary["null_count"] == 2
+        assert summary["min"] is None
+        assert summary["max"] is None
+        assert summary["mean"] is None
+        assert summary["std"] is None
+
+    def test_categorical_summary(self):
+        summary = _column_summary(pd.Series([122, 202, 122, None]), "categorical")
+        assert summary["type"] == "categorical"
+        assert summary["count"] == 3
+        assert summary["null_count"] == 1
+        assert summary["unique_count"] == 2
+        assert set(summary) == {"type", "count", "null_count", "unique_count"}
+
+    def test_no_stat_is_non_finite(self):
+        summary = _column_summary(pd.Series([5.0]), "continuous")
+        for value in summary.values():
+            assert not (isinstance(value, float) and not math.isfinite(value))
 
 
 class TestWriteParquet:

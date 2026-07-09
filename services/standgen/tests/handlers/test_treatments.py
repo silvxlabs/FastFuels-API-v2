@@ -18,6 +18,8 @@ from standgen.handlers.treatments import apply_in_place_treatments
 
 from lib.errors import ProcessingError
 
+from .conftest import BASE_INVENTORY_COLUMNS
+
 
 @pytest.fixture
 def sample_ddf():
@@ -65,6 +67,7 @@ def base_inventory():
             "crs": "EPSG:32611",
             "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
         },
+        "columns": BASE_INVENTORY_COLUMNS,
         "source": {"name": "pim", "source_pim_grid_id": "grid-id", "seed": 1},
         "treatments": [{"metric": "diameter", "method": "from_below", "value": 10.0}],
         "pending_treatments": [
@@ -74,7 +77,7 @@ def base_inventory():
 
 
 class TestApplyInPlaceTreatments:
-    @patch("standgen.handlers.treatments.save_parquet_replace")
+    @patch("standgen.handlers.treatments.save_parquet_replace_with_summary")
     @patch("standgen.handlers.treatments.load_inventory_parquet")
     def test_loads_own_data_replaces_in_place_and_carries_georeference(
         self, mock_load, mock_save, base_inventory, sample_ddf, domain_gdf
@@ -82,26 +85,31 @@ class TestApplyInPlaceTreatments:
         """Loads the inventory's own data, replaces it in place, returns the
         existing georeference unchanged."""
         mock_load.return_value = sample_ddf
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
         progress = MagicMock()
 
         result = apply_in_place_treatments(base_inventory, domain_gdf, progress)
 
-        # Load and replace both key off the inventory's own ID (in place).
+        # Load and replace both key off the inventory's own ID (in place);
+        # columns are passed as the third argument for summary computation.
         mock_load.assert_called_once_with("inventory-id")
         mock_save.assert_called_once()
         assert mock_save.call_args[0][0] == "inventory-id"
         assert isinstance(mock_save.call_args[0][1], dd.DataFrame)
+        assert mock_save.call_args[0][2] == base_inventory["columns"]
+        assert "columns" in result
 
         # Georeference is carried over verbatim — not recomputed.
         assert result["georeference"] == base_inventory["georeference"]
 
-    @patch("standgen.handlers.treatments.save_parquet_replace")
+    @patch("standgen.handlers.treatments.save_parquet_replace_with_summary")
     @patch("standgen.handlers.treatments.load_inventory_parquet")
     def test_applies_only_the_pending_delta(
         self, mock_load, mock_save, base_inventory, sample_ddf, domain_gdf
     ):
         """Only pending_treatments is applied to the current data."""
         mock_load.return_value = sample_ddf
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
         progress = MagicMock()
 
         apply_in_place_treatments(base_inventory, domain_gdf, progress)
@@ -111,12 +119,13 @@ class TestApplyInPlaceTreatments:
         assert (result_df["dbh"] >= 10.0).all()
         assert len(result_df) < len(sample_ddf.compute())
 
-    @patch("standgen.handlers.treatments.save_parquet_replace")
+    @patch("standgen.handlers.treatments.save_parquet_replace_with_summary")
     @patch("standgen.handlers.treatments.load_inventory_parquet")
     def test_reports_progress(
         self, mock_load, mock_save, base_inventory, sample_ddf, domain_gdf
     ):
         mock_load.return_value = sample_ddf
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
         progress = MagicMock()
 
         apply_in_place_treatments(base_inventory, domain_gdf, progress)
@@ -127,7 +136,7 @@ class TestApplyInPlaceTreatments:
         assert "Writing treated inventory..." in messages
         assert "Complete" in messages
 
-    @patch("standgen.handlers.treatments.save_parquet_replace")
+    @patch("standgen.handlers.treatments.save_parquet_replace_with_summary")
     @patch("standgen.handlers.treatments.load_inventory_parquet")
     def test_basal_area_proportional_reduces_stand(
         self, mock_load, mock_save, small_domain_gdf, sample_ddf
@@ -138,6 +147,7 @@ class TestApplyInPlaceTreatments:
             "id": "inventory-id",
             "domain_id": "domain-123",
             "georeference": {"crs": "EPSG:32611", "bounds": [0, 0, 1, 1]},
+            "columns": BASE_INVENTORY_COLUMNS,
             "source": {"name": "pim", "seed": 7},
             "treatments": [],
             "pending_treatments": [
@@ -145,6 +155,7 @@ class TestApplyInPlaceTreatments:
             ],
         }
         mock_load.return_value = sample_ddf
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
         progress = MagicMock()
 
         apply_in_place_treatments(inventory, small_domain_gdf, progress)
@@ -152,7 +163,7 @@ class TestApplyInPlaceTreatments:
         result_df = mock_save.call_args[0][1].compute()
         assert len(result_df) < len(sample_ddf.compute())
 
-    @patch("standgen.handlers.treatments.save_parquet_replace")
+    @patch("standgen.handlers.treatments.save_parquet_replace_with_summary")
     @patch("standgen.handlers.treatments.load_inventory_parquet")
     def test_multiple_pending_treatments_applied_sequentially(
         self, mock_load, mock_save, domain_gdf, sample_ddf
@@ -161,6 +172,7 @@ class TestApplyInPlaceTreatments:
             "id": "inventory-id",
             "domain_id": "domain-123",
             "georeference": {"crs": "EPSG:32611", "bounds": [0, 0, 1, 1]},
+            "columns": BASE_INVENTORY_COLUMNS,
             "source": {"name": "pim", "seed": 3},
             "treatments": [],
             "pending_treatments": [
@@ -169,6 +181,7 @@ class TestApplyInPlaceTreatments:
             ],
         }
         mock_load.return_value = sample_ddf
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
         progress = MagicMock()
 
         apply_in_place_treatments(inventory, domain_gdf, progress)
@@ -179,7 +192,7 @@ class TestApplyInPlaceTreatments:
         assert (result_df["dbh"] <= 45.0).all()
         assert len(result_df) < len(sample_ddf.compute())
 
-    @patch("standgen.handlers.treatments.save_parquet_replace")
+    @patch("standgen.handlers.treatments.save_parquet_replace_with_summary")
     @patch("standgen.handlers.treatments.load_inventory_parquet")
     def test_data_without_dbh_raises_actionable_error(
         self, mock_load, mock_save, base_inventory, domain_gdf
@@ -195,6 +208,7 @@ class TestApplyInPlaceTreatments:
             }
         )
         mock_load.return_value = dd.from_pandas(df, npartitions=1)
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {})
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:

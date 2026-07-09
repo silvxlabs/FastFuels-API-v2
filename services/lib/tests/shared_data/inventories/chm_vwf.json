@@ -1,5 +1,10 @@
 {
   "description": "Integration test for Variable Window Filter (VWF) CHM extraction",
+  "columns": [
+    {"key": "x", "type": "continuous", "unit": "m"},
+    {"key": "y", "type": "continuous", "unit": "m"},
+    {"key": "height", "type": "continuous", "unit": "m"}
+    ],
   "modifications": [],
   "name": "Test VWF CHM Inventory",
   "source": {

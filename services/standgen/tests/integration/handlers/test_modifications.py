@@ -131,6 +131,7 @@ def modifications_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             # The ledger holds only previously-applied rules; the new delta lives
             # in pending_modifications until completion merges it in.
             "modifications": prior_modifications,
@@ -148,6 +149,9 @@ def modifications_runner(shared_pim_source):
         assert mod_inventory["status"] == "completed", (
             f"Modifications inventory not completed: {mod_inventory.get('error')}"
         )
+        assert mod_inventory.get("columns") is not None
+        for col in mod_inventory["columns"]:
+            assert col["summary"] is not None
         # The delta is applied; on completion the work queue is cleared and the
         # delta is merged onto the end of the ledger (ledger == applied data),
         # never duplicated or dropped (#319).
@@ -465,6 +469,7 @@ def feature_modifications_runner(shared_pim_source):
             "status": "pending",
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
+            "columns": pim_inventory.get("columns", []),
             # Ledger starts empty; the delta is queued and merged on completion.
             "modifications": [],
             "pending_modifications": resolved_mods,
@@ -481,6 +486,9 @@ def feature_modifications_runner(shared_pim_source):
         assert mod_inventory["status"] == "completed", (
             f"Modifications inventory not completed: {mod_inventory.get('error')}"
         )
+        assert mod_inventory.get("columns") is not None
+        for col in mod_inventory["columns"]:
+            assert col["summary"] is not None
         # On completion the queued delta is merged into the ledger and the queue
         # cleared (#319).
         assert mod_inventory.get("pending_modifications") == []
@@ -552,3 +560,25 @@ def test_feature_remove_drops_trees_inside_buffered_geometry(
     )
     # ... and the survivor count equals the originally-outside count.
     assert len(mod_trees) == int((~inside).sum())
+
+
+def test_column_summaries_reflect_data(modifications_runner):
+    """Column summaries reflect the post-modification parquet data."""
+    modifications = [
+        {
+            "conditions": [{"attribute": "dbh", "operator": "lt", "value": 30.0}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+    _, mod_inventory = modifications_runner(modifications)
+
+    mod_df = dd.read_parquet(
+        f"gs://{INVENTORIES_BUCKET}/{mod_inventory['id']}"
+    ).compute()
+    if len(mod_df) == 0:
+        pytest.skip("No trees after modification")
+
+    cols = {col["key"]: col["summary"] for col in mod_inventory["columns"]}
+    assert cols["dbh"]["count"] == len(mod_df)
+    assert pytest.approx(cols["dbh"]["min"], rel=1e-4) == mod_df["dbh"].min()
+    assert pytest.approx(cols["dbh"]["max"], rel=1e-4) == mod_df["dbh"].max()

@@ -90,6 +90,15 @@ def handle_chm(
     if spatial_res is None:
         spatial_res = abs(chm_da.rio.resolution()[0])
 
+    # Drop implausibly tall CHM returns (e.g. LiDAR noise spikes) before detection
+    # so they can't seed a treetop or, via VWF's height-scaled search window,
+    # suppress real nearby maxima. Only over-max pixels are zeroed — below
+    # min_height, so never a treetop — leaving every valid pixel and existing
+    # nodata untouched; 0 (not NaN) keeps the window-size math finite.
+    max_height = algorithm_config.get("max_height")
+    if max_height is not None:
+        chm_da = chm_da.where(~(chm_da > max_height), 0.0)
+
     # --- 2. ALGORITHM ROUTING ---
     alg_name = algorithm_config.get("name", "lmf")
     progress(f"Running {alg_name.upper()} stem isolation...", 30)

@@ -49,6 +49,19 @@ class TestStemIsolationLmf:
         with pytest.raises(ValidationError, match="must be an odd integer"):
             StemIsolationLmf(footprint_size=4)
 
+    def test_max_height_defaults_to_120(self):
+        """max_height defaults to a physical ceiling above the tallest known tree."""
+        assert StemIsolationLmf().max_height == 120.0
+
+    def test_max_height_can_be_disabled_with_none(self):
+        """max_height accepts null to disable the ceiling."""
+        assert StemIsolationLmf(max_height=None).max_height is None
+
+    def test_max_height_below_min_rejected(self):
+        """max_height must exceed min_height."""
+        with pytest.raises(ValidationError, match="must be greater than 'min_height'"):
+            StemIsolationLmf(min_height=5.0, max_height=5.0)
+
 
 class TestStemIsolationVwf:
     """Tests for StemIsolationVwf model."""
@@ -76,6 +89,19 @@ class TestStemIsolationVwf:
         assert algo.spatial_resolution == 0.5
         assert algo.crown_ratio == 0.15
         assert algo.crown_offset == 2.0
+
+    def test_max_height_defaults_to_120(self):
+        """max_height defaults to a physical ceiling above the tallest known tree."""
+        assert StemIsolationVwf().max_height == 120.0
+
+    def test_max_height_can_be_disabled_with_none(self):
+        """max_height accepts null to disable the ceiling."""
+        assert StemIsolationVwf(max_height=None).max_height is None
+
+    def test_max_height_below_min_rejected(self):
+        """max_height must exceed min_height."""
+        with pytest.raises(ValidationError, match="must be greater than 'min_height'"):
+            StemIsolationVwf(min_height=10.0, max_height=8.0)
 
 
 class TestChmInventorySource:

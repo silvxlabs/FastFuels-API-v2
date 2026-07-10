@@ -13,6 +13,47 @@ from api.resources.inventories.schema import CreateInventoryRequestBase
 from api.resources.inventories.treatment_models import InventoryTreatment
 
 
+class ChmSpikeFilter(BaseModel):
+    """Morphological white top-hat spike filter for CHM stem isolation.
+
+    Removes isolated, implausibly tall returns (LiDAR birds / noise) that are
+    outliers relative to their surroundings but fall below the absolute
+    ``max_height`` ceiling. A morphological opening deletes bright features
+    narrower than ``window`` (spikes) while preserving wider real tree crowns;
+    only pixels rising more than ``min_prominence`` above the opened surface are
+    replaced (with the local median). Legitimate multi-pixel crowns are left
+    unchanged regardless of height, so this is a conditional filter, not a
+    smoother.
+    """
+
+    window: int = Field(
+        default=3,
+        description=(
+            "Size in pixels (odd, >= 3) of the morphological opening window. "
+            "Bright features narrower than this are treated as candidate spikes; "
+            "wider features (real tree crowns) are preserved regardless of height."
+        ),
+    )
+    min_prominence: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "Minimum height (in meters) a candidate must rise above the opened "
+            "surface to be treated as a spike and replaced with the local "
+            "median. Guards genuinely narrow real crowns against removal."
+        ),
+    )
+
+    @field_validator("window")
+    @classmethod
+    def validate_window_is_odd(cls, v: int) -> int:
+        if v < 3:
+            raise ValueError("The spike filter 'window' must be at least 3 pixels.")
+        if v % 2 == 0:
+            raise ValueError("The spike filter 'window' must be an odd integer.")
+        return v
+
+
 class StemIsolationLmf(BaseModel):
     """Parameters for Local Maximum Filter (LMF) stem isolation.
 
@@ -36,6 +77,15 @@ class StemIsolationLmf(BaseModel):
     footprint_size: int = Field(
         default=3,
         description="Diameter of the circular footprint in pixels. Must be an odd integer.",
+    )
+    spike_filter: ChmSpikeFilter | None = Field(
+        default=None,
+        description=(
+            "Optional morphological spike filter applied before detection to "
+            "remove isolated tall artifacts (e.g. LiDAR birds/noise) that fall "
+            "below `max_height` but are outliers relative to their surroundings. "
+            "Omit or set to null to disable (default)."
+        ),
     )
 
     @field_validator("footprint_size")
@@ -85,6 +135,15 @@ class StemIsolationVwf(BaseModel):
     crown_offset: float = Field(
         default=1.0,
         description="Constant offset (in meters) added to the dynamic search window.",
+    )
+    spike_filter: ChmSpikeFilter | None = Field(
+        default=None,
+        description=(
+            "Optional morphological spike filter applied before detection to "
+            "remove isolated tall artifacts (e.g. LiDAR birds/noise) that fall "
+            "below `max_height` but are outliers relative to their surroundings. "
+            "Omit or set to null to disable (default)."
+        ),
     )
 
     @model_validator(mode="after")

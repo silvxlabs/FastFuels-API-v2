@@ -8,11 +8,43 @@ These are pure unit tests with no external dependencies.
 import pytest
 from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
+    ChmSpikeFilter,
     CreateChmInventoryRequest,
     StemIsolationLmf,
     StemIsolationVwf,
 )
 from pydantic import ValidationError
+
+
+class TestChmSpikeFilter:
+    """Tests for the ChmSpikeFilter model."""
+
+    def test_default_values(self):
+        """Model initializes with sensible defaults."""
+        f = ChmSpikeFilter()
+        assert f.window == 3
+        assert f.min_prominence == 10.0
+
+    def test_custom_values(self):
+        """Model accepts custom valid parameters."""
+        f = ChmSpikeFilter(window=5, min_prominence=25.0)
+        assert f.window == 5
+        assert f.min_prominence == 25.0
+
+    def test_even_window_rejected(self):
+        """An even window raises ValidationError."""
+        with pytest.raises(ValidationError, match="must be an odd integer"):
+            ChmSpikeFilter(window=4)
+
+    def test_window_below_three_rejected(self):
+        """A window smaller than 3 pixels raises ValidationError."""
+        with pytest.raises(ValidationError, match="at least 3 pixels"):
+            ChmSpikeFilter(window=1)
+
+    def test_non_positive_prominence_rejected(self):
+        """min_prominence must be strictly positive."""
+        with pytest.raises(ValidationError):
+            ChmSpikeFilter(min_prominence=0.0)
 
 
 class TestStemIsolationLmf:
@@ -62,6 +94,23 @@ class TestStemIsolationLmf:
         with pytest.raises(ValidationError, match="must be greater than 'min_height'"):
             StemIsolationLmf(min_height=5.0, max_height=5.0)
 
+    def test_spike_filter_defaults_to_none(self):
+        """The spike filter is off (None) by default."""
+        assert StemIsolationLmf().spike_filter is None
+
+    def test_spike_filter_accepts_defaults_from_empty_dict(self):
+        """An empty spike_filter object fills in the model defaults."""
+        algo = StemIsolationLmf(spike_filter={})
+        assert isinstance(algo.spike_filter, ChmSpikeFilter)
+        assert algo.spike_filter.window == 3
+        assert algo.spike_filter.min_prominence == 10.0
+
+    def test_spike_filter_accepts_tuned_params(self):
+        """A tuned spike_filter is parsed into a ChmSpikeFilter."""
+        algo = StemIsolationLmf(spike_filter={"window": 5, "min_prominence": 20.0})
+        assert algo.spike_filter.window == 5
+        assert algo.spike_filter.min_prominence == 20.0
+
 
 class TestStemIsolationVwf:
     """Tests for StemIsolationVwf model."""
@@ -102,6 +151,16 @@ class TestStemIsolationVwf:
         """max_height must exceed min_height."""
         with pytest.raises(ValidationError, match="must be greater than 'min_height'"):
             StemIsolationVwf(min_height=10.0, max_height=8.0)
+
+    def test_spike_filter_defaults_to_none(self):
+        """The spike filter is off (None) by default."""
+        assert StemIsolationVwf().spike_filter is None
+
+    def test_spike_filter_accepts_tuned_params(self):
+        """A tuned spike_filter is parsed into a ChmSpikeFilter."""
+        algo = StemIsolationVwf(spike_filter={"window": 7, "min_prominence": 15.0})
+        assert algo.spike_filter.window == 7
+        assert algo.spike_filter.min_prominence == 15.0
 
 
 class TestChmInventorySource:

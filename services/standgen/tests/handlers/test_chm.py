@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import dask.array as da
 import dask.dataframe as dd
 import numpy as np
 import pytest
@@ -241,10 +242,16 @@ class TestHandleChm:
         assert exc_info.value.code == "INVALID_ALGORITHM_PARAMS"
         assert "negative" in exc_info.value.message
 
-    def _mock_grid_with_values(self, mock_get, mock_load, values):
-        """Mock a CHM grid holding `values` (a 2D array) at 1 m resolution."""
+    def _mock_grid_with_values(self, mock_get, mock_load, values, chunks=None):
+        """Mock a CHM grid holding `values` (a 2D array) at 1 m resolution.
+
+        Pass `chunks` to back the CHM with a chunked dask array (exercises the
+        handler's `map_overlap` path instead of the in-memory numpy path).
+        """
         chm = xr.DataArray(np.asarray(values, dtype=float)).rio.write_crs("EPSG:32610")
         chm.rio.write_transform(Affine(1.0, 0.0, 0.0, 0.0, -1.0, 0.0), inplace=True)
+        if chunks is not None:
+            chm = chm.chunk(chunks)
         mock_snapshot = MagicMock()
         mock_snapshot.to_dict.return_value = {"id": "grid-123"}
         mock_get.return_value = (None, mock_snapshot)
@@ -319,3 +326,149 @@ class TestHandleChm:
 
         _, kwargs = mock_var_filter.call_args
         assert float(kwargs["chm_da"].max()) == 400.0
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
+    def test_spike_filter_removes_isolated_spike(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """An isolated 1-pixel spike is replaced with the local median; the
+        surrounding real canopy is left untouched."""
+        values = np.full((7, 7), 15.0)
+        values[3, 3] = 60.0  # a lone LiDAR-noise spike over 15 m canopy
+        chm = self._mock_grid_with_values(mock_get, mock_load, values)
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        source = mock_inventory_vwf["source"]
+        source["algorithm"]["spike_filter"] = {"window": 3, "min_prominence": 10.0}
+
+        handle_chm(mock_inventory_vwf, source, mock_domain_gdf, MagicMock())
+
+        _, kwargs = mock_var_filter.call_args
+        cleaned = kwargs["chm_da"]
+        # Spike collapses to the 15 m local median; nothing above it survives.
+        assert float(cleaned.values[3, 3]) == 15.0
+        assert float(cleaned.max()) == 15.0
+        # Every non-spike pixel is byte-for-byte unchanged.
+        assert float(cleaned.values[0, 0]) == 15.0
+        assert cleaned.rio.crs == chm.rio.crs
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
+    def test_spike_filter_preserves_wide_crown(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """A real multi-pixel crown wider than the window is preserved verbatim,
+        even though it is much taller than its surroundings (top-hat keys on
+        spatial extent, not height)."""
+        values = np.full((7, 7), 15.0)
+        values[2:5, 2:5] = 30.0  # a 3x3 crown blob, wider than the 3 px window
+        self._mock_grid_with_values(mock_get, mock_load, values)
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        source = mock_inventory_vwf["source"]
+        source["algorithm"]["spike_filter"] = {"window": 3, "min_prominence": 10.0}
+
+        handle_chm(mock_inventory_vwf, source, mock_domain_gdf, MagicMock())
+
+        _, kwargs = mock_var_filter.call_args
+        cleaned = kwargs["chm_da"]
+        assert np.array_equal(cleaned.values[2:5, 2:5], np.full((3, 3), 30.0))
+        assert float(cleaned.max()) == 30.0
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
+    def test_spike_filter_absent_is_noop(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """With no spike_filter configured, the CHM passes through unchanged."""
+        values = np.full((7, 7), 15.0)
+        values[3, 3] = 60.0
+        self._mock_grid_with_values(mock_get, mock_load, values)
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        handle_chm(
+            mock_inventory_vwf,
+            mock_inventory_vwf["source"],
+            mock_domain_gdf,
+            MagicMock(),
+        )
+
+        _, kwargs = mock_var_filter.call_args
+        assert float(kwargs["chm_da"].max()) == 60.0
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
+    def test_spike_filter_removes_spike_on_dask_backed_chm(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """The map_overlap path removes a spike straddling a chunk boundary the
+        same as the in-memory path."""
+        values = np.full((7, 7), 15.0)
+        values[3, 3] = 60.0  # sits against the chunk boundary at index 4
+        self._mock_grid_with_values(
+            mock_get, mock_load, values, chunks={"dim_0": 4, "dim_1": 4}
+        )
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        source = mock_inventory_vwf["source"]
+        source["algorithm"]["spike_filter"] = {"window": 3, "min_prominence": 10.0}
+
+        handle_chm(mock_inventory_vwf, source, mock_domain_gdf, MagicMock())
+
+        _, kwargs = mock_var_filter.call_args
+        cleaned = kwargs["chm_da"]
+        assert isinstance(cleaned.data, da.Array)  # exercised the dask path
+        assert float(cleaned.max()) == 15.0  # triggers compute; spike is gone

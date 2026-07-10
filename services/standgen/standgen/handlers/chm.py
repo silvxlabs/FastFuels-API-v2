@@ -7,14 +7,18 @@ to Canopy Height Model grids.
 
 import logging
 
+import dask.array as da
 import geopandas as gpd
+import numpy as np
 import pandas as pd
+import xarray as xr
 
 # --- FASTFUELS CORE IMPORTS ---
 from fastfuels_core.itd.local_maxima_filter import (
     fixed_window_filter,
     variable_window_filter,
 )
+from scipy.ndimage import grey_opening, median_filter
 
 from lib.config import GRIDS_COLLECTION
 from lib.errors import ProcessingError
@@ -27,6 +31,46 @@ from standgen.modifications import (
 from standgen.storage import count_inventory_rows, load_grid, save_parquet_with_summary
 
 logger = logging.getLogger(__name__)
+
+
+def _despike_chm(
+    chm_da: xr.DataArray, window: int, min_prominence: float
+) -> xr.DataArray:
+    """Remove isolated tall spikes from a CHM via a morphological white top-hat.
+
+    A LiDAR spike (bird / noise return) is a 1-2 pixel feature far above its
+    neighbors; a real tree crown is a wider, contiguous blob. A morphological
+    opening with a ``window``-sized structuring element deletes bright features
+    narrower than the window (spikes) while leaving crowns intact. The top-hat
+    (``chm - opening``) is the height each pixel rises above that opened
+    surface; pixels whose top-hat exceeds ``min_prominence`` are spikes and are
+    replaced with the local median. Every other pixel is left byte-for-byte
+    unchanged, and a resolved multi-pixel crown is preserved regardless of its
+    height — this is a conditional filter, not a smoother.
+    """
+    size = (window, window)
+
+    def _despike_block(block: np.ndarray) -> np.ndarray:
+        opened = grey_opening(block, size=size, mode="reflect")
+        is_spike = (block - opened) > min_prominence
+        if not is_spike.any():
+            return block
+        local_median = median_filter(block, size=size, mode="reflect")
+        return np.where(is_spike, local_median, block)
+
+    data = chm_da.data
+    if isinstance(data, da.Array):
+        cleaned = da.map_overlap(
+            _despike_block,
+            data,
+            depth=window // 2,
+            boundary="reflect",
+            dtype=data.dtype,
+        )
+    else:
+        cleaned = _despike_block(np.asarray(data))
+
+    return chm_da.copy(data=cleaned)
 
 
 def handle_chm(
@@ -98,6 +142,18 @@ def handle_chm(
     max_height = algorithm_config.get("max_height")
     if max_height is not None:
         chm_da = chm_da.where(~(chm_da > max_height), 0.0)
+
+    # Then remove site-relative spikes that survive the cap: isolated, narrow,
+    # implausibly tall returns (e.g. a 60 m bird over 15 m shrub). The top-hat
+    # keys on spatial extent, so real multi-pixel crowns pass through untouched.
+    # Runs after the cap so gross artifacts don't distort the opened surface.
+    spike_filter = algorithm_config.get("spike_filter")
+    if spike_filter is not None:
+        chm_da = _despike_chm(
+            chm_da,
+            window=spike_filter.get("window", 3),
+            min_prominence=spike_filter.get("min_prominence", 10.0),
+        )
 
     # --- 2. ALGORITHM ROUTING ---
     alg_name = algorithm_config.get("name", "lmf")

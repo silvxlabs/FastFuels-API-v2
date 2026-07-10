@@ -3,9 +3,11 @@
 from unittest.mock import MagicMock, patch
 
 import dask.dataframe as dd
+import numpy as np
 import pytest
 import rioxarray  # noqa: F401 - registers .rio accessor
 import xarray as xr
+from affine import Affine
 from standgen.handlers.chm import handle_chm
 
 from lib.errors import ProcessingError
@@ -238,3 +240,82 @@ class TestHandleChm:
             )
         assert exc_info.value.code == "INVALID_ALGORITHM_PARAMS"
         assert "negative" in exc_info.value.message
+
+    def _mock_grid_with_values(self, mock_get, mock_load, values):
+        """Mock a CHM grid holding `values` (a 2D array) at 1 m resolution."""
+        chm = xr.DataArray(np.asarray(values, dtype=float)).rio.write_crs("EPSG:32610")
+        chm.rio.write_transform(Affine(1.0, 0.0, 0.0, 0.0, -1.0, 0.0), inplace=True)
+        mock_snapshot = MagicMock()
+        mock_snapshot.to_dict.return_value = {"id": "grid-123"}
+        mock_get.return_value = (None, mock_snapshot)
+        mock_load.return_value = xr.Dataset({"chm": chm})
+        return chm
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
+    def test_max_height_clips_tall_artifacts_before_detection(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """CHM returns above max_height are zeroed before the filter runs; valid
+        pixels and the grid's georeferencing are left untouched."""
+        chm = self._mock_grid_with_values(
+            mock_get, mock_load, [[10.0, 20.0], [30.0, 400.0]]
+        )
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        source = mock_inventory_vwf["source"]
+        source["algorithm"]["max_height"] = 120.0
+
+        handle_chm(mock_inventory_vwf, source, mock_domain_gdf, MagicMock())
+
+        _, kwargs = mock_var_filter.call_args
+        clipped = kwargs["chm_da"]
+        assert float(clipped.max()) <= 120.0
+        # 400 m artifact -> 0; the real 30 m return is preserved verbatim.
+        assert float(clipped.values[1, 1]) == 0.0
+        assert float(clipped.values[1, 0]) == 30.0
+        # Georeferencing must survive the clip (downstream reproject reads it).
+        assert clipped.rio.crs == chm.rio.crs
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
+    def test_max_height_none_leaves_chm_unclipped(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """max_height=None disables the ceiling; tall returns pass through."""
+        self._mock_grid_with_values(mock_get, mock_load, [[10.0, 20.0], [30.0, 400.0]])
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        source = mock_inventory_vwf["source"]
+        source["algorithm"]["max_height"] = None
+
+        handle_chm(mock_inventory_vwf, source, mock_domain_gdf, MagicMock())
+
+        _, kwargs = mock_var_filter.call_args
+        assert float(kwargs["chm_da"].max()) == 400.0

@@ -14,12 +14,24 @@ from api.resources.inventories.treatment_models import InventoryTreatment
 
 
 class StemIsolationLmf(BaseModel):
-    """Parameters for Local Maximum Filter (LMF) stem isolation."""
+    """Parameters for Local Maximum Filter (LMF) stem isolation.
+
+    When set, ``max_height`` must be greater than ``min_height``.
+    """
 
     name: Literal["lmf"] = "lmf"
     min_height: float = Field(
         default=2.0,
-        description="Minimum height threshold (in CHM units) for a treetop.",
+        description="Minimum height threshold (in meters) for a treetop.",
+    )
+    max_height: float | None = Field(
+        default=120.0,
+        description=(
+            "Maximum height threshold (in meters) for a treetop. CHM returns "
+            "taller than this are treated as artifacts (e.g. LiDAR noise spikes) "
+            "and excluded before detection. Defaults to 120, above the tallest "
+            "known tree; set to null to disable the ceiling."
+        ),
     )
     footprint_size: int = Field(
         default=3,
@@ -35,14 +47,32 @@ class StemIsolationLmf(BaseModel):
             )
         return v
 
+    @model_validator(mode="after")
+    def validate_max_height_above_min(self):
+        if self.max_height is not None and self.max_height <= self.min_height:
+            raise ValueError("'max_height' must be greater than 'min_height'.")
+        return self
+
 
 class StemIsolationVwf(BaseModel):
-    """Parameters for Variable Window Filter (VWF) stem isolation."""
+    """Parameters for Variable Window Filter (VWF) stem isolation.
+
+    When set, ``max_height`` must be greater than ``min_height``.
+    """
 
     name: Literal["vwf"] = "vwf"
     min_height: float = Field(
         default=2.0,
-        description="Minimum height threshold (in CHM units) for a treetop.",
+        description="Minimum height threshold (in meters) for a treetop.",
+    )
+    max_height: float | None = Field(
+        default=120.0,
+        description=(
+            "Maximum height threshold (in meters) for a treetop. CHM returns "
+            "taller than this are treated as artifacts (e.g. LiDAR noise spikes) "
+            "and excluded before detection. Defaults to 120, above the tallest "
+            "known tree; set to null to disable the ceiling."
+        ),
     )
     spatial_resolution: float | None = Field(
         default=None,
@@ -56,6 +86,12 @@ class StemIsolationVwf(BaseModel):
         default=1.0,
         description="Constant offset (in meters) added to the dynamic search window.",
     )
+
+    @model_validator(mode="after")
+    def validate_max_height_above_min(self):
+        if self.max_height is not None and self.max_height <= self.min_height:
+            raise ValueError("'max_height' must be greater than 'min_height'.")
+        return self
 
 
 # FastAPI will automatically route validation to the correct model based on the "name" field.

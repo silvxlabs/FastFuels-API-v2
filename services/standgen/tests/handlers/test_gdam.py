@@ -296,6 +296,20 @@ def _ok_post(url, json=None, timeout=None):
     return resp
 
 
+def _flaky_post(exc, fail_times):
+    """A post side_effect that raises ``exc`` the first ``fail_times`` calls, then
+    delegates to ``_ok_post`` — drives the transient-retry path in ``_post_batch``."""
+    calls = {"n": 0}
+
+    def side_effect(url, json=None, timeout=None):
+        if calls["n"] < fail_times:
+            calls["n"] += 1
+            raise exc
+        return _ok_post(url, json=json, timeout=timeout)
+
+    return side_effect
+
+
 @contextmanager
 def _patched(source_frame, post_side_effect):
     """Patch the handler's parquet I/O and GDAM client for one call.
@@ -419,6 +433,75 @@ class TestHandleGdam:
         assert len(result) == 5
         assert result["dbh"].notna().all()
         assert sorted(result.index) == [0, 1, 2, 3, 4]
+
+    def test_retries_transient_transport_error_then_succeeds(
+        self, mock_domain_gdf, monkeypatch
+    ):
+        # Two dropped connections, then success — the inventory should complete.
+        monkeypatch.setattr(gdam.time, "sleep", lambda *_: None)  # skip real backoff
+        frame = pd.DataFrame(
+            {"x": [500000.0], "y": [4500000.0], "height": [10.0], "dbh": [np.nan]}
+        )
+        side_effect = _flaky_post(httpx.ConnectError("connection reset"), fail_times=2)
+        with _patched(frame, side_effect) as (saved, mock_post):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        assert mock_post.call_count == 3  # 2 failures + 1 success
+        assert saved["df"].loc[0, "dbh"] == pytest.approx(30.0, abs=1e-2)
+
+    def test_terminal_after_exhausting_transport_retries(
+        self, mock_domain_gdf, monkeypatch
+    ):
+        monkeypatch.setattr(gdam.time, "sleep", lambda *_: None)
+        frame = pd.DataFrame(
+            {"x": [500000.0], "y": [4500000.0], "height": [10.0], "dbh": [np.nan]}
+        )
+        side_effect = _flaky_post(
+            httpx.RemoteProtocolError("server disconnected"), fail_times=99
+        )
+        with _patched(frame, side_effect) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "GDAM_REQUEST_FAILED"
+        assert mock_post.call_count == gdam.config.GDAM_MAX_ATTEMPTS
+
+    def test_read_timeout_is_terminal_without_retry(self, mock_domain_gdf, monkeypatch):
+        # A slow timeout already burned the per-request budget — never retried.
+        monkeypatch.setattr(gdam.time, "sleep", lambda *_: None)
+        frame = pd.DataFrame(
+            {"x": [500000.0], "y": [4500000.0], "height": [10.0], "dbh": [np.nan]}
+        )
+        side_effect = _flaky_post(httpx.ReadTimeout("timed out"), fail_times=99)
+        with _patched(frame, side_effect) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "GDAM_REQUEST_FAILED"
+        assert mock_post.call_count == 1
+
+    def test_http_status_error_is_terminal_without_retry(self, mock_domain_gdf):
+        frame = pd.DataFrame(
+            {"x": [500000.0], "y": [4500000.0], "height": [10.0], "dbh": [np.nan]}
+        )
+
+        def bad_status(url, json=None, timeout=None):
+            resp = MagicMock()
+            resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "500", request=MagicMock(), response=MagicMock()
+            )
+            return resp
+
+        with _patched(frame, bad_status) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "GDAM_REQUEST_FAILED"
+        assert mock_post.call_count == 1
 
     def test_multi_partition_aligns_predictions_to_source_rows(self, mock_domain_gdf):
         """Each tree gets ITS prediction even though GDAM returns a 0-based index.

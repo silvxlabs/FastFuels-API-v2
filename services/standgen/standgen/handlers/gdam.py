@@ -21,6 +21,7 @@ Unit and coordinate conventions (verified against a live GDAM probe):
 
 import json
 import logging
+import time
 
 import httpx
 import pandas as pd
@@ -138,27 +139,62 @@ def fill_missing(
     return result
 
 
+# httpx transport errors worth retrying: the connection dropped or the server
+# disconnected mid-response (e.g. the SSL UNEXPECTED_EOF seen when GDAM recycles
+# instances under load). These fail fast, so a retry is cheap. Read/write and
+# connect *timeouts* are deliberately excluded — they already burned the
+# per-request budget, so retrying only risks the caller's Cloud Run deadline.
+_RETRYABLE_TRANSPORT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+)
+_RETRY_BACKOFF_BASE_S = 0.5
+
+
 def _post_batch(payload: dict) -> dict:
     """POST one partition's trees to GDAM and return the parsed JSON.
 
-    Any transport/HTTP failure is terminal (`GDAM_REQUEST_FAILED`): re-running the
-    whole task won't fix a bad request, and the 120s timeout already absorbs GDAM
-    cold starts, so a timeout here is a real outage rather than a transient blip.
+    A transient transport error (a dropped/reset connection) is retried up to
+    ``GDAM_MAX_ATTEMPTS`` times with exponential backoff — one blip mid-response
+    shouldn't fail the whole inventory. A non-2xx status or a timeout is terminal
+    (`GDAM_REQUEST_FAILED`): a bad request or a sustained-unhealthy GDAM won't be
+    fixed by re-running the task, and the 120s timeout already absorbs cold starts.
     """
-    try:
-        response = httpx.post(
-            f"{config.GDAM_API_URL}/predict/batch",
-            json=payload,
-            timeout=config.GDAM_REQUEST_TIMEOUT_S,
-        )
-        response.raise_for_status()
-        return response.json()
-    except httpx.HTTPError as e:
-        raise ProcessingError(
-            code="GDAM_REQUEST_FAILED",
-            message=f"GDAM prediction request failed: {e}",
-            suggestion="Retry shortly; if it persists, the GDAM service may be down.",
-        ) from e
+    last_exc = None
+    for attempt in range(config.GDAM_MAX_ATTEMPTS):
+        try:
+            response = httpx.post(
+                f"{config.GDAM_API_URL}/predict/batch",
+                json=payload,
+                timeout=config.GDAM_REQUEST_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            return response.json()
+        except _RETRYABLE_TRANSPORT_ERRORS as e:
+            last_exc = e
+            if attempt < config.GDAM_MAX_ATTEMPTS - 1:
+                logger.warning(
+                    f"Transient GDAM transport error on attempt "
+                    f"{attempt + 1}/{config.GDAM_MAX_ATTEMPTS}, retrying: {e}"
+                )
+                time.sleep(_RETRY_BACKOFF_BASE_S * (2**attempt))
+        except httpx.HTTPError as e:
+            raise ProcessingError(
+                code="GDAM_REQUEST_FAILED",
+                message=f"GDAM prediction request failed: {e}",
+                suggestion="Retry shortly; if it persists, the GDAM service may be down.",
+            ) from e
+
+    raise ProcessingError(
+        code="GDAM_REQUEST_FAILED",
+        message=(
+            f"GDAM prediction request failed after {config.GDAM_MAX_ATTEMPTS} "
+            f"attempts: {last_exc}"
+        ),
+        suggestion="Retry shortly; if it persists, the GDAM service may be down.",
+    ) from last_exc
 
 
 def _predict(payload: dict, expected_count: int) -> dict:

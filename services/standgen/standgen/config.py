@@ -19,9 +19,17 @@ GDAM_API_URL = os.getenv(
 
 # Target trees per dask partition, i.e. per /predict/batch request. The handler
 # repartitions the source inventory to this size so each GDAM call (and each
-# partition held in memory) is bounded.
-GDAM_BATCH_SIZE = int(os.getenv("GDAM_BATCH_SIZE", "5000"))
+# partition held in memory) is bounded. 20k sits at ~97% of GDAM's per-instance
+# throughput ceiling (a benchmark showed the fixed per-request overhead amortizes
+# out by ~20k, plateauing near 54k trees/s at cpu=2/concurrency=8) while p50
+# latency (~3s) stays far under GDAM_REQUEST_TIMEOUT_S.
+GDAM_BATCH_SIZE = int(os.getenv("GDAM_BATCH_SIZE", "20000"))
 
 # Per-request timeout (seconds) on outbound GDAM calls. Must stay under Cloud Run's
 # request timeout so the handler returns before the container is SIGTERM'd.
 GDAM_REQUEST_TIMEOUT_S = float(os.getenv("GDAM_REQUEST_TIMEOUT_S", "120"))
+
+# Attempts for a single GDAM /predict/batch call. Attempts after the first retry
+# only transient transport errors (a dropped/reset connection) with backoff; a
+# non-2xx status or a read/write timeout is terminal.
+GDAM_MAX_ATTEMPTS = int(os.getenv("GDAM_MAX_ATTEMPTS", "3"))

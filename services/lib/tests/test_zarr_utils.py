@@ -278,6 +278,109 @@ class TestFaithfulRoundTrip:
         assert loaded.rio.crs.to_epsg() == 32611
 
 
+class TestStaleEncodingChunks:
+    """Regression tests for issue #417.
+
+    A variable can carry a per-variable ``encoding['chunks']`` left over from
+    a prior read — ``load_zarr`` stamps every variable with the source store's
+    on-disk chunk sizes, and a source raster's native tiling lands there too.
+    ``save_zarr`` rechunks the dataset with ``.chunk(chunk_shape)`` but must
+    also clear that stale hint; otherwise, when it disagrees with the freshly
+    applied dask chunks, xarray's Zarr writer raises "chunks ... would overlap
+    multiple Dask chunks" and, under a parallel Dask write, risks corrupting
+    the stored array. These tests assert the write succeeds, the on-disk chunks
+    reflect the *requested* ``chunk_shape`` (proving the stale hint was cleared,
+    not merely tolerated), and the round-tripped values are intact.
+    """
+
+    def test_fuel_depth_stale_encoding_matches_issue(self, tmp_path):
+        """The exact case from issue #417: a ``fuel_depth`` variable carrying
+        ``encoding['chunks']=(31, 26)`` re-saved with a finer chunk_shape."""
+        data = np.random.rand(31, 26).astype(np.float32)
+        ds = make_spatial_dataset(bands={"fuel_depth": data}, shape=(31, 26))
+        # Simulate the stale hint a load_zarr of a (31, 26) grid leaves behind.
+        ds["fuel_depth"].encoding["chunks"] = (31, 26)
+        path = str(tmp_path / "fuel_depth.zarr")
+
+        save_zarr(path, ds, chunk_shape=(16, 16))
+
+        store = zarr.open(path, mode="r")
+        assert store["fuel_depth"].chunks == (16, 16)
+        loaded = load_zarr(path)
+        np.testing.assert_array_equal(loaded["fuel_depth"].values, data)
+
+    def test_real_load_then_resave_finer_chunks(self, tmp_path):
+        """The production path exactly: save a grid, ``load_zarr`` it (which
+        stamps ``encoding['chunks']``), then re-save with finer chunks — as a
+        derived grid (compose/lookup/modification) does."""
+        original = np.random.rand(40, 40).astype(np.float32)
+        ds = make_spatial_dataset(bands={"band_0": original}, shape=(40, 40))
+        src = str(tmp_path / "src.zarr")
+        save_zarr(src, ds, chunk_shape=(512, 512))  # on-disk single chunk (40, 40)
+
+        loaded = load_zarr(src)
+        # Precondition: load_zarr really does leave a stale chunks hint behind.
+        assert loaded["band_0"].encoding.get("chunks") == (40, 40)
+
+        out = str(tmp_path / "out.zarr")
+        save_zarr(out, loaded, chunk_shape=(16, 16))
+
+        store = zarr.open(out, mode="r")
+        assert store["band_0"].chunks == (16, 16)
+        reloaded = load_zarr(out)
+        np.testing.assert_array_equal(reloaded["band_0"].values, original)
+        assert reloaded.rio.crs is not None
+
+    def test_stale_encoding_3d_grid(self, tmp_path):
+        """3D voxel grids hit the same overlap on the z/y/x axes."""
+        nz, ny, nx = 8, 20, 20
+        transform = from_bounds(
+            500000, 4200000, 500000 + nx * 30, 4200000 + ny * 30, nx, ny
+        )
+        data = np.random.rand(nz, ny, nx).astype(np.float32)
+        da = xr.DataArray(
+            data,
+            dims=("z", "y", "x"),
+            coords={"z": np.arange(nz), "y": np.arange(ny), "x": np.arange(nx)},
+        )
+        ds = xr.Dataset({"density": da}).rio.write_crs("EPSG:32610")
+        ds = ds.rio.write_transform(transform)
+        ds["density"].encoding["chunks"] = (nz, ny, nx)
+        path = str(tmp_path / "voxels.zarr")
+
+        save_zarr(path, ds, chunk_shape=(nz, 8, 8))
+
+        store = zarr.open(path, mode="r")
+        assert store["density"].chunks == (nz, 8, 8)
+        loaded = load_zarr(path)
+        np.testing.assert_array_equal(loaded["density"].values, data)
+
+    def test_multi_variable_mixed_stale_encoding(self, tmp_path):
+        """Only some variables carry stale encoding; all must round-trip and
+        land on the requested chunk shape."""
+        shape = (50, 50)
+        bands = {
+            "fbfm": np.full(shape, 101, dtype=np.int32),
+            "fuel_load.1hr": np.random.rand(*shape).astype(np.float32),
+            "fuel_depth": np.random.rand(*shape).astype(np.float32),
+        }
+        ds = make_spatial_dataset(bands=bands, shape=shape)
+        # Stale hints on two of the three variables.
+        ds["fuel_depth"].encoding["chunks"] = (50, 50)
+        ds["fbfm"].encoding["chunks"] = (50, 50)
+        path = str(tmp_path / "multi.zarr")
+
+        save_zarr(path, ds, chunk_shape=(16, 16))
+
+        store = zarr.open(path, mode="r")
+        loaded = load_zarr(path)
+        for var, data in bands.items():
+            assert store[var].chunks == (16, 16), f"{var} wrong on-disk chunks"
+            np.testing.assert_array_equal(
+                loaded[var].values, data, err_msg=f"{var} values differ"
+            )
+
+
 class TestChunkedToRaster:
     """Tests that chunked Zarr data can be written to GeoTIFF."""
 

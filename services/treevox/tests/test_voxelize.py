@@ -564,7 +564,7 @@ class TestBuildChunkCache:
         `build_tree` alone reading the column is covered by TestBuildTree; this
         asserts build_chunk_cache plumbs the source config through so the
         bin-representative Tree gets the right crown_fuel_load at cache-build
-        time. Regression guard for wiring bugs between the orchestrator, cache
+        time. Regression guard for wiring bugs between the voxelize handler, cache
         builder, and build_tree.
         """
         canopy = np.ones((2, 3, 3))

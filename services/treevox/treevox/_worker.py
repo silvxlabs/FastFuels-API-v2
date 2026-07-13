@@ -42,7 +42,7 @@ def run(payload: dict) -> dict:
     Returns on success:
       {chunk_location, buffers, y_slice, x_slice, pid, num_trees,
        process_time_s}
-    Returns on exception (never raises — orchestrator surfaces via
+    Returns on exception (never raises — the voxelize handler surfaces via
     ProcessingError(VOXELIZATION_FAILED)):
       {chunk_location, error}
     """

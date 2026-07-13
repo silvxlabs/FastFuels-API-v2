@@ -72,8 +72,10 @@ CREATE_QUICFIRE_EXPORT_OPENAPI_EXAMPLES = {
         "description": (
             "Override the default 2 m / 1 m fire grid. Useful for coarser "
             "simulations (e.g. dx=4 m) or finer vertical resolution (e.g. "
-            "dz=0.5 m). All role grids must still be lattice-aligned and "
-            "cover the resulting fire-grid extent."
+            "dz=0.5 m, which requires voxelizing the tree grid at "
+            "resolution.vertical=0.5). All role grids must still be lattice-"
+            "aligned, built at the fire-grid resolution, and cover the "
+            "resulting fire-grid extent."
         ),
     },
     "short_domain": {

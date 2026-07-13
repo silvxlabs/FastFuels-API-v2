@@ -4,13 +4,17 @@ See the architecture summary in the API repo's `docs/` folder for the full pictu
 
 ## Layout
 
-4 files:
-- `main.py` — Cloud Function entry, dispatch, errors, handler orchestration, parquet IO.
+Mirrors griddle/standgen: a thin `dispatch.py` routes on the source triple, delegating the work to a `handlers/` package.
+
+- `main.py` — Cloud Function entry (HTTP trigger, retry/error arms). Thin.
+- `dispatch.py` — routes on the source `(operation, input, entity)` triple to a handler.
+- `handlers/voxelize.py` — the tree-inventory voxelization job (`voxelize_inventory`) and its private stages, plus the `VoxelizationResult`/`GridLayout`/`BatchStats` dataclasses.
 - `voxelize.py` — pure compute (GridSpec, chunk binning, cache, voxelize_chunk). Worker-safe imports only.
 - `storage.py` — xarray-backed zarr I/O (init_store, read/write union, masked_merge). Not imported by workers.
 - `_worker.py` — spawned worker entry. Strict imports: numpy, pandas, treevox.voxelize only.
+- `errors.py`, `firestore_io.py`, `inventory_io.py` — error types, Firestore helpers, parquet IO.
 
-Griddle's `handlers/` subpackage and `dispatch.py`/`errors.py` splits exist because griddle has many source handlers. Treevox has exactly one (`inventory`) — premature scaffolding. Add the subpackage when a second source (lidar, treelist) lands.
+The `handlers/` package was added for the leaflux solar-irradiance source (#424); a second source module (e.g. `handlers/leaflux.py`) slots in alongside `handlers/voxelize.py` with a new `case` in `dispatch.py`.
 
 ## Hierarchy & Processing Flow
 
@@ -62,7 +66,7 @@ V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed u
 
 Two primitives together ensure crowns near chunk boundaries render correctly:
 1. **Union reads with halo** — each batch reads a region covering all chunks in the batch plus a 10-cell halo. Trees placed near a chunk interior boundary render into the halo.
-2. **Masked merge on write** — after workers return, the orchestrator merges per-chunk buffers into the union by `mask = data != fill_value`. Two chunks touching the same halo cell combine without clobbering.
+2. **Masked merge on write** — after workers return, the voxelize handler merges per-chunk buffers into the union by `mask = data != fill_value`. Two chunks touching the same halo cell combine without clobbering.
 
 V2 does **not** pad the outer grid itself (v1's `horizontal_padding_m = 10`). `compute_grid_dimensions` just snaps the domain's total bounds outward to the nearest multiple of `hr`. Domain-edge padding, where needed, is the domain resource's job via `pad_to_resolution` upstream.
 

@@ -461,7 +461,7 @@ def build_chunk_cache(
         realization varies deterministically), and once downstream in
         `voxelize_chunk` to pick which realization a given tree row uses.
         Seeded from `source.seed + (row_chunk, col_chunk)` in the
-        orchestrator so the whole job is reproducible.
+        voxelize handler so the whole job is reproducible.
 
     What it does
     ------------
@@ -874,7 +874,7 @@ def voxelize_chunk(
         e.g. `{"volume_fraction": np.zeros((nz, halo_y, halo_x), float32),
         ...}`. Pre-filled with each band's fill value (`BAND_SPECS`). All
         buffers share the same `(nz, halo_y, halo_x)` shape. Mutated IN
-        PLACE; the orchestrator reads them back after this returns.
+        PLACE; the voxelize handler reads them back after this returns.
     cache
         Pre-built cache from `build_chunk_cache` mapping each
         `_cache_key` present in `trees_in_chunk` to a `CacheEntry`.
@@ -899,7 +899,7 @@ def voxelize_chunk(
         Seeded numpy Generator. Used to pick one biomass realization
         per tree when a `CacheEntry` carries multiple. Seed comes from
         `_chunk_rng_seed(base_seed, row_chunk, col_chunk)` in the
-        orchestrator, so the same grid produces the same output on
+        voxelize handler, so the same grid produces the same output on
         re-run.
 
     What it does

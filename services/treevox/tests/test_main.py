@@ -1,9 +1,9 @@
 """Unit tests for treevox.main — HTTP entry + retry/error arms only.
 
-Orchestration, inventory I/O, and Firestore helpers are covered by their own
-test modules (test_orchestrator.py, test_inventory_io.py). The Cloud Function
-layer is exercised here by mocking `dispatch_handler` and the Firestore
-helpers.
+Source routing, the voxelization job, inventory I/O, and Firestore helpers are
+covered by their own test modules (test_dispatch.py, handlers/test_voxelize.py,
+test_inventory_io.py). The Cloud Function layer is exercised here by mocking
+`dispatch_handler` and the Firestore helpers.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from treevox import main
 from treevox.errors import CancelledException, ProcessingError
+from treevox.handlers.voxelize import VoxelizationResult
 from treevox.main import MockRequest, process_grid_request
-from treevox.orchestrator import VoxelizationResult
 
 
 class TestProcessGridRequest:

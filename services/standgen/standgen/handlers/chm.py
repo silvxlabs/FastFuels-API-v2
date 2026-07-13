@@ -85,6 +85,17 @@ def handle_chm(
 
     chm_da = grid_ds["chm"]
 
+    # Neutralize invalid CHM pixels (nodata = NaN, the continuous-grid convention)
+    # to a deterministic sub-min_height value before detection. scipy's maximum_filter
+    # is nondeterministic on NaN: a real treetop whose search window overlaps nodata
+    # gets a NaN filtered-max, fails the core's `chm == chm_max_filtered` test, and is
+    # silently dropped — under-detecting trees along every nodata boundary (#430). 0 is
+    # below min_height (never a treetop), sits below the canopy (never wins a window
+    # max, so never suppresses a real neighbor), and casts cleanly to int for VWF's
+    # window-size math. The stored grid keeps NaN nodata; this only touches the
+    # transient detection copy.
+    chm_da = chm_da.fillna(0.0)
+
     # Dynamically extract spatial resolution if not explicitly provided
     spatial_res = algorithm_config.get("spatial_resolution")
     if spatial_res is None:

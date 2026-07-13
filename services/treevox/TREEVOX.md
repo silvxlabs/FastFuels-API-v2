@@ -66,7 +66,7 @@ V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed u
 
 Two primitives together ensure crowns near chunk boundaries render correctly:
 1. **Union reads with halo** — each batch reads a region covering all chunks in the batch plus a 10-cell halo. Trees placed near a chunk interior boundary render into the halo.
-2. **Masked merge on write** — after workers return, the orchestrator merges per-chunk buffers into the union by `mask = data != fill_value`. Two chunks touching the same halo cell combine without clobbering.
+2. **Masked merge on write** — after workers return, the voxelize handler merges per-chunk buffers into the union by `mask = data != fill_value`. Two chunks touching the same halo cell combine without clobbering.
 
 V2 does **not** pad the outer grid itself (v1's `horizontal_padding_m = 10`). `compute_grid_dimensions` just snaps the domain's total bounds outward to the nearest multiple of `hr`. Domain-edge padding, where needed, is the domain resource's job via `pad_to_resolution` upstream.
 

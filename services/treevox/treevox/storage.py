@@ -1,11 +1,11 @@
 """xarray-backed 3D zarr I/O for treevox.
 
-Orchestrator-only module — never imported by spawned workers.
+Handler-side module — never imported by spawned workers.
 
 The surface is built around one xarray Dataset per grid with one variable
 per requested band. Per-variable dtypes and fill values are preserved via
 `encoding` on the initial `to_zarr(compute=False)` call. Workers fill chunk
-regions by returning numpy buffers; the orchestrator merges them into a
+regions by returning numpy buffers; the voxelize handler merges them into a
 halo-extended union Dataset and writes the region back with
 `to_zarr(region=...)`.
 

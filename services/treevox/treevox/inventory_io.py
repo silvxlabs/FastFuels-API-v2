@@ -3,7 +3,7 @@
 "Inventory" here means the tabular tree data (the parquet): rows of trees with
 `x, y, fia_species_code, fia_status_code, dbh, height, crown_ratio`. The job
 that turns this tabular data into a 3D fuel grid is called *voxelization* and
-lives in `treevox.orchestrator`. Keep the distinction when reading/editing
+lives in `treevox.handlers.voxelize`. Keep the distinction when reading/editing
 either module.
 
 Memory note: on Cloud Run `/tmp` is RAM-backed tmpfs, so downloading a parquet

@@ -23,6 +23,12 @@ leave the kwarg unused. See `services/lib/lib/cf_utils.py` for the full
 convention and the corresponding netCDF write-side pattern in
 `services/exporter/exporter/handlers/netcdf.py`.
 
+The one encoding key `save_zarr` manages itself is `chunks`: it rechunks
+to the caller's `chunk_shape` and clears any stale per-variable
+`encoding['chunks']`/`preferred_chunks` first, so a hint left by a prior
+read cannot disagree with the dask chunks and trip xarray's overlap guard
+(issue #417). Do not set `encoding['chunks']` expecting it to survive.
+
 `load_zarr` uses `decode_coords="all"` so callers always get a Dataset
 where `spatial_ref` is a coord and `ds.rio.crs` is populated, regardless
 of whether the on-disk zarr stored `grid_mapping` in attrs (treevox
@@ -53,6 +59,9 @@ def save_zarr(
             for 2D datasets, or `(z, y, x)` for 3D datasets. The Dataset
             is rechunked via xarray's .chunk() before writing — xarray
             uses dask chunk sizes as Zarr on-disk chunks automatically.
+            Any stale per-variable `encoding['chunks']` (e.g. left by a
+            prior `load_zarr`) is cleared first so it cannot conflict with
+            these dask chunks (issue #417).
 
     Returns:
         The path where data was written
@@ -77,6 +86,23 @@ def save_zarr(
         )
 
     data = data.chunk(chunks)
+
+    # Clear any stale per-variable `encoding['chunks']` (and the paired
+    # `preferred_chunks`) carried over from a prior read: `load_zarr` stamps
+    # every variable with the source store's on-disk chunk sizes, and a source
+    # raster's native tiling lands there too. We have just rechunked to
+    # `chunk_shape`, so those dask chunks are the intended on-disk layout; a
+    # leftover `encoding['chunks']` that disagrees makes xarray's Zarr writer
+    # raise "chunks ... would overlap multiple Dask chunks" and, under a
+    # parallel Dask write, risks corrupting the array (issue #417). Dropping
+    # the hint lets xarray derive the on-disk chunks from the dask chunks, as
+    # this function's contract promises. Every other encoding key — notably
+    # `grid_mapping` — is left intact, honoring the "mutate `var.encoding`
+    # before write, never pass `encoding=`" convention above.
+    for variable in data.variables.values():
+        variable.encoding.pop("chunks", None)
+        variable.encoding.pop("preferred_chunks", None)
+
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore", message="Consolidated metadata", category=UserWarning

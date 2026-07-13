@@ -546,6 +546,28 @@ class TestQuicfireExportValidation:
         assert "resolution mismatch" in detail.lower()
         assert '"alignment": {"dx": 30.0, "dy": 30.0}' in detail
 
+    def test_dz_mismatch_returns_422(
+        self,
+        client,
+        domain_for_testing,
+        canopy_grid,
+        surface_grid,
+        surface_moisture_grid,
+    ):
+        # Tree grid is 1 m vertical; request asks for a 0.5 m fire grid.
+        # alignment.dz is now honored, so the mismatch is rejected loudly
+        # instead of being silently ignored (issue #377).
+        body = _minimal_body(
+            canopy_grid["id"], surface_grid["id"], surface_moisture_grid["id"]
+        )
+        body["alignment"] = {"target": "domain", "dx": DX, "dy": DX, "dz": 0.5}
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "vertical resolution mismatch" in detail.lower()
+        assert '"alignment": {"dz": 1.0}' in detail
+
     def test_savr_pair_required_canopy_only_returns_422(
         self,
         client,

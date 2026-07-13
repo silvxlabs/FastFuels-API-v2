@@ -285,8 +285,24 @@ class TestBuildFireGridDomainTarget:
         fg = _build_fire_grid(req, domain, _canopy_doc()["georeference"], None)
         assert fg["dx"] == 4.0
         assert fg["dy"] == 4.0
+        assert fg["dz"] == 0.5  # dz is taken from alignment, not the canopy
         assert fg["nx"] == 20  # 80 / 4
         assert fg["ny"] == 20
+
+    def test_dz_taken_from_alignment_not_canopy(self):
+        # Canopy voxelized at 1 m vertical, but the request asks for 0.5 m.
+        # The fire grid's dz must reflect the *request*, so the downstream
+        # vertical check can catch the mismatch (rather than silently adopting
+        # the canopy's z_resolution as it used to).
+        domain = {
+            "bbox": [_ORIGIN_X, _ORIGIN_Y - 80, _ORIGIN_X + 80, _ORIGIN_Y],
+            "crs": {"type": "name", "properties": {"name": _CRS}},
+        }
+        req = _minimal_request(
+            alignment_override={"target": "domain", "dx": 2, "dy": 2, "dz": 0.5}
+        )
+        fg = _build_fire_grid(req, domain, _canopy_doc()["georeference"], None)
+        assert fg["dz"] == 0.5
 
 
 class TestBuildFireGridGridTarget:
@@ -459,6 +475,65 @@ class TestCheck3dRoleVertical:
                 fire_grid,
             )
         assert exc.value.status_code == 422
+        detail = exc.value.detail
+        # Message names both resolutions and offers a copy-pasteable fix.
+        assert "vertical resolution mismatch" in detail
+        assert "0.5 m" in detail  # the grid's z_resolution
+        assert "1.0 m" in detail  # the fire-grid dz
+        assert '"alignment": {"dz": 0.5}' in detail
+
+    def test_honors_alignment_dz_end_to_end(self):
+        # The core #377 fix: alignment.dz is now read into the fire grid AND
+        # validated against the tree grid. dz=0.5 request + a 1 m tree grid
+        # must be rejected (previously the dz was silently ignored).
+        domain = {
+            "bbox": [
+                _ORIGIN_X,
+                _ORIGIN_Y - _NY * _DX,
+                _ORIGIN_X + _NX * _DX,
+                _ORIGIN_Y,
+            ],
+            "crs": {"type": "name", "properties": {"name": _CRS}},
+        }
+        req = _minimal_request(
+            alignment_override={"target": "domain", "dx": _DX, "dy": _DX, "dz": 0.5}
+        )
+        canopy = _canopy_doc(z_resolution=1.0)
+        fg = _build_fire_grid(req, domain, canopy["georeference"], None)
+        assert fg["dz"] == 0.5
+        with pytest.raises(HTTPException) as exc:
+            _check_3d_role_vertical(
+                canopy,
+                FieldSource(grid_id="canopy", band="bulk_density.foliage.live"),
+                "canopy_bulk_density",
+                fg,
+            )
+        assert exc.value.status_code == 422
+
+    def test_matching_alignment_dz_passes_end_to_end(self):
+        # dz=0.5 request + a 0.5 m tree grid: honored and consistent, no error.
+        domain = {
+            "bbox": [
+                _ORIGIN_X,
+                _ORIGIN_Y - _NY * _DX,
+                _ORIGIN_X + _NX * _DX,
+                _ORIGIN_Y,
+            ],
+            "crs": {"type": "name", "properties": {"name": _CRS}},
+        }
+        req = _minimal_request(
+            alignment_override={"target": "domain", "dx": _DX, "dy": _DX, "dz": 0.5}
+        )
+        canopy = _canopy_doc(z_resolution=0.5)
+        fg = _build_fire_grid(req, domain, canopy["georeference"], None)
+        assert fg["dz"] == 0.5
+        # Should not raise.
+        _check_3d_role_vertical(
+            canopy,
+            FieldSource(grid_id="canopy", band="bulk_density.foliage.live"),
+            "canopy_bulk_density",
+            fg,
+        )
 
     def test_z_origin_mismatch_rejected(self, fire_grid):
         doc = _canopy_doc(z_origin=2.0)

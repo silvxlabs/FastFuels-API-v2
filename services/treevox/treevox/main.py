@@ -1,8 +1,9 @@
 """Cloud Function entry for treevox.
 
-Thin HTTP layer only. All voxelization work lives in `treevox.orchestrator`;
-Firestore reads/writes in `treevox.firestore_io`; inventory parquet I/O in
-`treevox.inventory_io`; error types in `treevox.errors`.
+Thin HTTP layer only. Source routing lives in `treevox.dispatch`; the
+voxelization job in `treevox.handlers.voxelize`; Firestore reads/writes in
+`treevox.firestore_io`; inventory parquet I/O in `treevox.inventory_io`;
+error types in `treevox.errors`.
 
 Retry semantics (via `X-CloudTasks-TaskRetryCount`):
 - First attempt processes normally.
@@ -25,6 +26,7 @@ from lib.config import GRIDS_COLLECTION
 from lib.firestore import DocumentNotFoundError, update_document
 from lib.grids import compute_chunks_doc
 from treevox import storage
+from treevox.dispatch import dispatch_handler
 from treevox.errors import CancelledException, ProcessingError
 from treevox.firestore_io import (
     load_domain,
@@ -32,7 +34,6 @@ from treevox.firestore_io import (
     make_progress_callback,
     update_status,
 )
-from treevox.orchestrator import dispatch_handler
 
 # GRPC_VERBOSITY and GRPC_ENABLE_FORK_SUPPORT are set before this module
 # imports via the Dockerfile (production) and services/treevox/conftest.py
@@ -60,7 +61,7 @@ class StructuredLogHandler(logging.Handler):
 
 
 # Attach the handler to the package logger so descendant modules
-# (treevox.orchestrator, treevox.storage, …) inherit it without each
+# (treevox.handlers.voxelize, treevox.storage, …) inherit it without each
 # needing its own handler.
 _pkg_logger = logging.getLogger("treevox")
 _pkg_logger.setLevel(logging.INFO)

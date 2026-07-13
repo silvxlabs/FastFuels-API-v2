@@ -1,4 +1,7 @@
-"""Voxelization job orchestration: dispatch + the inventory voxelization job.
+"""Tree-inventory voxelization handler: the 3D gridding job treevox runs.
+
+Routed to by `treevox.dispatch.dispatch_handler` on the
+(operation='voxelize', input='inventory', entity='tree') source triple.
 
 Distinguishes carefully between:
 - *inventory* (tabular tree data — a parquet of rows); handled by
@@ -737,28 +740,3 @@ def voxelize_inventory(
     logger.info(f"Voxelization job completed in {total_time:.2f} seconds", extra=extra)
 
     return _build_voxelization_result(layout, path)
-
-
-# Dispatch
-
-
-def dispatch_handler(
-    grid: dict,
-    domain_gdf,
-    progress: Callable[[str, int | None], None],
-) -> VoxelizationResult:
-    """Route on the source's (operation, input, entity) triple."""
-    source = grid["source"]
-    key = (source.get("operation"), source.get("input"), source.get("entity"))
-    match key:
-        case ("voxelize", "inventory", "tree"):
-            return voxelize_inventory(grid, domain_gdf, progress)
-        case _:
-            raise ProcessingError(
-                code="UNKNOWN_SOURCE",
-                message=f"Unknown tree grid source: {key!r}",
-                suggestion=(
-                    "Supported sources today: "
-                    "(operation='voxelize', input='inventory', entity='tree')."
-                ),
-            )

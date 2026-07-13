@@ -4,13 +4,17 @@ See the architecture summary in the API repo's `docs/` folder for the full pictu
 
 ## Layout
 
-4 files:
-- `main.py` — Cloud Function entry, dispatch, errors, handler orchestration, parquet IO.
+Mirrors griddle/standgen: a thin `dispatch.py` routes on the source triple, delegating the work to a `handlers/` package.
+
+- `main.py` — Cloud Function entry (HTTP trigger, retry/error arms). Thin.
+- `dispatch.py` — routes on the source `(operation, input, entity)` triple to a handler.
+- `handlers/voxelize.py` — the tree-inventory voxelization job (`voxelize_inventory`) and its private stages, plus the `VoxelizationResult`/`GridLayout`/`BatchStats` dataclasses.
 - `voxelize.py` — pure compute (GridSpec, chunk binning, cache, voxelize_chunk). Worker-safe imports only.
 - `storage.py` — xarray-backed zarr I/O (init_store, read/write union, masked_merge). Not imported by workers.
 - `_worker.py` — spawned worker entry. Strict imports: numpy, pandas, treevox.voxelize only.
+- `errors.py`, `firestore_io.py`, `inventory_io.py` — error types, Firestore helpers, parquet IO.
 
-Griddle's `handlers/` subpackage and `dispatch.py`/`errors.py` splits exist because griddle has many source handlers. Treevox has exactly one (`inventory`) — premature scaffolding. Add the subpackage when a second source (lidar, treelist) lands.
+The `handlers/` package was added for the leaflux solar-irradiance source (#424); a second source module (e.g. `handlers/leaflux.py`) slots in alongside `handlers/voxelize.py` with a new `case` in `dispatch.py`.
 
 ## Hierarchy & Processing Flow
 

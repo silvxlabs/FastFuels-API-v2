@@ -1,7 +1,8 @@
 """Firestore read/write helpers for treevox.
 
 All Firestore-facing I/O lives here so the HTTP entry (main.py) and the
-orchestrator (orchestrator.py) stay independent of persistence details.
+voxelization handler (handlers/voxelize.py) stay independent of persistence
+details.
 
 `update_progress` and `update_status` treat `DocumentNotFoundError` as user
 cancellation — the document was deleted mid-run, so we surface

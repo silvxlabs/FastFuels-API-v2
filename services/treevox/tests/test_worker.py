@@ -256,7 +256,7 @@ def _check_isolation(result_queue):
 
 
 class TestImportIsolation:
-    def test_worker_does_not_pull_in_treevox_orchestrator_modules(self):
+    def test_worker_does_not_pull_in_treevox_storage_or_main(self):
         """The worker must not import
         treevox.storage or treevox.main. Transitive pulls from fastfuels_core
         (xarray etc.) are out of our control.

@@ -9,12 +9,13 @@ helpers, each unit-testable without Firestore or the async runtime:
 * `_load_all_grids` — Firestore lookup for every grid the request touches
   (roles + the alignment target when `target="grid"`).
 * `_check_role_contract` — per role: band membership, unit, dimensionality.
-* `_build_fire_grid` — derives the fire grid's georeference from the
-  alignment + the canopy grid's vertical.
+* `_build_fire_grid` — derives the fire grid's georeference: the horizontal
+  lattice and `dz` from the alignment (domain target) or the reference grid +
+  canopy (grid target); `nz` / `z_origin` always from the canopy.
 * `_check_role_alignment` — per role: CRS, cell size, integer-cell lattice
   offset, horizontal coverage.
-* `_check_3d_role_vertical` — per 3D role: `nz` / `dz` / `z_origin` match
-  the fire grid's vertical.
+* `_check_3d_role_vertical` — per 3D role: `dz` / `nz` / `z_origin` match
+  the fire grid's vertical (the exporter never resamples vertically).
 * `_check_cell_count_cap` — total cell count under the v1 cap.
 * `_make_source` — assemble the persisted `QuicfireExportSource`.
 
@@ -130,17 +131,20 @@ def _build_fire_grid(
     canopy_geo: dict,
     alignment_grid_doc: dict | None,
 ) -> dict:
-    """Construct the fire-grid spec. Vertical comes from the canopy; the
-    horizontal lattice comes from `request.alignment`.
+    """Construct the fire-grid spec. `nz` and `z_origin` always come from the
+    canopy. The vertical cell size `dz` comes from `request.alignment.dz` for
+    the domain target (the exporter later requires the canopy grid's
+    `z_resolution` to match it) and from the canopy for the grid target, which
+    has no `dz` knob. The horizontal lattice comes from `request.alignment`.
 
     `alignment_grid_doc` must be supplied when
     `request.alignment.target == "grid"` and ignored otherwise.
     """
     nz = int(canopy_geo["shape"][0])
-    dz = float(canopy_geo["z_resolution"])
     z_origin = float(canopy_geo["z_origin"])
 
     if isinstance(request.alignment, QUICFireExportAlignmentDomainTarget):
+        dz = float(request.alignment.dz)
         dx = float(request.alignment.dx)
         minx, miny, maxx, maxy = domain["bbox"]
         nx = max(1, ceil((maxx - minx) / dx))
@@ -151,6 +155,7 @@ def _build_fire_grid(
         assert alignment_grid_doc is not None, (
             "alignment_grid_doc is required when alignment.target='grid'"
         )
+        dz = float(canopy_geo["z_resolution"])
         validate_grid_has_georeference(alignment_grid_doc, request.alignment.grid_id)
         ref = alignment_grid_doc["georeference"]
         fire_transform = [float(c) for c in ref["transform"][:6]]
@@ -244,20 +249,33 @@ def _check_role_alignment(
 def _check_3d_role_vertical(
     grid_data: dict, src: FieldSource, role_name: str, fire_grid: dict
 ) -> None:
-    """For 3D roles only: `nz`, `dz`, `z_origin` match the fire grid.
-    A no-op for 2D roles."""
+    """For 3D roles only: `dz`, `nz`, `z_origin` match the fire grid.
+    A no-op for 2D roles. The exporter never resamples vertically, so a role
+    grid's vertical must already equal the fire grid's."""
     geo = grid_data["georeference"]
     if len(geo["shape"]) != 3:
         return
-    if (
-        int(geo["shape"][0]) != fire_grid["nz"]
-        or not isclose(float(geo["z_resolution"]), fire_grid["dz"], abs_tol=_TOL)
-        or not isclose(float(geo["z_origin"]), fire_grid["z_origin"], abs_tol=_TOL)
+
+    gdz = float(geo["z_resolution"])
+    dz = fire_grid["dz"]
+    if not isclose(gdz, dz, abs_tol=_TOL):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"QUIC-Fire export vertical resolution mismatch: grid '{role_name}' "
+            f"({src.grid_id}) has {gdz} m vertical cells (z_resolution), but this "
+            f"export builds a {dz} m QUIC-Fire grid vertically. The exporter does "
+            f"not resample vertically. Rebuild the tree grid at {dz} m "
+            f'("resolution": {{"vertical": {dz}}}), or set '
+            f'"alignment": {{"dz": {gdz}}} to match your tree grid.',
+        )
+
+    if int(geo["shape"][0]) != fire_grid["nz"] or not isclose(
+        float(geo["z_origin"]), fire_grid["z_origin"], abs_tol=_TOL
     ):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Role '{role_name}' grid {src.grid_id}: z grid (nz, dz, "
-            f"z_origin) does not match fire-grid vertical.",
+            f"Role '{role_name}' grid {src.grid_id}: z grid (nz, z_origin) does "
+            f"not match fire-grid vertical.",
         )
 
 

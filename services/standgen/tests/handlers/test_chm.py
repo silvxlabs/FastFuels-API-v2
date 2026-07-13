@@ -295,6 +295,89 @@ class TestHandleChm:
     @patch("standgen.handlers.chm.load_grid")
     @patch("standgen.handlers.chm.save_parquet_with_summary")
     @patch("standgen.handlers.chm.variable_window_filter")
+    def test_nodata_nan_filled_to_zero_before_detection(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """Invalid CHM pixels (NaN nodata) are zero-filled before the filter runs so
+        they can't suppress real treetops at nodata boundaries (#430); valid pixels
+        and the grid's georeferencing are left untouched."""
+        chm = self._mock_grid_with_values(
+            mock_get, mock_load, [[10.0, np.nan], [np.nan, 30.0]]
+        )
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        source = mock_inventory_vwf["source"]
+        source["algorithm"]["max_height"] = None
+
+        handle_chm(mock_inventory_vwf, source, mock_domain_gdf, MagicMock())
+
+        _, kwargs = mock_var_filter.call_args
+        filled = kwargs["chm_da"]
+        # No NaN reaches the core; nodata pixels become 0.
+        assert not bool(np.isnan(filled.values).any())
+        assert float(filled.values[0, 1]) == 0.0
+        assert float(filled.values[1, 0]) == 0.0
+        # Real returns are preserved verbatim.
+        assert float(filled.values[0, 0]) == 10.0
+        assert float(filled.values[1, 1]) == 30.0
+        # Georeferencing must survive the fill (downstream reproject reads it).
+        assert filled.rio.crs == chm.rio.crs
+        assert filled.rio.transform() == chm.rio.transform()
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
+    def test_nodata_and_over_max_both_zeroed(
+        self,
+        mock_var_filter,
+        mock_save,
+        mock_load,
+        mock_get,
+        mock_count,
+        mock_inventory_vwf,
+        mock_domain_gdf,
+        mock_trees_ddf,
+    ):
+        """The nodata fill and the max_height cap compose: NaN nodata and over-max
+        returns both land at 0, while valid in-range pixels pass through."""
+        chm = self._mock_grid_with_values(
+            mock_get, mock_load, [[10.0, np.nan], [400.0, 30.0]]
+        )
+        mock_var_filter.return_value = mock_trees_ddf
+        mock_save.return_value = ("gs://test-bucket/test-inv-vwf", {}, None)
+        mock_count.return_value = 2
+
+        source = mock_inventory_vwf["source"]
+        source["algorithm"]["max_height"] = 120.0
+
+        handle_chm(mock_inventory_vwf, source, mock_domain_gdf, MagicMock())
+
+        _, kwargs = mock_var_filter.call_args
+        result = kwargs["chm_da"]
+        assert not bool(np.isnan(result.values).any())
+        assert float(result.values[0, 1]) == 0.0  # NaN nodata -> 0
+        assert float(result.values[1, 0]) == 0.0  # 400 m over-max -> 0
+        assert float(result.values[0, 0]) == 10.0  # valid, preserved
+        assert float(result.values[1, 1]) == 30.0  # valid, preserved
+        assert result.rio.crs == chm.rio.crs
+
+    @patch("standgen.handlers.chm.count_inventory_rows")
+    @patch("standgen.handlers.chm.get_document")
+    @patch("standgen.handlers.chm.load_grid")
+    @patch("standgen.handlers.chm.save_parquet_with_summary")
+    @patch("standgen.handlers.chm.variable_window_filter")
     def test_max_height_none_leaves_chm_unclipped(
         self,
         mock_var_filter,

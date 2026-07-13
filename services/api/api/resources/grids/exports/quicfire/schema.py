@@ -61,7 +61,10 @@ class QUICFireExportAlignmentDomainTarget(BaseModel):
         default=1.0,
         gt=0,
         description=(
-            "Vertical fire-grid cell size, in meters. QUIC-Fire recommends 1 m."
+            "Vertical fire-grid cell size, in meters. QUIC-Fire recommends 1 m. "
+            "Must equal the 3D tree grid's voxelization vertical resolution "
+            "(`resolution.vertical`): the exporter never resamples vertically, "
+            "so a mismatch is rejected with 422 rather than silently applied."
         ),
     )
 
@@ -122,6 +125,8 @@ class QuicfireExportRequest(BaseModel):
     export at 1 m, for example, set `dx`/`dy` to 1 and build all role grids at
     1 m (2D grids at 1 m via their `alignment.resolution`, and the 3D tree
     grid at 1 m via `resolution.horizontal` — 3D grids cannot be resampled).
+    The same holds vertically: `alignment.dz` must equal the 3D tree grid's
+    `resolution.vertical`, or the request is rejected with 422.
     """
 
     alignment: QUICFireExportAlignmentSpec = Field(

@@ -16,7 +16,6 @@ import logging
 import os
 import tempfile
 import time
-from pathlib import Path
 from typing import NamedTuple
 from uuid import uuid4
 
@@ -44,6 +43,7 @@ from lib.testing import (
     SHARED_TEST_DOMAINS_DIR,
     SHARED_TEST_FEATURES_DIR,
     SHARED_TEST_GRIDS_DIR,
+    load_json,
 )
 from lib.zarr_utils import load_zarr
 
@@ -58,12 +58,6 @@ logger = logging.getLogger(__name__)
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 FEATURES_DIR = SHARED_TEST_FEATURES_DIR
-
-
-def load_json(path: Path) -> dict:
-    """Load a JSON file from the test data directory."""
-    with open(path) as f:
-        return json.load(f)
 
 
 class MockRequest:

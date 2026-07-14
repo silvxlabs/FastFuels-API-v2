@@ -24,7 +24,6 @@ import logging
 import os
 import tempfile
 import time
-from pathlib import Path
 from typing import NamedTuple
 from uuid import uuid4
 
@@ -42,7 +41,7 @@ from lib.config import (
 )
 from lib.firestore.documents import delete_document, get_document, set_document
 from lib.gcs.blobs import delete_directory, exists, upload_file
-from lib.testing import SHARED_TEST_DOMAINS_DIR
+from lib.testing import SHARED_TEST_DOMAINS_DIR, load_json
 
 
 class TreevoxResult(NamedTuple):
@@ -54,11 +53,6 @@ class TreevoxResult(NamedTuple):
 logger = logging.getLogger(__name__)
 
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
-
-
-def load_json(path: Path) -> dict:
-    with open(path) as f:
-        return json.load(f)
 
 
 class MockRequest:

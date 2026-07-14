@@ -24,7 +24,7 @@ from lib.config import (
 )
 from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, exists
-from lib.testing import SHARED_TEST_DOMAINS_DIR
+from lib.testing import SHARED_TEST_DOMAINS_DIR, load_json
 from tests.integration.staging import staged_object_name
 
 # Blue Mountain domain (EPSG:32611, UTM zone 11N, near Missoula MT)
@@ -43,8 +43,7 @@ SAMPLE_LON_LAT = [(-114.104, 46.829), (-114.102, 46.830)]
 
 def _load_domain_doc(domain_id: str) -> dict:
     """Load the blue_mtn shared domain and assign a test ID."""
-    with open(_BLUE_MTN_PATH) as f:
-        data = json.load(f)
+    data = load_json(_BLUE_MTN_PATH)
     data["id"] = domain_id
     data["owner_id"] = "test-owner"
     # Firestore requires nested arrays to be stringified

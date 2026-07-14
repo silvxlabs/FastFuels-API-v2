@@ -13,7 +13,6 @@ Tests receive the completed inventory document and write their own assertions.
 import json
 import logging
 import time
-from pathlib import Path
 from uuid import uuid4
 
 import gcsfs
@@ -33,6 +32,7 @@ from lib.testing import (
     SHARED_TEST_DOMAINS_DIR,
     SHARED_TEST_GRIDS_DIR,
     SHARED_TEST_INVENTORIES_DIR,
+    load_json,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,12 +40,6 @@ logger = logging.getLogger(__name__)
 INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 GRIDS_DIR = SHARED_TEST_GRIDS_DIR
-
-
-def load_json(path: Path) -> dict:
-    """Load a JSON file from the test data directory."""
-    with open(path) as f:
-        return json.load(f)
 
 
 class MockRequest:

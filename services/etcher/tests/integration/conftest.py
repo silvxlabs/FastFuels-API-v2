@@ -12,7 +12,6 @@ Firestore setup -> feature execution -> polling -> Parquet verification -> clean
 import json
 import logging
 import time
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -28,18 +27,13 @@ from lib.gcs.blobs import delete_file, exists
 from lib.testing import (
     SHARED_TEST_DOMAINS_DIR,
     SHARED_TEST_FEATURES_DIR,
+    load_json,
 )
 
 logger = logging.getLogger(__name__)
 
 FEATURES_DIR = SHARED_TEST_FEATURES_DIR
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
-
-
-def load_json(path: Path) -> dict:
-    """Load a JSON file from the test data directory."""
-    with open(path) as f:
-        return json.load(f)
 
 
 class MockRequest:

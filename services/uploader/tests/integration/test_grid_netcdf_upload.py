@@ -29,7 +29,7 @@ from lib.config import (
 )
 from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, exists
-from lib.testing import SHARED_TEST_DOMAINS_DIR
+from lib.testing import SHARED_TEST_DOMAINS_DIR, load_json
 from tests.integration.staging import staged_object_name
 
 _BLUE_MTN_PATH = SHARED_TEST_DOMAINS_DIR / "blue_mtn.json"
@@ -41,8 +41,7 @@ NC_XMAX, NC_YMAX = 721200.0, 5190400.0
 
 
 def _load_domain_doc(domain_id: str) -> dict:
-    with open(_BLUE_MTN_PATH) as f:
-        data = json.load(f)
+    data = load_json(_BLUE_MTN_PATH)
     data["id"] = domain_id
     data["owner_id"] = "test-owner"
     for feature in data.get("features", []):

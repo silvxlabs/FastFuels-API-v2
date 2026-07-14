@@ -45,6 +45,7 @@ from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, delete_file, exists
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 from lib.zarr_utils import save_zarr
+from tests.integration.staging import staged_object_name
 
 # Internal attrs that the exporter strips before CF stamping — same list
 # as services/exporter/exporter/handlers/netcdf.py::_INTERNAL_ATTRS_TO_STRIP.
@@ -185,7 +186,7 @@ def _run_roundtrip(
     dst_grid_id = f"test-dst-{uuid4().hex}"
     domain_id = f"test-{uuid4().hex}"
 
-    upload_object_name = f"grids/{dst_grid_id}/upload.nc"
+    upload_object_name = staged_object_name(dst_grid_id, "upload.nc")
 
     src_zarr = f"gs://{GRIDS_BUCKET}/{src_grid_id}"
     dst_zarr = f"gs://{GRIDS_BUCKET}/{dst_grid_id}"
@@ -231,9 +232,11 @@ def _run_roundtrip(
         # 4. Run the upload handler
         handle_grid_netcdf(dst_grid_id, UPLOADS_BUCKET, upload_object_name, dst_doc)
 
-        # 5. Load both zarrs for comparison
-        src_reload = xr.open_zarr(src_zarr, decode_coords="all")
-        dst_reload = xr.open_zarr(dst_zarr, decode_coords="all")
+        # 5. Load both zarrs for comparison. Eager: the finally below deletes
+        # both zarrs before the caller asserts on them, so a lazy Dataset would
+        # be reading chunks out of a deleted prefix.
+        src_reload = xr.open_zarr(src_zarr, decode_coords="all").load()
+        dst_reload = xr.open_zarr(dst_zarr, decode_coords="all").load()
 
         _, dst_snap = get_document(GRIDS_COLLECTION, dst_grid_id)
         dst_doc_final = dst_snap.to_dict()

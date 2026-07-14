@@ -27,7 +27,7 @@ from lib.config import (
 from lib.errors import ProcessingError
 from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, delete_file, exists, get_gcsfs_client
-from lib.testing import SHARED_TEST_DOMAINS_DIR
+from lib.testing import SHARED_TEST_DOMAINS_DIR, load_json
 from tests.integration.staging import staged_object_name
 from tests.pointcloud_helpers import make_test_las
 
@@ -37,8 +37,7 @@ DOMAIN_CRS = "EPSG:32612"
 
 
 def _load_domain_doc(domain_id: str) -> dict:
-    with open(_DOMAIN_PATH) as f:
-        data = json.load(f)
+    data = load_json(_DOMAIN_PATH)
     data["id"] = domain_id
     data["owner_id"] = "test-owner"
     # Firestore rejects nested arrays — stringify domain coordinates.

@@ -4,6 +4,10 @@ api/resources/users/schema.py
 Response models for the read API of the quota system (GET /users/me and
 GET /users/me/usage). "me" is the authenticated owner — a user or an
 application — with ``kind`` disambiguating the two.
+
+``Usage`` is shared with GET /applications/{application_id}/usage, which
+reports the same shape for an application the caller owns, so it stays
+neutral about which owner it describes.
 """
 
 from datetime import datetime
@@ -84,7 +88,7 @@ class UsageLifecycle(BaseModel):
 
 
 class Usage(BaseModel):
-    """The authenticated owner's current usage against their resolved limits."""
+    """An owner's current usage against their resolved limits."""
 
     grids: JobResourceUsage
     exports: JobResourceUsage

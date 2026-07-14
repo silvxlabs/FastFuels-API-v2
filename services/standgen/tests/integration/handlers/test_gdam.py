@@ -17,6 +17,7 @@ valid credentials. They run only in the integration step (`pytest
 tests/integration/`).
 """
 
+from datetime import datetime
 from uuid import uuid4
 
 import dask.dataframe as dd
@@ -109,6 +110,8 @@ def completed_gdam_inventory(gdam_source):
         "type": "tree",
         "name": "GDAM integration inventory",
         "status": "pending",
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
         "source": {"name": "gdam", "source_tree_inventory_id": source_id},
         "modifications": [],
         "georeference": None,

@@ -564,7 +564,7 @@ class TestIncrementBudget:
         client._budget_doc = budget_doc
         return client
 
-    async def test_merges_increment_with_ttl_stamp(self):
+    async def test_merges_increment_with_week_metadata(self):
         client = self._client_with_set()
         with patch("api.quota.firestore_client", client):
             await _increment_budget("owner-inc", "grid_dispatches")
@@ -581,7 +581,8 @@ class TestIncrementBudget:
         assert isinstance(payload["grid_dispatches"], Increment)
         assert payload["owner_id"] == "owner-inc"
         assert payload["iso_week"] == iso_week_id(now)
-        assert timedelta(days=13) < payload["expire_at"] - now < timedelta(days=15)
+        # Week docs are retained indefinitely as a per-owner usage ledger.
+        assert "expire_at" not in payload
 
     async def test_write_error_is_swallowed_with_warning(self, caplog):
         client = self._client_with_set(error=RuntimeError("firestore down"))

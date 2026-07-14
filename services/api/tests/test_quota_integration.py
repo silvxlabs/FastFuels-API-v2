@@ -419,7 +419,6 @@ class TestWeeklyDispatchBudget:
         )
         assert data["iso_week"] == iso_week_id(datetime.now(UTC))
         assert data["owner_id"] == owner_env.owner_id
-        assert "expire_at" in data
 
     def test_first_dispatch_creates_budget_doc(self, owner_env, firestore_client):
         """With no budget doc yet, the create passes (missing doc = 0 used) and

@@ -295,9 +295,10 @@ def _raise_quota_exceeded(
 # owner's dispatch rate; sharding is the documented escalation if that ever
 # changes. The budget fails OPEN — an outage in the limiter must never block a
 # create — and every fail-open is logged at WARNING so it stays visible.
+# Week docs are retained indefinitely: they are the only durable record of
+# per-owner weekly activity (resource docs vanish on delete).
 
 _WEEK_SECONDS = 7 * 24 * 3600
-_BUDGET_DOC_TTL = timedelta(days=14)
 
 
 def iso_week_id(now: datetime) -> str:
@@ -366,18 +367,14 @@ async def _increment_budget(owner_id: str, counter_field: str) -> None:
     """Increment the owner's weekly dispatch counter; never raises.
 
     Runs as a fire-and-forget background task after the response is sent.
-    ``expire_at`` drives the native Firestore TTL policy on the ``weeks``
-    collection group (set out-of-band), which cleans up old week docs.
     """
     try:
-        now = datetime.now(UTC)
-        week_id = iso_week_id(now)
+        week_id = iso_week_id(datetime.now(UTC))
         await _budget_ref(owner_id, week_id).set(
             {
                 counter_field: Increment(1),
                 "owner_id": owner_id,
                 "iso_week": week_id,
-                "expire_at": now + _BUDGET_DOC_TTL,
             },
             merge=True,
         )

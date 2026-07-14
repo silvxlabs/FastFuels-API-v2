@@ -22,6 +22,7 @@ by element.
 import json
 import os
 import tempfile
+from datetime import datetime
 from uuid import uuid4
 
 import fsspec.asyn as fasyn
@@ -205,6 +206,8 @@ def _run_roundtrip(
                 "domain_id": domain_id,
                 "owner_id": "test-owner",
                 "status": "completed",
+                "created_on": datetime.now(),
+                "modified_on": datetime.now(),
                 "bands": bands,
             },
         )
@@ -219,6 +222,8 @@ def _run_roundtrip(
             "domain_id": domain_id,
             "owner_id": "test-owner",
             "status": "running",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
             "source": {
                 "name": "upload",
                 "format": "netcdf",

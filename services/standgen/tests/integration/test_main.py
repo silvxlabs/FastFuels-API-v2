@@ -6,6 +6,7 @@ Firestore and GCS. Verifies status transitions, error handling, and
 cleanup when using real infrastructure.
 """
 
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -55,6 +56,8 @@ def firestore_inventory():
             "domain_id": domain_id,
             "name": "Test Inventory",
             "status": "pending",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
             "source": {
                 "name": "pim",
                 "source_pim_grid_id": source_pim_grid_id,

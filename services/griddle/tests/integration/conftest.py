@@ -16,6 +16,7 @@ import logging
 import os
 import tempfile
 import time
+from datetime import datetime
 from typing import NamedTuple
 from uuid import uuid4
 
@@ -294,6 +295,8 @@ def griddle_runner():
                         "domain_id": domain_id,
                         "type": feature_type,
                         "status": "completed",
+                        "created_on": datetime.now(),
+                        "modified_on": datetime.now(),
                         "source": {"product": "test"},
                     },
                 )

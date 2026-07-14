@@ -14,6 +14,7 @@ These tests hit real GCS and Firestore and require valid credentials.
 """
 
 import json
+from datetime import datetime
 from uuid import uuid4
 
 import dask.dataframe as dd
@@ -136,6 +137,8 @@ def treatment_runner(treatment_env):
             "domain_id": domain_id,
             "name": "Treated PIM Inventory",
             "status": "pending",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
             "source": {
                 "name": "pim",
                 "point_process": "inhomogeneous_poisson",

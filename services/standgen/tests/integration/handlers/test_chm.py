@@ -12,6 +12,7 @@ Most tests share a single pipeline run via module-scoped fixtures to avoid
 redundant processing. Additional tests verify algorithm parameter variation.
 """
 
+from datetime import datetime
 from uuid import uuid4
 
 import dask.dataframe as dd
@@ -356,6 +357,8 @@ def test_treatment_bearing_chm_inventory_fails(module_chm_grid):
         "domain_id": domain_id,
         "name": "CHM with treatments",
         "status": "pending",
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
         "source": {
             "name": "chm",
             "source_chm_grid_id": module_chm_grid,

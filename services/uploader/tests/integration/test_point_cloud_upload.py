@@ -10,6 +10,7 @@ different CRS).
 """
 
 import json
+from datetime import datetime
 from uuid import uuid4
 
 import gcsfs
@@ -55,6 +56,8 @@ def _pc_doc(pc_id: str, domain_id: str, object_name: str) -> dict:
         "owner_id": "test-owner",
         "type": "als",
         "status": "running",
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
         "source": {"name": "upload", "object_name": object_name},
     }
 

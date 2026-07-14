@@ -24,6 +24,7 @@ import logging
 import os
 import tempfile
 import time
+from datetime import datetime
 from typing import NamedTuple
 from uuid import uuid4
 
@@ -285,6 +286,8 @@ def treevox_runner():
             "name": "",
             "description": "",
             "status": "pending",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
             "source": {
                 "operation": "voxelize",
                 "input": "inventory",

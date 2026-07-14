@@ -15,6 +15,7 @@ These tests hit real GCS and Firestore and require valid credentials.
 
 import os
 import tempfile
+from datetime import datetime
 from uuid import uuid4
 
 import dask.dataframe as dd
@@ -129,6 +130,8 @@ def treatments_runner(shared_pim_source):
             "domain_id": domain_id,
             "name": "Treated Inventory (in place)",
             "status": "pending",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),
@@ -333,6 +336,8 @@ def feature_treatments_runner(shared_pim_source):
                 "domain_id": domain_id,
                 "type": "water",
                 "status": "completed",
+                "created_on": datetime.now(),
+                "modified_on": datetime.now(),
                 "source": {"product": "test"},
             },
         )
@@ -358,6 +363,8 @@ def feature_treatments_runner(shared_pim_source):
             "domain_id": domain_id,
             "name": "Spatially Treated Inventory (in place)",
             "status": "pending",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
             "source": pim_inventory["source"],
             "georeference": pim_inventory["georeference"],
             "columns": pim_inventory.get("columns", []),

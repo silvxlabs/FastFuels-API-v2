@@ -7,6 +7,7 @@ to UPLOADS_BUCKET, calls handle_inventory directly, and asserts results.
 """
 
 import json
+from datetime import datetime
 from uuid import uuid4
 
 import gcsfs
@@ -67,6 +68,8 @@ def _make_inventory_doc(
         "owner_id": "test-owner",
         "type": "tree",
         "status": "running",
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
         "source": {
             "name": "upload",
             "format": fmt,

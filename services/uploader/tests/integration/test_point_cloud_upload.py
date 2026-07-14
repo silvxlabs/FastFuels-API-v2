@@ -28,6 +28,7 @@ from lib.errors import ProcessingError
 from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, delete_file, exists, get_gcsfs_client
 from lib.testing import SHARED_TEST_DOMAINS_DIR
+from tests.integration.staging import staged_object_name
 from tests.pointcloud_helpers import make_test_las
 
 # Blackfoot domain is EPSG:32612 (UTM 12N) — matches the synthesizer default.
@@ -106,7 +107,7 @@ class TestPointCloudUpload:
 
         local = tmp_path / "upload.laz"
         truth = make_test_las(str(local), n=100, epsg=32612, classes=(1, 2, 5))
-        object_name = f"pointclouds/{pc_id}/upload"
+        object_name = staged_object_name(pc_id, "upload")
         _upload(str(local), object_name)
         doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)
@@ -138,7 +139,7 @@ class TestPointCloudUpload:
 
         local = tmp_path / "upload.las"
         make_test_las(str(local), n=80, epsg=32612, classes=(2, 5))
-        object_name = f"pointclouds/{pc_id}/upload"
+        object_name = staged_object_name(pc_id, "upload")
         _upload(str(local), object_name)
         doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)
@@ -167,7 +168,7 @@ class TestPointCloudUpload:
         local = tmp_path / "upload.laz"
         # UTM 13N cloud into a UTM 12N domain: must be reprojected, not rejected.
         truth = make_test_las(str(local), n=60, epsg=32613, classes=(2,))
-        object_name = f"pointclouds/{pc_id}/upload"
+        object_name = staged_object_name(pc_id, "upload")
         _upload(str(local), object_name)
         doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)
@@ -214,7 +215,7 @@ class TestPointCloudUpload:
 
         local = tmp_path / "upload.laz"
         make_test_las(str(local), n=50, with_srs=False)
-        object_name = f"pointclouds/{pc_id}/upload"
+        object_name = staged_object_name(pc_id, "upload")
         _upload(str(local), object_name)
         doc = _pc_doc(pc_id, domain_id, object_name)
         set_document(POINT_CLOUDS_COLLECTION, pc_id, doc)

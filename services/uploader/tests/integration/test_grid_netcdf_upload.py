@@ -30,6 +30,7 @@ from lib.config import (
 from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, exists
 from lib.testing import SHARED_TEST_DOMAINS_DIR
+from tests.integration.staging import staged_object_name
 
 _BLUE_MTN_PATH = SHARED_TEST_DOMAINS_DIR / "blue_mtn.json"
 DOMAIN_CRS = "EPSG:32611"
@@ -76,7 +77,7 @@ def _reset_gcsfs():
 
 
 def _make_grid_doc(grid_id: str, domain_id: str) -> dict:
-    object_name = f"grids/{grid_id}/{_UPLOAD_FILENAME}"
+    object_name = staged_object_name(grid_id, _UPLOAD_FILENAME)
     return {
         "id": grid_id,
         "domain_id": domain_id,
@@ -93,7 +94,7 @@ def _make_grid_doc(grid_id: str, domain_id: str) -> dict:
 
 def _upload_netcdf_2d(grid_id: str) -> str:
     """Write a 2D CF netCDF and upload it to UPLOADS_BUCKET."""
-    object_name = f"grids/{grid_id}/{_UPLOAD_FILENAME}"
+    object_name = staged_object_name(grid_id, _UPLOAD_FILENAME)
     nx, ny = 40, 20
     x = (
         NC_XMIN
@@ -130,7 +131,7 @@ def _upload_netcdf_2d(grid_id: str) -> str:
 
 def _upload_netcdf_3d(grid_id: str, nz: int = 5) -> str:
     """Write a 3D CF netCDF (z up, uniform spacing) and upload it."""
-    object_name = f"grids/{grid_id}/{_UPLOAD_FILENAME}"
+    object_name = staged_object_name(grid_id, _UPLOAD_FILENAME)
     nx, ny = 40, 20
     x = (
         NC_XMIN

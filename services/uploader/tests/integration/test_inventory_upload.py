@@ -25,6 +25,7 @@ from lib.config import (
 from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, exists
 from lib.testing import SHARED_TEST_DOMAINS_DIR
+from tests.integration.staging import staged_object_name
 
 # Blue Mountain domain (EPSG:32611, UTM zone 11N, near Missoula MT)
 # bounds: x=[720228, 721534], y=[5189763, 5190645]
@@ -58,8 +59,8 @@ def _make_inventory_doc(
     inventory_id: str, domain_id: str, fmt: str, col_map: dict = None
 ) -> dict:
     """Minimal inventory document with upload source."""
-    object_name = (
-        f"inventories/{inventory_id}/upload.{fmt if fmt != 'geopackage' else 'gpkg'}"
+    object_name = staged_object_name(
+        inventory_id, f"upload.{fmt if fmt != 'geopackage' else 'gpkg'}"
     )
     return {
         "id": inventory_id,
@@ -82,7 +83,7 @@ def _upload_csv(inventory_id: str, x, y, height, extra: dict = None) -> str:
     if extra:
         data.update(extra)
     df = pd.DataFrame(data)
-    object_name = f"inventories/{inventory_id}/upload.csv"
+    object_name = staged_object_name(inventory_id, "upload.csv")
     fs = gcsfs.GCSFileSystem()
     with fs.open(f"{UPLOADS_BUCKET}/{object_name}", "w") as f:
         df.to_csv(f, index=False)
@@ -96,7 +97,7 @@ def _upload_geopackage(inventory_id: str, points: list, attrs: dict, crs: str) -
         geometry=[Point(x, y) for x, y in points],
         crs=crs,
     )
-    object_name = f"inventories/{inventory_id}/upload.gpkg"
+    object_name = staged_object_name(inventory_id, "upload.gpkg")
     import os
     import tempfile
 
@@ -118,7 +119,7 @@ def _upload_geojson(inventory_id: str, lon_lat_points: list, attrs: dict) -> str
         geometry=[Point(lon, lat) for lon, lat in lon_lat_points],
         crs="EPSG:4326",
     )
-    object_name = f"inventories/{inventory_id}/upload.geojson"
+    object_name = staged_object_name(inventory_id, "upload.geojson")
     fs = gcsfs.GCSFileSystem()
     with fs.open(f"{UPLOADS_BUCKET}/{object_name}", "w") as f:
         f.write(gdf.to_json())
@@ -239,7 +240,7 @@ class TestCsvUpload:
         df = pd.DataFrame(
             {"easting": SAMPLE_X, "northing": SAMPLE_Y, "HT": SAMPLE_HEIGHT}
         )
-        object_name = f"inventories/{inventory_id}/upload.csv"
+        object_name = staged_object_name(inventory_id, "upload.csv")
         fs = gcsfs.GCSFileSystem()
         with fs.open(f"{UPLOADS_BUCKET}/{object_name}", "w") as f:
             df.to_csv(f, index=False)
@@ -269,7 +270,7 @@ class TestCsvUpload:
         set_document(DOMAINS_COLLECTION, domain_id, domain_doc)
 
         df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y})
-        object_name = f"inventories/{inventory_id}/upload.csv"
+        object_name = staged_object_name(inventory_id, "upload.csv")
         fs = gcsfs.GCSFileSystem()
         with fs.open(f"{UPLOADS_BUCKET}/{object_name}", "w") as f:
             df.to_csv(f, index=False)

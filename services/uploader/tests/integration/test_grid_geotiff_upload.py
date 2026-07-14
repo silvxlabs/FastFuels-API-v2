@@ -31,6 +31,7 @@ from lib.config import (
 from lib.firestore import delete_document, get_document, set_document
 from lib.gcs import delete_directory, exists
 from lib.testing import SHARED_TEST_DOMAINS_DIR
+from tests.integration.staging import staged_object_name
 
 # Blue Mountain domain (EPSG:32611, UTM zone 11N, near Missoula MT)
 # bounds: x=[720228, 721534], y=[5189763, 5190645]
@@ -92,7 +93,7 @@ def _reset_gcsfs():
 
 def _make_grid_doc(grid_id: str, domain_id: str, bands_spec: list[dict]) -> dict:
     """Minimal grid document with upload source."""
-    object_name = f"grids/{grid_id}/{_UPLOAD_FILENAME}"
+    object_name = staged_object_name(grid_id, _UPLOAD_FILENAME)
     return {
         "id": grid_id,
         "domain_id": domain_id,
@@ -126,7 +127,7 @@ def _upload_geotiff(
     20m / 0.001deg square pixels at width=40, height=20. The
     NON_SQUARE_PIXELS validator rejects anything else.
     """
-    object_name = f"grids/{grid_id}/{_UPLOAD_FILENAME}"
+    object_name = staged_object_name(grid_id, _UPLOAD_FILENAME)
     transform = from_bounds(tiff_xmin, tiff_ymin, tiff_xmax, tiff_ymax, width, height)
 
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:

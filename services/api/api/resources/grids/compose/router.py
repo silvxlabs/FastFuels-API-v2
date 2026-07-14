@@ -6,11 +6,19 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import pint
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 
 from api.db.documents import firestore_client, get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.compose.examples import CREATE_COMPOSE_OPENAPI_EXAMPLES
 from api.resources.grids.compose.schema import (
     CATEGORICAL_CONDITION_OPERATORS,
@@ -471,6 +479,8 @@ def _dump_operations_for_firestore(
 )
 async def create_compose_grid(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreateComposeRequest,
@@ -541,5 +551,6 @@ async def create_compose_grid(
 
     await set_document_async(COLLECTION, grid_id, grid_data)
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
+    register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)

@@ -11,12 +11,20 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from google.cloud import firestore
 
 from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.modifications.examples import (
     APPLY_GRID_MODIFICATIONS_OPENAPI_EXAMPLES,
 )
@@ -63,6 +71,8 @@ def _referenced_band_keys(body: ApplyGridModificationsRequest) -> list[str]:
 )
 async def apply_grid_modifications(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     grid_id: str,
     body: Annotated[
@@ -248,6 +258,7 @@ async def apply_grid_modifications(
         grid_id,
         task_name=f"{grid_id}-{new_checksum}",
     )
+    register_dispatch(request, response, background_tasks)
 
     # pending_modifications is an internal work-queue field, not part of the
     # Grid schema; Pydantic ignores it (and owner_id) on construction.

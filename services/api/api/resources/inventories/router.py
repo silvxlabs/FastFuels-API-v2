@@ -33,7 +33,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.inventories.cache import get_inventory_metadata, read_partition
 from api.resources.inventories.exports.router import router as exports_router
 from api.resources.inventories.modifications.router import (
@@ -483,6 +483,7 @@ async def _copy_inventory_data(
 )
 async def duplicate_inventory(
     request: Request,
+    response: Response,
     domain: VerifiedDomain,
     inventory_id: str,
     background_tasks: BackgroundTasks,
@@ -586,6 +587,7 @@ async def duplicate_inventory(
         new_inventory_id,
         source_data.get("checksum"),
     )
+    register_dispatch(request, response, background_tasks)
 
     return Inventory(**inventory_data)
 

@@ -13,16 +13,19 @@ active-jobs count is owner-wide, so every test uses a fresh, isolated owner (see
 independent of that owner's tier.
 """
 
+import time
+from datetime import UTC, datetime
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
-from api.quota import Quotas
+from api.quota import Quotas, iso_week_id
 from api.resources.domains.examples import EXAMPLE_WGS84_DEFAULT
 from httpx import Client
 
 from lib.config import (
     APPLICATIONS_COLLECTION,
+    CREATE_BUDGETS_COLLECTION,
     DOMAINS_COLLECTION,
     FEATURES_COLLECTION,
     KEYS_COLLECTION,
@@ -124,8 +127,22 @@ def owner_env(firestore_client):
         features: dict | None = None,
         feature_size_bytes: int | None = None,
         applications: int | None = None,
+        budget: dict | None = None,
     ):
         owner_id = f"test-{uuid4().hex}"
+        # Exposed for tests that poll this owner's weekly budget doc.
+        _make.owner_id = owner_id
+
+        # The weekly budget doc (current ISO week) is always registered for
+        # cleanup: a successful dispatch creates it server-side even when the
+        # test seeded nothing.
+        week_id = iso_week_id(datetime.now(UTC))
+        weeks_path = f"{CREATE_BUDGETS_COLLECTION}/{owner_id}/weeks"
+        created.append((weeks_path, week_id))
+        if budget is not None:
+            firestore_client.collection(weeks_path).document(week_id).set(
+                {**budget, "owner_id": owner_id, "iso_week": week_id}
+            )
 
         key = make_key_data(owner_id=owner_id, scopes=["read", "write"])
         secret = key.pop("_test_secret")
@@ -312,3 +329,104 @@ class TestCountAndStorageQuota:
         assert response.status_code == 429
         assert response.headers.get("Retry-After") == "60"
         assert response.json()["detail"]["quota"] == "max_active_features"
+
+
+WEEKLY_FEATURE_LIMIT = Quotas().max_weekly_feature_dispatches
+
+
+def _poll_budget(firestore_client, owner_id: str, field: str, expected: int) -> dict:
+    """Wait for the owner's current-week budget doc to reach the expected count.
+
+    The increment runs as a background task after the response is sent, so the
+    doc converges shortly after the create returns.
+    """
+    week_id = iso_week_id(datetime.now(UTC))
+    ref = firestore_client.collection(
+        f"{CREATE_BUDGETS_COLLECTION}/{owner_id}/weeks"
+    ).document(week_id)
+    deadline = time.monotonic() + 10
+    data: dict = {}
+    while time.monotonic() < deadline:
+        snapshot = ref.get()
+        data = snapshot.to_dict() or {}
+        if data.get(field) == expected:
+            return data
+        time.sleep(0.25)
+    raise AssertionError(
+        f"budget doc never reached {field}={expected}; last seen: {data}"
+    )
+
+
+class TestWeeklyDispatchBudget:
+    """Phase 0 (#431): weekly dispatch budgets, exercised on the road-feature
+    create. Fresh owner per test (uncached quotas); the current-week budget doc
+    is seeded directly and cleaned up by ``owner_env``.
+    """
+
+    def test_spent_budget_returns_429_with_window_reset(self, owner_env):
+        """At the weekly limit, the create rejects with the budget-shaped 429:
+        window_reset_on in the detail and no Retry-After header."""
+        owner_client, domain_id = owner_env(
+            budget={"feature_dispatches": WEEKLY_FEATURE_LIMIT}
+        )
+        response = owner_client.post(
+            ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
+        )
+        assert response.status_code == 429
+        assert "Retry-After" not in response.headers
+        detail = response.json()["detail"]
+        assert detail["reason"] == "QUOTA_EXCEEDED"
+        assert detail["quota"] == "max_weekly_feature_dispatches"
+        assert detail["current"] == WEEKLY_FEATURE_LIMIT
+        assert detail["limit"] == WEEKLY_FEATURE_LIMIT
+        reset_on = datetime.fromisoformat(detail["window_reset_on"])
+        assert reset_on > datetime.now(UTC)
+
+    def test_override_lowers_weekly_budget(self, owner_env):
+        """A quota_overrides entry changes the enforced weekly limit."""
+        owner_client, domain_id = owner_env(
+            users_doc={"quota_overrides": {"max_weekly_feature_dispatches": 1}},
+            budget={"feature_dispatches": 1},
+        )
+        response = owner_client.post(
+            ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
+        )
+        assert response.status_code == 429
+        detail = response.json()["detail"]
+        assert detail["quota"] == "max_weekly_feature_dispatches"
+        assert detail["limit"] == 1
+
+    def test_dispatch_sets_headers_and_increments(self, owner_env, firestore_client):
+        """Under the limit the create succeeds, carries the IETF RateLimit
+        headers, and the counter converges to seeded + 1."""
+        owner_client, domain_id = owner_env(budget={"feature_dispatches": 3})
+        response = owner_client.post(
+            ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
+        )
+        assert response.status_code == 201
+        # 3 already used + this dispatch.
+        expected_remaining = WEEKLY_FEATURE_LIMIT - 4
+        ratelimit = response.headers["RateLimit"]
+        assert ratelimit.startswith(
+            f'"max_weekly_feature_dispatches";r={expected_remaining};t='
+        )
+        assert (
+            response.headers["RateLimit-Policy"]
+            == f'"max_weekly_feature_dispatches";q={WEEKLY_FEATURE_LIMIT};w=604800'
+        )
+        data = _poll_budget(
+            firestore_client, owner_env.owner_id, "feature_dispatches", 4
+        )
+        assert data["iso_week"] == iso_week_id(datetime.now(UTC))
+        assert data["owner_id"] == owner_env.owner_id
+        assert "expire_at" in data
+
+    def test_first_dispatch_creates_budget_doc(self, owner_env, firestore_client):
+        """With no budget doc yet, the create passes (missing doc = 0 used) and
+        the increment creates the doc via merge."""
+        owner_client, domain_id = owner_env()
+        response = owner_client.post(
+            ROAD_ROUTE.format(domain_id=domain_id), json={"type": "road"}
+        )
+        assert response.status_code == 201
+        _poll_budget(firestore_client, owner_env.owner_id, "feature_dispatches", 1)

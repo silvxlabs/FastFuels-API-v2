@@ -8,11 +8,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.fbfm40.examples import (
     CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES,
 )
@@ -45,6 +45,8 @@ COLLECTION = GRIDS_COLLECTION
 )
 async def create_landfire_fbfm40(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreateLandfireFbfm40Request,
@@ -113,5 +115,6 @@ async def create_landfire_fbfm40(
 
     # Enqueue task to Griddle for processing
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
+    register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)

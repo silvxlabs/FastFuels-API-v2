@@ -465,9 +465,17 @@ class TestEnforceWeeklyBudget:
         assert exc.value.status_code == 429
         assert exc.value.detail["quota"] == "max_weekly_grid_dispatches"
         assert exc.value.detail["current"] == limit
-        # Budget 429s carry the window reset, never Retry-After: the week-out
-        # reset would be a retry footgun.
-        assert exc.value.headers is None
+        # Budget 429s carry the window reset and the IETF RateLimit headers
+        # with r=0 — never Retry-After: the week-out reset would be a retry
+        # footgun.
+        assert "Retry-After" not in exc.value.headers
+        assert exc.value.headers["RateLimit"].startswith(
+            '"max_weekly_grid_dispatches";r=0;t='
+        )
+        assert (
+            exc.value.headers["RateLimit-Policy"]
+            == f'"max_weekly_grid_dispatches";q={limit};w=604800'
+        )
         assert exc.value.detail["window_reset_on"]
         assert "delete" not in exc.value.detail["message"].lower()
 

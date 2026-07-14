@@ -68,11 +68,50 @@ class Quotas(BaseModel):
     max_pointcloud_storage_bytes: int = 50 * GiB
 
     # Weekly worker-job dispatch budgets (#431); reset at ISO-week boundaries.
-    max_weekly_grid_dispatches: int = 500
-    max_weekly_export_dispatches: int = 250
-    max_weekly_inventory_dispatches: int = 250
-    max_weekly_feature_dispatches: int = 250
-    max_weekly_pointcloud_dispatches: int = 50
+    # Unlike the other quotas, "dispatch" isn't guessable from the field name,
+    # so these carry OpenAPI descriptions: a dispatch is any worker job
+    # commissioned on the owner's behalf (creates, modifications, treatments,
+    # duplicates, uploads), and deleting resources refunds nothing.
+    max_weekly_grid_dispatches: int = Field(
+        500,
+        description=(
+            "Grid worker jobs allowed per ISO week (Monday 00:00 UTC reset): "
+            "creates, modifications, duplicates, and uploads all count. "
+            "Deleting grids does not refund spent budget."
+        ),
+    )
+    max_weekly_export_dispatches: int = Field(
+        250,
+        description=(
+            "Export worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset). Deleting exports does not refund spent budget."
+        ),
+    )
+    max_weekly_inventory_dispatches: int = Field(
+        250,
+        description=(
+            "Inventory worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset): creates, modifications, treatments, duplicates, and "
+            "uploads all count. Deleting inventories does not refund spent "
+            "budget."
+        ),
+    )
+    max_weekly_feature_dispatches: int = Field(
+        250,
+        description=(
+            "Feature worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset). Synchronous layerset creates are exempt. Deleting "
+            "features does not refund spent budget."
+        ),
+    )
+    max_weekly_pointcloud_dispatches: int = Field(
+        50,
+        description=(
+            "Point cloud worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset): each upload counts. Deleting point clouds does not "
+            "refund spent budget."
+        ),
+    )
 
     # Lifecycle (enforced by the sweeper in phase 5); None = never expires.
     resource_ttl_days: int | None = 180
@@ -259,6 +298,36 @@ QUOTA_429_RESPONSE: dict = {
             "rejections include `window_reset_on` plus the IETF `RateLimit` / "
             "`RateLimit-Policy` headers with `r=0`."
         ),
+        "headers": {
+            "Retry-After": {
+                "description": (
+                    "Seconds to wait before retrying. Present only on "
+                    "active-job rejections, which clear on their own as jobs "
+                    "finish."
+                ),
+                "schema": {"type": "integer"},
+            },
+            "RateLimit": {
+                "description": (
+                    "IETF RateLimit header (weekly-budget rejections only): "
+                    'the spent policy, e.g. `"max_weekly_grid_dispatches";'
+                    "r=0;t=259200` — `r` remaining dispatches, `t` seconds "
+                    "until the ISO-week reset. Also sent with the live "
+                    "remaining count on successful dispatching responses."
+                ),
+                "schema": {"type": "string"},
+            },
+            "RateLimit-Policy": {
+                "description": (
+                    "IETF RateLimit-Policy header (weekly-budget rejections "
+                    'only): the policy itself, e.g. `"max_weekly_grid_'
+                    'dispatches";q=500;w=604800` — `q` the weekly limit, `w` '
+                    "the window in seconds (one week). Also sent on "
+                    "successful dispatching responses."
+                ),
+                "schema": {"type": "string"},
+            },
+        },
     }
 }
 

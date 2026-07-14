@@ -8,11 +8,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.uniform.examples import CREATE_UNIFORM_OPENAPI_EXAMPLES
 from api.resources.grids.uniform.schema import (
@@ -42,6 +42,8 @@ COLLECTION = GRIDS_COLLECTION
 )
 async def create_uniform_grid(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreateUniformRequest,
@@ -116,5 +118,6 @@ async def create_uniform_grid(
 
     # Enqueue task to Griddle for processing
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
+    register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)

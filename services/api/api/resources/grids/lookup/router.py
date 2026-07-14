@@ -8,11 +8,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.lookup.examples import (
     CREATE_FBFM40_LOOKUP_OPENAPI_EXAMPLES,
 )
@@ -45,6 +45,8 @@ COLLECTION = GRIDS_COLLECTION
 )
 async def create_fbfm40_lookup(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreateFbfm40LookupRequest,
@@ -158,5 +160,6 @@ async def create_fbfm40_lookup(
     await set_document_async(COLLECTION, grid_id, grid_data)
 
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
+    register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)

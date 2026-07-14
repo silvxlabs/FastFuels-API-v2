@@ -8,11 +8,19 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.pim.examples import CREATE_PIM_OPENAPI_EXAMPLES
 from api.resources.inventories.tree.pim.schema import (
@@ -47,6 +55,8 @@ COLLECTION = INVENTORIES_COLLECTION
 )
 async def create_pim_inventory(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreatePimInventoryRequest,
@@ -185,5 +195,6 @@ async def create_pim_inventory(
 
     # Enqueue task to Standgen for processing
     await create_http_task_async(STANDGEN_QUEUE, STANDGEN_SERVICE, inventory_id)
+    register_dispatch(request, response, background_tasks)
 
     return Inventory(**inventory_data)

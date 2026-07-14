@@ -8,11 +8,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.upload.examples import (
     CREATE_UPLOAD_OPENAPI_EXAMPLES,
@@ -50,6 +50,8 @@ MAX_INVENTORY_SIZE_BYTES = 524_288_000  # 500 MB
 )
 async def create_inventory_upload(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreateInventoryUploadRequest,
@@ -127,6 +129,7 @@ async def create_inventory_upload(
         "owner_id": owner_id,
     }
     await set_document_async(INVENTORIES_COLLECTION, inventory_id, inventory_data)
+    register_dispatch(request, response, background_tasks)
 
     expires_at = request_time + timedelta(minutes=60)
     url = generate_upload_signed_url(

@@ -43,6 +43,7 @@ KEYS_COLLECTION = os.getenv("KEYS_COLLECTION", "keys-v2")
 APPLICATIONS_COLLECTION = os.getenv("APPLICATIONS_COLLECTION", "applications-v2")
 USERS_COLLECTION = os.getenv("USERS_COLLECTION", "users-v2")
 POINT_CLOUDS_COLLECTION = os.getenv("POINT_CLOUDS_COLLECTION", "pointclouds-v2")
+CREATE_BUDGETS_COLLECTION = os.getenv("CREATE_BUDGETS_COLLECTION", "create-budgets-v2")
 
 # Queue names
 GRIDDLE_QUEUE = os.getenv("GRIDDLE_QUEUE", "griddle-v2-queue")

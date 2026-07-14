@@ -148,6 +148,8 @@ app.add_middleware(
         "X-Row-Count",
         "X-Total-Rows",
         "X-Num-Partitions",
+        "RateLimit",
+        "RateLimit-Policy",
     ],
 )
 

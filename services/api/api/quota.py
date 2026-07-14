@@ -256,7 +256,8 @@ QUOTA_429_RESPONSE: dict = {
         "description": (
             "Quota exceeded. The `detail` names the exact `quota`; active-job "
             "rejections also include a `Retry-After` header, and weekly-budget "
-            "rejections include `window_reset_on`."
+            "rejections include `window_reset_on` plus the IETF `RateLimit` / "
+            "`RateLimit-Policy` headers with `r=0`."
         ),
     }
 }
@@ -270,11 +271,15 @@ def _raise_quota_exceeded(
     limit: int,
     retry_after: bool,
     window_reset_on: datetime | None = None,
+    headers: dict[str, str] | None = None,
 ) -> None:
     """Raise a structured 429. ``retry_after`` adds the header for limits that
     clear by waiting (active jobs) and omits it for those that need deletion
     (count, storage) or a window reset (weekly budgets, which carry
-    ``window_reset_on`` in the detail instead)."""
+    ``window_reset_on`` in the detail and the ``RateLimit`` headers instead)."""
+    all_headers = dict(headers or {})
+    if retry_after:
+        all_headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail=QuotaExceededDetail(
@@ -284,7 +289,7 @@ def _raise_quota_exceeded(
             limit=limit,
             window_reset_on=window_reset_on,
         ).model_dump(mode="json", exclude_none=True),
-        headers={"Retry-After": str(RETRY_AFTER_SECONDS)} if retry_after else None,
+        headers=all_headers or None,
     )
 
 
@@ -332,6 +337,19 @@ class _WeeklyBudget:
     limit: int
     used: int | None  # None: the read failed open
     reset_at: datetime
+
+
+def _ratelimit_headers(
+    quota_field: str, remaining: int, limit: int, reset_at: datetime
+) -> dict[str, str]:
+    """The IETF ``RateLimit`` / ``RateLimit-Policy`` header pair for a weekly
+    budget — sent on successful dispatches (gauge) and on the budget 429
+    (``r=0``), so generic client throttle logic works on both."""
+    reset_seconds = max(int((reset_at - datetime.now(UTC)).total_seconds()), 0)
+    return {
+        "RateLimit": f'"{quota_field}";r={remaining};t={reset_seconds}',
+        "RateLimit-Policy": f'"{quota_field}";q={limit};w={_WEEK_SECONDS}',
+    }
 
 
 def _budget_ref(owner_id: str, week_id: str) -> AsyncDocumentReference:
@@ -403,14 +421,10 @@ def register_dispatch(
         return
     if budget.used is not None:
         remaining = max(budget.limit - budget.used - 1, 0)
-        reset_seconds = max(
-            int((budget.reset_at - datetime.now(UTC)).total_seconds()), 0
-        )
-        response.headers["RateLimit"] = (
-            f'"{budget.quota_field}";r={remaining};t={reset_seconds}'
-        )
-        response.headers["RateLimit-Policy"] = (
-            f'"{budget.quota_field}";q={budget.limit};w={_WEEK_SECONDS}'
+        response.headers.update(
+            _ratelimit_headers(
+                budget.quota_field, remaining, budget.limit, budget.reset_at
+            )
         )
     background_tasks.add_task(_increment_budget, budget.owner_id, budget.counter_field)
 
@@ -534,6 +548,7 @@ async def enforce_create_quotas(
                 limit=limit,
                 retry_after=False,
                 window_reset_on=reset_at,
+                headers=_ratelimit_headers(spec.weekly_field, 0, limit, reset_at),
                 message=(
                     f"Your weekly {spec.label} budget is spent ({used}/{limit} "
                     f"jobs this week). It resets {reset_at:%Y-%m-%d} (UTC). To "

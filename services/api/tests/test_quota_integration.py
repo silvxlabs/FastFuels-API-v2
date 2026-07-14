@@ -365,7 +365,8 @@ class TestWeeklyDispatchBudget:
 
     def test_spent_budget_returns_429_with_window_reset(self, owner_env):
         """At the weekly limit, the create rejects with the budget-shaped 429:
-        window_reset_on in the detail and no Retry-After header."""
+        window_reset_on in the detail, RateLimit headers with r=0, and no
+        Retry-After header."""
         owner_client, domain_id = owner_env(
             budget={"feature_dispatches": WEEKLY_FEATURE_LIMIT}
         )
@@ -374,6 +375,13 @@ class TestWeeklyDispatchBudget:
         )
         assert response.status_code == 429
         assert "Retry-After" not in response.headers
+        assert response.headers["RateLimit"].startswith(
+            '"max_weekly_feature_dispatches";r=0;t='
+        )
+        assert (
+            response.headers["RateLimit-Policy"]
+            == f'"max_weekly_feature_dispatches";q={WEEKLY_FEATURE_LIMIT};w=604800'
+        )
         detail = response.json()["detail"]
         assert detail["reason"] == "QUOTA_EXCEEDED"
         assert detail["quota"] == "max_weekly_feature_dispatches"

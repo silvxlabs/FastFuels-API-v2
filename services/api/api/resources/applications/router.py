@@ -19,7 +19,7 @@ from api.db.documents import (
     set_document_async,
     update_document_async,
 )
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, get_usage
 from api.resources.applications.schema import (
     Application,
     CreateApplicationRequest,
@@ -27,6 +27,7 @@ from api.resources.applications.schema import (
     UpdateApplicationRequest,
 )
 from api.resources.keys.schema import Access
+from api.resources.users.schema import Usage
 from lib.config import APPLICATIONS_COLLECTION, KEYS_COLLECTION
 
 router = APIRouter()
@@ -117,6 +118,31 @@ async def get_application(
         APPLICATIONS_COLLECTION, application_id, owner_id=request.state.id
     )
     return Application(**snapshot.to_dict())
+
+
+# No response_model_exclude_none: the shape must match GET /users/me/usage,
+# whose null lifecycle fields (next_expiry_on, and resource_ttl_days on the
+# application tier) are meaningful and stay in the response.
+@router.get(
+    "/{application_id}/usage",
+    response_model=Usage,
+    status_code=status.HTTP_200_OK,
+    summary="Get an application's usage",
+)
+async def get_application_usage(
+    request: Request,
+    application_id: str,
+) -> Usage:
+    """Get an owned application's usage against its resolved limits, per resource type.
+
+    Same shape as `GET /users/me/usage`, for an application the caller owns —
+    so a user can read an application's usage without authenticating as it.
+    """
+    await get_document_async(
+        APPLICATIONS_COLLECTION, application_id, owner_id=request.state.id
+    )
+    # The metered owner is the application, not the caller.
+    return Usage(**await get_usage(application_id, Access.APPLICATION))
 
 
 @router.patch(

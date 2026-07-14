@@ -9,6 +9,7 @@ UPLOADS_BUCKET, calls handle_grid_geotiff directly, and asserts results.
 import json
 import os
 import tempfile
+from datetime import datetime
 from uuid import uuid4
 
 import fsspec.asyn as fasyn
@@ -98,6 +99,8 @@ def _make_grid_doc(grid_id: str, domain_id: str, bands_spec: list[dict]) -> dict
         "domain_id": domain_id,
         "owner_id": "test-owner",
         "status": "running",
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
         "source": {
             "name": "upload",
             "format": "geotiff",

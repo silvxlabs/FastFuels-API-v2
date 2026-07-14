@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime
 from uuid import uuid4
 
 import gcsfs
@@ -403,6 +404,8 @@ def _make_test_domain_doc(domain_id: str) -> dict:
             }
         ],
         "bbox": [720226.0, 5189762.0, 721534.0, 5190646.0],
+        "created_on": datetime.now(),
+        "modified_on": datetime.now(),
     }
 
 

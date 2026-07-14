@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import time
-from pathlib import Path
 from uuid import uuid4
 
 import gcsfs
@@ -36,6 +35,7 @@ from lib.testing import (
     SHARED_TEST_EXPORTS_DIR,
     SHARED_TEST_GRIDS_DIR,
     SHARED_TEST_INVENTORIES_DIR,
+    load_json,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,12 +43,6 @@ logger = logging.getLogger(__name__)
 EXPORTS_DIR = SHARED_TEST_EXPORTS_DIR
 GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
-
-
-def load_json(path: Path) -> dict:
-    """Load a JSON file from the test data directory."""
-    with open(path) as f:
-        return json.load(f)
 
 
 class MockRequest:

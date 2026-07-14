@@ -23,15 +23,14 @@ from lib.firestore.documents import (
     get_document,
     set_document,
 )
-from lib.testing import SHARED_TEST_DOMAINS_DIR
+from lib.testing import SHARED_TEST_DOMAINS_DIR, load_json
 
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 
 
 def _load_domain_json(filename: str) -> dict:
     """Load a domain JSON file from griddle test data."""
-    with open(DOMAINS_DIR / filename) as f:
-        return json.load(f)
+    return load_json(DOMAINS_DIR / filename)
 
 
 def _stringify_coordinates(domain_data: dict) -> dict:

@@ -10,8 +10,18 @@ import time
 import pytest
 from httpx import Client
 
-from lib.config import APPLICATIONS_COLLECTION, KEYS_COLLECTION
-from tests.fixtures import make_application_data, make_key_data
+from lib.config import (
+    APPLICATIONS_COLLECTION,
+    DOMAINS_COLLECTION,
+    GRIDS_COLLECTION,
+    KEYS_COLLECTION,
+)
+from tests.fixtures import (
+    make_application_data,
+    make_domain_data,
+    make_grid_data,
+    make_key_data,
+)
 
 
 class TestCreateApplication:
@@ -191,6 +201,89 @@ class TestGetApplication:
             assert data["quota_overrides"] == {"max_active_grids": 100}
         finally:
             ref.delete()
+
+
+class TestGetApplicationUsage:
+    route = "/applications"
+    grid_size_bytes = 1500
+
+    @pytest.fixture
+    def app_with_usage(self, firestore_client, test_owner_id):
+        """An application-tier application owned by test-owner, with a domain and
+        two completed grids seeded under it.
+
+        The application id is fresh per test, so the application's usage starts at
+        zero (unlike the shared test owner's) and the seeded counts are exact.
+        """
+        app = make_application_data(owner_id=test_owner_id, name="Usage App")
+        app["tier"] = "application"
+        domain = make_domain_data(owner_id=app["id"])
+        grids = [
+            make_grid_data(
+                domain_id=domain["id"], owner_id=app["id"], status="completed"
+            )
+            for _ in range(2)
+        ]
+        for grid in grids:
+            grid["size_bytes"] = self.grid_size_bytes
+
+        seeded = [(APPLICATIONS_COLLECTION, app), (DOMAINS_COLLECTION, domain)]
+        seeded += [(GRIDS_COLLECTION, grid) for grid in grids]
+        for collection, doc in seeded:
+            firestore_client.collection(collection).document(doc["id"]).set(doc)
+
+        yield app
+
+        for collection, doc in seeded:
+            firestore_client.collection(collection).document(doc["id"]).delete()
+
+    def test_happy_path(self, client, app_with_usage):
+        response = client.get(f"{self.route}/{app_with_usage['id']}/usage")
+        assert response.status_code == 200
+        usage = response.json()
+
+        assert usage["grids"]["total"]["usage"] == 2
+        assert usage["grids"]["active"]["usage"] == 0  # completed is not active
+        assert usage["grids"]["storage"]["usage_bytes"] == 2 * self.grid_size_bytes
+        assert usage["domains"]["total"]["usage"] == 1
+        # Metered by owner_id == application id; this application owns no keys.
+        assert usage["api_keys"]["total"]["usage"] == 0
+        # Untouched types read zero.
+        assert usage["exports"]["total"]["usage"] == 0
+
+    def test_limits_resolve_from_the_application_not_the_caller(
+        self, client, app_with_usage
+    ):
+        """The metered owner is the application, so its tier sets the limits —
+        not the calling user's standard tier (1_000 grids, 180-day TTL)."""
+        response = client.get(f"{self.route}/{app_with_usage['id']}/usage")
+        assert response.status_code == 200
+        usage = response.json()
+
+        assert usage["grids"]["total"]["limit"] == 10_000
+        assert usage["grids"]["active"]["limit"] == 100
+        assert usage["lifecycle"]["resource_ttl_days"] is None
+
+    def test_shape_matches_users_me_usage(self, client, app_with_usage):
+        """Same shape as GET /users/me/usage, null lifecycle fields included."""
+        response = client.get(f"{self.route}/{app_with_usage['id']}/usage")
+        assert response.status_code == 200
+        usage = response.json()
+        me_usage = client.get("/users/me/usage").json()
+
+        assert set(usage) == set(me_usage)
+        assert set(usage["grids"]) == set(me_usage["grids"])
+        assert set(usage["lifecycle"]) == set(me_usage["lifecycle"])
+        assert usage["lifecycle"]["next_expiry_on"] is None
+
+    def test_nonexistent_returns_404(self, client):
+        response = client.get(f"{self.route}/00000000000000000000000000000000/usage")
+        assert response.status_code == 404
+
+    def test_wrong_owner_returns_404(self, client, application_with_different_owner):
+        app_id = application_with_different_owner["id"]
+        response = client.get(f"{self.route}/{app_id}/usage")
+        assert response.status_code == 404
 
 
 class TestUpdateApplication:

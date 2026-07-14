@@ -13,6 +13,7 @@ from cloudevents.http import CloudEvent
 from uploader.main import process_upload
 
 from lib.errors import ProcessingError
+from tests.integration.staging import staged_object_name
 
 
 def _make_event(bucket: str, name: str) -> CloudEvent:
@@ -96,6 +97,26 @@ def test_unknown_resource_type_returns_early(mock_get, mock_update, mock_dispatc
     """Object path with unrecognised resource type → no Firestore access."""
     event = _make_event("uploads-bucket", "widgets/widget-123/file.csv")
     process_upload(event)
+
+    mock_get.assert_not_called()
+    mock_dispatch.assert_not_called()
+
+
+@patch("uploader.dispatch.dispatch_handler")
+@patch("uploader.main.update_document")
+@patch("uploader.main.get_document")
+def test_staged_test_upload_is_ignored(mock_get, mock_update, mock_dispatch):
+    """A name from the integration suite's staging helper is inert here (#349).
+
+    The integration tests stage their uploads in the live, Eventarc-triggered
+    UPLOADS_BUCKET and then call handlers directly. Staging under a resource
+    type this dispatcher does not own is what stops the deployed service from
+    picking those objects up and racing the in-process handler over the same
+    object and document, so it has to keep returning before any Firestore
+    access.
+    """
+    name = staged_object_name("test-abc123", "upload.nc")
+    process_upload(_make_event("uploads-bucket", name))
 
     mock_get.assert_not_called()
     mock_dispatch.assert_not_called()

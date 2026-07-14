@@ -13,7 +13,7 @@ import traceback
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Request, status
+from fastapi import APIRouter, BackgroundTasks, Request, Response, status
 from google.api_core.exceptions import NotFound
 
 from api.db.blobs import copy_directory_verified
@@ -24,7 +24,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.duplicate.schema import DuplicateGridRequest
 from api.resources.grids.schema import Grid
 from api.schema import JobStatus
@@ -109,6 +109,7 @@ async def _copy_grid_data(source_id: str, new_id: str, source_checksum: str) -> 
 )
 async def duplicate_grid(
     request: Request,
+    response: Response,
     domain: VerifiedDomain,
     grid_id: str,
     background_tasks: BackgroundTasks,
@@ -211,5 +212,6 @@ async def duplicate_grid(
     background_tasks.add_task(
         _copy_grid_data, grid_id, new_grid_id, source_data.get("checksum")
     )
+    register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)

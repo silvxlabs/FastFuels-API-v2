@@ -12,11 +12,11 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.exports.schema import (
     Export,
     ExportGridRequest,
@@ -49,6 +49,8 @@ router = APIRouter()
 )
 async def create_grid_export(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     grid_id: str,
     format: GridExportFormat,
@@ -124,5 +126,6 @@ async def create_grid_export(
 
     await set_document_async(EXPORTS_COLLECTION, export_id, export_data)
     await create_http_task_async(EXPORTER_QUEUE, EXPORTER_SERVICE, export_id)
+    register_dispatch(request, response, background_tasks)
 
     return Export(**export_data)

@@ -11,9 +11,10 @@ The limits come from ``resolve_quotas()``, which layers an owner's tier and over
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
 
-from fastapi import HTTPException, Request, status
-from google.cloud.firestore import FieldFilter
+from fastapi import BackgroundTasks, HTTPException, Request, Response, status
+from google.cloud.firestore import AsyncDocumentReference, FieldFilter, Increment
 from pydantic import BaseModel, Field, ValidationError
 from ring import lru
 
@@ -22,6 +23,7 @@ from api.resources.keys.schema import Access
 from api.schema import JobStatus
 from lib.config import (
     APPLICATIONS_COLLECTION,
+    CREATE_BUDGETS_COLLECTION,
     DOMAINS_COLLECTION,
     EXPORTS_COLLECTION,
     FEATURES_COLLECTION,
@@ -65,6 +67,52 @@ class Quotas(BaseModel):
     max_feature_storage_bytes: int = 1 * GiB
     max_pointcloud_storage_bytes: int = 50 * GiB
 
+    # Weekly worker-job dispatch budgets (#431); reset at ISO-week boundaries.
+    # Unlike the other quotas, "dispatch" isn't guessable from the field name,
+    # so these carry OpenAPI descriptions: a dispatch is any worker job
+    # commissioned on the owner's behalf (creates, modifications, treatments,
+    # duplicates, uploads), and deleting resources refunds nothing.
+    max_weekly_grid_dispatches: int = Field(
+        500,
+        description=(
+            "Grid worker jobs allowed per ISO week (Monday 00:00 UTC reset): "
+            "creates, modifications, duplicates, and uploads all count. "
+            "Deleting grids does not refund spent budget."
+        ),
+    )
+    max_weekly_export_dispatches: int = Field(
+        250,
+        description=(
+            "Export worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset). Deleting exports does not refund spent budget."
+        ),
+    )
+    max_weekly_inventory_dispatches: int = Field(
+        250,
+        description=(
+            "Inventory worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset): creates, modifications, treatments, duplicates, and "
+            "uploads all count. Deleting inventories does not refund spent "
+            "budget."
+        ),
+    )
+    max_weekly_feature_dispatches: int = Field(
+        250,
+        description=(
+            "Feature worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset). Synchronous layerset creates are exempt. Deleting "
+            "features does not refund spent budget."
+        ),
+    )
+    max_weekly_pointcloud_dispatches: int = Field(
+        50,
+        description=(
+            "Point cloud worker jobs allowed per ISO week (Monday 00:00 UTC "
+            "reset): each upload counts. Deleting point clouds does not "
+            "refund spent budget."
+        ),
+    )
+
     # Lifecycle (enforced by the sweeper in phase 5); None = never expires.
     resource_ttl_days: int | None = 180
     failed_resource_ttl_days: int | None = 14
@@ -84,6 +132,11 @@ TIER_PRESETS: dict[str, dict] = {
         "max_grid_storage_bytes": 500 * GiB,
         "max_export_storage_bytes": 250 * GiB,
         "max_pointcloud_storage_bytes": 500 * GiB,
+        "max_weekly_grid_dispatches": 5_000,
+        "max_weekly_export_dispatches": 2_500,
+        "max_weekly_inventory_dispatches": 2_500,
+        "max_weekly_feature_dispatches": 1_000,
+        "max_weekly_pointcloud_dispatches": 250,
         "resource_ttl_days": None,
     },
     "partner": {},  # negotiated per partner; defaults until one is onboarded
@@ -145,37 +198,60 @@ class _ResourceQuota:
 
     ``active_field`` and ``storage_field`` are ``None`` for types without that
     limit (a domain has no in-flight job and no stored artifact).
+    ``weekly_field`` / ``counter_field`` are ``None`` for types whose creation
+    never dispatches a worker job (domains, applications).
     """
 
     label: str  # singular noun for user messages ("grid", "point cloud")
     active_field: str | None  # max_active_<type>: concurrent pending/running jobs
     count_field: str  # max_<type> / max_domains: total resources owned
     storage_field: str | None  # max_<type>_storage_bytes: summed artifact bytes
+    weekly_field: str | None = None  # max_weekly_<type>_dispatches
+    counter_field: str | None = None  # budget-doc count field, e.g. "grid_dispatches"
 
 
 # Collection -> the quota fields enforced on create. A collection absent here is
 # not quota-checked (API keys are pending a metering-identity decision).
 _RESOURCE_QUOTAS: dict[str, _ResourceQuota] = {
     GRIDS_COLLECTION: _ResourceQuota(
-        "grid", "max_active_grids", "max_grids", "max_grid_storage_bytes"
+        "grid",
+        "max_active_grids",
+        "max_grids",
+        "max_grid_storage_bytes",
+        "max_weekly_grid_dispatches",
+        "grid_dispatches",
     ),
     EXPORTS_COLLECTION: _ResourceQuota(
-        "export", "max_active_exports", "max_exports", "max_export_storage_bytes"
+        "export",
+        "max_active_exports",
+        "max_exports",
+        "max_export_storage_bytes",
+        "max_weekly_export_dispatches",
+        "export_dispatches",
     ),
     INVENTORIES_COLLECTION: _ResourceQuota(
         "inventory",
         "max_active_inventories",
         "max_inventories",
         "max_inventory_storage_bytes",
+        "max_weekly_inventory_dispatches",
+        "inventory_dispatches",
     ),
     FEATURES_COLLECTION: _ResourceQuota(
-        "feature", "max_active_features", "max_features", "max_feature_storage_bytes"
+        "feature",
+        "max_active_features",
+        "max_features",
+        "max_feature_storage_bytes",
+        "max_weekly_feature_dispatches",
+        "feature_dispatches",
     ),
     POINT_CLOUDS_COLLECTION: _ResourceQuota(
         "point cloud",
         "max_active_pointclouds",
         "max_pointclouds",
         "max_pointcloud_storage_bytes",
+        "max_weekly_pointcloud_dispatches",
+        "pointcloud_dispatches",
     ),
     DOMAINS_COLLECTION: _ResourceQuota("domain", None, "max_domains", None),
     APPLICATIONS_COLLECTION: _ResourceQuota(
@@ -203,6 +279,12 @@ class QuotaExceededDetail(BaseModel):
     message: str = Field(..., description="Human-readable explanation and next steps.")
     current: int = Field(..., description="The owner's current usage for this quota.")
     limit: int = Field(..., description="The limit that was reached.")
+    window_reset_on: datetime | None = Field(
+        None,
+        description=(
+            "When a windowed (weekly) quota resets; absent for non-windowed quotas."
+        ),
+    )
 
 
 # Declared by every resource-creating route so the 429 is part of the OpenAPI
@@ -212,28 +294,213 @@ QUOTA_429_RESPONSE: dict = {
         "model": QuotaExceededDetail,
         "description": (
             "Quota exceeded. The `detail` names the exact `quota`; active-job "
-            "rejections also include a `Retry-After` header."
+            "rejections also include a `Retry-After` header, and weekly-budget "
+            "rejections include `window_reset_on` plus the IETF `RateLimit` / "
+            "`RateLimit-Policy` headers with `r=0`."
         ),
+        "headers": {
+            "Retry-After": {
+                "description": (
+                    "Seconds to wait before retrying. Present only on "
+                    "active-job rejections, which clear on their own as jobs "
+                    "finish."
+                ),
+                "schema": {"type": "integer"},
+            },
+            "RateLimit": {
+                "description": (
+                    "IETF RateLimit header (weekly-budget rejections only): "
+                    'the spent policy, e.g. `"max_weekly_grid_dispatches";'
+                    "r=0;t=259200` — `r` remaining dispatches, `t` seconds "
+                    "until the ISO-week reset. Also sent with the live "
+                    "remaining count on successful dispatching responses."
+                ),
+                "schema": {"type": "string"},
+            },
+            "RateLimit-Policy": {
+                "description": (
+                    "IETF RateLimit-Policy header (weekly-budget rejections "
+                    'only): the policy itself, e.g. `"max_weekly_grid_'
+                    'dispatches";q=500;w=604800` — `q` the weekly limit, `w` '
+                    "the window in seconds (one week). Also sent on "
+                    "successful dispatching responses."
+                ),
+                "schema": {"type": "string"},
+            },
+        },
     }
 }
 
 
 def _raise_quota_exceeded(
-    *, quota: str, message: str, current: int, limit: int, retry_after: bool
+    *,
+    quota: str,
+    message: str,
+    current: int,
+    limit: int,
+    retry_after: bool,
+    window_reset_on: datetime | None = None,
+    headers: dict[str, str] | None = None,
 ) -> None:
     """Raise a structured 429. ``retry_after`` adds the header for limits that
     clear by waiting (active jobs) and omits it for those that need deletion
-    (count, storage)."""
+    (count, storage) or a window reset (weekly budgets, which carry
+    ``window_reset_on`` in the detail and the ``RateLimit`` headers instead)."""
+    all_headers = dict(headers or {})
+    if retry_after:
+        all_headers["Retry-After"] = str(RETRY_AFTER_SECONDS)
     raise HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail=QuotaExceededDetail(
-            quota=quota, message=message, current=current, limit=limit
-        ).model_dump(),
-        headers={"Retry-After": str(RETRY_AFTER_SECONDS)} if retry_after else None,
+            quota=quota,
+            message=message,
+            current=current,
+            limit=limit,
+            window_reset_on=window_reset_on,
+        ).model_dump(mode="json", exclude_none=True),
+        headers=all_headers or None,
     )
 
 
-async def enforce_create_quotas(collection: str, request: Request) -> None:
+# Weekly dispatch budgets (#431). One Firestore doc per owner per ISO week at
+# create-budgets-v2/{owner_id}/weeks/{iso_week} holds per-type dispatch
+# counters. A new week is a new doc id, so the reset is free. One doc per
+# owner-week is deliberate: Firestore sustains ~1 write/s/doc, far above any
+# owner's dispatch rate; sharding is the documented escalation if that ever
+# changes. The budget fails OPEN — an outage in the limiter must never block a
+# create — and every fail-open is logged at WARNING so it stays visible.
+# Week docs are retained indefinitely: they are the only durable record of
+# per-owner weekly activity (resource docs vanish on delete).
+
+_WEEK_SECONDS = 7 * 24 * 3600
+
+
+def iso_week_id(now: datetime) -> str:
+    """The ISO week id for ``now``, e.g. ``"2026-W28"``.
+
+    Uses the ISO year, which differs from the calendar year around January 1
+    (2025-12-29 falls in 2026-W01).
+    """
+    year, week, _ = now.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def next_week_start(now: datetime) -> datetime:
+    """The next ISO week boundary: the upcoming Monday at 00:00 UTC.
+
+    ``now`` must be timezone-aware UTC.
+    """
+    monday = now.date() - timedelta(days=now.weekday())
+    return datetime.combine(monday + timedelta(days=7), time.min, tzinfo=UTC)
+
+
+@dataclass(frozen=True)
+class _WeeklyBudget:
+    """Weekly-budget state stashed on ``request.state.weekly_budget`` by
+    :func:`enforce_create_quotas` so :func:`register_dispatch` can set the
+    RateLimit headers and schedule the increment without a second read."""
+
+    owner_id: str
+    quota_field: str  # max_weekly_<type>_dispatches
+    counter_field: str  # budget-doc count field, e.g. "grid_dispatches"
+    limit: int
+    used: int | None  # None: the read failed open
+    reset_at: datetime
+
+
+def _ratelimit_headers(
+    quota_field: str, remaining: int, limit: int, reset_at: datetime
+) -> dict[str, str]:
+    """The IETF ``RateLimit`` / ``RateLimit-Policy`` header pair for a weekly
+    budget — sent on successful dispatches (gauge) and on the budget 429
+    (``r=0``), so generic client throttle logic works on both."""
+    reset_seconds = max(int((reset_at - datetime.now(UTC)).total_seconds()), 0)
+    return {
+        "RateLimit": f'"{quota_field}";r={remaining};t={reset_seconds}',
+        "RateLimit-Policy": f'"{quota_field}";q={limit};w={_WEEK_SECONDS}',
+    }
+
+
+def _budget_ref(owner_id: str, week_id: str) -> AsyncDocumentReference:
+    return (
+        firestore_client.collection(CREATE_BUDGETS_COLLECTION)
+        .document(owner_id)
+        .collection("weeks")
+        .document(week_id)
+    )
+
+
+async def _read_budget_used(
+    owner_id: str, week_id: str, counter_field: str
+) -> int | None:
+    """Read the owner's dispatch count for the week; never raises.
+
+    A missing doc means nothing dispatched yet (0). ``None`` means the read
+    failed and the caller must fail open.
+    """
+    try:
+        doc = await _budget_ref(owner_id, week_id).get()
+        return int((doc.to_dict() or {}).get(counter_field, 0) or 0)
+    except Exception:
+        logger.warning(
+            "Weekly budget read failed for owner %s; failing open",
+            owner_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def _increment_budget(owner_id: str, counter_field: str) -> None:
+    """Increment the owner's weekly dispatch counter; never raises.
+
+    Runs as a fire-and-forget background task after the response is sent.
+    """
+    try:
+        week_id = iso_week_id(datetime.now(UTC))
+        await _budget_ref(owner_id, week_id).set(
+            {
+                counter_field: Increment(1),
+                "owner_id": owner_id,
+                "iso_week": week_id,
+            },
+            merge=True,
+        )
+    except Exception:
+        logger.warning(
+            "Weekly budget increment (%s) failed for owner %s; failing open",
+            counter_field,
+            owner_id,
+            exc_info=True,
+        )
+
+
+def register_dispatch(
+    request: Request, response: Response, background_tasks: BackgroundTasks
+) -> None:
+    """Record a worker-job dispatch against the owner's weekly budget.
+
+    Called once, immediately after a job is dispatched — never before, so
+    requests that fail validation don't consume budget. Sets the IETF
+    ``RateLimit`` / ``RateLimit-Policy`` headers on the response (skipped when
+    the budget read failed open) and schedules the counter increment. No-op if
+    :func:`enforce_create_quotas` did not run a weekly check for this request.
+    """
+    budget: _WeeklyBudget | None = getattr(request.state, "weekly_budget", None)
+    if budget is None:
+        return
+    if budget.used is not None:
+        remaining = max(budget.limit - budget.used - 1, 0)
+        response.headers.update(
+            _ratelimit_headers(
+                budget.quota_field, remaining, budget.limit, budget.reset_at
+            )
+        )
+    background_tasks.add_task(_increment_budget, budget.owner_id, budget.counter_field)
+
+
+async def enforce_create_quotas(
+    collection: str, request: Request, *, dispatch: bool = True
+) -> None:
     """Check create-time quotas for the authenticated owner; raise 429 if over.
 
     Called at the top of every resource-creating endpoint, before any validation
@@ -243,8 +510,14 @@ async def enforce_create_quotas(collection: str, request: Request) -> None:
     is a separate query because its ``(owner_id, size_bytes)`` index is sparse —
     docs without ``size_bytes`` are absent from it — so folding it into the count
     would undercount in-flight resources. Checks are evaluated active-jobs ->
-    count -> storage; the first over its limit raises. Collections absent from
-    ``_RESOURCE_QUOTAS`` are a no-op.
+    count -> storage -> weekly budget; the first over its limit raises.
+    Collections absent from ``_RESOURCE_QUOTAS`` are a no-op.
+
+    The weekly dispatch budget is read in the same gather and checked only when
+    ``dispatch`` is true (the default) and the type has a budget. Endpoints that
+    create a resource without commissioning a worker job (layerset features)
+    pass ``dispatch=False``. On pass, the budget state is stashed on
+    ``request.state.weekly_budget`` for :func:`register_dispatch`.
     """
     spec = _RESOURCE_QUOTAS.get(collection)
     if spec is None:
@@ -269,8 +542,16 @@ async def enforce_create_quotas(collection: str, request: Request) -> None:
     if spec.storage_field:
         aggregations["bytes"] = base.sum("size_bytes", alias="bytes")
 
+    check_weekly = dispatch and spec.weekly_field is not None
+    now = datetime.now(UTC)
+
     names = list(aggregations)
-    results = await asyncio.gather(*(aggregations[n].get() for n in names))
+    coros = [aggregations[n].get() for n in names]
+    if check_weekly:
+        # _read_budget_used never raises (fails open to None), so appending it
+        # to the gather cannot break the aggregation checks.
+        coros.append(_read_budget_used(owner_id, iso_week_id(now), spec.counter_field))
+    results = await asyncio.gather(*coros)
     values = {n: res[0][0].value for n, res in zip(names, results)}
 
     count = values["count"]
@@ -322,6 +603,35 @@ async def enforce_create_quotas(collection: str, request: Request) -> None:
                     f"{SUPPORT_EMAIL}."
                 ),
             )
+
+    if check_weekly:
+        used = results[-1]
+        limit = getattr(quotas, spec.weekly_field)
+        reset_at = next_week_start(now)
+        # Deleting resources refunds nothing: the budget counts dispatches, so
+        # the only ways forward are the window reset or a raised limit.
+        if used is not None and used >= limit:
+            _raise_quota_exceeded(
+                quota=spec.weekly_field,
+                current=used,
+                limit=limit,
+                retry_after=False,
+                window_reset_on=reset_at,
+                headers=_ratelimit_headers(spec.weekly_field, 0, limit, reset_at),
+                message=(
+                    f"Your weekly {spec.label} budget is spent ({used}/{limit} "
+                    f"jobs this week). It resets {reset_at:%Y-%m-%d} (UTC). To "
+                    f"request a higher limit, contact {SUPPORT_EMAIL}."
+                ),
+            )
+        request.state.weekly_budget = _WeeklyBudget(
+            owner_id=owner_id,
+            quota_field=spec.weekly_field,
+            counter_field=spec.counter_field,
+            limit=limit,
+            used=used,
+            reset_at=reset_at,
+        )
 
 
 # Output-key -> collection for GET /users/me/usage. The keys are the JSON field

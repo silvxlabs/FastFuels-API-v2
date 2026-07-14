@@ -76,7 +76,9 @@ async def create_layerset(
     owner_id = request.state.id
     domain_id = domain["id"]
 
-    await enforce_create_quotas(FEATURES_COLLECTION, request)
+    # dispatch=False: layerset features are written synchronously — no worker
+    # job is commissioned, so the weekly dispatch budget does not apply.
+    await enforce_create_quotas(FEATURES_COLLECTION, request, dispatch=False)
 
     feature_id = f"{owner_id[:8]}-{uuid4().hex}"
 

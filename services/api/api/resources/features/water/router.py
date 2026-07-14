@@ -8,11 +8,11 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.features.schema import Feature, FeatureType
 from api.resources.features.water.examples import CREATE_WATER_OPENAPI_EXAMPLES
 from api.resources.features.water.schema import (
@@ -41,6 +41,8 @@ COLLECTION = FEATURES_COLLECTION
 )
 async def create_osm_water_feature(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreateOsmWaterFeatureRequest,
@@ -109,5 +111,6 @@ async def create_osm_water_feature(
 
     # Enqueue task to the Features worker for processing
     await create_http_task_async(FEATURES_QUEUE, FEATURES_SERVICE, feature_id)
+    register_dispatch(request, response, background_tasks)
 
     return Feature(**feature_data)

@@ -11,12 +11,20 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from google.cloud import firestore
 
 from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.inventories.modifications.examples import (
     APPLY_MODIFICATIONS_OPENAPI_EXAMPLES,
 )
@@ -42,6 +50,8 @@ COLLECTION = INVENTORIES_COLLECTION
 )
 async def apply_modifications(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     inventory_id: str,
     body: Annotated[
@@ -201,6 +211,7 @@ async def apply_modifications(
         inventory_id,
         task_name=f"{inventory_id}-{new_checksum}",
     )
+    register_dispatch(request, response, background_tasks)
 
     # pending_modifications is an internal work-queue field, not part of the
     # Inventory schema; Pydantic ignores it (and owner_id) on construction.

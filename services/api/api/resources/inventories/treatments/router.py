@@ -12,12 +12,20 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from google.cloud import firestore
 
 from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
-from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
+from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.inventories.schema import Inventory
 from api.resources.inventories.treatments.examples import (
     APPLY_TREATMENTS_OPENAPI_EXAMPLES,
@@ -46,6 +54,8 @@ COLLECTION = INVENTORIES_COLLECTION
 )
 async def apply_treatments(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     inventory_id: str,
     body: Annotated[
@@ -218,6 +228,7 @@ async def apply_treatments(
         inventory_id,
         task_name=f"{inventory_id}-{new_checksum}",
     )
+    register_dispatch(request, response, background_tasks)
 
     # pending_treatments is an internal work-queue field, not part of the
     # Inventory schema; Pydantic ignores it (and owner_id) on construction.

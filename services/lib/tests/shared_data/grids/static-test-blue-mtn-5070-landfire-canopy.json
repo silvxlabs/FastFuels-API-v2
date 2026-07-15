@@ -1,0 +1,129 @@
+{
+    "bands": [
+        {
+            "description": "Fraction of ground covered by tree canopy (%).",
+            "index": 0,
+            "key": "cc",
+            "name": "Canopy Cover",
+            "nodata": null,
+            "summary": {
+                "count": 1950,
+                "max": 65.0,
+                "mean": 18.466666666666665,
+                "min": 0.0,
+                "nodata_count": 0,
+                "std": 20.690209914952202,
+                "type": "continuous"
+            },
+            "type": "continuous",
+            "unit": "%"
+        },
+        {
+            "description": "Height of the canopy top above ground.",
+            "index": 1,
+            "key": "chm",
+            "name": "Canopy Height",
+            "nodata": null,
+            "summary": {
+                "count": 1950,
+                "max": 27.0,
+                "mean": 7.662564102564103,
+                "min": 0.0,
+                "nodata_count": 0,
+                "std": 8.105963843716209,
+                "type": "continuous"
+            },
+            "type": "continuous",
+            "unit": "m"
+        },
+        {
+            "description": "Height above ground of the base of the live crown.",
+            "index": 2,
+            "key": "cbh",
+            "name": "Canopy Base Height",
+            "nodata": null,
+            "summary": {
+                "count": 1950,
+                "max": 10.0,
+                "mean": 0.668153847425412,
+                "min": 0.0,
+                "nodata_count": 0,
+                "std": 1.6362390172762336,
+                "type": "continuous"
+            },
+            "type": "continuous",
+            "unit": "m"
+        },
+        {
+            "description": "Mass of available canopy fuel per unit canopy volume.",
+            "index": 3,
+            "key": "cbd",
+            "name": "Canopy Bulk Density",
+            "nodata": null,
+            "summary": {
+                "count": 1950,
+                "max": 0.1599999964237213,
+                "mean": 0.033630768719774023,
+                "min": 0.0,
+                "nodata_count": 0,
+                "std": 0.03979237186623771,
+                "type": "continuous"
+            },
+            "type": "continuous",
+            "unit": "kg/m**3"
+        }
+    ],
+    "chunks": {
+        "count": 1,
+        "count_by_axis": {
+            "x": 1,
+            "y": 1
+        },
+        "shape": [
+            512,
+            512
+        ]
+    },
+    "description": "",
+    "georeference": {
+        "crs": "EPSG:5070",
+        "shape": [
+            39,
+            50
+        ],
+        "transform": [
+            30.0,
+            0.0,
+            -1379265.0,
+            0.0,
+            -30.0,
+            2781015.0
+        ]
+    },
+    "modifications": [],
+    "name": "",
+    "progress": {
+        "message": "Complete",
+        "percent": 100
+    },
+    "source": {
+        "alignment": {
+            "method": null,
+            "resolution": null,
+            "target": "native"
+        },
+        "bands": [
+            "cc",
+            "chm",
+            "cbh",
+            "cbd"
+        ],
+        "description": "LANDFIRE canopy fuel data (chm, cbd, cbh, cc) at 30m resolution (CONUS)",
+        "extent_buffer_cells": 0,
+        "name": "canopy",
+        "product": "landfire",
+        "version": "2024"
+    },
+    "status": "completed",
+    "tags": []
+}

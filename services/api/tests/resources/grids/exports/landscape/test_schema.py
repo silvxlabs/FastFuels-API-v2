@@ -179,18 +179,28 @@ class TestLandscapeExportRequest:
         assert request.tags == ["a", "b"]
 
 
+def _georeference() -> dict:
+    return {
+        "crs": "EPSG:5070",
+        "transform": [30.0, 0.0, -1379265.0, 0.0, -30.0, 2781015.0],
+        "shape": [39, 50],
+    }
+
+
 class TestLandscapeExportSource:
     def test_minimal(self):
         source = LandscapeExportSource(
             domain_id="d1",
             **_minimal_request_kwargs(),
             alignment={"target": "domain", "resolution": 30.0},
-            resolved={"landscape_grid": {}},
+            georeference=_georeference(),
         )
         assert source.name == "landscape"
         assert source.domain_id == "d1"
         assert source.fire_behavior_fuel_model == "fbfm40"
         assert source.canopy_height.band == "chm"
+        assert source.georeference.crs == "EPSG:5070"
+        assert source.georeference.shape == (39, 50)
 
     def test_name_is_pinned(self):
         # `name` is a Literal["landscape"]; assigning anything else fails.
@@ -200,15 +210,25 @@ class TestLandscapeExportSource:
                 domain_id="d1",
                 **_minimal_request_kwargs(),
                 alignment={"target": "domain", "resolution": 30.0},
-                resolved={"landscape_grid": {}},
+                georeference=_georeference(),
             )
 
-    def test_resolved_is_required(self):
+    def test_georeference_is_required(self):
         with pytest.raises(ValidationError):
             LandscapeExportSource(
                 domain_id="d1",
                 **_minimal_request_kwargs(),
                 alignment={"target": "domain", "resolution": 30.0},
+            )
+
+    def test_georeference_is_typed_not_a_blob(self):
+        """A free-form dict is rejected — the lattice has a schema."""
+        with pytest.raises(ValidationError):
+            LandscapeExportSource(
+                domain_id="d1",
+                **_minimal_request_kwargs(),
+                alignment={"target": "domain", "resolution": 30.0},
+                georeference={"landscape_grid": {}},
             )
 
 

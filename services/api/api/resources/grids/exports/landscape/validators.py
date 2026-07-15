@@ -16,7 +16,8 @@ helpers, each unit-testable without Firestore or the async runtime:
 * `_check_role_alignment` — per role: CRS, cell size, integer-cell lattice
   offset, coverage (shared `exports.alignment` checks).
 * `_check_cell_count_cap` — total cell count under the cap.
-* `_make_source` — assemble the persisted `LandscapeExportSource`.
+* `_make_source` — assemble the persisted `LandscapeExportSource`, whose
+  `georeference` is the output lattice the exporter renders onto.
 
 Every helper raises `HTTPException(422)` on failure.
 """
@@ -35,6 +36,7 @@ from api.resources.grids.exports.landscape.schema import (
     LandscapeExportSource,
     LandscapeFieldSource,
 )
+from api.resources.grids.schema import Georeference
 from api.resources.grids.utils import (
     validate_band_unit,
     validate_grid_dimensionality,
@@ -184,7 +186,12 @@ def _check_cell_count_cap(landscape_grid: dict) -> None:
 def _make_source(
     request: LandscapeExportRequest, domain_id: str, landscape_grid: dict
 ) -> LandscapeExportSource:
-    """Assemble the persisted `LandscapeExportSource`."""
+    """Assemble the persisted `LandscapeExportSource`.
+
+    The working lattice dict carries `nx`/`ny`/`dx`/`dy` for the alignment
+    checks; the persisted form is a plain `Georeference`, from which all four
+    are derivable.
+    """
     return LandscapeExportSource(
         domain_id=domain_id,
         alignment=request.alignment,
@@ -197,7 +204,11 @@ def _make_source(
         canopy_height=request.canopy_height,
         canopy_base_height=request.canopy_base_height,
         canopy_bulk_density=request.canopy_bulk_density,
-        resolved={"landscape_grid": landscape_grid},
+        georeference=Georeference(
+            crs=landscape_grid["crs"],
+            transform=tuple(landscape_grid["transform"]),
+            shape=(landscape_grid["ny"], landscape_grid["nx"]),
+        ),
     )
 
 

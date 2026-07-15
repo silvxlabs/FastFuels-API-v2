@@ -193,13 +193,12 @@ class TestCreateLandscapeExport:
         assert data["source"]["domain_id"] == domain_for_testing["id"]
         assert data["source"]["fire_behavior_fuel_model"] == "fbfm40"
 
-        lattice = data["source"]["resolved"]["landscape_grid"]
-        assert lattice["nx"] == N30
-        assert lattice["ny"] == N30
-        assert lattice["dx"] == RES
-        assert lattice["crs"] == "EPSG:32611"
-        assert lattice["transform"][2] == WEST
-        assert lattice["transform"][5] == NORTH_PADDED
+        geo = data["source"]["georeference"]
+        assert geo["shape"] == [N30, N30]
+        assert geo["crs"] == "EPSG:32611"
+        assert geo["transform"][0] == RES
+        assert geo["transform"][2] == WEST
+        assert geo["transform"][5] == NORTH_PADDED
         # Default alignment is recorded on the persisted source.
         assert data["source"]["alignment"]["target"] == "domain"
         assert data["source"]["alignment"]["resolution"] == RES
@@ -246,10 +245,9 @@ class TestCreateLandscapeExport:
         data = response.json()
         assert data["source"]["alignment"]["target"] == "grid"
         assert data["source"]["alignment"]["grid_id"] == topo_grid["id"]
-        lattice = data["source"]["resolved"]["landscape_grid"]
-        assert lattice["nx"] == N30
-        assert lattice["ny"] == N30
-        assert lattice["dx"] == RES
+        geo = data["source"]["georeference"]
+        assert geo["shape"] == [N30, N30]
+        assert geo["transform"][0] == RES
 
         _cleanup_export(firestore_client, data["id"])
 

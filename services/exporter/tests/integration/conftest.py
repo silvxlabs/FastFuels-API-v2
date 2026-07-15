@@ -505,3 +505,122 @@ def quicfire_exporter_runner():
         if exists(gcs_path):
             delete_directory(gcs_path)
         delete_document(EXPORTS_COLLECTION, export_id)
+
+
+# Landscape export: three role grids over Blue Mountain built with
+# `alignment.target="native"` in an EPSG:5070 domain, so they sit on the
+# LANDFIRE source rasters' own pixel lattice — origin=(-1379265, 2781015) at
+# 30 m, shape (39, 50), matching `source.georeference` in
+# `landscape.json`. That lattice is the point: because nothing was resampled
+# or reprojected on the way in, the exported GeoTIFF can be checked
+# pixel-for-pixel against the LANDFIRE CONUS rasters in RASTERS_BUCKET. The
+# UTM QUIC-Fire fixtures cannot serve here — they are 2 m EPSG:32611, i.e.
+# both resampled and reprojected away from any comparable source pixel.
+#
+# Unlike QUIC-Fire, the landscape handler reads no domain document —
+# everything it needs is in `source.georeference` — so no domain is staged.
+
+_LANDSCAPE_ROLE_FIXTURES = {
+    "topography": "static-test-blue-mtn-5070-landfire-topography",
+    "fbfm40": "static-test-blue-mtn-5070-landfire-fbfm40",
+    "canopy": "static-test-blue-mtn-5070-landfire-canopy",
+}
+
+
+@pytest.fixture(scope="module")
+def landscape_sources():
+    """Stage the three grids the landscape export consumes.
+
+    Copies each static fixture zarr to a unique test path and registers a
+    Firestore doc for it. Yields a dict mapping role names to test grid IDs;
+    cleans everything up on teardown.
+    """
+    fs = gcsfs.GCSFileSystem()
+    domain_id = f"test-{uuid4().hex}"
+
+    grid_ids: dict[str, str] = {}
+    for role, static_name in _LANDSCAPE_ROLE_FIXTURES.items():
+        grid_id = f"test-{uuid4().hex}"
+        fs.cp(
+            f"{GRIDS_BUCKET}/{static_name}", f"{GRIDS_BUCKET}/{grid_id}", recursive=True
+        )
+        grid_data = load_json(GRIDS_DIR / f"{static_name}.json")
+        grid_data["id"] = grid_id
+        grid_data["domain_id"] = domain_id
+        set_document(GRIDS_COLLECTION, grid_id, grid_data)
+        grid_ids[role] = grid_id
+
+    yield {"domain_id": domain_id, **grid_ids}
+
+    for grid_id in grid_ids.values():
+        gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        delete_document(GRIDS_COLLECTION, grid_id)
+
+
+@pytest.fixture(scope="module")
+def landscape_exporter_runner():
+    """Run the landscape exporter against a `landscape_sources` fixture.
+
+    Usage::
+
+        def test_landscape(landscape_sources, landscape_exporter_runner):
+            export = landscape_exporter_runner(landscape_sources)
+
+    Accepts ``source_overrides`` to vary the request (e.g. the declared
+    ``fire_behavior_fuel_model``). Returns the completed export doc.
+    """
+    export_ids: list[str] = []
+
+    def _run(
+        sources: dict,
+        timeout: int = 180,
+        source_overrides: dict | None = None,
+    ) -> dict:
+        export_data = load_json(EXPORTS_DIR / "landscape.json")
+        export_id = f"test-{uuid4().hex}"
+        export_data["id"] = export_id
+        export_data["domain_id"] = sources["domain_id"]
+        export_data["source"]["domain_id"] = sources["domain_id"]
+        export_data["source"]["alignment"]["grid_id"] = sources["topography"]
+        for role in ("elevation", "slope", "aspect"):
+            export_data["source"][role]["grid_id"] = sources["topography"]
+        export_data["source"]["fuel_model"]["grid_id"] = sources["fbfm40"]
+        for role in (
+            "canopy_cover",
+            "canopy_height",
+            "canopy_base_height",
+            "canopy_bulk_density",
+        ):
+            export_data["source"][role]["grid_id"] = sources["canopy"]
+
+        if source_overrides:
+            export_data["source"].update(source_overrides)
+
+        set_document(EXPORTS_COLLECTION, export_id, export_data)
+        export_ids.append(export_id)
+        _run_exporter(export_id)
+
+        if DEPLOYMENT_ENV != "local":
+            export = _poll_for_completion(export_id, timeout=timeout)
+        else:
+            _, snapshot = get_document(EXPORTS_COLLECTION, export_id)
+            export = snapshot.to_dict()
+
+        assert export["status"] == "completed", (
+            f"Landscape export did not complete: status={export['status']}, "
+            f"error={export.get('error')}"
+        )
+        assert export["signed_url"] is not None, "signed_url should be set"
+        # The export artifact's GCS footprint is recorded on completion (#342).
+        assert export["size_bytes"] > 0
+        return export
+
+    yield _run
+
+    for export_id in export_ids:
+        gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        delete_document(EXPORTS_COLLECTION, export_id)

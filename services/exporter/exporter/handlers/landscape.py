@@ -7,8 +7,8 @@ LANDFIRE-style landscape GeoTIFF for operational fire behavior tools
 
 The handler is a pure consumer: every shape/CRS/transform decision was made
 at request time by the API validator and snapshotted into
-``source["resolved"]["landscape_grid"]``. Per-role band selection is
-preserved in ``source["<role>"]`` (each a ``{grid_id, band}`` dict).
+``source["georeference"]``. Per-role band selection is preserved in
+``source["<role>"]`` (each a ``{grid_id, band}`` dict).
 
 Output conventions (per the LANDFIRE 2024 landscape product and the
 LCP-to-GeoTIFF transition memo):
@@ -75,12 +75,13 @@ def export_landscape(
     progress: Callable[[str, int | None], None],
 ) -> str:
     """Build a landscape GeoTIFF and upload it to GCS."""
-    lattice = source["resolved"]["landscape_grid"]
-    nx = int(lattice["nx"])
-    ny = int(lattice["ny"])
-    dx = float(lattice["dx"])
-    minx = float(lattice["transform"][2])
-    maxy = float(lattice["transform"][5])
+    georeference = source["georeference"]
+    ny, nx = (int(n) for n in georeference["shape"])
+    transform = Affine(*[float(c) for c in georeference["transform"]])
+    dx = transform.a
+    dy = -transform.e
+    minx = transform.c
+    maxy = transform.f
 
     grid_cache: dict[str, xr.Dataset] = {}
 
@@ -113,11 +114,11 @@ def export_landscape(
         arr = ds[band].transpose("y", "x").values.astype(np.float64, copy=False)
 
         # x coords ascend (west→east), y coords descend (north→south).
-        # Coordinates are cell centers; offset back to cell origin by dx/2.
+        # Coordinates are cell centers; offset back to cell origin by half a cell.
         role_minx = float(ds.x.values[0]) - dx / 2
-        role_maxy = float(ds.y.values[0]) + dx / 2
+        role_maxy = float(ds.y.values[0]) + dy / 2
         i0 = round((minx - role_minx) / dx)
-        j0 = round((role_maxy - maxy) / dx)
+        j0 = round((role_maxy - maxy) / dy)
         return arr[j0 : j0 + ny, i0 : i0 + nx]
 
     fuel_model_units = _FUEL_MODEL_UNITS[source["fire_behavior_fuel_model"]]
@@ -135,14 +136,13 @@ def export_landscape(
         bands.append((encoded, layer_name, units or fuel_model_units))
 
     progress("Writing GeoTIFF...", 60)
-    transform = Affine(*[float(c) for c in lattice["transform"][:6]])
     profile = {
         "driver": "GTiff",
         "width": nx,
         "height": ny,
         "count": len(bands),
         "dtype": "int16",
-        "crs": lattice["crs"],
+        "crs": georeference["crs"],
         "transform": transform,
         "nodata": _NODATA,
         "compress": "lzw",

@@ -93,15 +93,10 @@ def _build_source() -> dict:
         "canopy_height": {"grid_id": "canopy", "band": "chm"},
         "canopy_base_height": {"grid_id": "canopy", "band": "cbh"},
         "canopy_bulk_density": {"grid_id": "canopy", "band": "cbd"},
-        "resolved": {
-            "landscape_grid": {
-                "nx": _NX,
-                "ny": _NY,
-                "dx": _DX,
-                "dy": _DX,
-                "transform": _TRANSFORM,
-                "crs": _CRS,
-            },
+        "georeference": {
+            "crs": _CRS,
+            "transform": _TRANSFORM,
+            "shape": [_NY, _NX],
         },
     }
 

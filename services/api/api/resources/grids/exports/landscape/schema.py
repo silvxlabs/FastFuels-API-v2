@@ -14,6 +14,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from api.resources.grids.schema import Georeference
+
 
 class LandscapeFieldSource(BaseModel):
     """A single landscape band drawn from one band on one grid."""
@@ -171,7 +173,7 @@ class LandscapeExportRequest(BaseModel):
 class LandscapeExportSource(BaseModel):
     """Stored source metadata for a landscape export, recorded in `Export.source`.
 
-    `resolved` snapshots the landscape lattice at request time so the exporter
+    `georeference` snapshots the output lattice at request time so the exporter
     is a pure consumer and the export is reproducible even if a source grid is
     later modified or deleted.
     """
@@ -191,10 +193,11 @@ class LandscapeExportSource(BaseModel):
     canopy_base_height: LandscapeFieldSource
     canopy_bulk_density: LandscapeFieldSource
 
-    resolved: dict = Field(
+    georeference: Georeference = Field(
         ...,
         description=(
-            "Snapshot of the landscape lattice (CRS, transform, shape) at "
-            "request time. Used by the exporter to consume pre-validated data."
+            "The output lattice — CRS, affine transform, and (height, width) "
+            "shape — resolved from `alignment` at request time. Every band in "
+            "the exported GeoTIFF is written on this lattice."
         ),
     )

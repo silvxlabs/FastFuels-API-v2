@@ -391,10 +391,20 @@ class TestMakeSource:
         assert source.domain_id == "test-domain"
         assert source.fire_behavior_fuel_model == "fbfm40"
         assert source.alignment.target == "domain"
-        assert source.resolved["landscape_grid"]["nx"] == _NX
         assert source.canopy_height.band == "chm"
         assert source.canopy_base_height.band == "cbh"
         assert source.canopy_bulk_density.band == "cbd"
+
+    def test_georeference_is_the_resolved_lattice(self):
+        """The working lattice dict collapses to a plain Georeference —
+        `nx`/`ny`/`dx`/`dy` are all derivable from shape and transform."""
+        source = _make_source(_minimal_request(), "test-domain", dict(_LANDSCAPE_GRID))
+        geo = source.georeference
+        assert geo.crs == _CRS
+        assert geo.shape == (_NY, _NX)
+        assert tuple(geo.transform) == tuple(_LANDSCAPE_TRANSFORM)
+        assert geo.transform[0] == _RES  # dx
+        assert -geo.transform[4] == _RES  # dy
 
 
 class TestRoleContractTable:

@@ -270,11 +270,6 @@ class ListInventoriesResponse(PaginatedResponse):
     inventories: list[Inventory]
 
 
-class InventoryDataFormat(StrEnum):
-    json = "json"
-    csv = "csv"
-
-
 class InventoryJsonOrientation(StrEnum):
     split = "split"
     records = "records"

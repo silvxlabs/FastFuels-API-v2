@@ -27,8 +27,7 @@ class LandscapeExportAlignmentDomainTarget(BaseModel):
 
     Output cells tile the Domain bbox at `resolution`, padded outward if the
     bbox isn't already a whole multiple. The default 30 m matches LANDFIRE's
-    native resolution, so grids built from LANDFIRE sources with the default
-    grid alignment already land on this lattice.
+    native resolution.
     """
 
     target: Literal["domain"] = "domain"

@@ -17,7 +17,7 @@ from tests.fixtures import make_grid_data
 # lattice pads up to 34x34 cells anchored at the bbox's lower-left, so the
 # padded north edge sits at 5200000 + 34 * 30 = 5201020. Role grids are
 # seeded on exactly that lattice, matching what domain-target grid alignment
-# produces for LANDFIRE-sourced grids.
+# at an explicit 30 m resolution produces.
 RES = 30.0
 N30 = 34
 WEST = 500000.0

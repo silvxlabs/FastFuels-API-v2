@@ -41,9 +41,7 @@ CREATE_LANDSCAPE_EXPORT_OPENAPI_EXAMPLES = {
             "and aspect from a topography grid; fuel model codes from an "
             "FBFM40 grid; canopy cover, height, base height, and bulk "
             "density from a canopy grid. Alignment defaults to "
-            "Domain-anchored at 30 m (LANDFIRE-native), so grids built from "
-            "LANDFIRE sources with default alignment need no alignment "
-            "configuration."
+            "Domain-anchored at 30 m."
         ),
     },
     "custom_resolution": {

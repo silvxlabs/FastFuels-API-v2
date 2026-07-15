@@ -4,13 +4,16 @@ Integration tests for inventory data streaming endpoints.
 Tests the inventory data streaming endpoints:
   GET /domains/{domain_id}/inventories/{inventory_id}/data/metadata
   GET /domains/{domain_id}/inventories/{inventory_id}/data/{partition_index}
+  GET /domains/{domain_id}/inventories/{inventory_id}/data/{partition_index}/csv
 
 These tests use the static-test-blue-mtn-pim-inventory fixture which has
 real partitioned Parquet data on GCS.
 """
 
+import io
 import json
 
+import pandas as pd
 import pytest
 
 from lib.config import INVENTORIES_COLLECTION
@@ -109,6 +112,13 @@ def data_route(domain_id, inventory_id, partition_index, **params):
     )
 
 
+def csv_data_route(domain_id, inventory_id, partition_index, **params):
+    return (
+        f"/domains/{domain_id}/inventories/{inventory_id}/data/{partition_index}/csv",
+        params,
+    )
+
+
 # GET /domains/{domain_id}/inventories/{inventory_id}/data/metadata
 
 
@@ -176,74 +186,8 @@ class TestGetInventoryDataMetadata:
 # GET /domains/{domain_id}/inventories/{inventory_id}/data/{partition_index}
 
 
-class TestGetInventoryData:
-    def test_json_split_default_returns_200(
-        self, client, domain_for_testing, static_inventory_in_firestore
-    ):
-        """Default JSON split response."""
-        url, params = data_route(
-            domain_for_testing["id"], STATIC_PIM_INVENTORY, 0, format="json"
-        )
-        response = client.get(url, params=params)
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["partition"] == 0
-        assert data["num_rows"] > 0
-        assert isinstance(data["columns"], list)
-        assert isinstance(data["data"], list)
-        assert isinstance(data["data"][0], list)
-
-    def test_json_records_returns_200(
-        self, client, domain_for_testing, static_inventory_in_firestore
-    ):
-        """JSON records orientation."""
-        url, params = data_route(
-            domain_for_testing["id"],
-            STATIC_PIM_INVENTORY,
-            0,
-            format="json",
-            json_orientation="records",
-        )
-        response = client.get(url, params=params)
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["num_rows"] > 0
-        assert isinstance(data["data"][0], dict)
-
-    def test_csv_returns_200(
-        self, client, domain_for_testing, static_inventory_in_firestore
-    ):
-        """CSV response with metadata headers."""
-        url, params = data_route(
-            domain_for_testing["id"], STATIC_PIM_INVENTORY, 0, format="csv"
-        )
-        response = client.get(url, params=params)
-        assert response.status_code == 200
-        assert "text/csv" in response.headers["content-type"]
-        assert "X-Partition-Index" in response.headers
-        assert "X-Row-Count" in response.headers
-        assert "X-Total-Rows" in response.headers
-        assert "X-Num-Partitions" in response.headers
-
-    def test_column_subset(
-        self, client, domain_for_testing, static_inventory_in_firestore
-    ):
-        """Request only specific columns."""
-        url, params = data_route(
-            domain_for_testing["id"],
-            STATIC_PIM_INVENTORY,
-            0,
-            format="json",
-            columns="x,y,dbh",
-        )
-        response = client.get(url, params=params)
-        assert response.status_code == 200
-
-        data = response.json()
-        assert data["columns"] == ["x", "y", "dbh"]
-        assert len(data["data"][0]) == 3
+class TestGetInventoryDataJson:
+    # Validation
 
     def test_partition_out_of_range_returns_422(
         self, client, domain_for_testing, static_inventory_in_firestore
@@ -306,6 +250,173 @@ class TestGetInventoryData:
         response = client.get(url, params=params)
         assert response.status_code == 404
 
+    # Static fixture integration
+
+    def test_split_default_returns_200(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        """Split orientation is the default."""
+        url, params = data_route(domain_for_testing["id"], STATIC_PIM_INVENTORY, 0)
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+        assert "application/json" in response.headers["content-type"]
+
+        data = response.json()
+        assert data["partition"] == 0
+        assert data["num_rows"] > 0
+        assert isinstance(data["columns"], list)
+        assert isinstance(data["data"], list)
+        assert isinstance(data["data"][0], list)
+
+    def test_records_returns_200(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        """Records orientation returns row objects."""
+        url, params = data_route(
+            domain_for_testing["id"],
+            STATIC_PIM_INVENTORY,
+            0,
+            json_orientation="records",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["num_rows"] > 0
+        assert isinstance(data["data"][0], dict)
+
+    def test_column_subset(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        """Request only specific columns."""
+        url, params = data_route(
+            domain_for_testing["id"],
+            STATIC_PIM_INVENTORY,
+            0,
+            columns="x,y,dbh",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["columns"] == ["x", "y", "dbh"]
+        assert len(data["data"][0]) == 3
+
+
+# GET /domains/{domain_id}/inventories/{inventory_id}/data/{partition_index}/csv
+
+
+class TestGetInventoryDataCsv:
+    # Validation
+
+    def test_partition_out_of_range_returns_422(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        url, params = csv_data_route(
+            domain_for_testing["id"], STATIC_PIM_INVENTORY, 9999
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 422
+
+    def test_invalid_column_returns_422(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        url, params = csv_data_route(
+            domain_for_testing["id"],
+            STATIC_PIM_INVENTORY,
+            0,
+            columns="x,nonexistent_col",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 422
+
+    def test_inventory_not_completed_returns_422(
+        self, client, domain_for_testing, pending_inventory_in_firestore
+    ):
+        url, params = csv_data_route(
+            domain_for_testing["id"],
+            pending_inventory_in_firestore["id"],
+            0,
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 422
+
+    def test_inventory_not_found_returns_404(self, client, domain_for_testing):
+        url, params = csv_data_route(
+            domain_for_testing["id"],
+            "00000000000000000000000000000000",
+            0,
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 404
+
+    def test_inventory_wrong_owner_returns_404(
+        self, client, domain_for_testing, inventory_with_different_owner
+    ):
+        url, params = csv_data_route(
+            domain_for_testing["id"],
+            inventory_with_different_owner["id"],
+            0,
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 404
+
+    def test_inventory_wrong_domain_returns_404(
+        self, client, domain_with_different_owner, static_inventory_in_firestore
+    ):
+        url, params = csv_data_route(
+            domain_with_different_owner["id"],
+            STATIC_PIM_INVENTORY,
+            0,
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 404
+
+    # Static fixture integration
+
+    def test_returns_200_with_metadata_headers(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        """CSV response carries partition metadata in sidecar headers."""
+        url, params = csv_data_route(domain_for_testing["id"], STATIC_PIM_INVENTORY, 0)
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+        assert "text/csv" in response.headers["content-type"]
+        assert response.headers["X-Partition-Index"] == "0"
+        assert int(response.headers["X-Row-Count"]) > 0
+        assert int(response.headers["X-Total-Rows"]) > 0
+        assert int(response.headers["X-Num-Partitions"]) >= 1
+
+    def test_body_round_trips_through_read_csv(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        """The body parses as CSV, and its row count matches X-Row-Count."""
+        url, params = csv_data_route(domain_for_testing["id"], STATIC_PIM_INVENTORY, 0)
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+
+        df = pd.read_csv(io.StringIO(response.text))
+        assert len(df) == int(response.headers["X-Row-Count"])
+        assert len(df) > 0
+        assert "x" in df.columns
+        assert "y" in df.columns
+
+    def test_column_subset(
+        self, client, domain_for_testing, static_inventory_in_firestore
+    ):
+        """Request only specific columns."""
+        url, params = csv_data_route(
+            domain_for_testing["id"],
+            STATIC_PIM_INVENTORY,
+            0,
+            columns="x,y,dbh",
+        )
+        response = client.get(url, params=params)
+        assert response.status_code == 200
+
+        df = pd.read_csv(io.StringIO(response.text))
+        assert list(df.columns) == ["x", "y", "dbh"]
+
 
 class TestGetChmInventoryData:
     """Tests for CHM inventory data serialization.
@@ -319,9 +430,7 @@ class TestGetChmInventoryData:
         self, client, domain_for_testing, static_chm_inventory_in_firestore
     ):
         """Default split orientation serializes without pd.NA errors."""
-        url, params = data_route(
-            domain_for_testing["id"], STATIC_CHM_INVENTORY, 0, format="json"
-        )
+        url, params = data_route(domain_for_testing["id"], STATIC_CHM_INVENTORY, 0)
         response = client.get(url, params=params)
         assert response.status_code == 200
 
@@ -338,7 +447,6 @@ class TestGetChmInventoryData:
             domain_for_testing["id"],
             STATIC_CHM_INVENTORY,
             0,
-            format="json",
             json_orientation="records",
         )
         response = client.get(url, params=params)

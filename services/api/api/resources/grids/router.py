@@ -688,11 +688,20 @@ async def get_grid_data_json(
     )
 
 
+class BinaryResponse(Response):
+    """Response class carrying the binary media type, so the route documents
+    ``application/octet-stream`` alone rather than inheriting the default
+    ``application/json``.
+    """
+
+    media_type = "application/octet-stream"
+
+
 @router.get(
     "/{grid_id}/data/{band}/{chunk_index}/binary",
     status_code=status.HTTP_200_OK,
     summary="Get band data for a chunk (binary)",
-    responses={200: {"content": {"application/octet-stream": {}}}},
+    response_class=BinaryResponse,
 )
 async def get_grid_data_binary(
     request: Request,
@@ -804,9 +813,8 @@ async def get_grid_data_binary(
         }
         if fill_value is not None:
             headers["X-Data-Fill-Value"] = str(fill_value)
-        return Response(
+        return BinaryResponse(
             content=raw,
-            media_type="application/octet-stream",
             headers=headers,
         )
 
@@ -817,9 +825,8 @@ async def get_grid_data_binary(
         "Dense binary grid data",
         "Request array_format=sparse or a smaller chunk.",
     )
-    return Response(
+    return BinaryResponse(
         content=raw,
-        media_type="application/octet-stream",
         headers={
             "X-Data-Shape": shape_header,
             "X-Data-Dtype": str(data.dtype),

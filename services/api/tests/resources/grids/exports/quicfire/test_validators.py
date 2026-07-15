@@ -9,6 +9,7 @@ live in `test_router.py`.
 """
 
 import pytest
+from api.resources.grids.exports.alignment import domain_crs_string
 from api.resources.grids.exports.quicfire.schema import (
     FieldSource,
     QuicfireExportRequest,
@@ -21,7 +22,6 @@ from api.resources.grids.exports.quicfire.validators import (
     _check_cell_count_cap,
     _check_role_alignment,
     _check_role_contract,
-    _domain_crs_string,
     _iter_roles,
     _make_source,
 )
@@ -159,15 +159,15 @@ class TestIterRoles:
 class TestDomainCrsString:
     def test_from_geojson_dict(self):
         assert (
-            _domain_crs_string({"crs": {"type": "name", "properties": {"name": _CRS}}})
+            domain_crs_string({"crs": {"type": "name", "properties": {"name": _CRS}}})
             == _CRS
         )
 
     def test_from_string(self):
-        assert _domain_crs_string({"crs": _CRS}) == _CRS
+        assert domain_crs_string({"crs": _CRS}) == _CRS
 
     def test_missing(self):
-        assert _domain_crs_string({}) is None
+        assert domain_crs_string({}) is None
 
 
 class TestCheckRoleContract:

@@ -15,7 +15,6 @@ from api.resources.inventories.schema import (
     CreateInventoryRequestBase,
     FIASpeciesGroupShare,
     Inventory,
-    InventoryDataFormat,
     InventoryDataMetadata,
     InventoryDataResponse,
     InventoryJsonOrientation,
@@ -313,22 +312,6 @@ class TestCreatePimInventoryRequest:
     def test_seed_range(self):
         request = CreatePimInventoryRequest(source_pim_grid_id="grid123")
         assert 1 <= request.seed <= 1_000_000_000
-
-
-class TestInventoryDataFormat:
-    def test_json_value(self):
-        assert InventoryDataFormat.json == "json"
-
-    def test_csv_value(self):
-        assert InventoryDataFormat.csv == "csv"
-
-    def test_from_string(self):
-        assert InventoryDataFormat("json") == InventoryDataFormat.json
-        assert InventoryDataFormat("csv") == InventoryDataFormat.csv
-
-    def test_invalid_raises(self):
-        with pytest.raises(ValueError):
-            InventoryDataFormat("parquet")
 
 
 class TestInventoryJsonOrientation:

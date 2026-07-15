@@ -42,7 +42,6 @@ from api.resources.inventories.modifications.router import (
 from api.resources.inventories.schema import (
     DuplicateInventoryRequest,
     Inventory,
-    InventoryDataFormat,
     InventoryDataMetadata,
     InventoryDataResponse,
     InventoryJsonOrientation,
@@ -661,59 +660,15 @@ async def get_inventory_data_metadata(
     )
 
 
-@router.get(
-    "/{inventory_id}/data/{partition_index}",
-    response_model=InventoryDataResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Get inventory data for a partition",
-)
-async def get_inventory_data(
+async def _read_inventory_partition(
     request: Request,
     domain: VerifiedDomain,
     inventory_id: str,
-    partition_index: int = Path(..., ge=0, description="Zero-based partition index."),
-    data_format: InventoryDataFormat = Query(
-        InventoryDataFormat.json, alias="format", description="Response format."
-    ),
-    json_orientation: InventoryJsonOrientation = Query(
-        InventoryJsonOrientation.split,
-        description="JSON orientation. Ignored for CSV.",
-    ),
-    columns: str | None = Query(None, description="Comma-separated column subset."),
+    partition_index: int,
+    columns: str | None,
 ):
-    """
-    # Get Inventory Data
-
-    Reads a single partition of a completed inventory's Parquet data on GCS.
-    Returns the tree records as JSON (split or records orientation) or CSV.
-
-    ## Path Parameters
-
-    - **domain_id**: The domain the inventory belongs to.
-    - **inventory_id**: The unique identifier of the inventory.
-    - **partition_index**: Zero-based partition index.
-
-    ## Query Parameters
-
-    - **format**: Response format: `json` (default) or `csv`.
-    - **json_orientation**: JSON layout: `split` (default, compact) or
-      `records` (self-describing). Ignored for CSV.
-    - **columns**: Comma-separated column subset (default: all).
-
-    ## Response
-
-    **JSON split** (default): column names + 2D array of values.
-
-    **JSON records**: list of row objects.
-
-    **CSV**: `text/csv` body with metadata in response headers
-    `X-Partition-Index`, `X-Row-Count`, `X-Total-Rows`, `X-Num-Partitions`.
-
-    ## Error Responses
-
-    - **404 Not Found**: Inventory does not exist or user does not have access.
-    - **422 Unprocessable Entity**: Inventory not completed, partition index
-      out of range, invalid column names, or metadata not available.
+    """Authorize, validate, and read one partition of an inventory's Parquet
+    data. Returns the partition's dataframe alongside the inventory metadata.
     """
     _, snapshot = await get_document_async(
         COLLECTION,
@@ -757,22 +712,62 @@ async def get_inventory_data(
 
     partition = meta.partitions[partition_index]
     df = await read_partition(inventory_id, partition.path, columns=requested_columns)
+    return df, meta
 
-    col_names = list(df.columns)
 
-    if data_format == InventoryDataFormat.csv:
-        buf = io.StringIO()
-        df.to_csv(buf, index=False)
-        return Response(
-            content=buf.getvalue(),
-            media_type="text/csv",
-            headers={
-                "X-Partition-Index": str(partition_index),
-                "X-Row-Count": str(len(df)),
-                "X-Total-Rows": str(meta.total_rows),
-                "X-Num-Partitions": str(meta.num_partitions),
-            },
-        )
+@router.get(
+    "/{inventory_id}/data/{partition_index}",
+    response_model=InventoryDataResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get inventory data for a partition (JSON)",
+)
+async def get_inventory_data_json(
+    request: Request,
+    domain: VerifiedDomain,
+    inventory_id: str,
+    partition_index: int = Path(..., ge=0, description="Zero-based partition index."),
+    json_orientation: InventoryJsonOrientation = Query(
+        InventoryJsonOrientation.split,
+        description="JSON orientation.",
+    ),
+    columns: str | None = Query(None, description="Comma-separated column subset."),
+):
+    """
+    # Get Inventory Data (JSON)
+
+    Reads a single partition of a completed inventory's Parquet data on GCS and
+    returns the tree records as a JSON payload — either a compact columnar
+    layout or self-describing row objects, selected via `json_orientation`.
+
+    For a CSV body, use the CSV variant of this endpoint (append `/csv`).
+
+    ## Path Parameters
+
+    - **domain_id**: The domain the inventory belongs to.
+    - **inventory_id**: The unique identifier of the inventory.
+    - **partition_index**: Zero-based partition index.
+
+    ## Query Parameters
+
+    - **json_orientation**: JSON layout: `split` (default, compact) or
+      `records` (self-describing).
+    - **columns**: Comma-separated column subset (default: all).
+
+    ## Response
+
+    **split** (default): column names + 2D array of values.
+
+    **records**: list of row objects.
+
+    ## Error Responses
+
+    - **404 Not Found**: Inventory does not exist or user does not have access.
+    - **422 Unprocessable Entity**: Inventory not completed, partition index
+      out of range, invalid column names, or metadata not available.
+    """
+    df, _ = await _read_inventory_partition(
+        request, domain, inventory_id, partition_index, columns
+    )
 
     if json_orientation == InventoryJsonOrientation.records:
         data = df.to_dict(orient="records")
@@ -782,8 +777,81 @@ async def get_inventory_data(
     return InventoryDataResponse(
         partition=partition_index,
         num_rows=len(df),
-        columns=col_names,
+        columns=list(df.columns),
         data=data,
+    )
+
+
+class CsvResponse(Response):
+    """Response class carrying the CSV media type, so the route documents
+    ``text/csv`` alone rather than inheriting the default ``application/json``.
+    """
+
+    media_type = "text/csv"
+
+
+@router.get(
+    "/{inventory_id}/data/{partition_index}/csv",
+    status_code=status.HTTP_200_OK,
+    summary="Get inventory data for a partition (CSV)",
+    response_class=CsvResponse,
+)
+async def get_inventory_data_csv(
+    request: Request,
+    domain: VerifiedDomain,
+    inventory_id: str,
+    partition_index: int = Path(..., ge=0, description="Zero-based partition index."),
+    columns: str | None = Query(None, description="Comma-separated column subset."),
+):
+    """
+    # Get Inventory Data (CSV)
+
+    Reads a single partition of a completed inventory's Parquet data on GCS and
+    returns the tree records as a `text/csv` body with a header row. Use this
+    when you want to hand the response straight to a CSV reader.
+
+    For a structured JSON payload, use the JSON variant of this endpoint (drop
+    the trailing `/csv`).
+
+    ## Path Parameters
+
+    - **domain_id**: The domain the inventory belongs to.
+    - **inventory_id**: The unique identifier of the inventory.
+    - **partition_index**: Zero-based partition index.
+
+    ## Query Parameters
+
+    - **columns**: Comma-separated column subset (default: all).
+
+    ## Response
+
+    A `text/csv` body, with partition metadata in these response headers:
+
+    - `X-Partition-Index`: the partition this body came from.
+    - `X-Row-Count`: rows in this partition.
+    - `X-Total-Rows`: rows across all partitions of the inventory.
+    - `X-Num-Partitions`: total number of partitions.
+
+    ## Error Responses
+
+    - **404 Not Found**: Inventory does not exist or user does not have access.
+    - **422 Unprocessable Entity**: Inventory not completed, partition index
+      out of range, invalid column names, or metadata not available.
+    """
+    df, meta = await _read_inventory_partition(
+        request, domain, inventory_id, partition_index, columns
+    )
+
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    return CsvResponse(
+        content=buf.getvalue(),
+        headers={
+            "X-Partition-Index": str(partition_index),
+            "X-Row-Count": str(len(df)),
+            "X-Total-Rows": str(meta.total_rows),
+            "X-Num-Partitions": str(meta.num_partitions),
+        },
     )
 
 

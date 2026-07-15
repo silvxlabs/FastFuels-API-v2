@@ -126,6 +126,33 @@ app = FastAPI(
     separate_input_output_schemas=False,
 )
 
+# Every response header the API sets that a browser client needs to read. Only
+# CORS-safelisted headers reach cross-origin JS otherwise, so anything added to
+# a response — and documented for clients — must be listed here too.
+EXPOSE_HEADERS = [
+    "Content-Disposition",
+    "Transfer-Encoding",
+    "X-Data-Shape",
+    "X-Data-Dtype",
+    "X-Data-Order",
+    "X-Data-Format",
+    "X-Data-Fill-Value",
+    "X-Data-NNZ",
+    "X-Data-Index-Dtype",
+    "X-Data-Value-Dtype",
+    "X-Data-Offset",
+    "X-Data-Transform",
+    "X-Data-Z-Origin",
+    "X-Data-Z-Resolution",
+    "X-Partition-Index",
+    "X-Row-Count",
+    "X-Total-Rows",
+    "X-Num-Partitions",
+    "RateLimit",
+    "RateLimit-Policy",
+    "Retry-After",
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS.get(DEPLOYMENT_ENV, CORS_ORIGINS["local"]),
@@ -133,24 +160,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=[
-        "Content-Disposition",
-        "Transfer-Encoding",
-        "X-Data-Shape",
-        "X-Data-Dtype",
-        "X-Data-Order",
-        "X-Data-Format",
-        "X-Data-Fill-Value",
-        "X-Data-NNZ",
-        "X-Data-Index-Dtype",
-        "X-Data-Value-Dtype",
-        "X-Partition-Index",
-        "X-Row-Count",
-        "X-Total-Rows",
-        "X-Num-Partitions",
-        "RateLimit",
-        "RateLimit-Policy",
-    ],
+    expose_headers=EXPOSE_HEADERS,
 )
 
 api_router = APIRouter()

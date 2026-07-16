@@ -73,33 +73,34 @@ class TestSplitBand:
 
 
 class TestRemapSpecies:
-    def test_rewrites_codes_to_representatives(self):
-        # Two California live oaks that share a bucket.
+    def test_usable_codes_pass_through_unchanged(self):
+        # Two live oaks DUET models directly keep their own identities.
         spcd = np.array([[0, 801], [805, 0]], dtype=np.int32)
         out = handler._remap_species(spcd, "g1")
-        assert set(np.unique(out)) == {0, 314}
+        assert set(np.unique(out)) == {0, 801, 805}
 
     def test_leaves_fill_value_alone(self):
+        # 0 is the nodata marker (empty voxel), not a species — untouched.
         spcd = np.zeros((3, 3), dtype=np.int32)
         spcd[1, 1] = 122
         out = handler._remap_species(spcd, "g1")
         assert out[0, 0] == 0
         assert (out == 0).sum() == 8
 
-    def test_rejects_species_duet_would_silently_drop(self):
-        # Great Basin bristlecone pine. Without this guard DUET returns 0 and
-        # the grid is quietly all grass.
-        spcd = np.array([[122, 142]], dtype=np.int32)
-        with pytest.raises(ProcessingError) as exc:
-            handler._remap_species(spcd, "g1")
-        assert exc.value.code == "UNSUPPORTED_SPECIES"
-        assert "142" in exc.value.message
+    def test_unlisted_species_is_substituted_not_rejected(self):
+        # Four-leaf pinyon isn't in DUET's table; it becomes a Pinus surrogate
+        # rather than failing the job.
+        spcd = np.array([[122, 138]], dtype=np.int32)
+        out = handler._remap_species(spcd, "g1")
+        assert 138 not in set(np.unique(out))  # substituted away
+        assert 122 in set(np.unique(out))  # usable code kept
 
-    def test_rejects_species_duet_tools_would_drop_at_import(self):
+    def test_non_species_code_stops_the_run(self):
+        # 1000 is "hardwoods general", not a FIA species — cannot be placed.
         spcd = np.array([[122, 1000]], dtype=np.int32)
         with pytest.raises(ProcessingError) as exc:
             handler._remap_species(spcd, "g1")
-        assert exc.value.code == "UNSUPPORTED_SPECIES"
+        assert exc.value.code == "UNRESOLVABLE_SPECIES"
         assert "1000" in exc.value.message
 
     def test_rejects_empty_species_band(self):

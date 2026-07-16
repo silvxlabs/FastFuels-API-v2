@@ -9,6 +9,10 @@ dependencies = [
     "lib[firestore,gcs,zarr,raster]",
     "fastfuels-core>=0.12.0",
     "pyarrow>=18.0.0",
+    # Pinned, not floored: 1.0.1 is young and we carry a local shim around a
+    # crash in its import path (see handlers/duet.py::_import_run). Do NOT add
+    # the [landfire] extra — it pulls rasterio and caps Python at <3.12.
+    "duet-tools==1.0.1",
 ]
 
 [project.optional-dependencies]

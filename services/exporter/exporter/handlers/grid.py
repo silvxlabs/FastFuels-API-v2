@@ -177,7 +177,11 @@ def export_zarr(
     tmp_dir = tempfile.mkdtemp()
     try:
         zarr_dir = os.path.join(tmp_dir, "export.zarr")
-        ds.to_zarr(zarr_dir)
+        # The format version is part of the export contract: users open this
+        # store with their own tooling, and zarr-python 2.x cannot read v3.
+        # Pinned rather than left to the library default so a future default
+        # flip can't silently change what users receive.
+        ds.to_zarr(zarr_dir, zarr_format=3)
 
         progress("Zipping Zarr...", 85)
         zip_path = os.path.join(tmp_dir, "export")

@@ -115,6 +115,25 @@ def test_create_blue_mtn_chm_inventory(
 
 
 @pytest.mark.dependency()
+def test_create_blue_mtn_landfire_fbfm13(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create LANDFIRE FBFM13 fixture at 2 m, Domain-anchored.
+
+    Exercises the inline `alignment.target="domain", resolution=2` path on
+    the LANDFIRE FBFM13 handler -- no separate resample step.
+    """
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/fbfm13/landfire",
+        body={
+            "alignment": {"target": "domain", "resolution": 2, "method": "nearest"},
+        },
+        static_name="static-test-blue-mtn-landfire-fbfm13",
+    )
+
+@pytest.mark.dependency()
 def test_create_blue_mtn_landfire_fbfm40(
     create_static_fixture, client, blue_mountain_domain
 ):

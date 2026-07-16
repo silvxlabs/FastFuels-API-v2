@@ -9,12 +9,14 @@ These are pure unit tests with no external dependencies.
 import pytest
 from api.resources.grids.fbfm40.schema import (
     FBFM40_BAND,
-    NB_CODE_MAP,
     CreateLandfireFbfm40Request,
     LandfireFbfm40Source,
+)
+from api.resources.grids.providers.landfire import (
+    NB_CODE_MAP,
+    LandfireSource,
     NonBurnableFuelModel,
 )
-from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 

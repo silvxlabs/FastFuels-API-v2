@@ -1,0 +1,106 @@
+"""
+Example request bodies for FBFM13 endpoints.
+
+These examples are used in:
+1. OpenAPI/Swagger documentation - Users see these as example payloads
+2. Integration tests - Each example is tested to ensure documentation stays accurate
+
+domain_id comes from the URL path parameter, not the request body.
+"""
+
+EXAMPLE_FBFM13_MINIMAL = {}
+
+EXAMPLE_FBFM13_WITH_METADATA = {
+    "name": "FBFM13 fuel model codes",
+    "description": "Baseline fuel model codes for scenario comparison",
+    "tags": ["baseline", "surface-fuel"],
+    "version": "2024",
+}
+
+EXAMPLE_FBFM13_REMOVE_NON_BURNABLE = {
+    "name": "FBFM13 with non-burnable removal",
+    "remove_non_burnable": ["NB1", "NB2", "NB8", "NB9"],
+}
+
+EXAMPLE_FBFM13_WITH_BUFFER = {
+    "name": "FBFM13 with buffer",
+    "extent_buffer_cells": 8,
+}
+
+EXAMPLE_FBFM13_DOMAIN_2M = {
+    "name": "FBFM13 at 2m on domain origin",
+    "alignment": {"target": "domain", "resolution": 2.0, "method": "mode"},
+}
+
+EXAMPLE_FBFM13_NATIVE = {
+    "name": "FBFM13 at native source pixel anchor",
+    "alignment": {"target": "native"},
+}
+
+CREATE_LANDFIRE_FBFM13_OPENAPI_EXAMPLES = {
+    "minimal": {
+        "value": EXAMPLE_FBFM13_MINIMAL,
+        "summary": "Minimal request",
+        "description": (
+            "Creates a grid with default settings. Returns FBFM13 fuel model codes "
+            "at 30m resolution. Use /grids/lookup/fbfm13 to convert codes to "
+            "fuel parameters."
+        ),
+    },
+    "with_metadata": {
+        "value": EXAMPLE_FBFM13_WITH_METADATA,
+        "summary": "With name and tags",
+        "description": (
+            "Creates a named grid with tags for organization. Useful when "
+            "maintaining multiple grids for scenario comparison."
+        ),
+    },
+    "remove_non_burnable": {
+        "value": EXAMPLE_FBFM13_REMOVE_NON_BURNABLE,
+        "summary": "Remove non-burnable blocks",
+        "description": (
+            "Removes coarse 30m-resolution non-burnable blocks (urban, snow/ice, "
+            "water, bare ground) by replacing them with the most frequent "
+            "neighboring burnable fuel model. This clears the way for masking "
+            "in high-resolution 1-2m road, water, and building features from "
+            "sources such as OpenStreetMap."
+        ),
+    },
+    "with_buffer": {
+        "value": EXAMPLE_FBFM13_WITH_BUFFER,
+        "summary": "With output buffer",
+        "description": (
+            "Includes 8 result-grid cells of buffer beyond the domain extent. "
+            "Useful when the grid will later be resampled, reprojected, or "
+            "processed by focal filters / derivative calculations that are "
+            "sensitive to edges."
+        ),
+    },
+    "domain_aligned_2m": {
+        "value": EXAMPLE_FBFM13_DOMAIN_2M,
+        "summary": "2m output anchored to the domain origin",
+        "description": (
+            "Reprojects the 30m source FBFM13 to a 2m grid anchored at the "
+            "domain origin using mode aggregation. Composes with other 2m "
+            "domain-anchored grids."
+        ),
+    },
+    "native_anchor": {
+        "value": EXAMPLE_FBFM13_NATIVE,
+        "summary": "Preserve source pixel anchor",
+        "description": (
+            "Disables the default domain anchor. Output preserves the "
+            "source raster's pixel grid; will not compose with "
+            "domain-anchored grids without further alignment."
+        ),
+    },
+}
+
+ALL_FBFM13_EXAMPLE_VALUES = [
+    ("minimal", EXAMPLE_FBFM13_MINIMAL),
+    ("with_metadata", EXAMPLE_FBFM13_WITH_METADATA),
+    ("remove_non_burnable", EXAMPLE_FBFM13_REMOVE_NON_BURNABLE),
+    ("with_buffer", EXAMPLE_FBFM13_WITH_BUFFER),
+    ("domain_aligned_2m", EXAMPLE_FBFM13_DOMAIN_2M),
+    ("native_anchor", EXAMPLE_FBFM13_NATIVE),
+]

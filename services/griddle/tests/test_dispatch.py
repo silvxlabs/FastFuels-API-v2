@@ -37,6 +37,56 @@ class TestHandleLandfire:
         assert exc_info.value.code == "UNKNOWN_PRODUCT"
         assert "unknown_product" in exc_info.value.message
 
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    def test_routes_fbfm13_to_handler(self, mock_fetch):
+        """handle_landfire routes fbfm13 product to fetch_fbfm13."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        source = {"product": "fbfm13", "version": "2023"}
+
+        result = handle_landfire(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2023",
+            remove_non_burnable=None,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+        assert result == mock_result
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    def test_fbfm13_default_version(self, mock_fetch):
+        """handle_landfire uses 2024 as default version for fbfm13."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        source = {"product": "fbfm13"}  # No version specified
+
+        handle_landfire(mock_gdf, source, progress)
+
+        _, call_kwargs = mock_fetch.call_args
+        assert call_kwargs == {} or mock_fetch.call_args[0][1] == "2024"
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    def test_fbfm13_calls_progress_callback(self, mock_fetch):
+        """handle_landfire reports progress."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        source = {"product": "fbfm13", "version": "2023"}
+
+        handle_landfire(mock_gdf, source, progress)
+
+        progress.assert_called_once()
+        call_args = progress.call_args[0]
+        assert "LANDFIRE" in call_args[0]
+        assert "fbfm13" in call_args[0]
+
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
     def test_routes_fbfm40_to_handler(self, mock_fetch):
         """handle_landfire routes fbfm40 product to fetch_fbfm40."""

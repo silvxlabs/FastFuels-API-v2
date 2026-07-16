@@ -119,6 +119,51 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
     return ds
 
 
+def fetch_fbfm13(
+    roi: gpd.GeoDataFrame,
+    version: str = "2024",
+    remove_non_burnable: list[str] | None = None,
+    extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
+) -> xr.Dataset:
+    """Fetch LANDFIRE FBFM13 fuel model codes.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest
+        version: LANDFIRE version year (default "2024")
+        remove_non_burnable: List of non-burnable fuel model names to remove
+            (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
+            most frequent neighboring burnable fuel model via majority filter.
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+
+    Returns:
+        Dataset with a single "fbfm13" variable (int16 categorical codes,
+        1-13 plus non-burnable 91/92/93/98/99)
+    """
+    alignment = alignment or {"target": "domain"}
+    data = _fetch_landfire_raster(
+        roi,
+        "FBFM13",
+        version,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+        is_categorical=True,
+    )
+
+    if remove_non_burnable:
+        non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
+        filtered = _remove_non_burnable_blocks(data.values, non_burnable_keys)
+        data = data.copy(data=filtered)
+
+    return _to_dataset({"fbfm13": data})
+
+
 def fetch_fbfm40(
     roi: gpd.GeoDataFrame,
     version: str = "2024",
@@ -214,7 +259,7 @@ def _remove_non_burnable_blocks(grid: ndarray, non_burnable_keys: list[int]) -> 
     filter is applied iteratively until no targeted codes remain.
 
     Args:
-        grid: 2D array of LANDFIRE (FBFM40 or FCCS) fuel model codes
+        grid: 2D array of LANDFIRE (FBFM or FCCS) fuel model codes
         non_burnable_keys: Numeric codes to replace (e.g., [91, 93, 99])
 
     Returns:

@@ -1,0 +1,67 @@
+{
+    "bands": [
+        {
+            "description": "Scott & Burgan 40 fire behavior fuel model code (e.g. GR1, TL3, SH5). Convert to fuel parameters via /grids/lookup/fbfm40.",
+            "index": 0,
+            "key": "fbfm",
+            "name": "Scott & Burgan 40 Fuel Model",
+            "nodata": 32767,
+            "summary": {
+                "count": 1950,
+                "nodata_count": 0,
+                "type": "categorical",
+                "unique_count": 11
+            },
+            "type": "categorical",
+            "unit": null
+        }
+    ],
+    "chunks": {
+        "count": 1,
+        "count_by_axis": {
+            "x": 1,
+            "y": 1
+        },
+        "shape": [
+            512,
+            512
+        ]
+    },
+    "description": "",
+    "georeference": {
+        "crs": "EPSG:5070",
+        "shape": [
+            39,
+            50
+        ],
+        "transform": [
+            30.0,
+            0.0,
+            -1379265.0,
+            0.0,
+            -30.0,
+            2781015.0
+        ]
+    },
+    "modifications": [],
+    "name": "",
+    "progress": {
+        "message": "Complete",
+        "percent": 100
+    },
+    "source": {
+        "alignment": {
+            "method": null,
+            "resolution": null,
+            "target": "native"
+        },
+        "description": "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
+        "extent_buffer_cells": 0,
+        "name": "landfire",
+        "product": "fbfm40",
+        "remove_non_burnable": null,
+        "version": "2024"
+    },
+    "status": "completed",
+    "tags": []
+}

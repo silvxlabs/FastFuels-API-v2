@@ -1,0 +1,110 @@
+{
+    "bands": [
+        {
+            "description": "Height above sea level.",
+            "index": 0,
+            "key": "elevation",
+            "name": "Elevation",
+            "nodata": 32767,
+            "summary": {
+                "count": 1950,
+                "max": 1226.0,
+                "mean": 1041.9389743589743,
+                "min": 951.0,
+                "nodata_count": 0,
+                "std": 60.82424338669316,
+                "type": "continuous"
+            },
+            "type": "continuous",
+            "unit": "m"
+        },
+        {
+            "description": "Terrain slope (0-90 degrees).",
+            "index": 1,
+            "key": "slope",
+            "name": "Slope",
+            "nodata": 32767,
+            "summary": {
+                "count": 1950,
+                "max": 25.0,
+                "mean": 9.534871794871794,
+                "min": 0.0,
+                "nodata_count": 0,
+                "std": 5.383694695402689,
+                "type": "continuous"
+            },
+            "type": "continuous",
+            "unit": "deg"
+        },
+        {
+            "description": "Downslope compass direction, degrees clockwise from north (0-360).",
+            "index": 2,
+            "key": "aspect",
+            "name": "Aspect",
+            "nodata": 32767,
+            "summary": {
+                "count": 1950,
+                "max": 359.0,
+                "mean": 112.75128205128205,
+                "min": -1.0,
+                "nodata_count": 0,
+                "std": 120.77591110600056,
+                "type": "continuous"
+            },
+            "type": "continuous",
+            "unit": "deg"
+        }
+    ],
+    "chunks": {
+        "count": 1,
+        "count_by_axis": {
+            "x": 1,
+            "y": 1
+        },
+        "shape": [
+            512,
+            512
+        ]
+    },
+    "description": "",
+    "georeference": {
+        "crs": "EPSG:5070",
+        "shape": [
+            39,
+            50
+        ],
+        "transform": [
+            30.0,
+            0.0,
+            -1379265.0,
+            0.0,
+            -30.0,
+            2781015.0
+        ]
+    },
+    "modifications": [],
+    "name": "",
+    "progress": {
+        "message": "Complete",
+        "percent": 100
+    },
+    "source": {
+        "alignment": {
+            "method": null,
+            "resolution": null,
+            "target": "native"
+        },
+        "bands": [
+            "elevation",
+            "slope",
+            "aspect"
+        ],
+        "description": "LANDFIRE topographic data (elevation, slope, aspect)",
+        "extent_buffer_cells": 0,
+        "name": "landfire",
+        "product": "topography",
+        "version": "2020"
+    },
+    "status": "completed",
+    "tags": []
+}

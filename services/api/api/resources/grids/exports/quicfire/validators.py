@@ -13,7 +13,7 @@ helpers, each unit-testable without Firestore or the async runtime:
   lattice and `dz` from the alignment (domain target) or the reference grid +
   canopy (grid target); `nz` / `z_origin` always from the canopy.
 * `_check_role_alignment` — per role: CRS, cell size, integer-cell lattice
-  offset, horizontal coverage.
+  offset, horizontal coverage (shared `exports.alignment` checks).
 * `_check_3d_role_vertical` — per 3D role: `dz` / `nz` / `z_origin` match
   the fire grid's vertical (the exporter never resamples vertically).
 * `_check_cell_count_cap` — total cell count under the v1 cap.
@@ -22,11 +22,19 @@ helpers, each unit-testable without Firestore or the async runtime:
 Every helper raises `HTTPException(422)` on failure.
 """
 
-from math import ceil, isclose
+from math import isclose
 
 from fastapi import HTTPException, status
 
 from api.db.documents import get_document_async
+from api.resources.grids.exports.alignment import (
+    TOL as _TOL,
+)
+from api.resources.grids.exports.alignment import (
+    build_domain_lattice,
+    build_grid_lattice,
+    check_role_lattice_alignment,
+)
 from api.resources.grids.exports.quicfire.schema import (
     FieldSource,
     QUICFireExportAlignmentDomainTarget,
@@ -37,10 +45,8 @@ from api.resources.grids.utils import (
     validate_band_unit,
     validate_grid_dimensionality,
     validate_grid_has_band,
-    validate_grid_has_georeference,
 )
 from lib.config import GRIDS_COLLECTION
-from lib.crs import crs_equal
 
 # Per-role unit and dimensionality contract.
 _ROLE_CONTRACT: dict[str, tuple[int, str]] = {
@@ -53,9 +59,6 @@ _ROLE_CONTRACT: dict[str, tuple[int, str]] = {
     "surface_savr": (2, "1/m"),
     "topography": (2, "m"),
 }
-
-# 1 µm tolerance for transform-coefficient comparisons.
-_TOL = 1e-6
 
 # Cap matches v1.
 _MAX_CELLS = 50_000_000
@@ -79,14 +82,6 @@ def _iter_roles(
         )
         if source is not None
     ]
-
-
-def _domain_crs_string(domain: dict) -> str | None:
-    """Extract the EPSG-style CRS string from the Domain's GeoJSON CRS dict."""
-    crs = domain.get("crs")
-    if isinstance(crs, dict):
-        return crs.get("properties", {}).get("name")
-    return crs
 
 
 async def _load_all_grids(
@@ -145,105 +140,29 @@ def _build_fire_grid(
 
     if isinstance(request.alignment, QUICFireExportAlignmentDomainTarget):
         dz = float(request.alignment.dz)
-        dx = float(request.alignment.dx)
-        minx, miny, maxx, maxy = domain["bbox"]
-        nx = max(1, ceil((maxx - minx) / dx))
-        ny = max(1, ceil((maxy - miny) / dx))
-        fire_transform = [dx, 0.0, float(minx), 0.0, -dx, float(miny) + ny * dx]
-        fire_crs = _domain_crs_string(domain)
+        lattice = build_domain_lattice(domain, float(request.alignment.dx))
     else:
         assert alignment_grid_doc is not None, (
             "alignment_grid_doc is required when alignment.target='grid'"
         )
         dz = float(canopy_geo["z_resolution"])
-        validate_grid_has_georeference(alignment_grid_doc, request.alignment.grid_id)
-        ref = alignment_grid_doc["georeference"]
-        fire_transform = [float(c) for c in ref["transform"][:6]]
-        ny, nx = int(ref["shape"][-2]), int(ref["shape"][-1])
-        fire_crs = ref.get("crs")
-        dx = abs(fire_transform[0])
+        lattice = build_grid_lattice(alignment_grid_doc, request.alignment.grid_id)
 
-    return {
-        "nx": nx,
-        "ny": ny,
-        "nz": nz,
-        "dx": dx,
-        "dy": dx,
-        "dz": dz,
-        "transform": fire_transform,
-        "z_origin": z_origin,
-        "crs": fire_crs,
-    }
+    return lattice | {"nz": nz, "dz": dz, "z_origin": z_origin}
 
 
 def _check_role_alignment(
     grid_data: dict, src: FieldSource, role_name: str, fire_grid: dict
 ) -> None:
     """Per role: CRS, cell size, integer-cell lattice offset, coverage."""
-    geo = grid_data["georeference"]
-    gtransform = geo["transform"]
-    gcrs = geo.get("crs")
-    fire_crs = fire_grid["crs"]
-    dx = fire_grid["dx"]
-    fire_minx = fire_grid["transform"][2]
-    fire_maxy = fire_grid["transform"][5]
-    fire_maxx = fire_minx + fire_grid["nx"] * dx
-    fire_miny = fire_maxy - fire_grid["ny"] * dx
-
-    if not crs_equal(gcrs, fire_crs):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"QUIC-Fire export CRS mismatch: grid '{role_name}' ({src.grid_id}) "
-            f"is in {gcrs}, but this export builds the QUIC-Fire grid in "
-            f"{fire_crs}. All role grids must be in {fire_crs}; rebuild this "
-            f"grid in that CRS.",
-        )
-
-    gdx = abs(float(gtransform[0]))
-    gdy = abs(float(gtransform[4]))
-    if not isclose(gdx, dx, abs_tol=_TOL) or not isclose(gdy, dx, abs_tol=_TOL):
-        grid_res = f"{gdx}" if isclose(gdx, gdy, abs_tol=_TOL) else f"{gdx}x{gdy}"
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"QUIC-Fire export resolution mismatch: grid '{role_name}' "
-            f"({src.grid_id}) is {grid_res} m, but this export builds a "
-            f"{dx} m QUIC-Fire grid. To export at {gdx} m, add "
-            f'"alignment": {{"dx": {gdx}, "dy": {gdx}}} to your request; '
-            f"otherwise provide role grids built at {dx} m.",
-        )
-
-    offset_x = (float(gtransform[2]) - fire_minx) / dx
-    offset_y = (fire_maxy - float(gtransform[5])) / dx
-    if not isclose(offset_x, round(offset_x), abs_tol=_TOL) or not isclose(
-        offset_y, round(offset_y), abs_tol=_TOL
-    ):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"QUIC-Fire export lattice mismatch: grid '{role_name}' "
-            f"({src.grid_id}) is offset from the QUIC-Fire grid by a "
-            f"non-integer number of cells (x {offset_x:.3f}, y {offset_y:.3f}). "
-            f'Rebuild it domain-anchored (alignment.target="domain") or resample '
-            f"it onto the domain lattice so its origin lands on whole cells.",
-        )
-
-    gh, gw = int(geo["shape"][-2]), int(geo["shape"][-1])
-    gminx = float(gtransform[2])
-    gmaxy = float(gtransform[5])
-    gmaxx = gminx + gw * gdx
-    gminy = gmaxy - gh * gdy
-    if not (
-        gminx <= fire_minx + _TOL
-        and gminy <= fire_miny + _TOL
-        and gmaxx >= fire_maxx - _TOL
-        and gmaxy >= fire_maxy - _TOL
-    ):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"QUIC-Fire export coverage gap: grid '{role_name}' ({src.grid_id}) "
-            f"does not cover the full QUIC-Fire grid extent. Rebuild this grid "
-            f"over the whole domain (or with more buffer cells) so it spans the "
-            f"export area; resampling will not extend coverage.",
-        )
+    check_role_lattice_alignment(
+        grid_data,
+        src.grid_id,
+        role_name,
+        fire_grid,
+        export_label="QUIC-Fire",
+        resolution_hint='"alignment": {{"dx": {res}, "dy": {res}}}',
+    )
 
 
 def _check_3d_role_vertical(

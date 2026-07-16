@@ -1,0 +1,69 @@
+{
+    "description": "Integration test landscape export",
+    "domain_id": "test-domain",
+    "error": null,
+    "expiration_days": 1,
+    "expires_on": null,
+    "name": "Test Landscape Export",
+    "owner_id": "integration-test",
+    "progress": null,
+    "signed_url": null,
+    "source": {
+        "alignment": {
+            "grid_id": "PLACEHOLDER",
+            "target": "grid"
+        },
+        "aspect": {
+            "band": "aspect",
+            "grid_id": "PLACEHOLDER"
+        },
+        "canopy_base_height": {
+            "band": "cbh",
+            "grid_id": "PLACEHOLDER"
+        },
+        "canopy_bulk_density": {
+            "band": "cbd",
+            "grid_id": "PLACEHOLDER"
+        },
+        "canopy_cover": {
+            "band": "cc",
+            "grid_id": "PLACEHOLDER"
+        },
+        "canopy_height": {
+            "band": "chm",
+            "grid_id": "PLACEHOLDER"
+        },
+        "domain_id": "test-domain",
+        "elevation": {
+            "band": "elevation",
+            "grid_id": "PLACEHOLDER"
+        },
+        "fire_behavior_fuel_model": "fbfm40",
+        "fuel_model": {
+            "band": "fbfm",
+            "grid_id": "PLACEHOLDER"
+        },
+        "georeference": {
+            "crs": "EPSG:5070",
+            "shape": [
+                39,
+                50
+            ],
+            "transform": [
+                30.0,
+                0.0,
+                -1379265.0,
+                0.0,
+                -30.0,
+                2781015.0
+            ]
+        },
+        "name": "landscape",
+        "slope": {
+            "band": "slope",
+            "grid_id": "PLACEHOLDER"
+        }
+    },
+    "status": "pending",
+    "tags": []
+}

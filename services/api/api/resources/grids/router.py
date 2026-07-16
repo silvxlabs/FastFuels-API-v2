@@ -28,6 +28,9 @@ from api.resources.grids.cache import get_grid_array
 from api.resources.grids.canopy.router import router as canopy_router
 from api.resources.grids.compose.router import router as compose_router
 from api.resources.grids.duplicate.router import router as duplicate_router
+from api.resources.grids.exports.landscape.router import (
+    router as landscape_export_router,
+)
 from api.resources.grids.exports.quicfire.router import (
     router as quicfire_export_router,
 )
@@ -845,6 +848,11 @@ router.include_router(
     modifications_router,
     prefix="/{grid_id}/modifications",
     tags=["Grids - Modifications"],
+)
+router.include_router(
+    landscape_export_router,
+    prefix="/exports/landscape",
+    tags=["Grids - Exports"],
 )
 router.include_router(
     quicfire_export_router,

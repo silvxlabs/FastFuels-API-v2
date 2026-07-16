@@ -42,22 +42,12 @@ CREATE_DUET_OPENAPI_EXAMPLES = {
             ],
             "calibration": {
                 "fuel_load": {
-                    "grass": {
-                        "source": "values",
-                        "method": "meansd",
-                        "mean": 0.5,
-                        "sd": 0.25,
-                    },
-                    "litter": {
-                        "source": "values",
-                        "method": "maxmin",
-                        "max": 5.0,
-                        "min": 0.0,
-                    },
+                    "grass": {"method": "meansd", "mean": 0.5, "sd": 0.25},
+                    "litter": {"method": "maxmin", "max": 5.0, "min": 0.0},
                 },
                 "fuel_depth": {
-                    "grass": {"source": "values", "method": "constant", "value": 0.3},
-                    "litter": {"source": "values", "method": "constant", "value": 0.06},
+                    "grass": {"method": "constant", "value": 0.3},
+                    "litter": {"method": "constant", "value": 0.06},
                 },
             },
         },

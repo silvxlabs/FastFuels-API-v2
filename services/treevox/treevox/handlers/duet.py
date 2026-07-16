@@ -148,12 +148,20 @@ def _load_source_grid(source_grid_id: str) -> xr.Dataset:
 
 
 def _remap_species(spcd: np.ndarray, grid_id: str) -> np.ndarray:
-    """Rewrite species codes to the representatives DUET and duet-tools share.
+    """Resolve species codes to ones DUET and duet-tools both handle.
 
-    Rejects codes neither tool can handle rather than letting them through: DUET
-    ignores a code it does not know and still exits 0, so the failure would
-    otherwise surface as a grid that is quietly all grass. See
-    `treevox.duet_species` for both drops and their measurements.
+    Codes DUET models directly pass through unchanged; a code outside that set
+    is substituted for a same-genus (or, failing that, same softwood/hardwood)
+    surrogate so its litter is still modeled rather than silently dropped. See
+    `treevox.duet_species` for the resolution order.
+
+    Substitutions are logged, not silent: the surrogate's litter parameters
+    stand in for the original, which is a modeling choice worth being able to
+    see in the job logs. A code that is not a FIA species at all cannot be
+    placed and stops the run.
+
+    `spcd == 0` is the band's nodata marker (empty voxel), not a species, so it
+    is excluded before resolution.
     """
     present = {int(code) for code in np.unique(spcd) if code != 0}
     if not present:
@@ -166,31 +174,38 @@ def _remap_species(spcd: np.ndarray, grid_id: str) -> np.ndarray:
             ),
         )
 
-    unusable = duet_species.unmappable(present)
-    if unusable:
+    mapping, unresolved = duet_species.resolve_codes(present)
+    if unresolved:
         raise ProcessingError(
-            code="UNSUPPORTED_SPECIES",
+            code="UNRESOLVABLE_SPECIES",
             message=(
-                f"DUET cannot model FIA species code(s) {sorted(unusable)}. Their "
-                f"litter would be silently omitted, so the run was stopped instead."
+                f"Source grid contains code(s) {sorted(unresolved)} that are not "
+                f"recognized FIA species, so DUET cannot model them."
             ),
             suggestion=(
-                "Remove or reclassify these species in the source inventory, then "
-                "re-voxelize. DUET models 274 FIA species; the codes above are "
-                "outside its table or unclassifiable as coniferous/deciduous."
+                "These are not valid FIA species codes (a generic or placeholder "
+                "value, e.g. 1000). Correct them in the source inventory and "
+                "re-voxelize."
             ),
         )
 
-    mapping = duet_species.remap(present)
+    substituted = {orig: rep for orig, rep in mapping.items() if orig != rep}
     remapped = spcd.copy()
-    for original, representative in mapping.items():
-        if original != representative:
-            remapped[spcd == original] = representative
+    for original, surrogate in substituted.items():
+        remapped[spcd == original] = surrogate
+
     layers = len(set(mapping.values()))
-    logger.info(
-        f"Species: {len(present)} SPCD -> {layers} DUET litter layer(s)",
-        extra={"grid_id": grid_id},
-    )
+    if substituted:
+        logger.info(
+            f"Species: {len(present)} SPCD -> {layers} litter layer(s); "
+            f"substituted {len(substituted)} not in DUET's table: {substituted}",
+            extra={"grid_id": grid_id},
+        )
+    else:
+        logger.info(
+            f"Species: {len(present)} SPCD, all modeled directly",
+            extra={"grid_id": grid_id},
+        )
     return remapped
 
 

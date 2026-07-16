@@ -8,17 +8,15 @@ import pytest
 from api.resources.grids.duet.examples import CREATE_DUET_OPENAPI_EXAMPLES
 from api.resources.grids.duet.schema import (
     DUET_BAND_DEFS,
-    CalibrationMethod,
     CreateDuetRequest,
     DuetBand,
     DuetCalibration,
-    DuetFuelType,
+    DuetConstantCalibrationTarget,
+    DuetMaxMinCalibrationTarget,
+    DuetMeanSdCalibrationTarget,
+    DuetParameterCalibration,
     DuetSource,
-    ParameterCalibration,
-    ValuesTarget,
     build_duet_bands,
-    duet_fuel_type,
-    duet_parameter,
 )
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
@@ -55,112 +53,93 @@ class TestDuetBandDefs:
         assert [b.index for b in bands] == [0, 1]
 
 
-class TestBandDecomposition:
-    @pytest.mark.parametrize(
-        "band,parameter,fuel_type",
-        [
-            (DuetBand.fuel_load_grass, "fuel_load", DuetFuelType.grass),
-            (DuetBand.fuel_load_litter, "fuel_load", DuetFuelType.litter),
-            (
-                DuetBand.fuel_load_litter_coniferous,
-                "fuel_load",
-                DuetFuelType.coniferous,
-            ),
-            (
-                DuetBand.fuel_depth_litter_deciduous,
-                "fuel_depth",
-                DuetFuelType.deciduous,
-            ),
-            (DuetBand.fuel_moisture_total, "fuel_moisture", DuetFuelType.total),
-        ],
-    )
-    def test_band_splits_into_parameter_and_fuel_type(self, band, parameter, fuel_type):
-        assert duet_parameter(band) == parameter
-        assert duet_fuel_type(band) == fuel_type
-
-
-class TestValuesTarget:
+class TestCalibrationTargets:
     def test_maxmin_defaults_min_to_zero(self):
-        target = ValuesTarget(method=CalibrationMethod.maxmin, max=5.0)
-        assert target.min == 0.0
+        assert DuetMaxMinCalibrationTarget(max=5.0).min == 0.0
 
     def test_meansd(self):
-        target = ValuesTarget(method="meansd", mean=0.5, sd=0.25)
+        target = DuetMeanSdCalibrationTarget(mean=0.5, sd=0.25)
         assert (target.mean, target.sd) == (0.5, 0.25)
 
     def test_constant(self):
-        assert ValuesTarget(method="constant", value=0.03).value == 0.03
+        assert DuetConstantCalibrationTarget(value=0.03).value == 0.03
 
     @pytest.mark.parametrize(
-        "kwargs,missing",
+        "model,kwargs,missing",
         [
-            ({"method": "maxmin"}, "max"),
-            ({"method": "meansd", "mean": 1.0}, "sd"),
-            ({"method": "meansd", "sd": 1.0}, "mean"),
-            ({"method": "constant"}, "value"),
+            (DuetMaxMinCalibrationTarget, {}, "max"),
+            (DuetMeanSdCalibrationTarget, {"mean": 1.0}, "sd"),
+            (DuetMeanSdCalibrationTarget, {"sd": 1.0}, "mean"),
+            (DuetConstantCalibrationTarget, {}, "value"),
         ],
     )
-    def test_missing_field_for_method_is_rejected(self, kwargs, missing):
+    def test_missing_field_for_method_is_rejected(self, model, kwargs, missing):
         with pytest.raises(ValidationError, match=missing):
-            ValuesTarget(**kwargs)
+            model(**kwargs)
 
     @pytest.mark.parametrize(
-        "kwargs",
+        "model,kwargs",
         [
-            {"method": "maxmin", "max": 5.0, "mean": 1.0},
-            {"method": "meansd", "mean": 1.0, "sd": 1.0, "value": 2.0},
-            {"method": "constant", "value": 1.0, "max": 5.0},
+            (DuetMaxMinCalibrationTarget, {"max": 5.0, "mean": 1.0}),
+            (DuetMeanSdCalibrationTarget, {"mean": 1.0, "sd": 1.0, "value": 2.0}),
+            (DuetConstantCalibrationTarget, {"value": 1.0, "max": 5.0}),
         ],
     )
-    def test_field_from_another_method_is_rejected_not_ignored(self, kwargs):
-        with pytest.raises(ValidationError, match="does not use"):
-            ValuesTarget(**kwargs)
+    def test_field_from_another_method_is_rejected_not_ignored(self, model, kwargs):
+        # extra="forbid" refuses fields belonging to a different method.
+        with pytest.raises(ValidationError, match="not permitted"):
+            model(**kwargs)
 
     def test_max_below_min_is_rejected(self):
         with pytest.raises(ValidationError, match="greater than or equal to min"):
-            ValuesTarget(method="maxmin", max=1.0, min=5.0)
+            DuetMaxMinCalibrationTarget(max=1.0, min=5.0)
 
     def test_negative_target_is_rejected(self):
         with pytest.raises(ValidationError):
-            ValuesTarget(method="constant", value=-1.0)
+            DuetConstantCalibrationTarget(value=-1.0)
 
-    def test_unknown_field_is_rejected(self):
-        with pytest.raises(ValidationError):
-            ValuesTarget(method="maxmin", max=5.0, bogus=1)
+    def test_method_selects_the_right_model(self):
+        # The discriminator routes a plain dict to the matching target model.
+        calibration = DuetParameterCalibration(
+            grass={"method": "meansd", "mean": 0.5, "sd": 0.25},
+            litter={"method": "maxmin", "max": 5.0},
+        )
+        assert isinstance(calibration.grass, DuetMeanSdCalibrationTarget)
+        assert isinstance(calibration.litter, DuetMaxMinCalibrationTarget)
 
 
-class TestParameterCalibration:
+class TestDuetParameterCalibration:
     def test_per_fuel_type_targets(self):
-        calibration = ParameterCalibration(
-            grass={"source": "values", "method": "constant", "value": 1.0},
-            litter={"source": "values", "method": "maxmin", "max": 5.0},
+        calibration = DuetParameterCalibration(
+            grass={"method": "constant", "value": 1.0},
+            litter={"method": "maxmin", "max": 5.0},
         )
         assert calibration.grass.value == 1.0
         assert calibration.litter.max == 5.0
 
     def test_requires_at_least_one_target(self):
         with pytest.raises(ValidationError, match="At least one fuel type"):
-            ParameterCalibration()
+            DuetParameterCalibration()
 
     def test_all_is_exclusive(self):
         with pytest.raises(ValidationError, match="cannot be combined"):
-            ParameterCalibration(
-                all={"source": "values", "method": "constant", "value": 1.0},
-                grass={"source": "values", "method": "constant", "value": 1.0},
+            DuetParameterCalibration(
+                all={"method": "constant", "value": 1.0},
+                grass={"method": "constant", "value": 1.0},
             )
 
     @pytest.mark.parametrize("fuel_type", ["coniferous", "deciduous"])
     def test_litter_cannot_be_combined_with_its_parts(self, fuel_type):
         with pytest.raises(ValidationError, match="already covers"):
-            ParameterCalibration(
-                litter={"source": "values", "method": "constant", "value": 1.0},
-                **{fuel_type: {"source": "values", "method": "constant", "value": 1.0}},
+            DuetParameterCalibration(
+                litter={"method": "constant", "value": 1.0},
+                **{fuel_type: {"method": "constant", "value": 1.0}},
             )
 
     def test_coniferous_and_deciduous_may_be_set_together(self):
-        calibration = ParameterCalibration(
-            coniferous={"source": "values", "method": "constant", "value": 1.0},
-            deciduous={"source": "values", "method": "constant", "value": 2.0},
+        calibration = DuetParameterCalibration(
+            coniferous={"method": "constant", "value": 1.0},
+            deciduous={"method": "constant", "value": 2.0},
         )
         assert calibration.coniferous.value == 1.0
         assert calibration.deciduous.value == 2.0
@@ -173,9 +152,7 @@ class TestDuetCalibration:
 
     def test_parameters_are_independent(self):
         calibration = DuetCalibration(
-            fuel_load={
-                "grass": {"source": "values", "method": "constant", "value": 1.0}
-            }
+            fuel_load={"grass": {"method": "constant", "value": 1.0}}
         )
         assert calibration.fuel_depth is None
         assert calibration.fuel_moisture is None
@@ -241,13 +218,7 @@ class TestCreateDuetRequest:
                 years_since_burn=5,
                 bands=[DuetBand.fuel_load_grass],
                 calibration={
-                    "fuel_depth": {
-                        "grass": {
-                            "source": "values",
-                            "method": "constant",
-                            "value": 0.1,
-                        }
-                    }
+                    "fuel_depth": {"grass": {"method": "constant", "value": 0.1}}
                 },
             )
 
@@ -257,17 +228,8 @@ class TestCreateDuetRequest:
             years_since_burn=5,
             bands=[DuetBand.fuel_load_grass, DuetBand.fuel_depth_grass],
             calibration={
-                "fuel_load": {
-                    "grass": {
-                        "source": "values",
-                        "method": "meansd",
-                        "mean": 0.5,
-                        "sd": 0.25,
-                    }
-                },
-                "fuel_depth": {
-                    "grass": {"source": "values", "method": "constant", "value": 0.3}
-                },
+                "fuel_load": {"grass": {"method": "meansd", "mean": 0.5, "sd": 0.25}},
+                "fuel_depth": {"grass": {"method": "constant", "value": 0.3}},
             },
         )
         assert body.calibration.fuel_load.grass.mean == 0.5
@@ -299,23 +261,14 @@ class TestDuetSource:
             wind_direction=270,
             wind_variability=30,
             bands=[DuetBand.fuel_load_grass],
-            calibration={
-                "fuel_load": {
-                    "grass": {"source": "values", "method": "maxmin", "max": 5.0}
-                }
-            },
+            calibration={"fuel_load": {"grass": {"method": "maxmin", "max": 5.0}}},
         )
         dumped = source.model_dump(mode="json", exclude_none=True)
         assert dumped["bands"] == ["fuel_load.grass"]
         target = dumped["calibration"]["fuel_load"]["grass"]
-        # exclude_none drops the fields the method does not use, so the handler
-        # reads only what applies.
-        assert target == {
-            "source": "values",
-            "method": "maxmin",
-            "max": 5.0,
-            "min": 0.0,
-        }
+        # The discriminated target model carries only its own method's fields, so
+        # the handler reads exactly what applies (min defaults to 0.0).
+        assert target == {"method": "maxmin", "max": 5.0, "min": 0.0}
         assert DuetSource(**dumped) == source
 
 

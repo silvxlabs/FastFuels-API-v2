@@ -133,6 +133,7 @@ def test_create_blue_mtn_landfire_fbfm13(
         static_name="static-test-blue-mtn-landfire-fbfm13",
     )
 
+
 @pytest.mark.dependency()
 def test_create_blue_mtn_landfire_fbfm40(
     create_static_fixture, client, blue_mountain_domain

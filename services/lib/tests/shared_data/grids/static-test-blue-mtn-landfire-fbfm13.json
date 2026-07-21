@@ -1,0 +1,69 @@
+{
+  "bands": [
+    {
+      "description": "Anderson 13 fire behavior fuel model code (1-13). Convert to fuel parameters via /grids/lookup/fbfm13.",
+      "index": 0,
+      "key": "fbfm13",
+      "name": "Anderson 13 Fuel Model",
+      "nodata": 32767,
+      "summary": {
+        "count": 289068,
+        "nodata_count": 0,
+        "type": "categorical",
+        "unique_count": 6
+      },
+      "type": "categorical",
+      "unit": null
+    }
+  ],
+  "checksum": "57ed41b1edb04a43b0d07e4630fe72ce",
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "alignment": {
+      "method": "nearest",
+      "resolution": 2.0,
+      "target": "domain"
+    },
+    "description": "LANDFIRE FBFM13 fuel model codes (Anderson 13 classification)",
+    "extent_buffer_cells": 0,
+    "name": "landfire",
+    "product": "fbfm13",
+    "remove_non_burnable": null,
+    "version": "2024"
+  },
+  "status": "completed",
+  "tags": []
+}

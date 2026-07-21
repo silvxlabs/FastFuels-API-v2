@@ -1,0 +1,44 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "fuel_load.1hr",
+      "type": "continuous",
+      "unit": "kg/m\u00b2"
+    },
+    {
+      "index": 1,
+      "key": "fuel_load.10hr",
+      "type": "continuous",
+      "unit": "kg/m\u00b2"
+    },
+    {
+      "index": 2,
+      "key": "fuel_depth",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-lookup-fbfm13",
+  "progress": null,
+  "source": {
+    "name": "lookup",
+    "source_band": "fbfm13",
+    "source_grid_id": "PLACEHOLDER",
+    "table": "fbfm13"
+  },
+  "status": "pending",
+  "tags": []
+}

@@ -499,6 +499,30 @@ class TestHandlePim:
 class TestHandleLookup:
     """Tests for handle_lookup function."""
 
+    @patch("griddle.dispatch.lookup.fbfm13_lookup")
+    def test_routes_fbfm13_table(self, mock_fbfm13_lookup):
+        """handle_lookup routes fbfm13 table to fbfm13_lookup."""
+        mock_result = MagicMock()
+        mock_fbfm13_lookup.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {
+            "bands": [{"key": "fuel_load.1hr"}, {"key": "fuel_depth"}],
+        }
+        source = {
+            "table": "fbfm13",
+            "source_grid_id": "test-source-grid-id",
+        }
+
+        result = handle_lookup(grid, source, progress)
+
+        mock_fbfm13_lookup.assert_called_once_with(
+            source_grid_id="test-source-grid-id",
+            bands=grid["bands"],
+            progress=progress,
+        )
+        assert result == mock_result
+
     @patch("griddle.dispatch.lookup.fbfm40_lookup")
     def test_routes_fbfm40_table(self, mock_fbfm40_lookup):
         """handle_lookup routes fbfm40 table to fbfm40_lookup."""

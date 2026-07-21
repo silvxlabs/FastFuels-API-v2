@@ -12,6 +12,32 @@ import pytest
 
 
 @pytest.mark.parametrize(
+    "source_grid", ["static-test-blue-mtn-landfire-fbfm13"], indirect=True
+)
+def test_fbfm13_lookup(griddle_runner, source_grid):
+    """Lookup should produce fuel parameter bands from FBFM13 source grid."""
+    result = griddle_runner(
+        "blue_mtn.json",
+        "lookup_fbfm13.json",
+        source_overrides={"source_grid_id": source_grid},
+    )
+    ds = result.ds
+
+    for var in [
+        "fuel_load.1hr",
+        "fuel_load.10hr",
+        "fuel_depth",
+    ]:
+        assert var in ds.data_vars, f"Missing variable: {var}"
+        assert ds[var].dims == ("y", "x")
+        assert ds[var].dtype == np.float32, (
+            f"{var} should be float32, got {ds[var].dtype}"
+        )
+
+    assert (ds["fuel_depth"].values >= 0).all()
+
+
+@pytest.mark.parametrize(
     "source_grid", ["static-test-blue-mtn-landfire-fbfm40"], indirect=True
 )
 def test_fbfm40_lookup(griddle_runner, source_grid):

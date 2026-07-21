@@ -294,7 +294,7 @@ def handle_lookup(
             raise ProcessingError(
                 code="UNKNOWN_TABLE",
                 message=f"Unknown lookup table: {table}",
-                suggestion="Supported tables: fbfm40",
+                suggestion="Supported tables: fbfm13, fbfm40",
             )
 
 

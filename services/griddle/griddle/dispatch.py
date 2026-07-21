@@ -134,6 +134,18 @@ def handle_landfire(
     target_grid_doc = _load_target_grid_doc(alignment)
 
     match product:
+        case "fbfm13":
+            version = source.get("version", "2024")
+            progress(f"Fetching LANDFIRE {product} v{version}...", 10)
+            remove_non_burnable = source.get("remove_non_burnable")
+            return landfire.fetch_fbfm13(
+                domain_gdf,
+                version,
+                remove_non_burnable=remove_non_burnable,
+                extent_buffer_cells=extent_buffer_cells,
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
+            )
         case "fbfm40":
             version = source.get("version", "2024")
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
@@ -174,7 +186,7 @@ def handle_landfire(
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown LANDFIRE product: {product}",
-                suggestion="Supported products: fbfm40, fccs, topography",
+                suggestion="Supported products: fbfm13, fbfm40, fccs, topography",
             )
 
 

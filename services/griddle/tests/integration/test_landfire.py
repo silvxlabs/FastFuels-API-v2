@@ -9,6 +9,17 @@ so they require valid credentials and may take a few minutes.
 """
 
 
+def test_fbfm13(griddle_runner):
+    """LANDFIRE FBFM13 grid should produce a zarr with an fbfm13 variable."""
+    result = griddle_runner("blue_mtn.json", "landfire_fbfm13.json")
+
+    assert "fbfm13" in result.ds.data_vars
+    assert result.ds["fbfm13"].dims == ("y", "x")
+    assert "32611" in str(result.ds.rio.crs)
+    assert result.ds.rio.height > 10
+    assert result.ds.rio.width > 10
+
+
 def test_fbfm40(griddle_runner):
     """LANDFIRE FBFM40 grid should produce a zarr with an fbfm variable."""
     result = griddle_runner("blue_mtn.json", "landfire_fbfm40.json")

@@ -15,6 +15,7 @@ from griddle.handlers.landfire import (
     _fetch_landfire_raster,
     _most_frequent,
     _remove_non_burnable_blocks,
+    fetch_fbfm13,
     fetch_fbfm40,
     fetch_fccs,
     fetch_topography,
@@ -66,6 +67,42 @@ def roi(test_domain) -> gpd.GeoDataFrame:
 
     crs = domain["crs"]["properties"]["name"]
     return gpd.GeoDataFrame.from_features(domain["features"], crs=crs)
+
+
+class TestFetchFbfm13:
+    """Integration tests for fetch_fbfm13."""
+
+    def test_returns_dataset(self, roi):
+        """fetch_fbfm13 returns a Dataset."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert isinstance(result, xr.Dataset)
+
+    def test_has_fbfm13_variable(self, roi):
+        """Dataset contains an 'fbfm13' variable."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert "fbfm13" in result.data_vars
+
+    def test_fbfm13_shape(self, test_domain, roi):
+        """The fbfm13 variable has the expected spatial shape."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert result["fbfm13"].shape == test_domain.expected_shape
+
+    def test_fbfm13_dtype(self, roi):
+        """The fbfm13 variable is int16 (categorical codes)."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert result["fbfm13"].dtype == "int16"
+
+    def test_crs_preserved(self, roi):
+        """CRS is preserved via rioxarray."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert result.rio.crs == roi.crs
+
+    def test_fbfm13_values_in_valid_set(self, roi):
+        """FBFM13 codes are limited to the Anderson 13 models plus non-burnable."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        values = result["fbfm13"].values
+        valid_codes = set(range(1, 14)) | {91, 92, 93, 98, 99}
+        assert set(np.unique(values)).issubset(valid_codes)
 
 
 class TestFetchFbfm40:

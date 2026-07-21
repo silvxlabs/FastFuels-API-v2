@@ -98,11 +98,9 @@ class TestCreateDomainExamples:
         assert data["type"] == "FeatureCollection"
         assert "features" in data
 
-        # Two-feature response: "domain" (working extent) and "input" (original polygon)
-        assert len(data["features"]) >= 2
-        names = [f["properties"]["name"] for f in data["features"]]
-        assert "domain" in names
-        assert "input" in names
+        # Single-feature response: "domain" (working extent)
+        assert len(data["features"]) == 1
+        assert data["features"][0]["properties"]["name"] == "domain"
 
         # bbox field should be populated and equal the "domain" feature's bounds
         assert "bbox" in data
@@ -227,10 +225,9 @@ class TestCreateDomainFromFiles:
         # Response should echo pad_to_resolution
         assert data["pad_to_resolution"] == 30
 
-        # Two features: domain + input
-        assert len(data["features"]) == 2
-        names = [f["properties"]["name"] for f in data["features"]]
-        assert names == ["domain", "input"]
+        # Single "domain" feature
+        assert len(data["features"]) == 1
+        assert data["features"][0]["properties"]["name"] == "domain"
 
         # bbox field should be present and snapped to multiples of 30
         assert data["bbox"] is not None
@@ -270,8 +267,8 @@ class TestCreateDomainFromFiles:
         # response_model_exclude_none should drop pad_to_resolution when None
         assert "pad_to_resolution" not in data
 
-        # Should still have two features and bbox
-        assert len(data["features"]) == 2
+        # Should still have the "domain" feature and bbox
+        assert len(data["features"]) == 1
         assert "bbox" in data
 
         DOMAINS.append(data)
@@ -299,17 +296,15 @@ class TestPreviewDomain:
         assert response.status_code == 200
         assert response.json()["id"] == "preview"
 
-    def test_preview_returns_two_features(self, client):
-        """Preview returns the two-feature FeatureCollection (domain + input)."""
+    def test_preview_returns_domain_feature(self, client):
+        """Preview returns a single-feature FeatureCollection (domain)."""
         response = client.post(self.route, json=EXAMPLE_WGS84_DEFAULT)
 
         assert response.status_code == 200
         data = response.json()
 
-        assert len(data["features"]) == 2
-        names = [f["properties"]["name"] for f in data["features"]]
-        assert "domain" in names
-        assert "input" in names
+        assert len(data["features"]) == 1
+        assert data["features"][0]["properties"]["name"] == "domain"
 
     def test_preview_returns_bbox(self, client):
         """Preview response includes a valid 4-element bbox."""

@@ -794,10 +794,8 @@ class TestRoundTrip:
         assert domain.id == "test-domain-id"
         assert domain.name == "Test Domain"
 
-    def test_two_feature_round_trip_with_pad_to_resolution(
-        self, sample_polygon_coordinates
-    ):
-        """A two-feature domain with bbox and pad_to_resolution should round-trip."""
+    def test_round_trip_with_pad_to_resolution(self, sample_polygon_coordinates):
+        """A domain with bbox and pad_to_resolution should round-trip."""
         data = {
             "type": "FeatureCollection",
             "features": [
@@ -809,20 +807,12 @@ class TestRoundTrip:
                     },
                     "properties": {"name": "domain"},
                 },
-                {
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": sample_polygon_coordinates,
-                    },
-                    "properties": {"name": "input"},
-                },
             ],
             "bbox": [0.0, 0.0, 1.0, 1.0],
             "pad_to_resolution": 30,
             "id": "test-padded-domain",
             "name": "Padded Test Domain",
-            "description": "Round-trip test for two-feature padded domain",
+            "description": "Round-trip test for padded domain",
             "created_on": datetime.now(),
             "modified_on": datetime.now(),
         }
@@ -832,7 +822,6 @@ class TestRoundTrip:
 
         # Coordinates should be stringified for Firestore
         assert isinstance(firestore_data["features"][0]["geometry"]["coordinates"], str)
-        assert isinstance(firestore_data["features"][1]["geometry"]["coordinates"], str)
 
         # bbox should be a 4-tuple/list of floats (not stringified)
         assert tuple(firestore_data["bbox"]) == (0.0, 0.0, 1.0, 1.0)
@@ -844,6 +833,5 @@ class TestRoundTrip:
         assert restored.id == "test-padded-domain"
         assert restored.pad_to_resolution == 30
         assert tuple(restored.bbox) == (0.0, 0.0, 1.0, 1.0)
-        assert len(restored.features) == 2
+        assert len(restored.features) == 1
         assert restored.features[0].properties["name"] == "domain"
-        assert restored.features[1].properties["name"] == "input"

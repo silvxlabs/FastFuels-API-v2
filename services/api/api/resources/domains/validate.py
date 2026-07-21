@@ -214,13 +214,11 @@ def build_domain_features(
     gdf: GeoDataFrame,
     pad_to_resolution: float | None = None,
 ) -> tuple[list[dict], tuple[float, float, float, float]]:
-    """Build the two-feature list and bbox for a domain.
+    """Build the feature list and bbox for a domain.
 
-    Produces a list of GeoJSON features where:
-    - features[0] is the "domain" feature: a polygon covering the bounding box
-      of the input geometry, optionally padded to a resolution.
-    - features[1:] are "input" features: the user's original projected geometry,
-      tagged with properties.name = "input".
+    Produces a single-feature list containing the "domain" feature: a polygon
+    covering the bounding box of the input geometry, optionally padded to a
+    resolution.
 
     Args:
         gdf: Projected GeoDataFrame containing the user's input geometry.
@@ -255,14 +253,7 @@ def build_domain_features(
         },
     }
 
-    # Build the "input" feature(s) from the projected GeoDataFrame
-    input_features = json.loads(gdf.to_json())["features"]
-    for feature in input_features:
-        if feature.get("properties") is None:
-            feature["properties"] = {}
-        feature["properties"]["name"] = "input"
-
-    return [domain_feature, *input_features], (minx, miny, maxx, maxy)
+    return [domain_feature], (minx, miny, maxx, maxy)
 
 
 def reproject_features(
@@ -305,7 +296,8 @@ class DomainValidationResult:
         crs: The final CRS (always projected).
         utm_crs: The UTM CRS if estimated from geographic input, None otherwise.
         area: The working extent area in square meters (possibly padded).
-        features: The two-feature GeoJSON list (domain + input) ready for storage.
+        features: The single-feature GeoJSON list (the "domain" working
+            extent) ready for storage.
         bbox: The (minx, miny, maxx, maxy) of the "domain" feature.
     """
 
@@ -335,8 +327,8 @@ def validate_domain(geojson: dict) -> DomainValidationResult:
     3. Projects to UTM if geographic CRS
     4. Validates geometry has non-zero area
     5. Validates geometry is within CONUS (on the original projected polygon)
-    6. Builds the two-feature list (domain bbox + input polygon), optionally
-       padding the bbox to pad_to_resolution
+    6. Builds the "domain" working-extent feature, optionally padding the
+       bbox to pad_to_resolution
     7. Validates the working extent area is within limits (< 16 sq km)
 
     Args:
@@ -378,7 +370,7 @@ def validate_domain(geojson: dict) -> DomainValidationResult:
     # near a CONUS border shouldn't cause false rejections).
     validate_within_conus(gdf)
 
-    # 6. Build the two-feature list with optional padding
+    # 6. Build the "domain" feature with optional padding
     pad_to_resolution = geojson.get("pad_to_resolution")
     features, bbox = build_domain_features(gdf, pad_to_resolution)
 

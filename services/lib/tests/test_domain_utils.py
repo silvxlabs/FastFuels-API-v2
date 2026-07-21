@@ -202,19 +202,16 @@ class TestMultipleFeatures:
         assert bounds[3] == 30  # maxy
 
 
-class TestTwoFeatureFormat:
-    """Tests for the two-feature format produced by API v2 domain creation.
+class TestDomainFeatureFormat:
+    """Tests for the domain format produced by API v2 domain creation.
 
-    A v2 domain is stored with two named features: "domain" (the working
-    extent / bbox rectangle, possibly snapped via pad_to_resolution) and
-    "input" (the user's original polygon). The bbox rectangle contains the
-    input polygon by construction, so loading both features into a single
-    GeoDataFrame yields a ``total_bounds`` equal to the working extent
-    without any filtering.
+    A v2 domain is stored with a single named feature: "domain" (the working
+    extent / bbox rectangle, possibly snapped via pad_to_resolution), so
+    ``total_bounds`` equals the working extent.
     """
 
     @pytest.fixture
-    def two_feature_data(self):
+    def domain_feature_data(self):
         return {
             "crs": {"type": "name", "properties": {"name": "EPSG:32611"}},
             "features": [
@@ -228,35 +225,24 @@ class TestTwoFeatureFormat:
                         ),
                     },
                 },
-                {
-                    "type": "Feature",
-                    "properties": {"name": "input"},
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": json.dumps(
-                            [[[10, 10], [90, 10], [90, 90], [10, 90], [10, 10]]]
-                        ),
-                    },
-                },
             ],
         }
 
-    def test_loads_both_features(self, two_feature_data):
-        result = parse_domain_gdf(two_feature_data)
-        assert len(result) == 2
+    def test_loads_domain_feature(self, domain_feature_data):
+        result = parse_domain_gdf(domain_feature_data)
+        assert len(result) == 1
 
-    def test_total_bounds_equal_working_extent(self, two_feature_data):
-        result = parse_domain_gdf(two_feature_data)
+    def test_total_bounds_equal_working_extent(self, domain_feature_data):
+        result = parse_domain_gdf(domain_feature_data)
         bounds = result.total_bounds
-        # The bbox rectangle (0..100) contains the input polygon (10..90),
-        # so total_bounds reduces to the working extent without filtering.
         assert bounds[0] == 0
         assert bounds[1] == 0
         assert bounds[2] == 100
         assert bounds[3] == 100
 
     def test_padded_extent_drives_total_bounds(self):
-        """When the "domain" feature is snapped outward, total_bounds reflects it."""
+        """When the "domain" feature is snapped outward via pad_to_resolution,
+        total_bounds reflects the padded extent."""
         data = {
             "crs": {"type": "name", "properties": {"name": "EPSG:32611"}},
             "features": [
@@ -266,18 +252,7 @@ class TestTwoFeatureFormat:
                     "geometry": {
                         "type": "Polygon",
                         "coordinates": json.dumps(
-                            # Snapped outward beyond the input's tight bbox
                             [[[0, 0], [120, 0], [120, 120], [0, 120], [0, 0]]]
-                        ),
-                    },
-                },
-                {
-                    "type": "Feature",
-                    "properties": {"name": "input"},
-                    "geometry": {
-                        "type": "Polygon",
-                        "coordinates": json.dumps(
-                            [[[10, 10], [115, 10], [115, 115], [10, 115], [10, 10]]]
                         ),
                     },
                 },
@@ -285,7 +260,6 @@ class TestTwoFeatureFormat:
         }
         result = parse_domain_gdf(data)
         bounds = result.total_bounds
-        # Padded extent (120 × 120), not the input's tight bbox (105 × 105)
         assert bounds[2] == 120
         assert bounds[3] == 120
 

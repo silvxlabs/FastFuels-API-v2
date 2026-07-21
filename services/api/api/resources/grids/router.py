@@ -35,6 +35,7 @@ from api.resources.grids.exports.quicfire.router import (
     router as quicfire_export_router,
 )
 from api.resources.grids.exports.router import router as grid_exports_router
+from api.resources.grids.fbfm13.router import router as fbfm13_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.fccs.router import router as fccs_router
 from api.resources.grids.lookup.router import router as lookup_router
@@ -859,6 +860,7 @@ router.include_router(
     prefix="/exports/quicfire",
     tags=["Grids - Exports"],
 )
+router.include_router(fbfm13_router, prefix="/fbfm13", tags=["Grids - FBFM13"])
 router.include_router(fbfm40_router, prefix="/fbfm40", tags=["Grids - FBFM40"])
 router.include_router(fccs_router, prefix="/fccs", tags=["Grids - FCCS"])
 router.include_router(

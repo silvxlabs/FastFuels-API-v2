@@ -144,12 +144,10 @@ async def create_domain(
     - **modified_on**: (datetime) When the domain was last modified.
     - **tags**: (array) The tags associated with the domain.
     - **crs**: (object) The coordinate reference system (always projected).
-    - **features**: (array) Two named features:
-      - **`name: "domain"`** — A polygon covering the working extent (bounding
-        box of the input, possibly padded). This is what griddle, standgen,
-        and exporter use as the authoritative spatial extent.
-      - **`name: "input"`** — The user's original projected geometry, preserved
-        for visualization and reference.
+    - **features**: (array) A single feature named `"domain"` — a polygon
+      covering the working extent (bounding box of the input, possibly
+      padded). This is what griddle, standgen, and exporter use as the
+      authoritative spatial extent.
     - **bbox**: (array) Standard GeoJSON bbox `[minx, miny, maxx, maxy]` in the
       domain's projected CRS. Equals the bounds of the "domain" feature.
     - **pad_to_resolution**: (number, optional) The padding value, if set.
@@ -182,10 +180,10 @@ async def create_domain(
        FeatureCollection input, not individual Feature objects. Wrap single
        features in a FeatureCollection.
 
-    2. **Two-Feature Output**: The created domain stores two named features:
-       a "domain" feature (bounding box, the working extent used by all
-       downstream services) and an "input" feature (the user's original
-       polygon, preserved for visualization).
+    2. **Working-Extent Output**: The created domain stores a single "domain"
+       feature — the bounding box of the input geometry, which is the working
+       extent used by all downstream services. The submitted geometry itself
+       is not stored.
 
     3. **Projection**: Geographic coordinates are always projected to a suitable
        UTM zone for accurate area calculations and grid operations.
@@ -274,8 +272,8 @@ async def preview_domain(
 
     - **id**: Always `"preview"` — not a real domain identifier.
     - **created_on** / **modified_on**: Set to the current request time (not persisted).
-    - **features**: Two named features — `"domain"` (working extent) and `"input"`
-      (original polygon), identical to what create would return.
+    - **features**: A single `"domain"` feature (the working extent),
+      identical to what create would return.
     - **bbox**: Bounding box of the `"domain"` feature.
     - **crs**: Projected CRS, identical to what create would return.
 

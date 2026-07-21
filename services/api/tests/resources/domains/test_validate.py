@@ -608,17 +608,11 @@ class TestBuildDomainFeatures:
         )
         return GeoDataFrame(geometry=[polygon], crs="EPSG:32611")
 
-    def test_returns_two_features_without_padding(self, projected_gdf):
-        """Without padding, returns one 'domain' and one 'input' feature."""
+    def test_returns_single_domain_feature(self, projected_gdf):
+        """Returns exactly one feature, named 'domain'."""
         features, bbox = build_domain_features(projected_gdf, pad_to_resolution=None)
 
-        assert len(features) == 2
-        assert features[0]["properties"]["name"] == "domain"
-        assert features[1]["properties"]["name"] == "input"
-
-    def test_domain_feature_is_first(self, projected_gdf):
-        """The 'domain' feature should be at index 0."""
-        features, _ = build_domain_features(projected_gdf)
+        assert len(features) == 1
         assert features[0]["properties"]["name"] == "domain"
 
     def test_domain_bbox_equals_input_bounds_without_padding(self, projected_gdf):
@@ -647,14 +641,6 @@ class TestBuildDomainFeatures:
         # Padded to 30: (720210, 5189760, 721560, 5190660)
         assert bbox == (720210, 5189760, 721560, 5190660)
 
-    def test_padding_does_not_change_input_geometry(self, projected_gdf):
-        """The 'input' feature geometry should be unchanged by padding."""
-        features, _ = build_domain_features(projected_gdf, pad_to_resolution=30)
-
-        input_coords = features[1]["geometry"]["coordinates"][0]
-        original_coords = list(projected_gdf.geometry.iloc[0].exterior.coords)
-        assert len(input_coords) == len(original_coords)
-
     def test_domain_feature_bbox_equals_returned_bbox(self, projected_gdf):
         """The 'domain' feature's geometry bounds must equal the returned bbox tuple."""
         features, bbox = build_domain_features(projected_gdf, pad_to_resolution=30)
@@ -664,19 +650,16 @@ class TestBuildDomainFeatures:
         domain_ys = [c[1] for c in domain_coords]
         assert (min(domain_xs), min(domain_ys), max(domain_xs), max(domain_ys)) == bbox
 
-    def test_multi_polygon_input_all_tagged_input(self):
-        """If user submits multiple polygons, all are tagged 'input'."""
+    def test_multi_polygon_input_yields_single_domain_feature(self):
+        """Multiple submitted polygons still produce a single 'domain' feature."""
         polygon1 = Polygon([(0, 0), (100, 0), (100, 100), (0, 100), (0, 0)])
         polygon2 = Polygon([(200, 200), (300, 200), (300, 300), (200, 300), (200, 200)])
         gdf = GeoDataFrame(geometry=[polygon1, polygon2], crs="EPSG:32611")
 
         features, bbox = build_domain_features(gdf, pad_to_resolution=None)
 
-        # 1 domain + 2 inputs
-        assert len(features) == 3
+        assert len(features) == 1
         assert features[0]["properties"]["name"] == "domain"
-        assert features[1]["properties"]["name"] == "input"
-        assert features[2]["properties"]["name"] == "input"
 
         # Domain bbox encompasses both input polygons
         assert bbox == (0.0, 0.0, 300.0, 300.0)
@@ -756,18 +739,18 @@ class TestValidateDomain:
         assert result.crs.to_epsg() == 32611
 
     def test_returns_features_list(self, valid_polygon_geojson):
-        """Should return two features: 'domain' (bbox) and 'input' (polygon)."""
+        """Should return a single 'domain' (bbox) feature."""
         result = validate_domain(valid_polygon_geojson)
 
         assert isinstance(result.features, list)
-        assert len(result.features) == 2
+        assert len(result.features) == 1
         for feature in result.features:
             assert feature["type"] == "Feature"
             assert "geometry" in feature
             assert "properties" in feature
 
         names = [f["properties"]["name"] for f in result.features]
-        assert names == ["domain", "input"]
+        assert names == ["domain"]
 
     def test_features_are_projected(self, valid_polygon_geojson):
         """All features should contain projected coordinates."""
@@ -950,9 +933,9 @@ class TestValidateDomainRealData:
         assert result.utm_crs is not None
         assert result.area > 0
         assert result.crs.to_epsg() in [32611, 32612]
-        assert len(result.features) == 2
+        assert len(result.features) == 1
         names = [f["properties"]["name"] for f in result.features]
-        assert names == ["domain", "input"]
+        assert names == ["domain"]
 
     def test_point_zero_area_raises_422(self, point_geojson):
         """Point geometry should fail with zero area."""

@@ -49,6 +49,8 @@ COLLECTION = GRIDS_COLLECTION
 )
 async def create_fbfm13_lookup(
     request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
         CreateFbfm13LookupRequest,
@@ -158,6 +160,7 @@ async def create_fbfm13_lookup(
     await set_document_async(COLLECTION, grid_id, grid_data)
 
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
+    register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)
 

@@ -1,0 +1,102 @@
+{
+  "bands": [
+    {
+      "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels.",
+      "index": 0,
+      "key": "fuel_load.1hr",
+      "name": "1-hour Fuel Load",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 0.654574453830719,
+        "mean": 0.40659689342411504,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 0.22263345016450825,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "kg/m**2"
+    },
+    {
+      "description": "Vertical depth of the surface fuel bed.",
+      "index": 1,
+      "key": "fuel_depth",
+      "name": "Fuel Bed Depth",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 0.7620000243186951,
+        "mean": 0.3472818713904292,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 0.2755954696590325,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "description": "Surface-area-to-volume ratio of 1-hour timelag dead fuels.",
+      "index": 2,
+      "key": "savr.1hr",
+      "name": "1-hour Surface-Area-to-Volume Ratio",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 9842.51953125,
+        "mean": 7085.020789300387,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 1555.256606880645,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "1/m"
+    }
+  ],
+  "checksum": "b22113d21a8542ebaceb82822803218a",
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "name": "lookup",
+    "source_band": "fbfm13",
+    "source_grid_checksum": "987a39cc6ea94914896d46aefa3b3c89",
+    "source_grid_id": "static-test-blue-mtn-landfire-fbfm13",
+    "table": "fbfm13"
+  },
+  "status": "completed",
+  "tags": []
+}

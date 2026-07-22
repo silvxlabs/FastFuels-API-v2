@@ -134,6 +134,25 @@ def test_create_blue_mtn_landfire_fbfm13(
     )
 
 
+@pytest.mark.dependency(depends=["test_create_blue_mtn_landfire_fbfm13"])
+def test_create_blue_mtn_lookup_fbfm13(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create FBFM13 lookup grid at 2 m with the three surface roles
+    QUIC-Fire needs (fuel_load.1hr, fuel_depth, savr.1hr)."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/lookup/fbfm13",
+        body={
+            "source_grid_id": "static-test-blue-mtn-landfire-fbfm13",
+            "bands": ["fuel_load.1hr", "fuel_depth", "savr.1hr"],
+        },
+        static_name="static-test-blue-mtn-lookup-fbfm13",
+        dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm13"]},
+    )
+
+
 @pytest.mark.dependency()
 def test_create_blue_mtn_landfire_fbfm40(
     create_static_fixture, client, blue_mountain_domain

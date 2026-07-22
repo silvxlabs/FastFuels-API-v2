@@ -4,13 +4,13 @@
       "index": 0,
       "key": "fuel_load.1hr",
       "type": "continuous",
-      "unit": "kg/m\u00b2"
+      "unit": "kg/m**2"
     },
     {
       "index": 1,
       "key": "fuel_load.10hr",
       "type": "continuous",
-      "unit": "kg/m\u00b2"
+      "unit": "kg/m**2"
     },
     {
       "index": 2,

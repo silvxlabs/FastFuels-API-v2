@@ -278,6 +278,12 @@ def handle_lookup(
     progress(f"Looking up {table} fuel parameters...", 10)
 
     match table:
+        case "fbfm13":
+            return lookup.fbfm13_lookup(
+                source_grid_id=source["source_grid_id"],
+                bands=grid["bands"],
+                progress=progress,
+            )
         case "fbfm40":
             return lookup.fbfm40_lookup(
                 source_grid_id=source["source_grid_id"],
@@ -288,7 +294,7 @@ def handle_lookup(
             raise ProcessingError(
                 code="UNKNOWN_TABLE",
                 message=f"Unknown lookup table: {table}",
-                suggestion="Supported tables: fbfm40",
+                suggestion="Supported tables: fbfm13, fbfm40",
             )
 
 

@@ -17,9 +17,11 @@ Two things worth knowing if these fail:
 
 - **A DUET failure looks like a `DUET_FAILED` grid error, not an exception.**
   The model's own message is on the grid document's `error.traceback`.
-- **`DEPLOYMENT_ENV=local` will not work on an arm64 machine.** The binary is a
-  linux/amd64 ELF, so local mode runs it on the developer's own hardware. CI is
-  always deployed mode.
+- **`DEPLOYMENT_ENV=local` runs the binary on the developer's own hardware.**
+  The DUET binary is fetched at runtime (it is restricted and never committed);
+  the fetched ELF is linux/amd64 and won't run on arm64, so a local run there
+  needs the native macOS build via `DUET_BINARY_PATH` (see
+  `treevox/data/README.md`). CI always runs in deployed mode against the image.
 
 Each DUET run costs a voxelization first (~30s) plus the model itself, so the
 list stays short.

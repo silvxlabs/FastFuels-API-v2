@@ -38,15 +38,41 @@ import numpy as np
 import rioxarray  # noqa: F401 — registers `.rio` accessor on xr.Dataset
 import xarray as xr
 
-from lib.config import GRIDS_BUCKET
+from lib.config import DUET_BINARY_GCS, GRIDS_BUCKET
+from lib.gcs.blobs import download_file
 from lib.zarr_utils import load_zarr, save_zarr
 from treevox import duet_species
 from treevox.errors import ProcessingError
 
 logger = logging.getLogger(__name__)
 
-DUET_BINARY = Path(__file__).parent.parent / "data" / "duet_v2.1_FF_linux.exe"
+# The DUET binary is a restricted third-party (LANL) artifact and is NOT
+# publicly distributable, so it must never be committed to this public repo. It
+# is fetched at runtime from the private executables bucket — the Cloud Run
+# service account has read access — and cached once per container. This mirrors
+# v1, which also downloaded it rather than vendoring it. See data/README.md.
+_DUET_BINARY_CACHE = Path(tempfile.gettempdir()) / "duet" / "duet.exe"
 DUET_SPECIES_FILE = duet_species.DUET_SPECIES_FILE
+
+
+def _duet_binary() -> Path:
+    """Return a local path to the DUET binary, fetching it once if needed.
+
+    `DUET_BINARY_PATH` short-circuits the fetch with a local build — used for
+    local development on non-amd64 hardware, where the linux/amd64 ELF cannot
+    run and a native build (e.g. the macOS arm64 `duet_mac_v2.1.exe`) is pointed
+    at instead. Otherwise the ELF is downloaded from `DUET_BINARY_GCS` on first
+    use and cached for the container's lifetime.
+    """
+    override = os.environ.get("DUET_BINARY_PATH")
+    if override:
+        return Path(override)
+    if not _DUET_BINARY_CACHE.exists():
+        _DUET_BINARY_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        download_file(DUET_BINARY_GCS, str(_DUET_BINARY_CACHE))
+        os.chmod(_DUET_BINARY_CACHE, 0o755)
+    return _DUET_BINARY_CACHE
+
 
 # DUET requires its species table under this exact name in the working dir.
 DUET_SPECIES_FILENAME = "FIA_FastFuels_fin_fulllist_populated.txt"
@@ -221,7 +247,7 @@ def _write_duet_inputs(work: Path, ds: xr.Dataset, source: dict, grid_id: str) -
     from duet_tools.utils import write_array_to_dat
 
     shutil.copy(DUET_SPECIES_FILE, work / DUET_SPECIES_FILENAME)
-    shutil.copy(DUET_BINARY, work / "duet.exe")
+    shutil.copy(_duet_binary(), work / "duet.exe")
     os.chmod(work / "duet.exe", 0o755)
 
     foliage = np.ascontiguousarray(ds[FOLIAGE_BAND].values, dtype=np.float32)

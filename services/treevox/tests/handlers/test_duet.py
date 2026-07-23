@@ -19,6 +19,20 @@ from treevox.errors import ProcessingError
 from treevox.handlers import duet as handler
 
 
+@pytest.fixture(autouse=True)
+def _stub_duet_binary(tmp_path_factory, monkeypatch):
+    """Point `_duet_binary` at a dummy executable via the DUET_BINARY_PATH override.
+
+    The real binary is fetched from GCS at runtime and is never on disk in a unit
+    run, so any test that stages inputs would otherwise reach the network. The
+    override short-circuits the fetch with a local file.
+    """
+    fake = tmp_path_factory.mktemp("duet-bin") / "duet.exe"
+    fake.write_bytes(b"#!/bin/sh\nexit 0\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("DUET_BINARY_PATH", str(fake))
+
+
 def _read_duet_in(work: Path) -> list[str]:
     """Return duet.in's values, dropping its trailing `! description` comments."""
     return [
@@ -70,6 +84,43 @@ class TestSplitBand:
         with pytest.raises(ProcessingError) as exc:
             handler._split_band("bulk_density.foliage.live")
         assert exc.value.code == "UNKNOWN_BAND"
+
+
+class TestDuetBinary:
+    """The binary is restricted and never committed — it is fetched at runtime."""
+
+    def test_override_short_circuits_the_fetch(self, tmp_path, monkeypatch):
+        local = tmp_path / "native.exe"
+        local.write_bytes(b"x")
+        monkeypatch.setenv("DUET_BINARY_PATH", str(local))
+        with patch.object(handler, "download_file") as download:
+            assert handler._duet_binary() == local
+        download.assert_not_called()
+
+    def test_fetches_from_gcs_when_no_override(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DUET_BINARY_PATH", raising=False)
+        cache = tmp_path / "duet" / "duet.exe"
+        monkeypatch.setattr(handler, "_DUET_BINARY_CACHE", cache)
+        monkeypatch.setattr(handler, "DUET_BINARY_GCS", "gs://bucket/duet.exe")
+
+        def fake_download(gcs_path, local_path, *a, **k):
+            Path(local_path).write_bytes(b"elf")
+
+        with patch.object(handler, "download_file", side_effect=fake_download) as dl:
+            result = handler._duet_binary()
+        assert result == cache
+        dl.assert_called_once_with("gs://bucket/duet.exe", str(cache))
+        assert cache.exists()
+
+    def test_cached_binary_is_not_re_downloaded(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("DUET_BINARY_PATH", raising=False)
+        cache = tmp_path / "duet" / "duet.exe"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"already here")
+        monkeypatch.setattr(handler, "_DUET_BINARY_CACHE", cache)
+        with patch.object(handler, "download_file") as download:
+            assert handler._duet_binary() == cache
+        download.assert_not_called()
 
 
 class TestRemapSpecies:

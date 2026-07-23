@@ -869,7 +869,7 @@ router.include_router(
 router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
 router.include_router(canopy_router, prefix="/canopy", tags=["Grids - Canopy"])
 router.include_router(compose_router, prefix="/compose", tags=["Grids - Compose"])
-router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
+router.include_router(lookup_router, prefix="/lookup")
 router.include_router(rasterize_router, prefix="/rasterize", tags=["Grids - Rasterize"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(voxelize_router, prefix="/voxelize")

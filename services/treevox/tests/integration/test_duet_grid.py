@@ -122,6 +122,32 @@ def test_duet_on_pim_tree_grid(tree_grid, duet_runner):
         rel=1e-4,
     )
 
+    # Spatial alignment: litter accumulates under crowns, grass fills the gaps.
+    # This is the one property the assertions above cannot catch — finite,
+    # non-negative, the sums, and the aggregate identities all survive a y-flip
+    # or transpose of the output. Tie the litter and grass maps back to the
+    # source canopy footprint so an axis-ordering regression fails here rather
+    # than passing silently with the whole surface grid mirrored.
+    canopy_overhead = (tree_grid.ds["bulk_density.foliage.live"] > 0).mean("z").values
+    litter = result.ds["fuel_load.litter"].values
+    grass = result.ds["fuel_load.grass"].values
+    # A transpose on this non-square grid (442x654) already fails this line.
+    assert canopy_overhead.shape == litter.shape == grass.shape
+
+    litter_heavy = litter > np.percentile(litter[litter > 0], 75)
+    grass_heavy = grass > np.percentile(grass[grass > 0], 75)
+    # DUET deposits litter under (and downwind of) crowns and grows grass in the
+    # gaps, so mean canopy overhead is far higher beneath the heaviest litter
+    # than beneath the heaviest grass — measured ~0.64 vs ~0.10 on this stand. A
+    # flipped output swaps the two and inverts the inequality; the 2x margin
+    # sits well inside the real ~6x separation while still catching that flip.
+    assert (
+        canopy_overhead[litter_heavy].mean() > 2 * canopy_overhead[grass_heavy].mean()
+    ), (
+        "litter is not concentrated under the canopy — the DUET output is "
+        "likely misaligned with the source grid (axis flip or transpose)"
+    )
+
 
 def test_duet_calibrated_hits_its_targets(tree_grid, duet_runner):
     """Calibration through the real duet-tools import path.

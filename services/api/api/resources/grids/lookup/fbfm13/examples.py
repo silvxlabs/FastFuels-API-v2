@@ -48,7 +48,8 @@ CREATE_FBFM13_LOOKUP_OPENAPI_EXAMPLES = {
         "summary": "All fuel bands",
         "description": (
             "Looks up all available Anderson 13 fuel parameters: fuel loads "
-            "(4 size classes), SAV ratios (4 size classes), and fuel depth."
+            "and SAV ratios (three dead size classes plus live foliage), "
+            "and fuel depth."
         ),
     },
 }

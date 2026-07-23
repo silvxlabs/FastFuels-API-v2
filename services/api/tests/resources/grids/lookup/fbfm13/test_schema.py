@@ -81,7 +81,7 @@ class TestFbfm13LookupBand:
     """Tests for Fbfm13LookupBand enum."""
 
     def test_has_9_members(self):
-        """There are exactly 11 predefined bands."""
+        """There are exactly 9 predefined bands."""
         assert len(Fbfm13LookupBand) == 9
 
     def test_fuel_load_1hr(self):

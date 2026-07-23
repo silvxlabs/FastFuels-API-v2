@@ -302,7 +302,7 @@ class TestCreateFbfm13Lookup:
     def test_source_grid_not_complete_returns_422(
         self, client, domain_for_testing, pending_fbfm13_grid
     ):
-        """Source grid with status != 'complete' returns 422."""
+        """Source grid with status != 'completed' returns 422."""
         request_body = {
             "source_grid_id": pending_fbfm13_grid["id"],
             "bands": ["fuel_load.1hr"],
@@ -522,7 +522,7 @@ class TestCreateFbfm40Lookup:
     def test_source_grid_not_complete_returns_422(
         self, client, domain_for_testing, pending_fbfm40_grid
     ):
-        """Source grid with status != 'complete' returns 422."""
+        """Source grid with status != 'completed' returns 422."""
         request_body = {
             "source_grid_id": pending_fbfm40_grid["id"],
             "bands": ["fuel_load.1hr"],

@@ -350,6 +350,38 @@ class DuetSource(DuetSourceBase):
     calibration: DuetCalibration | None = None
 
 
+_CALIBRATION_PARAMETERS = ("fuel_load", "fuel_depth", "fuel_moisture")
+
+# The duet-tools fuel type a band's output is extracted as, keyed by the band
+# suffix after its parameter prefix. Mirrors treevox's `handlers.duet._split_band`
+# so the request validator reasons about the same outputs the handler produces.
+_BAND_SUFFIX_FUEL_TYPE = {
+    "grass": "grass",
+    "litter": "litter",
+    "litter.coniferous": "coniferous",
+    "litter.deciduous": "deciduous",
+    "total": "integrated",
+}
+
+# For each calibration fuel type, the set of extracted band fuel types whose
+# output reflects that calibration. Calibrating `litter` rescales both litter
+# layers, so a coniferous or deciduous band reads it; calibrating a single litter
+# layer moves the integrated `litter` band; `all` reaches every output; and an
+# `integrated` (total) band reflects a calibration on any fuel type it sums.
+_CALIBRATION_REFLECTED_IN = {
+    "grass": {"grass", "integrated"},
+    "coniferous": {"coniferous", "litter", "integrated"},
+    "deciduous": {"deciduous", "litter", "integrated"},
+    "litter": {"litter", "coniferous", "deciduous", "integrated"},
+    "all": {"grass", "litter", "coniferous", "deciduous", "integrated"},
+}
+
+
+def _band_fuel_type(band: DuetBand) -> str:
+    """Return the duet-tools fuel type a band's output is extracted as."""
+    return _BAND_SUFFIX_FUEL_TYPE[band.value.split(".", 1)[1]]
+
+
 class CreateDuetRequest(DuetSourceBase):
     """Request body for creating a DUET surface fuel grid from a tree grid.
 
@@ -393,23 +425,53 @@ class CreateDuetRequest(DuetSourceBase):
 
     @model_validator(mode="after")
     def validate_calibration_covers_requested_bands(self) -> Self:
-        """Reject calibration of a parameter no requested band reads.
+        """Reject calibration no requested band would read.
 
-        Calibrating `fuel_depth` while requesting only `fuel_load.*` bands runs
-        the calibration and then discards it, which reads as a silent no-op.
+        Calibrating a target no requested band extracts runs the calibration and
+        then discards it, which reads as a silent no-op. Two dimensions can miss:
+
+        - **Parameter**: calibrating `fuel_depth` while requesting only
+          `fuel_load.*` bands.
+        - **Fuel type**: calibrating litter while requesting only a grass band —
+          the litter rescale is computed and thrown away.
         """
         if self.calibration is None:
             return self
-        requested = {band.value.split(".", 1)[0] for band in self.bands}
-        unused = [
+
+        requested_parameters = {band.value.split(".", 1)[0] for band in self.bands}
+        unused_parameters = [
             parameter
-            for parameter in ("fuel_load", "fuel_depth", "fuel_moisture")
+            for parameter in _CALIBRATION_PARAMETERS
             if getattr(self.calibration, parameter) is not None
-            and parameter not in requested
+            and parameter not in requested_parameters
         ]
-        if unused:
+        if unused_parameters:
             raise ValueError(
-                f"calibration targets {unused} have no matching requested band. "
-                f"Request a {unused[0]}.* band or drop the target."
+                f"calibration targets {unused_parameters} have no matching "
+                f"requested band. Request a {unused_parameters[0]}.* band or drop "
+                f"the target."
+            )
+
+        unused_targets = []
+        for parameter in _CALIBRATION_PARAMETERS:
+            parameter_calibration = getattr(self.calibration, parameter)
+            if parameter_calibration is None:
+                continue
+            extracted = {
+                _band_fuel_type(band)
+                for band in self.bands
+                if band.value.split(".", 1)[0] == parameter
+            }
+            for fuel_type in ("grass", "coniferous", "deciduous", "litter", "all"):
+                if getattr(parameter_calibration, fuel_type) is None:
+                    continue
+                if _CALIBRATION_REFLECTED_IN[fuel_type].isdisjoint(extracted):
+                    unused_targets.append(f"{parameter}.{fuel_type}")
+        if unused_targets:
+            raise ValueError(
+                f"calibration targets {unused_targets} have no matching requested "
+                f"band; the calibration would be computed and then discarded. "
+                f"Request a band that reads each targeted fuel type, or drop the "
+                f"target."
             )
         return self

@@ -547,6 +547,30 @@ class TestHandleLookup:
         )
         assert result == mock_result
 
+    @patch("griddle.dispatch.lookup.fccs_lookup")
+    def test_routes_fccs_table(self, mock_fccs_lookup):
+        """handle_lookup routes fccs table to fccs_lookup."""
+        mock_result = MagicMock()
+        mock_fccs_lookup.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {
+            "bands": [{"key": "fuel_load.litter"}, {"key": "duff_depth"}],
+        }
+        source = {
+            "table": "fccs",
+            "source_grid_id": "test-source-grid-id",
+        }
+
+        result = handle_lookup(grid, source, progress)
+
+        mock_fccs_lookup.assert_called_once_with(
+            source_grid_id="test-source-grid-id",
+            bands=grid["bands"],
+            progress=progress,
+        )
+        assert result == mock_result
+
     def test_unknown_table_raises(self):
         """handle_lookup raises ProcessingError for unknown table."""
         progress = MagicMock()

@@ -235,6 +235,41 @@ class TestCreateDuetRequest:
         assert body.calibration.fuel_load.grass.mean == 0.5
         assert body.calibration.fuel_depth.grass.value == 0.3
 
+    def test_calibrating_a_fuel_type_with_no_requested_band_is_rejected(self):
+        # Right parameter (fuel_load is requested), wrong fuel type: only grass
+        # is requested, so the litter calibration would be computed and dropped.
+        with pytest.raises(ValidationError, match="computed and then discarded"):
+            CreateDuetRequest(
+                source_grid_id="g1",
+                years_since_burn=5,
+                bands=[DuetBand.fuel_load_grass],
+                calibration={"fuel_load": {"litter": {"method": "maxmin", "max": 5.0}}},
+            )
+
+    def test_litter_calibration_is_read_by_a_total_band(self):
+        # `fuel_load.total` sums grass + litter, so a litter calibration is
+        # reflected in it — this must be accepted, not flagged as unused.
+        body = CreateDuetRequest(
+            source_grid_id="g1",
+            years_since_burn=5,
+            bands=[DuetBand.fuel_load_total],
+            calibration={"fuel_load": {"litter": {"method": "maxmin", "max": 5.0}}},
+        )
+        assert body.calibration.fuel_load.litter.max == 5.0
+
+    def test_coniferous_calibration_is_read_by_the_integrated_litter_band(self):
+        # `fuel_load.litter` integrates coniferous + deciduous, so calibrating a
+        # single litter layer is reflected in it.
+        body = CreateDuetRequest(
+            source_grid_id="g1",
+            years_since_burn=5,
+            bands=[DuetBand.fuel_load_litter],
+            calibration={
+                "fuel_load": {"coniferous": {"method": "constant", "value": 1.0}}
+            },
+        )
+        assert body.calibration.fuel_load.coniferous.value == 1.0
+
 
 class TestDuetSource:
     def test_carries_the_dispatch_triple(self):

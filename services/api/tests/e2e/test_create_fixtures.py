@@ -193,6 +193,26 @@ def test_create_blue_mtn_lookup_fbfm40(
 
 
 @pytest.mark.dependency()
+def test_create_blue_mtn_landfire_fccs(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create LANDFIRE FCCS fixture at 2 m, Domain-anchored.
+
+    Exercises the inline `alignment.target="domain", resolution=2` path on
+    the LANDFIRE FCCS handler — no separate resample step.
+    """
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/fccs/landfire",
+        body={
+            "alignment": {"target": "domain", "resolution": 2, "method": "nearest"},
+        },
+        static_name="static-test-blue-mtn-landfire-fccs",
+    )
+
+
+@pytest.mark.dependency()
 def test_create_blue_mtn_landfire_topography(
     create_static_fixture, client, blue_mountain_domain
 ):

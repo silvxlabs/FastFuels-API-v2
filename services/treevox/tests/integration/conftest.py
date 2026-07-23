@@ -4,10 +4,21 @@ Supports two execution modes:
 - local: Directly calls process_grid_request() with a MockRequest.
 - deployed: Enqueues via Cloud Tasks, polls Firestore for completion.
 
-The main fixture is ``treevox_runner``, which handles the full lifecycle:
-stages a tree inventory parquet (either copied from a static fixture in GCS
-or uploaded from a caller-supplied DataFrame), creates domain/grid documents,
-runs treevox, polls Firestore, opens the 3D zarr, and cleans up on teardown.
+Which mode runs matters more than it looks. Only ``deployed`` puts the work in
+the built image on Cloud Run; ``local`` runs the handler in whatever process
+pytest is in. For DUET that is the difference between testing the artifact we
+ship — binary, libgfortran5, amd64, the real memory and timeout — and testing
+the developer's laptop. CI sets ``DEPLOYMENT_ENV`` to the deploy environment, so
+CI is always ``deployed``.
+
+Two runner fixtures, one per handler:
+
+- ``treevox_runner`` — stages a tree inventory parquet (either copied from a
+  static fixture in GCS or uploaded from a caller-supplied DataFrame), creates
+  domain/grid documents, runs treevox, polls Firestore, opens the 3D zarr, and
+  cleans up on teardown.
+- ``duet_runner`` — takes a completed 3D tree grid from ``treevox_runner`` and
+  runs DUET against it, returning the 2D surface grid.
 
 Real integration tests should use ``static_inventory="static-test-blue-mtn-..."``
 to point at fixture data produced by ``services/api/tests/e2e``. The ``trees=``
@@ -358,6 +369,143 @@ def treevox_runner():
     for domain_id in domain_ids:
         try:
             delete_document(DOMAINS_COLLECTION, domain_id)
+        except Exception:
+            pass
+
+
+# DUET band metadata, mirroring what the API's duet schema writes onto the
+# grid document. Duplicated here for the same reason `_BAND_DEFS` above is:
+# treevox cannot import the API, and the fixture's job is to imitate the
+# document the API would have written.
+_DUET_UNITS = {"fuel_load": "kg/m**2", "fuel_depth": "m", "fuel_moisture": "%"}
+
+
+def _duet_band_defs(bands: list[str]) -> list[dict]:
+    defs = []
+    for i, key in enumerate(bands):
+        parameter = next(p for p in _DUET_UNITS if key.startswith(f"{p}."))
+        defs.append(
+            {
+                "key": key,
+                "type": "continuous",
+                "unit": _DUET_UNITS[parameter],
+                "index": i,
+            }
+        )
+    return defs
+
+
+@pytest.fixture
+def duet_runner():
+    """Run DUET against a completed 3D tree grid and return the 2D surface grid.
+
+    The source grid must carry `bulk_density.foliage.live`, `spcd`, and
+    `fuel_moisture.live` — build it with ``treevox_runner`` requesting those
+    bands.
+
+    Usage::
+
+        def test_duet(treevox_runner, duet_runner):
+            source = treevox_runner(
+                static_inventory="static-test-blue-mtn-pim-inventory",
+                bands=["bulk_density.foliage.live", "spcd", "fuel_moisture.live"],
+                moisture_model={"live": {"method": "uniform", "value": 100.0}},
+            )
+            result = duet_runner(
+                source_grid_id=source.grid_id,
+                domain_id=source.grid["domain_id"],
+                years_since_burn=25,
+            )
+    """
+    grid_ids: list[str] = []
+    datasets: list[xr.Dataset] = []
+
+    def _run(
+        source_grid_id: str,
+        domain_id: str,
+        bands: list[str] | None = None,
+        years_since_burn: int = 25,
+        wind_direction: int = 270,
+        wind_variability: int = 30,
+        calibration: dict | None = None,
+        expect_failed: bool = False,
+        timeout: int = 900,
+    ) -> TreevoxResult:
+        bands = bands or ["fuel_load.grass", "fuel_load.litter"]
+
+        grid_id = f"test-{uuid4().hex}"
+        source = {
+            "operation": "duet",
+            "input": "grid",
+            "entity": "tree",
+            "source_grid_id": source_grid_id,
+            "years_since_burn": years_since_burn,
+            "wind_direction": wind_direction,
+            "wind_variability": wind_variability,
+            "bands": bands,
+        }
+        if calibration is not None:
+            source["calibration"] = calibration
+
+        grid_data = {
+            "id": grid_id,
+            "domain_id": domain_id,
+            "name": "",
+            "description": "",
+            "status": "pending",
+            "created_on": datetime.now(),
+            "modified_on": datetime.now(),
+            "source": source,
+            "bands": _duet_band_defs(bands),
+            "modifications": [],
+            "georeference": None,
+            "chunks": None,
+            "tags": [],
+        }
+        set_document(GRIDS_COLLECTION, grid_id, grid_data)
+        grid_ids.append(grid_id)
+
+        _run_treevox(grid_id)
+
+        if DEPLOYMENT_ENV != "local":
+            grid = _poll_for_completion(grid_id, timeout=timeout)
+        else:
+            _, snapshot = get_document(GRIDS_COLLECTION, grid_id)
+            grid = snapshot.to_dict()
+
+        if expect_failed:
+            assert grid["status"] == "failed", (
+                f"Expected failed, got {grid['status']}: {grid.get('error')}"
+            )
+            return TreevoxResult(ds=xr.Dataset(), grid_id=grid_id, grid=grid)
+
+        assert grid["status"] == "completed", (
+            f"Expected completed, got {grid['status']}: {grid.get('error')}"
+        )
+        geo = grid["georeference"]
+        assert geo is not None
+        # DUET reads a 3D canopy and writes a 2D surface, so unlike every other
+        # treevox output this georeference has no z axis.
+        assert len(geo["shape"]) == 2  # (y, x)
+        assert all(s > 0 for s in geo["shape"])
+
+        ds = xr.open_zarr(
+            f"gs://{GRIDS_BUCKET}/{grid_id}", consolidated=True, decode_coords="all"
+        )
+        datasets.append(ds)
+        return TreevoxResult(ds=ds, grid_id=grid_id, grid=grid)
+
+    yield _run
+
+    for ds in datasets:
+        ds.close()
+
+    for grid_id in grid_ids:
+        gcs_path = f"gs://{GRIDS_BUCKET}/{grid_id}"
+        if exists(gcs_path):
+            delete_directory(gcs_path)
+        try:
+            delete_document(GRIDS_COLLECTION, grid_id)
         except Exception:
             pass
 

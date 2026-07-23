@@ -1,0 +1,21 @@
+# Keep the build context lean: the service Dockerfiles only COPY services/lib
+# and their own service dir, and every image runs `uv sync` to build its own
+# environment — so host virtualenvs, caches, and VCS metadata are pure bloat
+# (and baking a host .venv into the image would ship the wrong-arch wheels).
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.git
+.gitignore
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/node_modules
+**/*.zarr
+**/tmp.zarr
+**/scripts/figures
+.config
+*.env
+.env
+**/.DS_Store

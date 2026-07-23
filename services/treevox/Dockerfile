@@ -1,7 +1,10 @@
 FROM python:3.13-slim
 
+# libgfortran5: the DUET binary (treevox/data/duet_v2.1_FF_linux.exe) is a
+# dynamically linked Fortran executable and will not start without it.
 RUN apt-get update && apt-get install -y \
-    libexpat1
+    libexpat1 \
+    libgfortran5
 
 RUN pip install uv
 

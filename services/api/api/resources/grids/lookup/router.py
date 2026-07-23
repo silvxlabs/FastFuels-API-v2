@@ -104,9 +104,9 @@ async def create_fbfm13_lookup(
       same domain reference as their source).
     - The output grid inherits georeference from the source grid.
     - Non-burnable codes (91-99) produce zero values for all bands.
-    - Fuel loads, fuel bed depth, and moisture of extinction are from
-      Anderson, Hal E. 1982. *Aids to determining fuel models for estimating
-      fire behavior.* USDA Forest Service General Technical Report INT-122.
+    - Fuel parameter values are from Anderson, Hal E. 1982. *Aids to
+      determining fuel models for estimating fire behavior.* USDA Forest
+      Service General Technical Report INT-122.
     - All output values are in metric units (converted from Anderson 13 imperial values).
     """
     owner_id = request.state.id

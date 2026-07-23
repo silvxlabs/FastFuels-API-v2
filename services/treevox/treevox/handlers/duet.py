@@ -346,20 +346,25 @@ def _import_run(work: Path):
         calibration._loading_weighted_average = original
 
 
+_METHOD_KWARGS = {
+    "maxmin": ("max", "min"),
+    "meansd": ("mean", "sd"),
+    "constant": ("value",),
+}
+
+
 def _build_targets(calibration_config: dict) -> dict:
     """Translate the stored calibration config into duet-tools target objects.
 
     Returns {duet-tools parameter -> FuelParameterTargets}, ready for
-    `calibrate`. The API has already rejected impossible combinations, so this
-    only maps names.
+    `calibrate`. The API validates calibration targets on create, so a
+    well-formed grid always maps cleanly; a target with an unknown method or a
+    field its method needs missing can only reach here on a hand-edited or
+    otherwise malformed document. Raise `CALIBRATION_FAILED` on that rather than
+    letting a bare `KeyError` fall through duet-tools as an unexpected 500 —
+    every other DUET failure is a clean terminal `ProcessingError`.
     """
     from duet_tools import assign_targets, set_fuel_parameter
-
-    method_kwargs = {
-        "maxmin": ("max", "min"),
-        "meansd": ("mean", "sd"),
-        "constant": ("value",),
-    }
 
     parameter_targets = {}
     for api_parameter, duet_parameter in _PARAMETERS.items():
@@ -368,12 +373,35 @@ def _build_targets(calibration_config: dict) -> dict:
             continue
         assigned = {}
         for fuel_type, target in fuel_types.items():
-            method = target["method"]
-            kwargs = {
-                key: target[key]
-                for key in method_kwargs[method]
-                if target.get(key) is not None
-            }
+            method = target.get("method")
+            if method not in _METHOD_KWARGS:
+                raise ProcessingError(
+                    code="CALIBRATION_FAILED",
+                    message=(
+                        f"Calibration target {api_parameter}.{fuel_type} has an "
+                        f"unrecognized method {method!r}."
+                    ),
+                    suggestion=(
+                        "Re-create the grid; calibration methods are validated at "
+                        "create time, so this indicates a malformed grid document."
+                    ),
+                )
+            required = _METHOD_KWARGS[method]
+            missing = [key for key in required if target.get(key) is None]
+            if missing:
+                raise ProcessingError(
+                    code="CALIBRATION_FAILED",
+                    message=(
+                        f"Calibration target {api_parameter}.{fuel_type} uses "
+                        f"method {method!r} but is missing required field(s): "
+                        f"{missing}."
+                    ),
+                    suggestion=(
+                        "Re-create the grid; calibration targets are validated at "
+                        "create time, so this indicates a malformed grid document."
+                    ),
+                )
+            kwargs = {key: target[key] for key in required}
             assigned[fuel_type] = assign_targets(method=method, **kwargs)
         parameter_targets[duet_parameter] = set_fuel_parameter(
             parameter=duet_parameter, **assigned

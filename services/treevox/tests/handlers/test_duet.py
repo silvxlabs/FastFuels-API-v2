@@ -388,6 +388,25 @@ class TestBuildTargets:
                 handler._build_targets(config)
         assign.assert_called_once_with(method="constant", value=1.0)
 
+    def test_missing_method_field_becomes_a_processing_error(self):
+        # A malformed maxmin target (no `min`) can only reach the handler on a
+        # hand-edited document — the API always persists min=0.0. Without the
+        # guard, duet-tools' `_maxmin_calibration` does `kwargs["min"]` and dies
+        # with a bare KeyError, which escapes _calibrate's `except ValueError`
+        # and surfaces as a 500 + retry instead of a clean terminal failure.
+        config = {"fuel_load": {"grass": {"method": "maxmin", "max": 5.0}}}
+        with pytest.raises(ProcessingError) as exc:
+            handler._build_targets(config)
+        assert exc.value.code == "CALIBRATION_FAILED"
+        assert "min" in exc.value.message
+
+    def test_unknown_method_becomes_a_processing_error(self):
+        config = {"fuel_load": {"grass": {"method": "bogus", "value": 1.0}}}
+        with pytest.raises(ProcessingError) as exc:
+            handler._build_targets(config)
+        assert exc.value.code == "CALIBRATION_FAILED"
+        assert "bogus" in exc.value.message
+
 
 class TestCalibrate:
     def test_no_config_returns_the_run_untouched(self):

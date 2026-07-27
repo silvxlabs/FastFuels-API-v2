@@ -1,5 +1,5 @@
 """
-Example request bodies for FBFM13 and FBFM40 lookup endpoints.
+Example request bodies for the FBFM40 lookup endpoint.
 
 These examples are used in:
 1. OpenAPI/Swagger documentation - Users see these as example payloads
@@ -48,8 +48,7 @@ CREATE_FBFM13_LOOKUP_OPENAPI_EXAMPLES = {
         "summary": "All fuel bands",
         "description": (
             "Looks up all available Anderson 13 fuel parameters: fuel loads "
-            "and SAV ratios (three dead size classes plus live foliage), "
-            "and fuel depth."
+            "(4 size classes), SAV ratios (4 size classes), and fuel depth."
         ),
     },
 }

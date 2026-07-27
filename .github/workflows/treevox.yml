@@ -86,7 +86,8 @@ jobs:
               GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
               GCP_REGION=${{ env.REGION }},\
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
-              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }}" \
+              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
+              DUET_BINARY_GCS=${{ secrets.DUET_BINARY_GCS }}" \
             --quiet
 
   test:

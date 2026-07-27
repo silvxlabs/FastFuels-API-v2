@@ -74,7 +74,7 @@ STATIC_RESOURCE_TYPES = {
 
 # Fields to strip from grid documents when saving JSON templates.
 # These are runtime-specific and get set dynamically in tests.
-STRIP_FIELDS = {"id", "domain_id", "owner_id", "created_on", "modified_on"}
+STRIP_FIELDS = {"id", "domain_id", "owner_id", "created_on", "modified_on", "checksum"}
 
 
 def _poll_for_completion(

@@ -565,9 +565,23 @@ class TestMakeSource:
         assert source.name == "quicfire"
         assert source.domain_id == "test-domain"
         assert source.alignment.target == "domain"
-        assert source.resolved["fire_grid"]["nx"] == _NX
+        assert source.georeference.shape == (_NZ, _NY, _NX)
         assert source.canopy_bulk_density.grid_id == "canopy"
         assert source.topography is None
+
+    def test_georeference_is_the_resolved_fire_grid(self):
+        """The working fire-grid dict collapses to a plain Georeference3D —
+        `nx`/`ny`/`nz`/`dx`/`dy`/`dz` are all derivable from shape, transform,
+        and z_resolution."""
+        source = _make_source(_minimal_request(), "test-domain", dict(_FIRE_GRID))
+        geo = source.georeference
+        assert geo.crs == _CRS
+        assert geo.shape == (_NZ, _NY, _NX)
+        assert tuple(geo.transform) == tuple(_FIRE_TRANSFORM)
+        assert geo.transform[0] == _DX  # dx
+        assert -geo.transform[4] == _DX  # dy
+        assert geo.z_resolution == _DZ  # dz
+        assert geo.z_origin == 0.0
 
     def test_with_optional_roles(self):
         req = QuicfireExportRequest(

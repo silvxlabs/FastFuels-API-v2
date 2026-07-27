@@ -365,7 +365,7 @@ def inventory_exporter_runner():
 
 # QUIC-Fire combined export: five role grids + a test domain so the handler
 # can write domain.geojson. All five fixtures share lattice
-# origin=(720226, 5190646) at 2 m, matching `resolved.fire_grid` in
+# origin=(720226, 5190646) at 2 m, matching `source.georeference` in
 # `quicfire.json`. The handler reads `domain.features` and `domain.crs` only
 # (for the geojson sidecar) — bbox is not consulted.
 

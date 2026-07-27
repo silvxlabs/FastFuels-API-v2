@@ -6,8 +6,8 @@ grids into a zip of trees*.dat files plus metadata.json and domain.geojson.
 
 The handler is a pure consumer: every shape/CRS/transform decision was made
 at request time by the API validator and snapshotted into
-``source["resolved"]["fire_grid"]``. Per-role band selection is preserved
-in ``source["<role>"]`` (each a ``{grid_id, band}`` dict).
+``source["georeference"]``. Per-role band selection is preserved in
+``source["<role>"]`` (each a ``{grid_id, band}`` dict).
 
 Surface and canopy values are merged at the bottom slab (k=0):
 
@@ -62,14 +62,13 @@ def export_quicfire(
     progress: Callable[[str, int | None], None],
 ) -> str:
     """Build a QUIC-Fire input zip and upload it to GCS."""
-    fire_grid = source["resolved"]["fire_grid"]
-    nx = int(fire_grid["nx"])
-    ny = int(fire_grid["ny"])
-    # nz = int(fire_grid["nz"])
-    dx = float(fire_grid["dx"])
-    dz = float(fire_grid["dz"])
-    fire_minx = float(fire_grid["transform"][2])
-    fire_maxy = float(fire_grid["transform"][5])
+    georeference = source["georeference"]
+    ny, nx = (int(n) for n in georeference["shape"][-2:])
+    transform = [float(c) for c in georeference["transform"]]
+    dx = abs(transform[0])
+    dz = float(georeference["z_resolution"])
+    fire_minx = transform[2]
+    fire_maxy = transform[5]
 
     grid_cache: dict[str, xr.Dataset] = {}
 
@@ -170,7 +169,7 @@ def export_quicfire(
                 _write_fortran_2d(out_dir / "topo.dat", topo_arr)
             if treesss is not None:
                 _write_fortran_3d(out_dir / "treesss.dat", treesss)
-            _write_metadata(out_dir / "metadata.json", export, source, fire_grid)
+            _write_metadata(out_dir / "metadata.json", export, source, georeference)
             _write_domain_geojson(out_dir / "domain.geojson", source["domain_id"])
         except ProcessingError:
             raise
@@ -215,17 +214,39 @@ def _write_fortran_2d(path: Path, arr: np.ndarray) -> None:
         f.write_record(_prep_2d(arr))
 
 
+def _fire_grid_spec(georeference: dict) -> dict:
+    """Expand the stored `Georeference3D` into the metadata.json `fire_grid` block.
+
+    The sidecar is a file format read by whoever unzips the export, not the API
+    contract, so it keeps its explicit cell-count / cell-size shape even though
+    the API stores the equivalent georeference.
+    """
+    nz, ny, nx = (int(n) for n in georeference["shape"])
+    transform = [float(c) for c in georeference["transform"]]
+    return {
+        "nx": nx,
+        "ny": ny,
+        "nz": nz,
+        "dx": abs(transform[0]),
+        "dy": abs(transform[4]),
+        "dz": float(georeference["z_resolution"]),
+        "transform": transform,
+        "z_origin": float(georeference["z_origin"]),
+        "crs": georeference["crs"],
+    }
+
+
 def _write_metadata(
     path: Path,
     export: dict,
     source: dict,
-    fire_grid: dict,
+    georeference: dict,
 ) -> None:
     metadata = {
         "format": "quicfire",
         "exporter_version": "1",
         "completed_on": datetime.now(UTC).isoformat(),
-        "fire_grid": fire_grid,
+        "fire_grid": _fire_grid_spec(georeference),
         "export_id": export.get("id"),
         "export_name": export.get("name"),
         "source": source,

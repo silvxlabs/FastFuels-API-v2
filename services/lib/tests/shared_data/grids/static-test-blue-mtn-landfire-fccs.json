@@ -1,0 +1,69 @@
+{
+  "bands": [
+    {
+      "description": "Fuel Characteristic Classification System (FCCS) fuelbed identifier. Convert to fuel parameters via /grids/lookup/fccs.",
+      "index": 0,
+      "key": "fccs",
+      "name": "FCCS Fuelbed ID",
+      "nodata": 2147483647,
+      "summary": {
+        "count": 289068,
+        "nodata_count": 0,
+        "type": "categorical",
+        "unique_count": 16
+      },
+      "type": "categorical",
+      "unit": null
+    }
+  ],
+  "checksum": "d01368dc7af9458eaa78d161d1563473",
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "alignment": {
+      "method": "nearest",
+      "resolution": 2.0,
+      "target": "domain"
+    },
+    "description": "LANDFIRE FCCS fuelbed IDs",
+    "extent_buffer_cells": 0,
+    "name": "landfire",
+    "product": "fccs",
+    "remove_bare_ground": false,
+    "version": "2023"
+  },
+  "status": "completed",
+  "tags": []
+}

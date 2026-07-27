@@ -359,7 +359,9 @@ class TestUnitConversion:
         assert metric[0] == pytest.approx(expected, rel=1e-6)
 
 
-def _make_mock_source_ds(fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:32610", var_name="FBFM"):
+def _make_mock_source_ds(
+    fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:32610", var_name="FBFM"
+):
     """Create a mock xarray Dataset that mimics load_zarr output."""
     if y_coords is None:
         y_coords = np.arange(fbfm_codes.shape[0], dtype=np.float64) * 30.0

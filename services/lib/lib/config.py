@@ -33,6 +33,11 @@ TEST_BUCKET = os.getenv("TEST_BUCKET", "placeholder-bucket-name")
 UPLOADS_BUCKET = os.getenv("UPLOADS_BUCKET", "placeholder-bucket-name")
 POINT_CLOUDS_BUCKET = os.getenv("POINT_CLOUDS_BUCKET", "placeholder-bucket-name")
 
+# GCS path to the DUET binary. It is a restricted third-party artifact fetched
+# at runtime (never committed); treevox downloads it from here on first use. The
+# real value is set via env in the treevox service and local .env, not here.
+DUET_BINARY_GCS = os.getenv("DUET_BINARY_GCS", "gs://placeholder-bucket/duet.exe")
+
 # Collection names
 DOMAINS_COLLECTION = os.getenv("DOMAINS_COLLECTION", "domains-v2")
 GRIDS_COLLECTION = os.getenv("GRIDS_COLLECTION", "grids-v2")

@@ -32,6 +32,10 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Restricted third-party (LANL) DUET artifacts — NOT publicly distributable.
+# treevox fetches the binary at runtime from a private bucket; never commit it.
+services/treevox/treevox/data/*.exe
+
 # Temporary files
 *.tif
 *.tiff

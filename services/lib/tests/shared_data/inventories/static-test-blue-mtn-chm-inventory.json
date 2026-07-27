@@ -1,43 +1,52 @@
 {
+  "checksum": "46c85d5692034cdfb07257d352eb7f86",
   "columns": [
     {
       "key": "x",
+      "summary": {
+        "count": 9227,
+        "max": 721533.7026895626,
+        "mean": 720772.0657284688,
+        "min": 720226.2998630336,
+        "null_count": 0,
+        "std": 365.3882023680253,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "y",
+      "summary": {
+        "count": 9227,
+        "max": 5190646.296086108,
+        "mean": 5190226.879943475,
+        "min": 5189762.299863034,
+        "null_count": 0,
+        "std": 250.60264716338543,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
-    },
-    {
-      "key": "fia_species_code",
-      "type": "categorical",
-      "unit": null
-    },
-    {
-      "key": "fia_status_code",
-      "type": "categorical",
-      "unit": null
-    },
-    {
-      "key": "dbh",
-      "type": "continuous",
-      "unit": "cm"
     },
     {
       "key": "height",
+      "summary": {
+        "count": 9227,
+        "max": 32.689998626708984,
+        "mean": 14.734069580554808,
+        "min": 2.009999990463257,
+        "null_count": 0,
+        "std": 6.691886304929943,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
-    },
-    {
-      "key": "crown_ratio",
-      "type": "continuous",
-      "unit": null
     }
   ],
   "description": "",
   "error": null,
+  "forestry_metrics": null,
   "georeference": {
     "bounds": [
       720226.0,
@@ -56,13 +65,16 @@
   "source": {
     "algorithm": {
       "footprint_size": 3,
+      "max_height": 120.0,
       "min_height": 2.0,
       "name": "lmf"
     },
     "name": "chm",
+    "source_chm_grid_checksum": "27490d395e3d4df5a6067c7636628cb0",
     "source_chm_grid_id": "static-test-blue-mtn-naip-chm"
   },
   "status": "completed",
   "tags": [],
+  "treatments": [],
   "type": "tree"
 }

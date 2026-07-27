@@ -1,12 +1,22 @@
 {
   "bands": [
     {
+      "description": "TreeMap raster pixel value identifying the matched FIA plot (small integer, ~1-70k).",
       "index": 0,
       "key": "tm_id",
+      "name": "TreeMap ID",
+      "nodata": 4294967295,
+      "summary": {
+        "count": 655,
+        "nodata_count": 695,
+        "type": "categorical",
+        "unique_count": 46
+      },
       "type": "categorical",
       "unit": null
     }
   ],
+  "checksum": "66a17cde79c0441ba9fab257b5e34e5e",
   "chunks": {
     "count": 1,
     "count_by_axis": {

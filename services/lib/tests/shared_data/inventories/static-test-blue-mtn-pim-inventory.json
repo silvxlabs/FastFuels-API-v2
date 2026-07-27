@@ -1,43 +1,135 @@
 {
+  "checksum": "c52c03115b7848678b072ed71efb2b1e",
   "columns": [
     {
       "key": "x",
+      "summary": {
+        "count": 41929,
+        "max": 721530.7781919414,
+        "mean": 720796.1774776389,
+        "min": 720241.1602455191,
+        "null_count": 0,
+        "std": 353.3239092380921,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "y",
+      "summary": {
+        "count": 41929,
+        "max": 5190630.982899896,
+        "mean": 5190180.547598486,
+        "min": 5189776.00434774,
+        "null_count": 0,
+        "std": 244.7608228486032,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "fia_species_code",
+      "summary": {
+        "count": 41929,
+        "null_count": 0,
+        "type": "categorical",
+        "unique_count": 12
+      },
       "type": "categorical",
       "unit": null
     },
     {
       "key": "fia_status_code",
+      "summary": {
+        "count": 41929,
+        "null_count": 0,
+        "type": "categorical",
+        "unique_count": 2
+      },
       "type": "categorical",
       "unit": null
     },
     {
       "key": "dbh",
+      "summary": {
+        "count": 41929,
+        "max": 93.218,
+        "mean": 13.808800352977652,
+        "min": 2.54,
+        "null_count": 0,
+        "std": 10.956492930933083,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "cm"
     },
     {
       "key": "height",
+      "summary": {
+        "count": 41929,
+        "max": 44.50079999999999,
+        "mean": 8.832235884471368,
+        "min": 1.8287999999999998,
+        "null_count": 0,
+        "std": 5.6622470300877765,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
     },
     {
       "key": "crown_ratio",
+      "summary": {
+        "count": 41929,
+        "max": 0.95,
+        "mean": 0.41734002718881913,
+        "min": 0.0,
+        "null_count": 0,
+        "std": 0.23751227050479862,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": null
     }
   ],
   "description": "",
   "error": null,
+  "forestry_metrics": {
+    "basal_area_per_area": 38.54871986199412,
+    "dominant_species_groups": [
+      {
+        "basal_area_share": 0.7503891681900499,
+        "name": "Pine",
+        "spgrpcd": 4
+      },
+      {
+        "basal_area_share": 0.16815411352986695,
+        "name": "Douglas-fir",
+        "spgrpcd": 2
+      },
+      {
+        "basal_area_share": 0.0282226497181546,
+        "name": "Aspen/alder/cottonwood-willow",
+        "spgrpcd": 6
+      },
+      {
+        "basal_area_share": 0.019401617972058013,
+        "name": "Cedar/larch",
+        "spgrpcd": 1
+      },
+      {
+        "basal_area_share": 0.016984141399040944,
+        "name": "True fir/hemlock",
+        "spgrpcd": 3
+      }
+    ],
+    "quadratic_mean_diameter": 6.9399169127035725,
+    "tree_count": 41929,
+    "tree_density": 146.74862113708323,
+    "type": "tree"
+  },
   "georeference": {
     "bounds": [
       720226.0,
@@ -57,9 +149,11 @@
     "name": "pim",
     "point_process": "inhomogeneous_poisson",
     "seed": 898870608,
+    "source_pim_grid_checksum": "66a17cde79c0441ba9fab257b5e34e5e",
     "source_pim_grid_id": "static-test-blue-mtn-pim-treemap"
   },
   "status": "completed",
   "tags": [],
+  "treatments": [],
   "type": "tree"
 }

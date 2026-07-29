@@ -12,6 +12,7 @@ from fastapi import APIRouter
 
 from api.resources.grids.lookup.fbfm13.router import router as fbfm13_lookup_router
 from api.resources.grids.lookup.fbfm40.router import router as fbfm40_lookup_router
+from api.resources.grids.lookup.fccs.router import router as fccs_lookup_router
 
 router = APIRouter()
 
@@ -25,4 +26,7 @@ router.include_router(
 )
 router.include_router(
     fbfm40_lookup_router, prefix="/fbfm40", tags=["Grids - Lookup - FBFM40"]
+)
+router.include_router(
+    fccs_lookup_router, prefix="/fccs", tags=["Grids - Lookup - FCCS"]
 )

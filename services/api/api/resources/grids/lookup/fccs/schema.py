@@ -94,7 +94,7 @@ FCCS_LOOKUP_BAND_METADATA: dict[FccsLookupBand, dict] = {
     },
     FccsLookupBand.duff_depth: {
         "name": "Duff Layer Depth",
-        "description": ("Vertical depth of the duff layer."),
+        "description": "Vertical depth of the duff layer.",
         "type": BandType.continuous,
         "unit": "m",
     },
@@ -112,19 +112,19 @@ FCCS_LOOKUP_BAND_METADATA: dict[FccsLookupBand, dict] = {
     },
     FccsLookupBand.fuel_load_1hr: {
         "name": "1-hour Fuel Load",
-        "description": ("Oven-dry mass per unit area of 1-hour timelag dead fuels "),
+        "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels.",
         "type": BandType.continuous,
         "unit": "kg/m**2",
     },
     FccsLookupBand.fuel_load_10hr: {
         "name": "10-hour Fuel Load",
-        "description": ("Oven-dry mass per unit area of 10-hour timelag dead fuels "),
+        "description": "Oven-dry mass per unit area of 10-hour timelag dead fuels.",
         "type": BandType.continuous,
         "unit": "kg/m**2",
     },
     FccsLookupBand.fuel_load_100hr: {
         "name": "100-hour Fuel Load",
-        "description": ("Oven-dry mass per unit area of 100-hour timelag dead fuels "),
+        "description": "Oven-dry mass per unit area of 100-hour timelag dead fuels.",
         "type": BandType.continuous,
         "unit": "kg/m**2",
     },

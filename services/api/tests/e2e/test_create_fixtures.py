@@ -212,6 +212,30 @@ def test_create_blue_mtn_landfire_fccs(
     )
 
 
+@pytest.mark.dependency(depends=["test_create_blue_mtn_landfire_fccs"])
+def test_create_blue_mtn_lookup_fccs(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create FCCS lookup grid at 2 m with a representative band subset
+    (dead 1hr fuel load, duff depth, live herbaceous fuel load).
+
+    FCCS has no fuel_depth/savr equivalent to the FBFM13/FBFM40 QUIC-Fire
+    role set -- FOFEM only provides fuel loads plus duff_depth -- so this
+    fixture exercises a representative cross-section instead.
+    """
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/lookup/fccs",
+        body={
+            "source_grid_id": "static-test-blue-mtn-landfire-fccs",
+            "bands": ["fuel_load.1hr", "duff_depth", "fuel_load.live_herb"],
+        },
+        static_name="static-test-blue-mtn-lookup-fccs",
+        dependencies={"grids": ["static-test-blue-mtn-landfire-fccs"]},
+    )
+
+
 @pytest.mark.dependency()
 def test_create_blue_mtn_landfire_topography(
     create_static_fixture, client, blue_mountain_domain

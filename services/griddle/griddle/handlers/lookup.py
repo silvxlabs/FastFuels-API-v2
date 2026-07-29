@@ -235,7 +235,7 @@ def _load_fccs_table() -> dict:
 
     codes = df["fccs_id"].to_numpy(dtype=np.int32)
     arrays = {col: df[col].to_numpy(dtype=np.float32) for col in FCCS_QUANTITY_COLUMNS}
-    base_codes = frozenset(int(c) // 10_000 for c in codes) | {0}
+    base_codes = frozenset(int(c) // 10_000 for c in codes)
 
     return {"codes": codes, "base_codes": base_codes, **arrays}
 
@@ -623,8 +623,6 @@ def fccs_lookup(
         ).astype(np.float32)
 
         metric_vals = _convert_to_metric(imperial_vals, column).astype(np.float32)
-        metric_vals[nodata_mask] = np.nan
-        metric_vals[unmatched] = np.nan
 
         result_bands.append(metric_vals)
 

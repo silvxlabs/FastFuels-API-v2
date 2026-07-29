@@ -63,6 +63,23 @@ def test_fbfm40_lookup(griddle_runner, source_grid):
     assert (ds["fuel_depth"].values >= 0).all()
 
 
+def test_fccs_lookup_table_schema(griddle_runner):
+    """Sanity check: the real fccs_parameter_lookup.parquet in TABLES_BUCKET
+    has every column fccs_lookup expects.
+
+    Pins the contract between the handler and the out-of-band parquet
+    artifact — catches a renamed/dropped column or a missing file that
+    every mocked unit test in tests/handlers/test_lookup.py would miss.
+    """
+    from griddle.handlers.lookup import FCCS_QUANTITY_COLUMNS, _load_fccs_table
+
+    table = _load_fccs_table()
+
+    assert len(table["codes"]) > 0
+    for col in FCCS_QUANTITY_COLUMNS:
+        assert col in table, f"Missing column in real table: {col}"
+
+
 @pytest.mark.parametrize(
     "source_grid", ["static-test-blue-mtn-landfire-fccs"], indirect=True
 )

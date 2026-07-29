@@ -842,7 +842,10 @@ class TestFccsLookup:
     @patch("griddle.handlers.lookup.pd.read_parquet")
     @patch("griddle.handlers.lookup.load_zarr")
     def test_nodata_cells_pass_through_as_nan(self, mock_load_zarr, mock_read_parquet):
-        """Nodata cells (-9999) become NaN in every output band."""
+        """Nodata cells become NaN in every output band.
+
+        Uses 2147483647 (int32 max) — the nodata value FCCS source grids declare.
+        """
         mock_read_parquet.return_value = _make_fccs_df(
             [
                 {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
@@ -850,9 +853,10 @@ class TestFccsLookup:
                 {"fccs_id": 2, **{col: 2.0 for col in FCCS_QUANTITY_COLUMNS}},
             ]
         )
-        codes = np.array([[0, 1], [2, -9999]], dtype=np.int64)
+        NODATA = 2_147_483_647
+        codes = np.array([[0, 1], [2, NODATA]], dtype=np.int64)
         ds = _make_mock_source_ds(codes, var_name="FCCS")
-        ds["FCCS"] = ds["FCCS"].rio.write_nodata(-9999)
+        ds["FCCS"] = ds["FCCS"].rio.write_nodata(NODATA)
         mock_load_zarr.return_value = ds
 
         result = fccs_lookup("g", [{"key": "fuel_load.litter"}], MagicMock())
@@ -1204,3 +1208,38 @@ class TestLookupZarrRoundTrip:
         out_path = str(tmp_path / "multiband.tif")
         loaded.rio.to_raster(out_path)
         assert (tmp_path / "multiband.tif").exists()
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_fccs_round_trip_preserves_named_variables_and_metadata(
+        self, mock_load_zarr, mock_read_parquet, tmp_path
+    ):
+        """FCCS lookup output survives a zarr round-trip."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 1, **{col: 1.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        codes = np.array([[0, 1], [1, 0]])
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            codes, var_name="FCCS", crs="EPSG:32610"
+        )
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}, {"key": "duff_depth"}]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        save_zarr(str(tmp_path / "lookup.zarr"), result, chunk_shape=(512, 512))
+        loaded = load_zarr(str(tmp_path / "lookup.zarr"))
+
+        assert set(loaded.data_vars) == {"fuel_load.litter", "duff_depth"}
+        assert "__xarray_dataarray_variable__" not in loaded.data_vars
+        assert "spatial_ref" in loaded.coords
+        assert "spatial_ref" not in loaded.data_vars
+        assert loaded.rio.crs is not None
+        assert loaded.rio.crs.to_epsg() == 32610
+
+        out_path = str(tmp_path / "fccs.tif")
+        loaded.rio.to_raster(out_path)
+        assert (tmp_path / "fccs.tif").exists()

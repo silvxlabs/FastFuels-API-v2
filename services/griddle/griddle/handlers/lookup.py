@@ -235,7 +235,7 @@ def _load_fccs_table() -> dict:
 
     codes = df["fccs_id"].to_numpy(dtype=np.int32)
     arrays = {col: df[col].to_numpy(dtype=np.float32) for col in FCCS_QUANTITY_COLUMNS}
-    base_codes = frozenset(int(c) // 10_000 for c in codes) | {0}
+    base_codes = frozenset(int(c) // 10_000 for c in codes)
 
     return {"codes": codes, "base_codes": base_codes, **arrays}
 
@@ -322,7 +322,7 @@ def fbfm13_lookup(
             code="INVALID_FBFM_CODES",
             message=(
                 f"Source grid contains {len(invalid_codes)} invalid FBFM13 code(s): "
-                f"{sorted(invalid_codes)}"
+                f"{sorted(int(c) for c in invalid_codes)}"
             ),
             suggestion=(
                 "Valid FBFM13 codes are 91-99 (NB) and 1-13 (Anderson 13 "
@@ -445,7 +445,7 @@ def fbfm40_lookup(
             code="INVALID_FBFM_CODES",
             message=(
                 f"Source grid contains {len(invalid_codes)} invalid FBFM40 code(s): "
-                f"{sorted(invalid_codes)}"
+                f"{sorted(int(c) for c in invalid_codes)}"
             ),
             suggestion=(
                 "Valid FBFM40 codes are 91-99 (NB), 101-109 (GR), 121-124 (GS), "
@@ -586,7 +586,7 @@ def fccs_lookup(
                 code="INVALID_FCCS_CODES",
                 message=(
                     f"Source grid contains {len(invalid_codes)} invalid FCCS "
-                    f"code(s): {sorted(invalid_codes)}"
+                    f"code(s): {sorted(int(c) for c in invalid_codes)}"
                 ),
                 suggestion=(
                     "These codes don't correspond to any known FCCS fuelbed. "
@@ -598,7 +598,7 @@ def fccs_lookup(
             progress(
                 f"{len(missing_codes)} valid FCCS code(s) have no matching "
                 f"row in the FOFEM lookup table and will be output as NaN: "
-                f"{sorted(missing_codes)}",
+                f"{sorted(int(c) for c in missing_codes)}",
                 35,
             )
 
@@ -623,8 +623,6 @@ def fccs_lookup(
         ).astype(np.float32)
 
         metric_vals = _convert_to_metric(imperial_vals, column).astype(np.float32)
-        metric_vals[nodata_mask] = np.nan
-        metric_vals[unmatched] = np.nan
 
         result_bands.append(metric_vals)
 

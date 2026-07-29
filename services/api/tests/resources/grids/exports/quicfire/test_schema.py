@@ -255,12 +255,22 @@ class TestQuicfireExportRequest:
             QuicfireExportRequest(**kwargs)
 
 
+def _georeference() -> dict:
+    return {
+        "crs": "EPSG:32611",
+        "transform": [2.0, 0.0, 720226.0, 0.0, -2.0, 5190646.0],
+        "shape": [37, 442, 654],
+        "z_resolution": 1.0,
+        "z_origin": 0.0,
+    }
+
+
 class TestQuicfireExportSource:
     def test_minimal(self):
         source = QuicfireExportSource(
             domain_id="d1",
             **_minimal_request_kwargs(),
-            resolved={"domain": {}, "fire_grid": {}, "roles": {}},
+            georeference=_georeference(),
         )
         assert source.name == "quicfire"
         assert source.domain_id == "d1"
@@ -271,6 +281,10 @@ class TestQuicfireExportSource:
         assert source.rhof_merge == "sum"
         assert source.moist_merge == "max"
         assert source.savr_merge == "weighted_avg"
+        assert source.georeference.crs == "EPSG:32611"
+        assert source.georeference.shape == (37, 442, 654)
+        assert source.georeference.z_resolution == 1.0
+        assert source.georeference.z_origin == 0.0
 
     def test_name_is_pinned(self):
         # `name` is a Literal["quicfire"]; assigning anything else fails.
@@ -279,12 +293,31 @@ class TestQuicfireExportSource:
                 name="zarr",  # type: ignore[arg-type]
                 domain_id="d1",
                 **_minimal_request_kwargs(),
-                resolved={"domain": {}, "fire_grid": {}, "roles": {}},
+                georeference=_georeference(),
             )
 
-    def test_resolved_is_required(self):
+    def test_georeference_is_required(self):
         with pytest.raises(ValidationError):
             QuicfireExportSource(domain_id="d1", **_minimal_request_kwargs())
+
+    def test_georeference_is_typed_not_a_blob(self):
+        """A free-form dict is rejected — the fire grid has a schema."""
+        with pytest.raises(ValidationError):
+            QuicfireExportSource(
+                domain_id="d1",
+                **_minimal_request_kwargs(),
+                georeference={"fire_grid": {}},
+            )
+
+    def test_georeference_requires_3d_shape(self):
+        """A 2D shape is rejected — the fire grid is always (z, y, x)."""
+        geo = _georeference() | {"shape": [442, 654]}
+        with pytest.raises(ValidationError):
+            QuicfireExportSource(
+                domain_id="d1",
+                **_minimal_request_kwargs(),
+                georeference=geo,
+            )
 
 
 class TestExampleValidation:

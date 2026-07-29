@@ -290,11 +290,17 @@ def handle_lookup(
                 bands=grid["bands"],
                 progress=progress,
             )
+        case "fccs":
+            return lookup.fccs_lookup(
+                source_grid_id=source["source_grid_id"],
+                bands=grid["bands"],
+                progress=progress,
+            )
         case _:
             raise ProcessingError(
                 code="UNKNOWN_TABLE",
                 message=f"Unknown lookup table: {table}",
-                suggestion="Supported tables: fbfm13, fbfm40",
+                suggestion="Supported tables: fbfm13, fbfm40, fccs",
             )
 
 

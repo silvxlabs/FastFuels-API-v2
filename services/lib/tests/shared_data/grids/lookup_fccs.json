@@ -2,19 +2,19 @@
   "bands": [
     {
       "index": 0,
-      "key": "fuel_load.1hr",
+      "key": "fuel_load.litter",
       "type": "continuous",
       "unit": "kg/m**2"
     },
     {
       "index": 1,
-      "key": "fuel_load.10hr",
+      "key": "fuel_load.duff",
       "type": "continuous",
       "unit": "kg/m**2"
     },
     {
       "index": 2,
-      "key": "fuel_depth",
+      "key": "duff_depth",
       "type": "continuous",
       "unit": "m"
     }
@@ -31,13 +31,13 @@
   "error": null,
   "georeference": null,
   "modifications": [],
-  "name": "test-lookup-fbfm40",
+  "name": "test-lookup-fccs",
   "progress": null,
   "source": {
     "name": "lookup",
-    "source_band": "fbfm",
+    "source_band": "fccs",
     "source_grid_id": "PLACEHOLDER",
-    "table": "fbfm40"
+    "table": "fccs"
   },
   "status": "pending",
   "tags": []

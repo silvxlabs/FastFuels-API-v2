@@ -12,6 +12,7 @@ Tests cover:
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pandas as pd
 import pint
 import pytest
 import rioxarray  # noqa: F401
@@ -19,13 +20,17 @@ import xarray as xr
 from griddle.handlers.lookup import (
     FBFM13_BAND_KEY_TO_COLUMN,
     FBFM40_BAND_KEY_TO_COLUMN,
+    FCCS_BAND_KEY_TO_COLUMN,
+    FCCS_QUANTITY_COLUMNS,
     UNIT_CONVERSIONS,
     _convert_to_metric,
     _get_conversion_key,
     _load_fbfm13_table,
+    _load_fccs_table,
     _load_sb40_table,
     fbfm13_lookup,
     fbfm40_lookup,
+    fccs_lookup,
 )
 
 from lib.errors import ProcessingError
@@ -83,9 +88,15 @@ ALL_FBFM40_KEYS = [
 
 FBFM13_BAND_KEYS = list(FBFM13_BAND_KEY_TO_COLUMN.keys())
 FBFM40_BAND_KEYS = list(FBFM40_BAND_KEY_TO_COLUMN.keys())
+FCCS_BAND_KEYS = list(FCCS_BAND_KEY_TO_COLUMN.keys())
 
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
+
+
+def _make_fccs_df(rows: list[dict]) -> pd.DataFrame:
+    """Build a minimal fake FCCS parameter table for mocking pd.read_parquet."""
+    return pd.DataFrame(rows)
 
 
 class TestFbfm13TableLoading:
@@ -233,6 +244,88 @@ class TestSb40TableLoading:
             )
 
 
+class TestFccsTableLoading:
+    """Tests for FCCS parameter table loading."""
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    def test_table_has_all_columns(self, mock_read_parquet):
+        """Table contains all expected quantity columns."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        table = _load_fccs_table()
+        expected_columns = list(FCCS_BAND_KEY_TO_COLUMN.values())
+        for col in expected_columns:
+            assert col in table, f"Missing column: {col}"
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    def test_codes_are_sorted(self, mock_read_parquet):
+        """Codes array is sorted ascending, required for searchsorted."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 5, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 3, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        table = _load_fccs_table()
+        codes = table["codes"]
+        assert np.all(codes[:-1] <= codes[1:])
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    def test_bare_ground_is_zero(self, mock_read_parquet):
+        """FCCS code 0 (Bare Ground) has zero for every quantity column."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 1, **{col: 1.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        table = _load_fccs_table()
+        idx = np.searchsorted(table["codes"], 0)
+        assert table["codes"][idx] == 0
+        for col in FCCS_QUANTITY_COLUMNS:
+            assert table[col][idx] == pytest.approx(0.0)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    def test_base_codes_include_bare_ground(self, mock_read_parquet):
+        """base_codes always includes 0, even though 0 // 10000 == 0 anyway."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        table = _load_fccs_table()
+        assert 0 in table["base_codes"]
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    def test_valid_codes_matches_table_size(self, mock_read_parquet):
+        """table['codes'] has exactly one entry per input row."""
+        rows = [
+            {"fccs_id": i, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}}
+            for i in range(5)
+        ]
+        mock_read_parquet.return_value = _make_fccs_df(rows)
+        table = _load_fccs_table()
+        assert len(table["codes"]) == len(rows)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    def test_known_gap_code_not_in_table(self, mock_read_parquet):
+        """A code with a valid base but no matching row isn't in codes,
+        but its base is still in base_codes."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                # 1700111 // 10_000 == 170, giving base_codes = {0, 170}
+                {"fccs_id": 1_700_111, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        table = _load_fccs_table()
+        assert 1_700_211 not in table["codes"]
+        assert (1_700_211 // 10_000) in table["base_codes"]
+
+
 class TestUnitConversion:
     """Tests for imperial-to-metric unit conversion."""
 
@@ -258,8 +351,17 @@ class TestUnitConversion:
         expected = Q_(0.4, "ft").to("m").magnitude
         assert metric[0] == pytest.approx(expected, rel=1e-6)
 
+    def test_duff_depth_conversion(self):
+        """Duff depth: in → m."""
+        imperial = np.array([2.0])
+        metric = _convert_to_metric(imperial, "duff_depth")
+        expected = Q_(2.0, "in").to("m").magnitude
+        assert metric[0] == pytest.approx(expected, rel=1e-6)
 
-def _make_mock_source_ds(fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:32610"):
+
+def _make_mock_source_ds(
+    fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:32610", var_name="FBFM"
+):
     """Create a mock xarray Dataset that mimics load_zarr output."""
     if y_coords is None:
         y_coords = np.arange(fbfm_codes.shape[0], dtype=np.float64) * 30.0
@@ -267,13 +369,13 @@ def _make_mock_source_ds(fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:326
         x_coords = np.arange(fbfm_codes.shape[1], dtype=np.float64) * 30.0
 
     da = xr.DataArray(
-        data=fbfm_codes.astype(np.int16),
+        data=fbfm_codes.astype(np.int32),
         dims=("y", "x"),
         coords={"y": y_coords, "x": x_coords},
     )
     da = da.rio.write_crs(crs)
     da = da.rio.write_transform()
-    ds = da.to_dataset(name="FBFM")
+    ds = da.to_dataset(name=var_name)
     return ds
 
 
@@ -734,6 +836,301 @@ class TestFbfm40Lookup:
         assert exc_info.value.code == "SOURCE_GRID_NOT_FOUND"
 
 
+class TestFccsLookup:
+    """Tests for the fccs_lookup function."""
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_nodata_cells_pass_through_as_nan(self, mock_load_zarr, mock_read_parquet):
+        """Nodata cells become NaN in every output band.
+
+        Uses 2147483647 (int32 max) — the nodata value FCCS source grids declare.
+        """
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 1, **{col: 1.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 2, **{col: 2.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        NODATA = 2_147_483_647
+        codes = np.array([[0, 1], [2, NODATA]], dtype=np.int64)
+        ds = _make_mock_source_ds(codes, var_name="FCCS")
+        ds["FCCS"] = ds["FCCS"].rio.write_nodata(NODATA)
+        mock_load_zarr.return_value = ds
+
+        result = fccs_lookup("g", [{"key": "fuel_load.litter"}], MagicMock())
+
+        vals = result["fuel_load.litter"].values
+        assert np.isnan(vals[1, 1])
+        assert not np.isnan(vals[0, 0])
+        assert np.isnan(result["fuel_load.litter"].rio.nodata)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_returns_dataset(self, mock_load_zarr, mock_read_parquet):
+        """Returns a Dataset, not a DataArray."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 1, **{col: 1.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        codes = np.array([[0, 1]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}, {"key": "duff_depth"}]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        assert isinstance(result, xr.Dataset)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_dataset_variables_match_band_keys(self, mock_load_zarr, mock_read_parquet):
+        """Each band key becomes a named variable in the Dataset."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 1, **{col: 1.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        codes = np.array([[0, 1]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}, {"key": "duff_depth"}]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        assert set(result.data_vars) == {"fuel_load.litter", "duff_depth"}
+        for var in result.data_vars:
+            assert result[var].dims == ("y", "x")
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_sample_codes_all_bands(self, mock_load_zarr, mock_read_parquet):
+        """A sample of FCCS codes produce the correct metric value for every band.
+
+        Builds a small fake table with known values so the expected metric
+        value can be independently recomputed via pint, rather than
+        depending on real table content.
+        """
+        fake_rows = [
+            {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            {"fccs_id": 1, **{col: 1.5 for col in FCCS_QUANTITY_COLUMNS}},
+            {"fccs_id": 2, **{col: 3.25 for col in FCCS_QUANTITY_COLUMNS}},
+        ]
+        mock_read_parquet.return_value = _make_fccs_df(fake_rows)
+        sample_codes = [0, 1, 2]
+        codes = np.array([sample_codes])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": k} for k in FCCS_BAND_KEYS]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        assert set(result.data_vars) == set(FCCS_BAND_KEYS)
+
+        row_by_code = {row["fccs_id"]: row for row in fake_rows}
+
+        for band_key in FCCS_BAND_KEYS:
+            column = FCCS_BAND_KEY_TO_COLUMN[band_key]
+            conv_key = _get_conversion_key(column)
+            src_unit, dst_unit = UNIT_CONVERSIONS[conv_key]
+
+            for col_idx, code in enumerate(sample_codes):
+                imperial_val = row_by_code[code][column]
+
+                if src_unit is None:
+                    expected = imperial_val
+                else:
+                    expected = Q_(imperial_val, src_unit).to(dst_unit).magnitude
+
+                actual = result[band_key].values[0, col_idx]
+                assert actual == pytest.approx(expected, rel=1e-6, abs=1e-12), (
+                    f"Mismatch for code {code}, band {band_key}: "
+                    f"expected {expected}, got {actual}"
+                )
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_multi_band_output(self, mock_load_zarr, mock_read_parquet):
+        """Multiple bands produce one variable per band."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": i, **{col: float(i) for col in FCCS_QUANTITY_COLUMNS}}
+                for i in range(4)
+            ]
+        )
+        codes = np.array([[0, 1], [2, 3]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [
+            {"key": "fuel_load.litter"},
+            {"key": "fuel_load.duff"},
+            {"key": "duff_depth"},
+        ]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        assert set(result.data_vars) == {
+            "fuel_load.litter",
+            "fuel_load.duff",
+            "duff_depth",
+        }
+        for var in result.data_vars:
+            assert result[var].shape == (2, 2)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_bare_ground_produces_zeros(self, mock_load_zarr, mock_read_parquet):
+        """FCCS code 0 (Bare Ground) produces zero values for all bands."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        codes = np.array([[0, 0]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": k} for k in FCCS_BAND_KEYS]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        for var in result.data_vars:
+            np.testing.assert_array_equal(result[var].values, 0.0)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_invalid_codes_raise_error(self, mock_load_zarr, mock_read_parquet):
+        """A code whose base isn't a real FCCSID raises INVALID_FCCS_CODES."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        # base = 123456789 // 10_000 = 12345, not present in the fake table
+        codes = np.array([[0, 123456789]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}]
+        with pytest.raises(ProcessingError) as exc_info:
+            fccs_lookup("test-grid-id", bands, progress)
+
+        assert exc_info.value.code == "INVALID_FCCS_CODES"
+        assert "123456789" in exc_info.value.message
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_missing_from_table_codes_output_nan_not_error(
+        self, mock_load_zarr, mock_read_parquet
+    ):
+        """A real code (valid base) with no table row outputs NaN and warns
+        via progress, rather than raising."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                # base 170 present via this row, but not the exact code 1700211
+                {"fccs_id": 1700111, **{col: 1.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        codes = np.array([[0, 1_700_211]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        vals = result["fuel_load.litter"].values
+        assert np.isnan(vals[0, 1])
+        assert not np.isnan(vals[0, 0])
+
+        messages = [call[0][0] for call in progress.call_args_list]
+        assert any("1700211" in m for m in messages)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_spatial_metadata_inherited(self, mock_load_zarr, mock_read_parquet):
+        """Output inherits CRS from source grid."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": i, **{col: float(i) for col in FCCS_QUANTITY_COLUMNS}}
+                for i in range(4)
+            ]
+        )
+        codes = np.array([[0, 1], [2, 3]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, crs="EPSG:32610")
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        assert result.rio.crs is not None
+        assert result.rio.crs.to_epsg() == 32610
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_y_x_coordinates_preserved(self, mock_load_zarr, mock_read_parquet):
+        """Output preserves y and x coordinates from source grid."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": i, **{col: float(i) for col in FCCS_QUANTITY_COLUMNS}}
+                for i in range(4)
+            ]
+        )
+        codes = np.array([[0, 1], [2, 3]])
+        y = np.array([5000000.0, 4999970.0])
+        x = np.array([500000.0, 500030.0])
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            codes, y_coords=y, x_coords=x
+        )
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        np.testing.assert_array_equal(result.coords["y"].values, y)
+        np.testing.assert_array_equal(result.coords["x"].values, x)
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_progress_callbacks(self, mock_load_zarr, mock_read_parquet):
+        """Handler calls progress at expected stages."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        codes = np.array([[0]])
+        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}]
+        fccs_lookup("test-grid-id", bands, progress)
+
+        assert progress.call_count >= 3
+        messages = [call[0][0] for call in progress.call_args_list]
+        assert any("Loading" in m for m in messages)
+        assert any("Looking up" in m or "Lookup" in m for m in messages)
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_source_grid_not_found_raises(self, mock_load_zarr):
+        """Missing source grid raises ProcessingError.
+
+        No pd.read_parquet mock needed — load_zarr fails before
+        _load_fccs_table is ever called.
+        """
+        mock_load_zarr.side_effect = FileNotFoundError("not found")
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}]
+        with pytest.raises(ProcessingError) as exc_info:
+            fccs_lookup("missing-grid", bands, progress)
+
+        assert exc_info.value.code == "SOURCE_GRID_NOT_FOUND"
+
+
 class TestLookupZarrRoundTrip:
     """Verify lookup output survives a zarr save/load cycle.
 
@@ -811,3 +1208,38 @@ class TestLookupZarrRoundTrip:
         out_path = str(tmp_path / "multiband.tif")
         loaded.rio.to_raster(out_path)
         assert (tmp_path / "multiband.tif").exists()
+
+    @patch("griddle.handlers.lookup.pd.read_parquet")
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_fccs_round_trip_preserves_named_variables_and_metadata(
+        self, mock_load_zarr, mock_read_parquet, tmp_path
+    ):
+        """FCCS lookup output survives a zarr round-trip."""
+        mock_read_parquet.return_value = _make_fccs_df(
+            [
+                {"fccs_id": 0, **{col: 0.0 for col in FCCS_QUANTITY_COLUMNS}},
+                {"fccs_id": 1, **{col: 1.0 for col in FCCS_QUANTITY_COLUMNS}},
+            ]
+        )
+        codes = np.array([[0, 1], [1, 0]])
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            codes, var_name="FCCS", crs="EPSG:32610"
+        )
+        progress = MagicMock()
+
+        bands = [{"key": "fuel_load.litter"}, {"key": "duff_depth"}]
+        result = fccs_lookup("test-grid-id", bands, progress)
+
+        save_zarr(str(tmp_path / "lookup.zarr"), result, chunk_shape=(512, 512))
+        loaded = load_zarr(str(tmp_path / "lookup.zarr"))
+
+        assert set(loaded.data_vars) == {"fuel_load.litter", "duff_depth"}
+        assert "__xarray_dataarray_variable__" not in loaded.data_vars
+        assert "spatial_ref" in loaded.coords
+        assert "spatial_ref" not in loaded.data_vars
+        assert loaded.rio.crs is not None
+        assert loaded.rio.crs.to_epsg() == 32610
+
+        out_path = str(tmp_path / "fccs.tif")
+        loaded.rio.to_raster(out_path)
+        assert (tmp_path / "fccs.tif").exists()

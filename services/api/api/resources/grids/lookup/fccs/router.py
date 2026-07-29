@@ -80,6 +80,8 @@ async def create_fccs_lookup(
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
 
+    ## Band Coverage
+
     These 12 bands are a starting subset of what FOFEM provides, not the
     full table. `fuel_load.1000hr_sound` and `fuel_load.1000hr_rotten`
     are each calculated by summing three FOFEM size-class columns
@@ -87,10 +89,6 @@ async def create_fccs_lookup(
     column. FOFEM also provides finer sound/rotten size-class
     breakdowns, a cover-group code, and emission factors that aren't
     exposed as bands here — additional bands can be added on request.
-    - **source_band**: (optional) Band in source grid containing FCCS codes. Defaults to `"fccs"`.
-    - **name**: (optional) Name for the grid.
-    - **description**: (optional) Description.
-    - **tags**: (optional) Tags for organizing grids.
 
     ## Valid FCCS Codes
 

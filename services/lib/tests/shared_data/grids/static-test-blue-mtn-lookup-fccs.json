@@ -1,7 +1,7 @@
 {
   "bands": [
     {
-      "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels ",
+      "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels.",
       "index": 0,
       "key": "fuel_load.1hr",
       "name": "1-hour Fuel Load",

@@ -43,10 +43,13 @@ LANDFIRE_CANOPY_SCALE_FACTORS: dict[str, float] = {
     "cc": 1.0,
 }
 
-# LANDFIRE canopy rasters carry two coexisting nodata sentinels: 32767 is
-# declared in the TIFF nodata tag; -9999 also appears in pixel data without
-# being declared anywhere.
-LANDFIRE_CANOPY_EXTRA_NODATA: int = -9999
+# LANDFIRE rasters can carry an undeclared -9999 sentinel that the TIFF
+# nodata tag doesn't account for. Before 2024, the declared value was
+# simply wrong and -9999 was the real sentinel throughout. From 2024 on,
+# the declared value is correct but -9999 still shows up alongside it.
+# Either way, both are unified onto the declared value at fetch time so
+# downstream code can trust rio.nodata.
+LANDFIRE_EXTRA_NODATA: int = -9999
 
 
 def _fetch_landfire_raster(
@@ -99,7 +102,16 @@ def _fetch_landfire_raster(
             else None,
             **dest,
         )
-    return data.squeeze("band", drop=True)
+        data = data.squeeze("band", drop=True)
+
+        # If no nodata is declared, fall back to -9999.
+        if data.rio.nodata is None:
+            data = data.rio.write_nodata(LANDFIRE_EXTRA_NODATA)
+        # Replace -9999 with the declared nodata value.
+        declared = data.rio.nodata
+        data = data.where(data != LANDFIRE_EXTRA_NODATA, declared)
+
+        return data
 
 
 def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
@@ -410,19 +422,16 @@ def fetch_canopy_landfire(
 
 
 def _scale_canopy_band(data: DataArray, scale: float) -> DataArray:
-    """Mask LANDFIRE canopy nodata sentinels and decode to physical units.
+    """Mask nodata and decode a LANDFIRE canopy band to physical units.
 
-    LANDFIRE distributes canopy products as int16 with two coexisting nodata
-    sentinels: 32767 (declared in the TIFF nodata tag) and -9999 (present in
-    pixel data without being declared anywhere). Naively dividing would
-    inject ``sentinel / scale`` into the valid value range, so we mask both
-    before any arithmetic.
+    Assumes `data` has already gone through `_fetch_landfire_raster`, so
+    its declared nodata is trustworthy and any undeclared -9999 sentinel
+    has already been folded into it. Masks that value, then divides by
+    `scale` to convert from the int16 storage representation into
+    physical units (m for chm/cbh, kg/m**3 for cbd, % for cc).
     """
     declared_nodata = data.rio.nodata
-    sentinel_mask = data == LANDFIRE_CANOPY_EXTRA_NODATA
-    if declared_nodata is not None:
-        sentinel_mask = sentinel_mask | (data == declared_nodata)
-    out = data.astype("float32").where(~sentinel_mask)
+    out = data.astype("float32").where(data != declared_nodata)
     if scale != 1.0:
         out = out / scale
     return out.rio.write_nodata(np.nan, encoded=True)

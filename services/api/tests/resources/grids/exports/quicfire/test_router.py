@@ -269,14 +269,12 @@ class TestCreateQuicfireExport:
         assert data["source"]["canopy_savr"] is None
         assert data["source"]["surface_savr"] is None
 
-        fire_grid = data["source"]["resolved"]["fire_grid"]
-        assert fire_grid["nx"] == NX
-        assert fire_grid["ny"] == NY
-        assert fire_grid["nz"] == NZ
+        geo = data["source"]["georeference"]
+        assert geo["shape"] == [NZ, NY, NX]
         # Alignment was omitted → defaults to QF-recommended 2 m / 1 m.
-        assert fire_grid["dx"] == DX
-        assert fire_grid["dy"] == DX
-        assert fire_grid["dz"] == 1.0
+        assert geo["transform"][0] == DX
+        assert -geo["transform"][4] == DX
+        assert geo["z_resolution"] == 1.0
         # Default alignment is recorded on the persisted source.
         assert data["source"]["alignment"]["target"] == "domain"
         assert data["source"]["alignment"]["dx"] == DX
@@ -350,12 +348,11 @@ class TestCreateQuicfireExport:
         response = client.post(_route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201, response.text
 
-        fire_grid = response.json()["source"]["resolved"]["fire_grid"]
-        assert fire_grid["dx"] == DX
-        assert fire_grid["dy"] == DX
-        assert fire_grid["dz"] == 1.0
-        assert fire_grid["nx"] == NX
-        assert fire_grid["ny"] == NY
+        geo = response.json()["source"]["georeference"]
+        assert geo["transform"][0] == DX
+        assert -geo["transform"][4] == DX
+        assert geo["z_resolution"] == 1.0
+        assert geo["shape"] == [NZ, NY, NX]
 
         _cleanup_export(firestore_client, response.json()["id"])
 
@@ -383,11 +380,10 @@ class TestCreateQuicfireExport:
         data = response.json()
         assert data["source"]["alignment"]["target"] == "grid"
         assert data["source"]["alignment"]["grid_id"] == surface_grid["id"]
-        fire_grid = data["source"]["resolved"]["fire_grid"]
-        assert fire_grid["nx"] == NX
-        assert fire_grid["ny"] == NY
-        assert fire_grid["dx"] == DX
-        assert fire_grid["crs"] == "EPSG:32611"
+        geo = data["source"]["georeference"]
+        assert geo["shape"] == [NZ, NY, NX]
+        assert geo["transform"][0] == DX
+        assert geo["crs"] == "EPSG:32611"
 
         _cleanup_export(firestore_client, data["id"])
 

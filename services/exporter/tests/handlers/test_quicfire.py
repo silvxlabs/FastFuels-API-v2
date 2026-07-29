@@ -136,18 +136,12 @@ def _build_source(
         "rhof_merge": "sum",
         "moist_merge": "weighted_avg",
         "savr_merge": "weighted_avg",
-        "resolved": {
-            "fire_grid": {
-                "nx": _NX,
-                "ny": _NY,
-                "nz": _NZ,
-                "dx": _DX,
-                "dy": _DX,
-                "dz": _DZ,
-                "transform": _TRANSFORM,
-                "z_origin": 0.0,
-                "crs": "EPSG:32611",
-            },
+        "georeference": {
+            "crs": "EPSG:32611",
+            "transform": _TRANSFORM,
+            "shape": [_NZ, _NY, _NX],
+            "z_resolution": _DZ,
+            "z_origin": 0.0,
         },
     }
     if topo_grid_id:
@@ -590,11 +584,17 @@ class TestMetadata:
         assert meta["format"] == "quicfire"
         assert meta["export_id"] == "exp-meta"
         assert meta["export_name"] == "blue mountain run"
+        # The sidecar keeps its explicit cell-count / cell-size shape even
+        # though the source now stores an equivalent Georeference3D.
         fg = meta["fire_grid"]
         assert fg["nx"] == _NX
         assert fg["ny"] == _NY
         assert fg["nz"] == _NZ
+        assert fg["dx"] == _DX
+        assert fg["dy"] == _DX
         assert fg["dz"] == _DZ
+        assert fg["transform"] == _TRANSFORM
+        assert fg["z_origin"] == 0.0
         assert fg["crs"] == "EPSG:32611"
         assert "completed_on" in meta
         assert meta["source"]["name"] == "quicfire"

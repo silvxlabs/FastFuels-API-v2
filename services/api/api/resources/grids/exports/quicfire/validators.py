@@ -17,7 +17,8 @@ helpers, each unit-testable without Firestore or the async runtime:
 * `_check_3d_role_vertical` — per 3D role: `dz` / `nz` / `z_origin` match
   the fire grid's vertical (the exporter never resamples vertically).
 * `_check_cell_count_cap` — total cell count under the v1 cap.
-* `_make_source` — assemble the persisted `QuicfireExportSource`.
+* `_make_source` — assemble the persisted `QuicfireExportSource`, whose
+  `georeference` is the fire grid the exporter writes onto.
 
 Every helper raises `HTTPException(422)` on failure.
 """
@@ -41,6 +42,7 @@ from api.resources.grids.exports.quicfire.schema import (
     QuicfireExportRequest,
     QuicfireExportSource,
 )
+from api.resources.grids.schema import Georeference3D
 from api.resources.grids.utils import (
     validate_band_unit,
     validate_grid_dimensionality,
@@ -213,7 +215,12 @@ def _check_cell_count_cap(fire_grid: dict) -> None:
 def _make_source(
     request: QuicfireExportRequest, domain_id: str, fire_grid: dict
 ) -> QuicfireExportSource:
-    """Assemble the persisted `QuicfireExportSource`."""
+    """Assemble the persisted `QuicfireExportSource`.
+
+    The working fire-grid dict carries `nx`/`ny`/`nz`/`dx`/`dy`/`dz` for the
+    alignment checks; the persisted form is a plain `Georeference3D`, from
+    which all six are derivable.
+    """
     return QuicfireExportSource(
         domain_id=domain_id,
         alignment=request.alignment,
@@ -228,7 +235,13 @@ def _make_source(
         rhof_merge=request.rhof_merge,
         moist_merge=request.moist_merge,
         savr_merge=request.savr_merge,
-        resolved={"fire_grid": fire_grid},
+        georeference=Georeference3D(
+            crs=fire_grid["crs"],
+            transform=tuple(fire_grid["transform"]),
+            shape=(fire_grid["nz"], fire_grid["ny"], fire_grid["nx"]),
+            z_resolution=fire_grid["dz"],
+            z_origin=fire_grid["z_origin"],
+        ),
     )
 
 

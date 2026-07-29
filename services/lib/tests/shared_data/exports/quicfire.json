@@ -21,18 +21,12 @@
     "domain_id": "test-domain",
     "moist_merge": "max",
     "name": "quicfire",
-    "resolved": {
-      "fire_grid": {
-        "nx": 654,
-        "ny": 442,
-        "nz": 37,
-        "dx": 2.0,
-        "dy": 2.0,
-        "dz": 1.0,
-        "transform": [2.0, 0.0, 720226.0, 0.0, -2.0, 5190646.0],
-        "z_origin": 0.0,
-        "crs": "EPSG:32611"
-      }
+    "georeference": {
+      "crs": "EPSG:32611",
+      "transform": [2.0, 0.0, 720226.0, 0.0, -2.0, 5190646.0],
+      "shape": [37, 442, 654],
+      "z_resolution": 1.0,
+      "z_origin": 0.0
     },
     "rhof_merge": "sum",
     "savr_merge": "weighted_avg",

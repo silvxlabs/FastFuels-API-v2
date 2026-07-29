@@ -1,8 +1,20 @@
 {
   "bands": [
     {
+      "description": "Height of the canopy top above ground.",
       "index": 0,
       "key": "chm",
+      "name": "Canopy Height",
+      "nodata": null,
+      "summary": {
+        "count": 3216975,
+        "max": 32.689998626708984,
+        "mean": 5.950183918105713,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 7.25633903389633,
+        "type": "continuous"
+      },
       "type": "continuous",
       "unit": "m"
     }

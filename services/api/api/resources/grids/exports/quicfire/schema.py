@@ -15,6 +15,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from api.resources.grids.schema import Georeference3D
+
 
 class FieldSource(BaseModel):
     """A single physical quantity drawn from one band on one grid.
@@ -259,9 +261,9 @@ class QuicfireExportRequest(BaseModel):
 class QuicfireExportSource(BaseModel):
     """Stored source metadata for a QUIC-Fire export, recorded in `Export.source`.
 
-    `resolved` snapshots CRS/transform/shape/units per role at request time so
-    the exporter is a pure consumer and the export is reproducible even if a
-    source grid is later modified or deleted.
+    `georeference` snapshots the fire grid at request time so the exporter is a
+    pure consumer and the export is reproducible even if a source grid is later
+    modified or deleted.
     """
 
     name: Literal["quicfire"] = "quicfire"
@@ -282,10 +284,12 @@ class QuicfireExportSource(BaseModel):
     moist_merge: Literal["max", "weighted_avg"] = "max"
     savr_merge: Literal["weighted_avg"] = "weighted_avg"
 
-    resolved: dict = Field(
+    georeference: Georeference3D = Field(
         ...,
         description=(
-            "Snapshot of CRS, transform, shape, and band units per role at "
-            "request time. Used by the exporter to consume pre-validated data."
+            "The fire grid — CRS, affine transform, (z, height, width) shape, "
+            "vertical cell size, and vertical origin — resolved from "
+            "`alignment` and the canopy grid at request time. Every `.dat` "
+            "file in the exported zip is written on this grid."
         ),
     )

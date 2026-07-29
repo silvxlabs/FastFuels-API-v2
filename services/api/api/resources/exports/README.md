@@ -181,22 +181,28 @@ Each export format has its own source schema with `name` identifying the format:
         "surface_moisture":    {"grid_id": "uniform_def", "band": "fuel_moisture.1hr"},
         "surface_savr":        null,
         "topography":          {"grid_id": "topo_xyz",    "band": "elevation"},
-        "resolved": {
-            "domain": {"crs": "...", "bbox": [...]},
-            "fire_grid": {"nx": ..., "ny": ..., "nz": ..., "transform": [...], "z_origin": ..., "z_resolution": ..., "crs": "..."},
-            "roles": {
-                "canopy_bulk_density": {"grid_id": "tree_xyz", "band": "bulk_density.foliage.live", "unit": "kg/m**3", "dimensionality": 3, "shape": [...], "transform": [...], "crs": "..."},
-                "canopy_moisture":     {"...": "..."},
-                "...": "..."
-            }
+        "georeference": {
+            "crs": "EPSG:32611",
+            "transform": [2.0, 0.0, 720226.0, 0.0, -2.0, 5190646.0],
+            "shape": [37, 442, 654],
+            "z_resolution": 1.0,
+            "z_origin": 0.0
         }
     }
 }
 ```
 
-The `resolved` block snapshots CRS / transform / shape / units per role at
-request time so the exporter consumes pre-validated data and the export
-remains reproducible if a source grid is later modified or deleted.
+`georeference` is the fire grid, resolved from `alignment` and the canopy grid
+at request time, in the same `Georeference3D` shape grids use. It snapshots the
+output lattice so the exporter consumes pre-validated data and the export
+remains reproducible if a source grid is later modified or deleted. `shape` is
+`(nz, ny, nx)`; `dx` / `dy` are `transform[0]` / `-transform[4]` and `dz` is
+`z_resolution`.
+
+The exporter writes an expanded `fire_grid` block (explicit `nx`/`ny`/`nz` and
+`dx`/`dy`/`dz`) into the output zip's `metadata.json`. That sidecar is a file
+format for whoever unzips the export, not the API contract, and keeps its shape
+independently of this schema.
 
 Forward extensibility for `nfuel>1` (when QUIC-Fire's multi-fuel-type
 capability becomes relevant): each per-fuel-type role accepts

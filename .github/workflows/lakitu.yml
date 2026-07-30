@@ -81,7 +81,11 @@ jobs:
       # memory and can run for minutes, so the Cloud Run defaults (512 MiB,
       # 300s, 80 concurrent requests per instance) would fail every job.
       # Concurrency is 1 because two fetches on one instance would compete for
-      # the same memory budget.
+      # the same memory budget. The timeout matches the Cloud Tasks dispatch
+      # deadline (600s, the platform default) — Cloud Tasks cancels and retries
+      # the attempt at that point, so a longer timeout here would only let a
+      # request outlive the deadline watching it. Measured fetches run ~3
+      # minutes at the point-budget ceiling, so there is plenty of room.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy ${{ env.SERVICE_NAME }}-${{ needs.determine-environment.outputs.deploy_env }} \
@@ -89,7 +93,7 @@ jobs:
             --region ${{ env.REGION }} \
             --memory=8Gi \
             --cpu=2 \
-            --timeout=3600 \
+            --timeout=600 \
             --concurrency=1 \
             --max-instances=10 \
             --update-env-vars="\

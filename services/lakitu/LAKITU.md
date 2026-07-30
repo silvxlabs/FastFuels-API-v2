@@ -63,6 +63,14 @@ already the limit. 8 GiB / 2 vCPU is the cheapest Cloud Run tier with real
 headroom over the ~3 GB peak; 16 GiB would force 4 vCPU, buying two cores the
 GIL cannot use.
 
+Cloud Tasks cancels an attempt at its dispatch deadline (600s by default for an
+HTTP target) and retries it, and this worker treats any retry as terminal, so
+that deadline — not Cloud Run's timeout — is the real ceiling on a fetch. The
+service's timeout is set to match it rather than exceed it. Measured fetches run
+about three minutes at the point-budget ceiling, so this has not been close to
+binding; if it ever is, the answer is a smaller `LAKITU_MAX_POINTS`.
+
+
 ## Correctness notes
 
 **Depth.** EPT is additive: a node holds a coarse sample of its own volume and

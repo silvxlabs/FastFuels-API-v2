@@ -51,3 +51,14 @@ uv run python scripts/refresh_ept_catalog.py
 Pushes to `main` deploy `lakitu-v2-prod` via `.github/workflows/lakitu.yml`.
 Unlike the older services, the workflow sets memory, CPU, timeout, and
 concurrency explicitly — see LAKITU.md for why.
+
+The `lakitu-v2-queue` Cloud Tasks queue is a one-time manual resource:
+
+```bash
+gcloud tasks queues create lakitu-v2-queue --location=us-west1 \
+  --max-attempts=2 --max-concurrent-dispatches=10
+```
+
+`--max-attempts=2` matters because `main.py` fails the resource on any retry
+rather than re-running an hour-long fetch, and the concurrency cap matches the
+service's `--max-instances`.

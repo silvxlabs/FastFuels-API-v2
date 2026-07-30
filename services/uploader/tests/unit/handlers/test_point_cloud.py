@@ -42,8 +42,9 @@ class TestRequireCrs:
         path = tmp_path / "cloud.laz"
         make_test_las(str(path), epsg=32612)
         with laspy.open(str(path)) as reader:
-            crs = _require_crs(reader.header)
+            crs, vertical = _require_crs(reader.header)
         assert crs.to_epsg() == 32612
+        assert vertical is None
 
     def test_missing_crs_raises(self, tmp_path):
         path = tmp_path / "cloud.laz"
@@ -53,22 +54,50 @@ class TestRequireCrs:
                 _require_crs(reader.header)
         assert exc.value.code == "MISSING_CRS"
 
-    def test_compound_crs_resolves_to_horizontal(self, tmp_path):
-        path = tmp_path / "cloud.laz"
+    def _compound_source(self, path, crs):
         header = laspy.LasHeader(version="1.4", point_format=6)
         header.offsets = [500000.0, 4300000.0, 1800.0]
         header.scales = [0.01, 0.01, 0.01]
-        # UTM 12N + NAVD88 height.
-        header.add_crs(pyproj.CRS.from_user_input("EPSG:32612+5703"))
+        header.add_crs(pyproj.CRS.from_user_input(crs))
         las = laspy.LasData(header)
         las.x = np.array([500100.0])
         las.y = np.array([4300100.0])
         las.z = np.array([1850.0])
         las.write(str(path))
 
+    def test_compound_crs_resolves_to_horizontal(self, tmp_path):
+        path = tmp_path / "cloud.laz"
+        # UTM 12N + NAVD88 height.
+        self._compound_source(path, "EPSG:32612+5703")
+
         with laspy.open(str(path)) as reader:
-            crs = _require_crs(reader.header)
+            crs, _ = _require_crs(reader.header)
         assert crs.to_epsg() == 32612
+
+    def test_compound_crs_reports_its_vertical_datum(self, tmp_path):
+        """Discarding it reports `vertical_crs: null`, which the API documents
+        as meaning the source declared nothing — the opposite of the truth."""
+        path = tmp_path / "cloud.laz"
+        self._compound_source(path, "EPSG:32612+5703")
+
+        with laspy.open(str(path)) as reader:
+            _, vertical = _require_crs(reader.header)
+        assert vertical == "EPSG:5703"
+
+    def test_a_different_vertical_datum_is_reported_as_itself(self, tmp_path):
+        """The datum is read from the file, not assumed to be 3DEP's NAVD88.
+
+        Two clouds in one domain on different reference surfaces disagree in z
+        by metres, so 'measured from something else' has to be distinguishable
+        from 'unstated'.
+        """
+        path = tmp_path / "cloud.laz"
+        # UTM 12N + EGM2008 geoid height.
+        self._compound_source(path, "EPSG:32612+3855")
+
+        with laspy.open(str(path)) as reader:
+            _, vertical = _require_crs(reader.header)
+        assert vertical == "EPSG:3855"
 
 
 class TestCensus:

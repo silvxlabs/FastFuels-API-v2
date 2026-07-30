@@ -66,7 +66,7 @@ def handle_point_cloud(
 
         with get_gcsfs_client().open(src, "rb") as stream:
             with _open_cloud(stream) as reader:
-                src_crs = _require_crs(reader.header)
+                src_crs, vertical_crs = _require_crs(reader.header)
                 if src_crs.equals(domain_crs, ignore_axis_order=True):
                     if reader.header.are_points_compressed:
                         # Already LAZ in the domain CRS: census the points,
@@ -95,7 +95,11 @@ def handle_point_cloud(
             {
                 "status": "completed",
                 "modified_on": datetime.now(UTC),
-                "georeference": {"crs": domain_crs_name, "bounds": bounds},
+                "georeference": {
+                    "crs": domain_crs_name,
+                    "vertical_crs": vertical_crs,
+                    "bounds": bounds,
+                },
                 "summary": {
                     "point_count": stats["point_count"],
                     "point_classes": stats["point_classes"],
@@ -144,8 +148,18 @@ def _open_cloud(source) -> laspy.LasReader:
         )
 
 
-def _require_crs(header: laspy.LasHeader) -> PyprojCRS:
-    """Return the cloud's CRS, resolving compound CRSs to their horizontal part.
+def _require_crs(header: laspy.LasHeader) -> tuple[PyprojCRS, str | None]:
+    """Return the cloud's horizontal CRS, and the vertical one it declares.
+
+    Only the horizontal part is used for reprojection — elevations pass through
+    untouched — but a compound CRS names what those elevations are measured
+    from, and that is the only place it is recorded. Discarding it would leave
+    an uploaded cloud reporting ``vertical_crs: null``, which the API documents
+    as "the source did not declare one".
+
+    Returns:
+        ``(horizontal_crs, vertical_crs_name)``, the latter None unless the
+        file declares a compound CRS whose vertical part has an EPSG code.
 
     Raises:
         ProcessingError: MISSING_CRS when the file carries no CRS — without a
@@ -167,9 +181,14 @@ def _require_crs(header: laspy.LasHeader) -> PyprojCRS:
                 "`pdal translate in.laz out.laz --writers.las.a_srs=EPSG:<code>`."
             ),
         )
-    if crs.is_compound:
-        crs = crs.sub_crs_list[0]
-    return crs
+    if not crs.is_compound:
+        return crs, None
+
+    # A vertical datum with no EPSG code is reported as absent rather than as a
+    # WKT blob: the field is an identifier consumers compare, and a spelling
+    # only this file uses answers no question they can ask.
+    vertical_epsg = crs.sub_crs_list[1].to_epsg()
+    return crs.sub_crs_list[0], f"EPSG:{vertical_epsg}" if vertical_epsg else None
 
 
 def _census(reader: laspy.LasReader) -> dict:

@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 
 import laspy
 import numpy as np
+from laspy.header import GpsTimeType
 from pyproj import CRS as PyprojCRS
 from pyproj import Transformer
 
@@ -39,6 +40,7 @@ from lib.config import (
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
 from lib.gcs import delete_file, get_gcsfs_client, storage_size
+from lib.laz import LazAccumulator, build_output_header, normalize_record
 
 _OUTPUT_FILENAME = "cloud.laz"
 # ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
@@ -201,9 +203,14 @@ def _rewrite(
     """Stream a cloud into an in-memory LAZ, optionally reprojecting it.
 
     Reads in bounded chunks, transforms X/Y when a transformer is given
-    (elevations pass through untouched), and writes compressed LAZ to a
-    seekable in-memory buffer. Statistics and bounds are computed from the
-    written (output-CRS) coordinates, so what is reported is what was stored.
+    (elevations pass through untouched), and writes compressed LAZ through
+    ``lib.laz``. Statistics and bounds are computed from the written
+    (output-CRS) coordinates, so what is reported is what was stored.
+
+    The source's point format is preserved rather than normalized to the
+    canonical one: this is a single file being rewritten, not a merge, so there
+    is no format conflict to resolve and converting could only lose attributes
+    the uploader has no reason to touch.
 
     Args:
         reader: Open LAS/LAZ reader positioned at the start of the points.
@@ -214,54 +221,33 @@ def _rewrite(
         (buffer, stats dict, [minx, miny, minz, maxx, maxy, maxz]).
     """
     src_header = reader.header
-    header = laspy.LasHeader(
-        version=src_header.version, point_format=src_header.point_format
-    )
-    header.scales = src_header.scales
     # Offsets must be near the data and fixed before writing; the transformed
     # header minimum is exact for transformer=None and close enough otherwise.
     if transformer is not None:
-        ox, oy = transformer.transform(src_header.mins[0], src_header.mins[1])
+        origin = transformer.transform(src_header.mins[0], src_header.mins[1])
     else:
-        ox, oy = src_header.mins[0], src_header.mins[1]
-    header.offsets = [ox, oy, src_header.mins[2]]
-    header.add_crs(dst_crs)
+        origin = (src_header.mins[0], src_header.mins[1])
 
-    classes: set[int] = set()
-    count = 0
-    mins = np.array([np.inf, np.inf, np.inf])
-    maxs = np.array([-np.inf, -np.inf, -np.inf])
+    header = build_output_header(
+        dst_crs,
+        origin,
+        point_format_id=src_header.point_format.id,
+        # Carry the source's own claim about its timestamps rather than letting
+        # a fresh header default to GPS Week Time and misdate every point.
+        gps_standard_time=(
+            src_header.global_encoding.gps_time_type == GpsTimeType.STANDARD
+        ),
+    )
+    header.version = src_header.version
 
-    buf = io.BytesIO()
-    with laspy.open(
-        buf, mode="w", header=header, do_compress=True, closefd=False
-    ) as writer:
-        for points in reader.chunk_iterator(_CHUNK_POINTS):
-            x = np.asarray(points.x)
-            y = np.asarray(points.y)
-            if transformer is not None:
-                x, y = transformer.transform(x, y)
-            points.change_scaling(scales=header.scales, offsets=header.offsets)
-            points.x = x
-            points.y = y
+    accumulator = LazAccumulator(header)
+    for points in reader.chunk_iterator(_CHUNK_POINTS):
+        x = np.asarray(points.x)
+        y = np.asarray(points.y)
+        z = np.asarray(points.z)
+        if transformer is not None:
+            x, y = transformer.transform(x, y)
+        accumulator.append(normalize_record(points, header, x, y, z))
 
-            z = np.asarray(points.z)
-            mins = np.minimum(mins, [x.min(), y.min(), z.min()])
-            maxs = np.maximum(maxs, [x.max(), y.max(), z.max()])
-            classes |= set(np.unique(np.asarray(points.classification)).tolist())
-            count += len(points)
-            writer.write_points(points)
-
-    if count == 0:
-        mins = np.array(header.offsets, dtype=float)
-        maxs = np.array(header.offsets, dtype=float)
-
-    area = (maxs[0] - mins[0]) * (maxs[1] - mins[1])
-    stats = {
-        "rewritten": True,
-        "point_count": count,
-        "point_classes": sorted(int(c) for c in classes),
-        "density": (count / area) if area > 0 else 0.0,
-    }
-    buf.seek(0)
-    return buf, stats, [*mins.tolist(), *maxs.tolist()]
+    buf, stats, bounds = accumulator.finish()
+    return buf, {"rewritten": True, **stats}, bounds

@@ -28,6 +28,7 @@ from api.resources.point_clouds.schema import (
     PointCloudType,
     UpdatePointCloudRequestBody,
 )
+from api.resources.point_clouds.threedep.router import router as threedep_router
 from api.resources.point_clouds.upload.router import router as upload_router
 from api.schema import SortOrder
 from lib.config import POINT_CLOUDS_COLLECTION
@@ -38,8 +39,11 @@ wildcard_router = APIRouter()
 COLLECTION = POINT_CLOUDS_COLLECTION
 
 # Source-specific creation sub-routers. The upload source creates a point cloud
-# from a user-supplied file (#328); the 3dep source (#329) attaches similarly.
+# from a user-supplied file (#328); the 3dep source fetches one from USGS.
+# These are included before the /{point_cloud_id} routes below so the literal
+# paths win over the path parameter.
 router.include_router(upload_router, prefix="/upload", tags=["Point Clouds - Upload"])
+router.include_router(threedep_router, prefix="/3dep", tags=["Point Clouds - 3DEP"])
 
 
 @wildcard_router.get(

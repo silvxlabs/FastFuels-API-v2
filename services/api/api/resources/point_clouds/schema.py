@@ -63,6 +63,20 @@ class PointCloudGeoreference(BaseModel):
         ),
         examples=["EPSG:32613", "EPSG:5070"],
     )
+    vertical_crs: str | None = Field(
+        default=None,
+        description=(
+            "Reference surface the `z` coordinates are measured from, when it "
+            "is known — for example `EPSG:5703` (NAVD88 orthometric heights), "
+            "which is what USGS 3DEP publishes. Elevations are stored exactly "
+            "as the source provided them and are never vertically transformed, "
+            "so two clouds in the same domain can differ by tens of metres in "
+            "`z` if they use different reference surfaces. Null when the source "
+            "did not declare one, in which case the elevations cannot be "
+            "assumed comparable with another cloud's."
+        ),
+        examples=["EPSG:5703"],
+    )
     bounds: tuple[float, float, float, float, float, float] = Field(
         ...,
         description=(
@@ -233,9 +247,17 @@ class PointCloud(BaseModel):
                     "created_on": "2026-06-01T17:42:10Z",
                     "modified_on": "2026-06-01T17:48:55Z",
                     "checksum": "c0ffee00c0ffee00c0ffee00c0ffee00",
-                    "source": {"name": "3dep"},
+                    "source": {
+                        "name": "3dep",
+                        "datasets": ["WY_Southwest_1_2020"],
+                        "requested_datasets": None,
+                        "coverage_fraction": 1.0,
+                        "vertical_datum": "NAVD88",
+                        "catalog_fetched_on": "2026-06-01T17:42:10Z",
+                    },
                     "georeference": {
                         "crs": "EPSG:32612",
+                        "vertical_crs": "EPSG:5703",
                         "bounds": [
                             500000.0,
                             5060000.0,

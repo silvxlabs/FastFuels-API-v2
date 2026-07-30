@@ -56,6 +56,7 @@ EXPORTER_QUEUE = os.getenv("EXPORTER_QUEUE", "exporter-v2-queue")
 STANDGEN_QUEUE = os.getenv("STANDGEN_QUEUE", "standgen-v2-queue")
 FEATURES_QUEUE = os.getenv("FEATURES_QUEUE", "etcher-v2-queue")
 TREEVOX_QUEUE = os.getenv("TREEVOX_QUEUE", "treevox-v2-queue")
+LAKITU_QUEUE = os.getenv("LAKITU_QUEUE", "lakitu-v2-queue")
 
 
 # Service names
@@ -65,6 +66,7 @@ STANDGEN_SERVICE = os.getenv("STANDGEN_SERVICE", f"standgen-v2-{INFRA_ENV}")
 FEATURES_SERVICE = os.getenv("FEATURES_SERVICE", f"etcher-v2-{INFRA_ENV}")
 TREEVOX_SERVICE = os.getenv("TREEVOX_SERVICE", f"treevox-v2-{INFRA_ENV}")
 UPLOADER_SERVICE = os.getenv("UPLOADER_SERVICE", f"uploader-v2-{INFRA_ENV}")
+LAKITU_SERVICE = os.getenv("LAKITU_SERVICE", f"lakitu-v2-{INFRA_ENV}")
 
 # Support contact surfaced in user-facing error messages.
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support.fastfuels@silvxlabs.com")

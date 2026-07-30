@@ -1,0 +1,30 @@
+[project]
+name = "lakitu"
+version = "0.1.0"
+description = "Point cloud production service for FastFuels API v2"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "functions-framework>=3.10.0",
+    "lib[firestore,gcs,entwine,pointcloud]",
+    "geopandas>=1.1.2",
+    "numpy>=2.0.0",
+    "requests>=2.32",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9.0.2",
+    "pytest-xdist>=3.5.0",
+    "google-cloud-run>=0.10.0",
+    "google-cloud-tasks>=2.16.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests requiring network access (deselect with '-m \"not integration\"')",
+]
+
+[tool.uv.sources]
+lib = { path = "../lib", editable = true }

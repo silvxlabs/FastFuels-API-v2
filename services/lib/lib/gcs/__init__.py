@@ -11,6 +11,7 @@ from lib.gcs.blobs import (
     exists,
     get_gcsfs_client,
     storage_size,
+    upload_buffer,
     upload_file,
 )
 from lib.gcs.signed_urls import (
@@ -23,6 +24,7 @@ from lib.gcs.signed_urls import (
 __all__ = [
     "gcs_client",
     "get_gcsfs_client",
+    "upload_buffer",
     "upload_file",
     "download_file",
     "delete_file",

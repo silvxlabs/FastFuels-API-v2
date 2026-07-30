@@ -38,7 +38,7 @@ from lib.config import (
 )
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
-from lib.gcs import delete_file, get_gcsfs_client, storage_size
+from lib.gcs import delete_file, get_gcsfs_client, storage_size, upload_buffer
 from lib.laz import LazAccumulator, normalize_record
 
 _OUTPUT_FILENAME = "cloud.laz"
@@ -85,8 +85,7 @@ def handle_point_cloud(
                     buf, stats, bounds = _rewrite(reader, domain_crs, transformer)
 
         if stats["rewritten"]:
-            with get_gcsfs_client().open(dest, "wb") as out:
-                out.write(buf.getbuffer())
+            upload_buffer(dest, buf)
         else:
             get_gcsfs_client().copy(src, dest)
 

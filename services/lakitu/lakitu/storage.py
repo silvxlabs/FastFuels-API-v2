@@ -9,7 +9,7 @@ stay in step with the uploader, which writes the same path for uploads.
 import io
 
 from lib.config import POINT_CLOUDS_BUCKET
-from lib.gcs import delete_directory, exists, get_gcsfs_client, storage_size
+from lib.gcs import delete_directory, exists, storage_size, upload_buffer
 
 CLOUD_FILENAME = "cloud.laz"
 
@@ -22,8 +22,7 @@ def cloud_path(point_cloud_id: str) -> str:
 def write_cloud(point_cloud_id: str, buffer: io.BytesIO) -> int:
     """Write a point cloud's LAZ to GCS and return its size in bytes."""
     path = cloud_path(point_cloud_id)
-    with get_gcsfs_client().open(path, "wb") as out:
-        out.write(buffer.getbuffer())
+    upload_buffer(path, buffer)
     return storage_size(path)
 
 

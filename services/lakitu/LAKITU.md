@@ -36,11 +36,17 @@ output is assembled in an in-memory buffer and peak memory tracks the point
 count.
 
 `LAKITU_MAX_POINTS` (default 200M) is what bounds it. The budget is checked
-twice: the API rejects a request whose catalog-derived estimate is over, and
-the worker re-checks against the exact per-node counts from the index *before
-downloading anything*. The second check is the authoritative one — the catalog
-estimate runs low, because an acquisition's published point count is spread
-over its whole extent including water and other gaps.
+twice: the API rejects a request whose catalog-derived estimate is over, and the
+worker re-checks from the octree index *before downloading anything*. The second
+check is much the sharper of the two, since it counts the nodes that actually
+exist rather than assuming a uniform density across a published extent.
+
+Neither check is exact, and the worker's has one subtlety worth knowing. Nodes
+are selected by bounding box but kept by contribution polygon, so on an
+irregular seam two acquisitions' boxes both approximate the whole domain.
+Summing raw node counts would charge the domain to each of them and roughly
+double the total — enough to reject a fetch that was well inside the budget — so
+each acquisition's count is scaled by its contribution's share of its own box.
 
 Cloud Run sizing follows from measurement rather than guesswork:
 
@@ -88,11 +94,16 @@ clips the bulge. Edges are segmented first.
 
 ## Vertical datum
 
-3DEP publishes orthometric heights on NAVD88. The domain CRS is horizontal, so
-there is nothing to transform and elevations pass through exactly as published.
-That is recorded (`source.vertical_datum`, `georeference.vertical_crs`) rather
-than applied, because an uploaded cloud may carry ellipsoidal heights and the
-two would otherwise sit tens of metres apart with nothing to say why.
+3DEP mostly publishes orthometric heights on NAVD88, but that is a property of
+each survey, not of the program. The domain CRS is horizontal, so there is
+nothing to transform and elevations pass through exactly as published.
+
+`georeference.vertical_crs` therefore *labels* rather than converts, and it is
+filled in only from what a survey's own `ept.json` declares in `srs.vertical`.
+Most declare nothing, so null is the common answer — which is the honest one,
+since an uploaded cloud may carry ellipsoidal heights and the two would sit tens
+of metres apart with nothing to say why. A merge across surveys that disagree
+reports null too, rather than picking a winner.
 
 **Known limitation:** a few USGS acquisitions store z in US survey feet, and
 `ept.json` carries no reliable flag for it. `georeference.bounds` exposes the z

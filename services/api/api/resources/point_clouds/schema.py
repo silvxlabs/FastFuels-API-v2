@@ -252,7 +252,6 @@ class PointCloud(BaseModel):
                         "datasets": ["WY_Southwest_1_2020"],
                         "requested_datasets": None,
                         "coverage_fraction": 1.0,
-                        "vertical_datum": "NAVD88",
                         "catalog_fetched_on": "2026-06-01T17:42:10Z",
                     },
                     "georeference": {

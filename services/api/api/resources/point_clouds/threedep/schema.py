@@ -46,21 +46,6 @@ class CreateThreeDepPointCloudRequest(BaseModel):
         ),
         examples=[["CO_CentralEasternPlains_1_2020"]],
     )
-    min_coverage: float = Field(
-        0.0,
-        ge=0.0,
-        le=1.0,
-        description=(
-            "Minimum fraction of the domain that must be covered by 3DEP, from "
-            "`0.0` to `1.0`. The request is rejected when available coverage "
-            "falls below this. The default of `0.0` accepts any coverage at "
-            "all, because acquisition boundaries are irregular and a domain is "
-            "often covered to 99-point-something percent rather than exactly "
-            "100. Set it to `1.0` to insist on complete coverage instead of "
-            "receiving a cloud with a gap in it."
-        ),
-    )
-
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
@@ -219,13 +204,6 @@ class ThreeDepPointCloudSource(BaseModel):
             "a gap, which summary statistics alone will not reveal: density is "
             "measured over the points that exist, so a partial cloud still "
             "reports a healthy density."
-        ),
-    )
-    vertical_datum: str = Field(
-        "NAVD88",
-        description=(
-            "Vertical datum of the elevations. 3DEP publishes orthometric "
-            "heights on NAVD88, and they are stored exactly as published."
         ),
     )
     catalog_fetched_on: str | None = Field(

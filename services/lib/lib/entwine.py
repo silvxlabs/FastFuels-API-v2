@@ -76,6 +76,12 @@ MAX_POINTS = int(os.getenv("LAKITU_MAX_POINTS", 200_000_000))
 # difference operations otherwise leave slivers along shared edges.
 _PRECISION_GRID = 0.01
 
+# How long a loaded catalog is reused, in seconds. USGS publishes new surveys
+# periodically, and instances here are long-lived, so caching for the life of
+# the process would let two instances answer the same coverage question
+# differently for as long as they both stayed warm.
+CATALOG_TTL = float(os.getenv("EPT_CATALOG_TTL_SECONDS", 3600))
+
 _catalog: gpd.GeoDataFrame | None = None
 _catalog_fetched_on: datetime | None = None
 
@@ -131,14 +137,14 @@ def load_catalog(refresh: bool = False) -> gpd.GeoDataFrame:
     """Load the 3DEP EPT acquisition catalog, caching it in the process.
 
     Reads the GeoParquet mirror first and falls back to the live GeoJSON. The
-    result is cached for the life of the process because it is ~9 MB of GeoJSON
-    that changes only when USGS publishes new acquisitions.
+    result is cached for ``CATALOG_TTL`` seconds, since it is several megabytes
+    that change only when USGS publishes new acquisitions.
 
     Never call this at import time. Worker processes fork after import, and the
     parse is slow enough to matter on an API cold start.
 
     Args:
-        refresh: Re-read the catalog even if it is already cached.
+        refresh: Re-read the catalog even if the cached copy is still fresh.
 
     Returns:
         GeoDataFrame in EPSG:4326 with columns ``name``, ``url``, ``count``.
@@ -148,7 +154,11 @@ def load_catalog(refresh: bool = False) -> gpd.GeoDataFrame:
     """
     global _catalog, _catalog_fetched_on
 
-    if _catalog is not None and not refresh:
+    fresh = (
+        _catalog_fetched_on is not None
+        and (datetime.now(UTC) - _catalog_fetched_on).total_seconds() < CATALOG_TTL
+    )
+    if _catalog is not None and fresh and not refresh:
         return _catalog
 
     try:

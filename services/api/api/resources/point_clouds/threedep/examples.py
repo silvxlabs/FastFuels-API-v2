@@ -20,13 +20,6 @@ EXAMPLE_3DEP_PINNED = {
     "datasets": ["WY_Southwest_1_2020"],
 }
 
-# Refuse anything less than complete coverage rather than accepting a cloud
-# with a gap in it.
-EXAMPLE_3DEP_FULL_COVERAGE = {
-    "name": "Bridger ALS (complete coverage only)",
-    "min_coverage": 1.0,
-}
-
 CREATE_3DEP_OPENAPI_EXAMPLES = {
     "automatic": {
         "value": EXAMPLE_3DEP_AUTOMATIC,
@@ -44,18 +37,9 @@ CREATE_3DEP_OPENAPI_EXAMPLES = {
             "see which acquisitions are available for the domain."
         ),
     },
-    "full_coverage": {
-        "value": EXAMPLE_3DEP_FULL_COVERAGE,
-        "summary": "Require complete coverage",
-        "description": (
-            "Reject the request unless 3DEP covers the whole domain, instead "
-            "of returning a point cloud with a gap."
-        ),
-    },
 }
 
 ALL_3DEP_EXAMPLE_VALUES = [
     ("automatic", EXAMPLE_3DEP_AUTOMATIC),
     ("pinned", EXAMPLE_3DEP_PINNED),
-    ("full_coverage", EXAMPLE_3DEP_FULL_COVERAGE),
 ]

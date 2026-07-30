@@ -71,28 +71,20 @@ def point_format_id_for_dimensions(dimension_names: Iterable[str]) -> int:
     return CANONICAL_POINT_FORMAT_ID
 
 
-def merged_point_format_id(*point_formats: laspy.PointFormat) -> int:
-    """Return the canonical point format that preserves every source's data.
-
-    Args:
-        *point_formats: Point formats of the sources being merged.
-
-    Returns:
-        6, 7, or 8.
-    """
-    return point_format_id_for_dimensions(
-        name for pf in point_formats for name in pf.dimension_names
-    )
-
-
 def build_output_header(
     crs,
     bounds: tuple[float, float, float, float] | tuple[float, ...],
     *,
-    point_format: int | laspy.PointFormat = CANONICAL_POINT_FORMAT_ID,
+    point_format_id: int = CANONICAL_POINT_FORMAT_ID,
     gps_standard_time: bool = True,
 ) -> laspy.LasHeader:
     """Build the canonical output header for a cloud in a known extent.
+
+    This imposes a format: canonical point format, millimetre scaling, and an
+    offset anchored to the extent. That is what makes points from several
+    acquisitions writable into one file. A caller rewriting a *single* file
+    should not use it — reproduce that file's own header instead, or its
+    scaling and attributes are silently replaced (see the uploader).
 
     Scale and offset are fixed up front from the extent rather than derived from
     the data. A LAZ header must be final before the first point is written, so
@@ -105,12 +97,9 @@ def build_output_header(
             (a pyproj CRS).
         bounds: Horizontal extent the points fall inside, as
             ``(min_x, min_y, ...)``. Only the two minima are read.
-        point_format: Output point format, as an id or a format to reproduce.
-            Defaults to the canonical 6. Pass the result of
-            ``merged_point_format_id`` when merging sources that may carry
-            colour, or a source's own ``PointFormat`` to preserve it verbatim —
-            an id alone rebuilds a bare format and drops any extra dimensions
-            the source carried.
+        point_format_id: Output point format. Defaults to the canonical 6; pass
+            the result of ``point_format_id_for_dimensions`` when the sources
+            may carry colour.
         gps_standard_time: Whether GPS timestamps are Adjusted Standard GPS
             Time. True for USGS 3DEP and for essentially all modern data. A
             fresh laspy header would otherwise claim GPS Week Time, silently
@@ -120,9 +109,9 @@ def build_output_header(
         A LAS 1.4 header in the requested point format, carrying the CRS and
         scaling.
     """
-    if isinstance(point_format, int):
-        point_format = laspy.PointFormat(point_format)
-    header = laspy.LasHeader(version=CANONICAL_VERSION, point_format=point_format)
+    header = laspy.LasHeader(
+        version=CANONICAL_VERSION, point_format=laspy.PointFormat(point_format_id)
+    )
     header.scales = [CANONICAL_SCALE] * 3
     header.offsets = [math.floor(bounds[0]), math.floor(bounds[1]), 0.0]
     if gps_standard_time:

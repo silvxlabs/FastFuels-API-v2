@@ -21,8 +21,8 @@ from lib.laz import (
     CANONICAL_POINT_FORMAT_ID,
     LazAccumulator,
     build_output_header,
-    merged_point_format_id,
     normalize_record,
+    point_format_id_for_dimensions,
 )
 
 DOMAIN_CRS = CRS.from_user_input("EPSG:32612")
@@ -105,57 +105,42 @@ class TestBuildOutputHeader:
         header = build_output_header(DOMAIN_CRS, BOUNDS)
         assert header.parse_crs().equals(DOMAIN_CRS)
 
-    def test_a_supplied_format_preserves_its_extra_dimensions(self):
-        """Passing a format reproduces it; passing an id rebuilds a bare one.
+    def test_canonical_header_carries_no_extra_dimensions(self):
+        """The canonical header imposes its own format, extras included.
 
-        Rewriting a single file has no format conflict to resolve, so the
-        source's own format is reproduced verbatim. Scanner exports routinely
-        add dimensions like amplitude or reflectance, and an id alone would
-        drop every one of them.
+        That is correct for a merge and wrong for a single-file rewrite, which
+        is why the uploader builds its own header instead of calling this.
         """
-        source = make_source(3, extra="Amplitude")
-
-        preserved = build_output_header(
-            DOMAIN_CRS, BOUNDS, point_format=source.point_format
-        )
-        assert "Amplitude" in preserved.point_format.extra_dimension_names
-
-        by_id = build_output_header(
-            DOMAIN_CRS, BOUNDS, point_format=source.point_format.id
-        )
-        assert by_id.point_format.num_extra_bytes == 0
-
-    def test_extra_dimension_values_round_trip(self):
-        source = make_source(3, count=5, extra="Amplitude")
         header = build_output_header(
-            DOMAIN_CRS, BOUNDS, point_format=source.point_format
+            DOMAIN_CRS, BOUNDS, point_format_id=make_source(3).point_format.id
         )
-
-        acc = LazAccumulator(header)
-        acc.append(normalize_record(source, header, *output_coords(5)))
-        buffer, _, _ = acc.finish()
-
-        reread = laspy.read(buffer)
-        assert np.array_equal(
-            np.asarray(reread["Amplitude"]), np.asarray(source["Amplitude"])
-        )
+        assert header.point_format.num_extra_bytes == 0
 
 
-class TestMergedPointFormatId:
+def _dims(*point_formats):
+    """Dimension names across several point formats, as a source schema lists."""
+    return [name for pf in point_formats for name in pf.dimension_names]
+
+
+class TestPointFormatSelection:
     """Tests for choosing an output format that loses nothing."""
 
     def test_colourless_sources_use_the_canonical_format(self):
-        assert (
-            merged_point_format_id(laspy.PointFormat(1), laspy.PointFormat(6))
-            == CANONICAL_POINT_FORMAT_ID
-        )
+        dims = _dims(laspy.PointFormat(1), laspy.PointFormat(6))
+        assert point_format_id_for_dimensions(dims) == CANONICAL_POINT_FORMAT_ID
 
     def test_rgb_source_promotes_the_output(self):
         """Point format 6 has no colour, so an RGB source must promote to 7."""
-        assert merged_point_format_id(laspy.PointFormat(1), laspy.PointFormat(3)) == 7
+        dims = _dims(laspy.PointFormat(1), laspy.PointFormat(3))
+        assert point_format_id_for_dimensions(dims) == 7
 
     def test_nir_source_promotes_furthest(self):
-        assert merged_point_format_id(laspy.PointFormat(1), laspy.PointFormat(8)) == 8
+        dims = _dims(laspy.PointFormat(1), laspy.PointFormat(8))
+        assert point_format_id_for_dimensions(dims) == 8
+
+    def test_schema_style_capitalised_names_match(self):
+        """EPT schemas name dimensions `Red`, laspy names them `red`."""
+        assert point_format_id_for_dimensions(["X", "Y", "Z", "Red"]) == 7
 
     def test_colour_survives_a_promoted_merge(self):
         """The promotion is only worth anything if the values come through."""
@@ -166,8 +151,8 @@ class TestMergedPointFormatId:
         header = build_output_header(
             DOMAIN_CRS,
             BOUNDS,
-            point_format=merged_point_format_id(
-                coloured.point_format, plain.point_format
+            point_format_id=point_format_id_for_dimensions(
+                _dims(coloured.point_format, plain.point_format)
             ),
         )
         acc = LazAccumulator(header)

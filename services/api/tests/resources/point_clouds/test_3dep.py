@@ -169,7 +169,6 @@ class TestCreate3DepPointCloud:
         assert source["datasets"] == [BONDURANT_DATASET]
         assert source["requested_datasets"] is None
         assert source["coverage_fraction"] == pytest.approx(1.0, abs=1e-3)
-        assert source["vertical_datum"] == "NAVD88"
 
     def test_pinned_datasets_are_recorded(
         self, client, covered_domain, cleanup_point_clouds
@@ -232,18 +231,6 @@ class TestCreateValidation:
         )
         assert response.status_code == 422, response.text
         assert "does not overlap" in response.json()["detail"].lower()
-
-    def test_min_coverage_above_available_is_rejected(self, client, domain_for_testing):
-        response = client.post(
-            _create_route(domain_for_testing["id"]), json={"min_coverage": 1.0}
-        )
-        assert response.status_code == 422, response.text
-
-    def test_min_coverage_out_of_range_is_rejected(self, client, covered_domain):
-        response = client.post(
-            _create_route(covered_domain["id"]), json={"min_coverage": 1.5}
-        )
-        assert response.status_code == 422
 
     def test_requires_an_owned_domain(self, client, domain_with_different_owner):
         response = client.post(

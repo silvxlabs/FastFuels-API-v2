@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from lakitu.ept import (
+    MAX_DEPTH,
     MAX_HIERARCHY_PAGES,
     EptMetadata,
     _overlaps_2d,
@@ -62,6 +63,7 @@ def metadata(bounds=ROOT) -> EptMetadata:
         bounds=bounds,
         bounds_conforming=bounds,
         crs=CRS.from_user_input("EPSG:3857"),
+        vertical_crs=None,
         point_count=1000,
         dimension_names=("X", "Y", "Z"),
     )
@@ -159,6 +161,19 @@ class TestFetchMetadata:
         session = fake_session({"ept.json": {**EPT_DOCUMENT, "srs": {"wkt": wkt}}})
         meta = fetch_metadata(session, "https://example.test/ACQ/ept.json")
         assert meta.crs.to_epsg() == 26912
+
+    def test_reads_a_declared_vertical_crs(self):
+        """Recorded when the survey declares it — it is a label, not a transform."""
+        srs = {"authority": "EPSG", "horizontal": "3857", "vertical": "5703"}
+        session = fake_session({"ept.json": {**EPT_DOCUMENT, "srs": srs}})
+        meta = fetch_metadata(session, "https://example.test/ACQ/ept.json")
+        assert meta.vertical_crs == "EPSG:5703"
+
+    def test_undeclared_vertical_crs_is_none(self):
+        """Most acquisitions declare nothing; inventing one would be a guess."""
+        session = fake_session({"ept.json": EPT_DOCUMENT})
+        meta = fetch_metadata(session, "https://example.test/ACQ/ept.json")
+        assert meta.vertical_crs is None
 
     def test_unreachable_index_raises(self):
         session = fake_session({})
@@ -261,6 +276,27 @@ class TestWalkHierarchy:
             walk_hierarchy(session, metadata(), (0, 0, 100, 100))
         assert exc.value.code == "EPT_METADATA_ERROR"
         assert session.get.call_count <= MAX_HIERARCHY_PAGES
+
+    def test_deepest_allowed_level_is_not_treated_as_malformed(self):
+        """Children are pushed one level past whatever exists.
+
+        Judging depth before checking the index would fail a perfectly good
+        tree whose deepest populated level happens to be the limit.
+        """
+        # The walk only descends through nodes the index claims, so the whole
+        # ancestor chain has to exist for the deepest one to be reached.
+        chain = {f"{d}-0-0-0": 5 for d in range(MAX_DEPTH + 1)}
+        session = fake_session({"0-0-0-0.json": chain})
+        nodes = walk_hierarchy(session, metadata(), (0, 0, 1024, 1024))
+        assert f"{MAX_DEPTH}-0-0-0" in {node.key for node in nodes}
+
+    def test_a_node_past_the_depth_limit_raises(self):
+        """The guard still fires for a tree that genuinely goes too deep."""
+        chain = {f"{d}-0-0-0": 5 for d in range(MAX_DEPTH + 2)}
+        session = fake_session({"0-0-0-0.json": chain})
+        with pytest.raises(ProcessingError) as exc:
+            walk_hierarchy(session, metadata(), (0, 0, 1024, 1024))
+        assert exc.value.code == "EPT_METADATA_ERROR"
 
     def test_nodes_are_ordered_shallowest_first(self):
         session = fake_session(

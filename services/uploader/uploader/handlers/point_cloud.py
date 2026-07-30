@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 
 import laspy
 import numpy as np
-from laspy.header import GpsTimeType
 from pyproj import CRS as PyprojCRS
 from pyproj import Transformer
 
@@ -40,7 +39,7 @@ from lib.config import (
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
 from lib.gcs import delete_file, get_gcsfs_client, storage_size
-from lib.laz import LazAccumulator, build_output_header, normalize_record
+from lib.laz import LazAccumulator, normalize_record
 
 _OUTPUT_FILENAME = "cloud.laz"
 # ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
@@ -207,10 +206,14 @@ def _rewrite(
     ``lib.laz``. Statistics and bounds are computed from the written
     (output-CRS) coordinates, so what is reported is what was stored.
 
-    The source's point format is preserved rather than normalized to the
-    canonical one: this is a single file being rewritten, not a merge, so there
-    is no format conflict to resolve and converting could only lose attributes
-    the uploader has no reason to touch.
+    The output header reproduces the source's own: same version, point format,
+    scaling, and global encoding. Only the CRS and the offsets change, because
+    only those are what a reprojection alters. This is one file being rewritten,
+    not a merge, so there is no format conflict to resolve — and anything the
+    header does not carry forward is data the user loses without being told.
+    That is why this builds its own header instead of going through
+    ``lib.laz.build_output_header``, which is the *canonical* header for merging
+    several sources into one and deliberately imposes its own format and scale.
 
     Args:
         reader: Open LAS/LAZ reader positioned at the start of the points.
@@ -221,27 +224,21 @@ def _rewrite(
         (buffer, stats dict, [minx, miny, minz, maxx, maxy, maxz]).
     """
     src_header = reader.header
+    header = laspy.LasHeader(
+        version=src_header.version, point_format=src_header.point_format
+    )
+    header.scales = src_header.scales
+    header.global_encoding = src_header.global_encoding
     # Offsets must be near the data and fixed before writing; the transformed
     # header minimum is exact for transformer=None and close enough otherwise.
     if transformer is not None:
-        origin = transformer.transform(src_header.mins[0], src_header.mins[1])
+        origin_x, origin_y = transformer.transform(
+            src_header.mins[0], src_header.mins[1]
+        )
     else:
-        origin = (src_header.mins[0], src_header.mins[1])
-
-    header = build_output_header(
-        dst_crs,
-        origin,
-        # The source format itself, not just its id: an id would rebuild a bare
-        # format and drop any extra dimensions the file carried (scanner
-        # exports commonly add amplitude or reflectance).
-        point_format=src_header.point_format,
-        # Carry the source's own claim about its timestamps rather than letting
-        # a fresh header default to GPS Week Time and misdate every point.
-        gps_standard_time=(
-            src_header.global_encoding.gps_time_type == GpsTimeType.STANDARD
-        ),
-    )
-    header.version = src_header.version
+        origin_x, origin_y = src_header.mins[0], src_header.mins[1]
+    header.offsets = [origin_x, origin_y, src_header.mins[2]]
+    header.add_crs(dst_crs)
 
     accumulator = LazAccumulator(header)
     for points in reader.chunk_iterator(_CHUNK_POINTS):

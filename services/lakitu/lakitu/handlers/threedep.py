@@ -18,7 +18,15 @@ from pyproj import CRS, Transformer
 from shapely.geometry.base import BaseGeometry
 
 from lakitu.ept import fetch_metadata, fetch_nodes, make_session, walk_hierarchy
-from lib.entwine import MAX_POINTS, EptSelection, search_3dep_ept, select_datasets
+from lib.entwine import (
+    MAX_POINTS,
+    DatasetNotFoundError,
+    DatasetOutsideDomainError,
+    EptCatalogError,
+    EptSelection,
+    search_3dep_ept,
+    select_datasets,
+)
 from lib.errors import ProcessingError
 from lib.laz import (
     LazAccumulator,
@@ -28,11 +36,6 @@ from lib.laz import (
 )
 
 logger = logging.getLogger(__name__)
-
-# 3DEP publishes orthometric heights on NAVD88. Elevations pass through
-# untouched, so this is recorded rather than applied.
-VERTICAL_DATUM = "NAVD88"
-VERTICAL_CRS = "EPSG:5703"
 
 # Maximum length of a domain edge, in metres, before it is broken into segments
 # for reprojection. A straight line in the domain's CRS is a curve in the
@@ -75,15 +78,16 @@ def handle_3dep(
     progress("Reading 3DEP index", 10)
     for index, dataset in enumerate(selection.datasets):
         meta = fetch_metadata(session, dataset.url)
-        query = _query_box(selection.contributions[index], domain_crs, meta.crs)
-        nodes = walk_hierarchy(session, meta, query)
+        projected = _project_contribution(
+            selection.contributions[index], domain_crs, meta.crs
+        )
+        nodes = walk_hierarchy(session, meta, projected.bounds)
         metadata.append(meta)
         all_nodes.append((index, nodes))
-        total_points += sum(node.count for node in nodes)
+        total_points += _estimate_kept_points(nodes, projected)
 
-    # The index gives an exact upper bound on what the fetch would read, and
-    # masking only ever removes points. Checking here costs one index walk and
-    # avoids downloading gigabytes we would have to throw away.
+    # Checking before any node is downloaded costs one index walk and avoids
+    # pulling gigabytes that would only be discarded.
     if total_points > MAX_POINTS:
         raise ProcessingError(
             code="POINT_BUDGET_EXCEEDED",
@@ -115,14 +119,13 @@ def handle_3dep(
         "buffer": buffer,
         "georeference": {
             "crs": _crs_name(domain_crs),
-            "vertical_crs": VERTICAL_CRS,
+            "vertical_crs": _vertical_crs(metadata),
             "bounds": bounds,
         },
         "summary": summary,
         "source_extra": {
             "datasets": [d.name for d in selection.datasets],
             "coverage_fraction": selection.coverage_fraction,
-            "vertical_datum": VERTICAL_DATUM,
             "catalog_fetched_on": (
                 selection.catalog_fetched_on.isoformat()
                 if selection.catalog_fetched_on
@@ -138,9 +141,41 @@ def _resolve(domain_gdf: gpd.GeoDataFrame, source: dict) -> EptSelection:
     The API resolved this when the request came in, but the catalog is live and
     the job may have queued for a while, so the pin — not the earlier answer —
     is what carries forward.
+
+    Raises:
+        ProcessingError: EPT_CATALOG_UNAVAILABLE if the catalog cannot be read,
+            COVERAGE_ERROR if nothing usable covers the domain.
     """
     pinned = source.get("requested_datasets")
-    selection = select_datasets(domain_gdf, search_3dep_ept(domain_gdf), pinned=pinned)
+    try:
+        selection = select_datasets(
+            domain_gdf, search_3dep_ept(domain_gdf), pinned=pinned
+        )
+    except EptCatalogError as e:
+        # Transient and retryable. Without this the bare Exception handler in
+        # main.py turns an upstream outage into UNEXPECTED_FAILURE, which tells
+        # the user to contact support about someone else's downtime.
+        raise ProcessingError(
+            code="EPT_CATALOG_UNAVAILABLE",
+            message=(
+                "The USGS 3DEP lidar catalog could not be reached. Please try "
+                "again shortly."
+            ),
+            suggestion="Retry the request in a few minutes.",
+            traceback=str(e),
+        ) from e
+    except (DatasetNotFoundError, DatasetOutsideDomainError) as e:
+        # The API validates the pin at create time, so reaching here means the
+        # catalog changed under a queued job.
+        raise ProcessingError(
+            code="COVERAGE_ERROR",
+            message=str(e),
+            suggestion=(
+                "Check the acquisitions available for this domain with GET "
+                "/domains/{domain_id}/pointclouds/3dep/coverage."
+            ),
+        ) from e
+
     if not selection.datasets:
         raise ProcessingError(
             code="COVERAGE_ERROR",
@@ -153,20 +188,42 @@ def _resolve(domain_gdf: gpd.GeoDataFrame, source: dict) -> EptSelection:
     return selection
 
 
-def _query_box(
+def _project_contribution(
     contribution: BaseGeometry, domain_crs: CRS, target_crs: CRS
-) -> tuple[float, float, float, float]:
-    """Bounding box of a contribution in the acquisition's CRS.
+) -> BaseGeometry:
+    """Reproject a contribution into an acquisition's CRS.
 
-    The contribution is densified before reprojection: its edges are straight
-    in the domain's CRS but curved in the acquisition's, and transforming only
-    the corners would produce a box that cuts the curve off.
+    Densified first: its edges are straight in the domain's CRS but curved in
+    the acquisition's, and transforming only the corners would produce a shape
+    that cuts the curve off.
     """
     densified = shapely.segmentize(contribution, max_segment_length=_SEGMENT_LENGTH)
-    reprojected = (
-        gpd.GeoSeries([densified], crs=domain_crs).to_crs(target_crs).total_bounds
-    )
-    return tuple(reprojected)
+    return gpd.GeoSeries([densified], crs=domain_crs).to_crs(target_crs).iloc[0]
+
+
+def _estimate_kept_points(nodes: list, projected: BaseGeometry) -> int:
+    """Estimate how many of a box's points fall inside the contribution itself.
+
+    Nodes are selected by bounding box, but only points inside the acquisition's
+    own contribution are kept. Where two acquisitions split a domain along an
+    irregular seam, both boxes approximate the whole domain, so summing raw node
+    counts charges the whole domain to each acquisition and roughly doubles the
+    total — enough to reject a fetch that was comfortably within budget.
+
+    Scaling by the contribution's share of its own bounding box corrects that,
+    assuming points are spread evenly. Rough, but it feeds a guard rail rather
+    than a reported figure, and both areas are measured in the acquisition's CRS
+    so the ratio is dimensionless.
+    """
+    node_points = sum(node.count for node in nodes)
+    if not node_points:
+        return 0
+
+    min_x, min_y, max_x, max_y = projected.bounds
+    box_area = (max_x - min_x) * (max_y - min_y)
+    if box_area <= 0:
+        return node_points
+    return int(node_points * min(1.0, projected.area / box_area))
 
 
 def _read_points(
@@ -186,7 +243,7 @@ def _read_points(
         name for meta in metadata for name in meta.dimension_names
     )
     header = build_output_header(
-        domain_crs, domain_geom.bounds, point_format=point_format_id
+        domain_crs, domain_geom.bounds, point_format_id=point_format_id
     )
     accumulator = LazAccumulator(header)
 
@@ -239,6 +296,19 @@ def _read_points(
                 )
 
     return accumulator, accumulator.point_count
+
+
+def _vertical_crs(metadata: list) -> str | None:
+    """Return the vertical reference the acquisitions agree on, if any.
+
+    Elevations are stored exactly as published — the domain CRS is horizontal,
+    so there is nothing to transform — which makes this a label rather than a
+    conversion. It is reported only when the acquisitions actually declare it
+    and agree: a cloud merged from surveys on different vertical references has
+    no single answer, and asserting one would be worse than admitting none.
+    """
+    declared = {meta.vertical_crs for meta in metadata if meta.vertical_crs}
+    return declared.pop() if len(declared) == 1 else None
 
 
 def _crs_name(crs: CRS) -> str:

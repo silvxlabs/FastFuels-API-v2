@@ -126,6 +126,14 @@ async def create_3dep_point_cloud(
     and densities. Pass `datasets` to pin the fetch to specific surveys
     instead; check the coverage endpoint first to see what is available.
 
+    Survey boundaries are irregular, so a domain is often covered to
+    99-point-something percent rather than exactly 100. Any coverage above zero
+    produces a point cloud, and the fraction actually covered is recorded on the
+    result as `source.coverage_fraction` — check it if a gap would matter, since
+    `summary.density` is measured over the points that exist and looks healthy
+    either way. Use the coverage endpoint to see the shortfall before creating
+    anything.
+
     ## Request Body
 
     - **name**: (optional) Human-readable name.
@@ -133,20 +141,19 @@ async def create_3dep_point_cloud(
     - **tags**: (optional) Tags for organizing and filtering.
     - **datasets**: (optional) Acquisition names to read, in priority order.
       Omit to choose automatically.
-    - **min_coverage**: (optional) Minimum fraction of the domain that must be
-      covered, `0.0`-`1.0`. Defaults to `0.0`, accepting partial coverage.
 
     ## Coordinate reference system
 
     Points are reprojected to the domain's CRS. Only horizontal coordinates are
-    transformed — elevations are stored exactly as USGS published them, as
-    NAVD88 orthometric heights.
+    transformed — elevations are stored exactly as USGS published them, never
+    converted. `georeference.vertical_crs` records what they are measured from
+    when the survey declares it, and is null when it does not.
 
     ## Error Responses
 
-    - **422**: No 3DEP lidar covers this domain, coverage is below
-      `min_coverage`, a pinned acquisition is unknown or does not overlap the
-      domain, or the fetch would exceed the point budget.
+    - **422**: No 3DEP lidar covers this domain, a pinned acquisition is
+      unknown or does not overlap the domain, or the fetch would exceed the
+      point budget.
     - **429**: A quota was exceeded.
     - **503**: The USGS 3DEP catalog is temporarily unreachable.
     """
@@ -165,17 +172,6 @@ async def create_3dep_point_cloud(
             detail=(
                 "No USGS 3DEP lidar is available for this domain. Check "
                 "coverage with GET /domains/{domain_id}/pointclouds/3dep/coverage."
-            ),
-        )
-
-    if selection.coverage_fraction < body.min_coverage:
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"USGS 3DEP covers {selection.coverage_fraction:.1%} of this "
-                f"domain, below the requested minimum of {body.min_coverage:.1%}. "
-                "Lower min_coverage to accept partial coverage, or resize the "
-                "domain to fit the available lidar."
             ),
         )
 

@@ -56,6 +56,7 @@ class EptMetadata:
     bounds: tuple[float, float, float, float, float, float]
     bounds_conforming: tuple[float, float, float, float, float, float]
     crs: CRS
+    vertical_crs: str | None
     point_count: int
     dimension_names: tuple[str, ...]
 
@@ -146,7 +147,8 @@ def fetch_metadata(session: requests.Session, url: str) -> EptMetadata:
             traceback=f"{url}: unsupported hierarchyType {hierarchy_type!r}",
         )
 
-    crs = _parse_srs(document.get("srs") or {}, url)
+    srs = document.get("srs") or {}
+    crs = _parse_srs(srs, url)
 
     return EptMetadata(
         url=url,
@@ -154,6 +156,15 @@ def fetch_metadata(session: requests.Session, url: str) -> EptMetadata:
         bounds=tuple(document["bounds"]),
         bounds_conforming=tuple(document.get("boundsConforming") or document["bounds"]),
         crs=crs,
+        # Reported, never applied: elevations pass through untouched, so this
+        # only records what they are measured from. Most acquisitions declare
+        # nothing, and inventing a datum for those would be a guess presented
+        # as a fact.
+        vertical_crs=(
+            f"{srs['authority']}:{srs['vertical']}"
+            if srs.get("authority") and srs.get("vertical")
+            else None
+        ),
         point_count=int(document.get("points", 0)),
         # The schema names every attribute the tree carries, so the output
         # format can be chosen without downloading a node to look.
@@ -299,13 +310,6 @@ def walk_hierarchy(
     while pending:
         key = pending.pop()
         depth, x, y, z = (int(part) for part in key.split("-"))
-        if depth > MAX_DEPTH:
-            raise ProcessingError(
-                code="EPT_METADATA_ERROR",
-                message="The USGS 3DEP index for this area is malformed.",
-                suggestion="Select a different acquisition.",
-                traceback=f"{metadata.url}: hierarchy deeper than {MAX_DEPTH}",
-            )
 
         bounds = node_bounds(metadata.bounds, depth, x, y, z)
         if not _overlaps_2d(bounds, query):
@@ -314,6 +318,18 @@ def walk_hierarchy(
         count = hierarchy.get(key)
         if count is None:
             continue
+
+        # Depth is judged only for nodes the index actually claims. Children are
+        # pushed speculatively one level past whatever exists, so checking
+        # before the lookup above would fail a tree whose deepest real level is
+        # exactly MAX_DEPTH.
+        if depth > MAX_DEPTH:
+            raise ProcessingError(
+                code="EPT_METADATA_ERROR",
+                message="The USGS 3DEP index for this area is malformed.",
+                suggestion="Select a different acquisition.",
+                traceback=f"{metadata.url}: hierarchy deeper than {MAX_DEPTH}",
+            )
 
         if count == -1:
             # A placeholder: this node's real count and its children live in
@@ -416,9 +432,25 @@ def fetch_nodes(
             )
 
     def produce() -> None:
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            list(pool.map(download, nodes))
-        results.put(None)
+        # The sentinel must be enqueued whatever happens. The consumer waits on
+        # results.get() with no timeout, so a producer that dies without one —
+        # a thread that cannot start under memory pressure, say — would park the
+        # job until Cloud Run times it out, with the traceback going nowhere but
+        # this daemon thread's stderr.
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                list(pool.map(download, nodes))
+        except BaseException as e:
+            results.put(
+                ProcessingError(
+                    code="EPT_FETCH_FAILED",
+                    message="Could not download USGS 3DEP lidar for this area.",
+                    suggestion="Try again shortly.",
+                    traceback=f"node download pool failed: {e!r}",
+                )
+            )
+        finally:
+            results.put(None)
 
     producer = threading.Thread(target=produce, daemon=True)
     producer.start()
@@ -431,7 +463,19 @@ def fetch_nodes(
             if isinstance(item, ProcessingError):
                 raise item
             node, payload = item
-            yield node, laspy.read(io.BytesIO(payload))
+            # Decoding belongs to the same ladder as the download: a truncated
+            # or corrupt node is a bad file from the archive, not a bug here,
+            # and it deserves the same message as a failed fetch.
+            try:
+                points = laspy.read(io.BytesIO(payload))
+            except Exception as e:
+                raise ProcessingError(
+                    code="EPT_FETCH_FAILED",
+                    message="USGS 3DEP lidar for this area could not be read.",
+                    suggestion="Try again shortly.",
+                    traceback=f"{node.data_url}: {e}",
+                ) from e
+            yield node, points
     finally:
         stop.set()
         # Drain so the producer never blocks on a full queue while unwinding.

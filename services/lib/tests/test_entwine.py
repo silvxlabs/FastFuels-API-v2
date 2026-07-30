@@ -7,6 +7,7 @@ catalog cache is patched directly so ``load_catalog`` never reaches out.
 Run with: uv run --extra entwine pytest tests/test_entwine.py -v
 """
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import geopandas as gpd
@@ -14,6 +15,7 @@ import pytest
 from shapely.geometry import Polygon, box
 
 from lib.entwine import (
+    CATALOG_TTL,
     MIN_CONTRIBUTION_FRACTION,
     DatasetNotFoundError,
     DatasetOutsideDomainError,
@@ -76,6 +78,32 @@ class TestLoadCatalog:
                     with patch("geopandas.read_file", return_value=sentinel):
                         assert len(load_catalog(refresh=True)) == 1
                     mock_get.assert_called_once()
+
+    def test_cached_catalog_is_reused_within_the_ttl(self):
+        sentinel = make_catalog([("A", box(0, 0, 1, 1), 10)])
+        with patch("lib.entwine._catalog", sentinel):
+            with patch("lib.entwine._catalog_fetched_on", datetime.now(UTC)):
+                with patch("geopandas.read_parquet") as mock_read:
+                    load_catalog()
+                    mock_read.assert_not_called()
+
+    def test_expired_catalog_is_reloaded(self):
+        """Caching forever lets two warm instances disagree indefinitely.
+
+        USGS publishes new surveys, so a process that never re-reads keeps
+        answering coverage questions from a snapshot that drifts further out of
+        date the longer it stays up.
+        """
+        stale = make_catalog([("OLD", box(0, 0, 1, 1), 10)])
+        fresh = make_catalog(
+            [("OLD", box(0, 0, 1, 1), 10), ("NEW", box(2, 2, 3, 3), 20)]
+        )
+        expired = datetime.now(UTC) - timedelta(seconds=CATALOG_TTL + 1)
+
+        with patch("lib.entwine._catalog", stale):
+            with patch("lib.entwine._catalog_fetched_on", expired):
+                with patch("geopandas.read_parquet", return_value=fresh):
+                    assert list(load_catalog()["name"]) == ["OLD", "NEW"]
 
     def test_raises_when_both_sources_fail(self):
         """Losing the mirror and the source is an error, not an empty catalog."""

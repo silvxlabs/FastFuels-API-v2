@@ -105,6 +105,41 @@ class TestBuildOutputHeader:
         header = build_output_header(DOMAIN_CRS, BOUNDS)
         assert header.parse_crs().equals(DOMAIN_CRS)
 
+    def test_a_supplied_format_preserves_its_extra_dimensions(self):
+        """Passing a format reproduces it; passing an id rebuilds a bare one.
+
+        Rewriting a single file has no format conflict to resolve, so the
+        source's own format is reproduced verbatim. Scanner exports routinely
+        add dimensions like amplitude or reflectance, and an id alone would
+        drop every one of them.
+        """
+        source = make_source(3, extra="Amplitude")
+
+        preserved = build_output_header(
+            DOMAIN_CRS, BOUNDS, point_format=source.point_format
+        )
+        assert "Amplitude" in preserved.point_format.extra_dimension_names
+
+        by_id = build_output_header(
+            DOMAIN_CRS, BOUNDS, point_format=source.point_format.id
+        )
+        assert by_id.point_format.num_extra_bytes == 0
+
+    def test_extra_dimension_values_round_trip(self):
+        source = make_source(3, count=5, extra="Amplitude")
+        header = build_output_header(
+            DOMAIN_CRS, BOUNDS, point_format=source.point_format
+        )
+
+        acc = LazAccumulator(header)
+        acc.append(normalize_record(source, header, *output_coords(5)))
+        buffer, _, _ = acc.finish()
+
+        reread = laspy.read(buffer)
+        assert np.array_equal(
+            np.asarray(reread["Amplitude"]), np.asarray(source["Amplitude"])
+        )
+
 
 class TestMergedPointFormatId:
     """Tests for choosing an output format that loses nothing."""
@@ -131,7 +166,7 @@ class TestMergedPointFormatId:
         header = build_output_header(
             DOMAIN_CRS,
             BOUNDS,
-            point_format_id=merged_point_format_id(
+            point_format=merged_point_format_id(
                 coloured.point_format, plain.point_format
             ),
         )

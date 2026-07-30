@@ -89,7 +89,7 @@ def build_output_header(
     crs,
     bounds: tuple[float, float, float, float] | tuple[float, ...],
     *,
-    point_format_id: int = CANONICAL_POINT_FORMAT_ID,
+    point_format: int | laspy.PointFormat = CANONICAL_POINT_FORMAT_ID,
     gps_standard_time: bool = True,
 ) -> laspy.LasHeader:
     """Build the canonical output header for a cloud in a known extent.
@@ -105,9 +105,12 @@ def build_output_header(
             (a pyproj CRS).
         bounds: Horizontal extent the points fall inside, as
             ``(min_x, min_y, ...)``. Only the two minima are read.
-        point_format_id: Output point format. Defaults to the canonical 6; pass
-            the result of ``merged_point_format_id`` when the sources may carry
-            colour.
+        point_format: Output point format, as an id or a format to reproduce.
+            Defaults to the canonical 6. Pass the result of
+            ``merged_point_format_id`` when merging sources that may carry
+            colour, or a source's own ``PointFormat`` to preserve it verbatim —
+            an id alone rebuilds a bare format and drops any extra dimensions
+            the source carried.
         gps_standard_time: Whether GPS timestamps are Adjusted Standard GPS
             Time. True for USGS 3DEP and for essentially all modern data. A
             fresh laspy header would otherwise claim GPS Week Time, silently
@@ -117,10 +120,9 @@ def build_output_header(
         A LAS 1.4 header in the requested point format, carrying the CRS and
         scaling.
     """
-    header = laspy.LasHeader(
-        version=CANONICAL_VERSION,
-        point_format=laspy.PointFormat(point_format_id),
-    )
+    if isinstance(point_format, int):
+        point_format = laspy.PointFormat(point_format)
+    header = laspy.LasHeader(version=CANONICAL_VERSION, point_format=point_format)
     header.scales = [CANONICAL_SCALE] * 3
     header.offsets = [math.floor(bounds[0]), math.floor(bounds[1]), 0.0]
     if gps_standard_time:

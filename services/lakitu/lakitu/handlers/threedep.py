@@ -186,7 +186,7 @@ def _read_points(
         name for meta in metadata for name in meta.dimension_names
     )
     header = build_output_header(
-        domain_crs, domain_geom.bounds, point_format_id=point_format_id
+        domain_crs, domain_geom.bounds, point_format=point_format_id
     )
     accumulator = LazAccumulator(header)
 

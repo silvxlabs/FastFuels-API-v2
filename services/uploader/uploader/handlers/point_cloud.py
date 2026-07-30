@@ -231,7 +231,10 @@ def _rewrite(
     header = build_output_header(
         dst_crs,
         origin,
-        point_format_id=src_header.point_format.id,
+        # The source format itself, not just its id: an id would rebuild a bare
+        # format and drop any extra dimensions the file carried (scanner
+        # exports commonly add amplitude or reflectance).
+        point_format=src_header.point_format,
         # Carry the source's own claim about its timestamps rather than letting
         # a fresh header default to GPS Week Time and misdate every point.
         gps_standard_time=(

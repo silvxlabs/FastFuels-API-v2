@@ -30,8 +30,15 @@ from lib.entwine import (
 # checkable. The ROI below is a 1000 m square = 1e6 m**2.
 CRS = "EPSG:32612"
 
+# The same ground in metres and in US survey feet, for the tests that check the
+# estimate does not depend on the domain CRS's linear unit. Both cover Denver,
+# where the fixtures below are placed; the equator-adjacent coordinates the rest
+# of the file uses are nowhere near a State Plane zone.
+METRE_CRS = "EPSG:26913"  # NAD83 / UTM 13N
+FOOT_CRS = "EPSG:2232"  # NAD83 / Colorado Central (ftUS)
 
-def make_catalog(entries) -> gpd.GeoDataFrame:
+
+def make_catalog(entries, crs: str = CRS) -> gpd.GeoDataFrame:
     """Build a synthetic catalog. Entries are (name, geometry, count)."""
     return gpd.GeoDataFrame(
         {
@@ -41,7 +48,7 @@ def make_catalog(entries) -> gpd.GeoDataFrame:
             "url": [ept_url(e[0]) for e in entries],
             "geometry": [e[1] for e in entries],
         },
-        crs=CRS,
+        crs=crs,
     )
 
 
@@ -406,3 +413,31 @@ class TestEstimates:
         total = sum(d.estimated_points for d in selection.datasets)
         assert selection.estimated_point_count == total
         assert total == pytest.approx(6_000_000, rel=0.15)
+
+    def test_estimate_does_not_depend_on_the_domain_crs_unit(self, patched_catalog):
+        """The same ground must estimate the same in feet as in metres.
+
+        Densities are points per square metre, but every geometry operation
+        runs in the ROI's CRS and returns areas in that CRS's units. Domains
+        normally land in a UTM zone, but any projected CRS is accepted, and a
+        State Plane domain is in US survey feet — where multiplying the two
+        directly overstates the estimate by ~10.8x and rejects a fetch that is
+        comfortably inside the point budget.
+        """
+        # A 1 km square over Denver, inside a 9e6 m**2 footprint carrying
+        # 36e6 points -> 4 pts/m**2, so the square is worth ~4M points.
+        square = box(500_000, 4_390_000, 501_000, 4_391_000)
+        footprint = box(499_000, 4_389_000, 502_000, 4_392_000)
+        catalog = make_catalog([("COVER", footprint, 36_000_000)], crs=METRE_CRS)
+
+        metre_roi = gpd.GeoDataFrame(geometry=[square], crs=METRE_CRS)
+        foot_roi = metre_roi.to_crs(FOOT_CRS)
+
+        with patched_catalog(catalog):
+            in_metres = select_datasets(metre_roi, search_3dep_ept(metre_roi))
+            in_feet = select_datasets(foot_roi, search_3dep_ept(foot_roi))
+
+        assert in_metres.estimated_point_count == pytest.approx(4_000_000, rel=0.05)
+        assert in_feet.estimated_point_count == pytest.approx(
+            in_metres.estimated_point_count, rel=0.05
+        )

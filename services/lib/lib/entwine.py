@@ -48,8 +48,10 @@ CATALOG_MIRROR = f"gs://{RASTERS_BUCKET}/catalogs/usgs_3dep_ept.parquet"
 
 EPT_BASE_URL = "https://s3-us-west-2.amazonaws.com/usgs-lidar-public"
 
-# Equal-area projection used only to size whole acquisition footprints, which
-# can span a state and would be badly distorted in a domain's local CRS.
+# Equal-area projection everything measured in square metres goes through:
+# acquisition footprints, which can span a state and would be badly distorted in
+# a domain's local CRS, and the domain itself when converting its own areas into
+# square metres.
 EQUAL_AREA_CRS = "EPSG:8857"
 
 # An acquisition covering at least this much of the domain is used on its own.
@@ -252,6 +254,7 @@ def select_datasets(
     """
     roi_geom = _clean(roi.union_all())
     roi_area = roi_geom.area
+    square_metres_per_unit = _square_metres_per_unit(roi_geom, roi.crs)
 
     if pinned:
         ordered = _order_by_pin(candidates, pinned)
@@ -274,7 +277,10 @@ def select_datasets(
         if contribution.is_empty or fraction < MIN_CONTRIBUTION_FRACTION:
             continue
 
-        estimated_points = int(density * contribution.area)
+        # Density is points per square metre; the contribution's area is in the
+        # ROI's own CRS units. The two are only multipliable once the area has
+        # been carried into square metres.
+        estimated_points = int(density * contribution.area * square_metres_per_unit)
         datasets.append(
             EptDataset(
                 name=name,
@@ -363,6 +369,37 @@ def _order_by_coverage(
         pool.remove(best)
 
     return ordered
+
+
+def _square_metres_per_unit(geom: BaseGeometry, crs) -> float:
+    """Square metres per unit of area in ``crs``, measured on ``geom`` itself.
+
+    Every geometry operation here runs in the ROI's CRS, so the areas that come
+    back are in that CRS's units — which are only *usually* metres. Domains
+    normally land in a UTM zone, but any projected CRS is accepted, and a domain
+    created in a State Plane CRS is in US survey feet. Multiplying a points-per-
+    square-metre density by an area in square feet overstates the point estimate
+    by a factor of about 10.8, which is enough to reject a fetch that is
+    comfortably inside the budget.
+
+    Measured against an equal-area projection rather than read off the CRS
+    definition, so the same ratio also absorbs the projection's own area
+    distortion — a UTM zone is conformal, not equal-area, and its scale factor
+    is not 1. A pure unit conversion would leave that behind.
+
+    Args:
+        geom: Geometry to measure, in ``crs``.
+        crs: The CRS its coordinates are in.
+
+    Returns:
+        The factor an area in ``crs`` units is multiplied by to reach square
+        metres. 1.0 for a degenerate geometry with no area to measure.
+    """
+    area = geom.area
+    if area <= 0:
+        return 1.0
+    equal_area_geom = gpd.GeoSeries([geom], crs=crs).to_crs(EQUAL_AREA_CRS).iloc[0]
+    return float(equal_area_geom.area / area)
 
 
 def _footprint(candidates: gpd.GeoDataFrame, name: str) -> BaseGeometry:

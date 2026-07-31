@@ -53,12 +53,9 @@ class TestSingleAcquisition:
         doc = read_point_cloud(point_cloud_id)
         assert doc["status"] == "completed", doc.get("error")
 
-        # Stored in the domain's CRS, with the vertical reference recorded.
+        # Stored in the domain's CRS.
         georeference = doc["georeference"]
         assert georeference["crs"] == "EPSG:32612"
-        # Reported only when the survey declares it; most 3DEP acquisitions
-        # do not, so null is the common and correct answer.
-        assert "vertical_crs" in georeference
 
         summary = doc["summary"]
         assert summary["point_count"] > 1_000_000

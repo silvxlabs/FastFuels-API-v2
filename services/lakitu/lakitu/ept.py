@@ -56,7 +56,6 @@ class EptMetadata:
     bounds: tuple[float, float, float, float, float, float]
     bounds_conforming: tuple[float, float, float, float, float, float]
     crs: CRS
-    vertical_crs: str | None
     point_count: int
     dimension_names: tuple[str, ...]
 
@@ -156,15 +155,6 @@ def fetch_metadata(session: requests.Session, url: str) -> EptMetadata:
         bounds=tuple(document["bounds"]),
         bounds_conforming=tuple(document.get("boundsConforming") or document["bounds"]),
         crs=crs,
-        # Reported, never applied: elevations pass through untouched, so this
-        # only records what they are measured from. Most acquisitions declare
-        # nothing, and inventing a datum for those would be a guess presented
-        # as a fact.
-        vertical_crs=(
-            f"{srs['authority']}:{srs['vertical']}"
-            if srs.get("authority") and srs.get("vertical")
-            else None
-        ),
         point_count=int(document.get("points", 0)),
         # The schema names every attribute the tree carries, so the output
         # format can be chosen without downloading a node to look.

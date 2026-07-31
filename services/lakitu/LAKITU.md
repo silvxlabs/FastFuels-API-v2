@@ -106,12 +106,14 @@ clips the bulge. Edges are segmented first.
 each survey, not of the program. The domain CRS is horizontal, so there is
 nothing to transform and elevations pass through exactly as published.
 
-`georeference.vertical_crs` therefore *labels* rather than converts, and it is
-filled in only from what a survey's own `ept.json` declares in `srs.vertical`.
-Most declare nothing, so null is the common answer — which is the honest one,
-since an uploaded cloud may carry ellipsoidal heights and the two would sit tens
-of metres apart with nothing to say why. A merge across surveys that disagree
-reports null too, rather than picking a winner.
+The datum is deliberately **not recorded on the resource**. Nothing consumes it:
+every use of z in FastFuels is a difference — #330's CHM is height above ground
+from ground points in the same cloud, so the datum cancels — and no path
+compares a point cloud's absolute z against anything else's. It is also not
+lost: `source.datasets` names the acquisitions, so each `ept.json` can be
+re-read if an absolute-elevation use ever appears. Sampling 40 of the catalog's
+2,277 acquisitions found *none* declaring `srs.vertical`, so a field for it
+would have read null on essentially every 3DEP cloud regardless.
 
 **Known limitation:** a few USGS acquisitions store z in US survey feet, and
 `ept.json` carries no reliable flag for it. `georeference.bounds` exposes the z

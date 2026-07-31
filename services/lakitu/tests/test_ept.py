@@ -63,7 +63,6 @@ def metadata(bounds=ROOT) -> EptMetadata:
         bounds=bounds,
         bounds_conforming=bounds,
         crs=CRS.from_user_input("EPSG:3857"),
-        vertical_crs=None,
         point_count=1000,
         dimension_names=("X", "Y", "Z"),
     )
@@ -162,18 +161,12 @@ class TestFetchMetadata:
         meta = fetch_metadata(session, "https://example.test/ACQ/ept.json")
         assert meta.crs.to_epsg() == 26912
 
-    def test_reads_a_declared_vertical_crs(self):
-        """Recorded when the survey declares it — it is a label, not a transform."""
+    def test_a_declared_vertical_crs_does_not_affect_the_horizontal_one(self):
+        """A compound srs block still resolves to its horizontal CRS alone."""
         srs = {"authority": "EPSG", "horizontal": "3857", "vertical": "5703"}
         session = fake_session({"ept.json": {**EPT_DOCUMENT, "srs": srs}})
         meta = fetch_metadata(session, "https://example.test/ACQ/ept.json")
-        assert meta.vertical_crs == "EPSG:5703"
-
-    def test_undeclared_vertical_crs_is_none(self):
-        """Most acquisitions declare nothing; inventing one would be a guess."""
-        session = fake_session({"ept.json": EPT_DOCUMENT})
-        meta = fetch_metadata(session, "https://example.test/ACQ/ept.json")
-        assert meta.vertical_crs is None
+        assert meta.crs.to_epsg() == 3857
 
     def test_unreachable_index_raises(self):
         session = fake_session({})

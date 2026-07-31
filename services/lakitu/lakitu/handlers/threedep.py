@@ -119,7 +119,6 @@ def handle_3dep(
         "buffer": buffer,
         "georeference": {
             "crs": _crs_name(domain_crs),
-            "vertical_crs": _vertical_crs(metadata),
             "bounds": bounds,
         },
         "summary": summary,
@@ -296,19 +295,6 @@ def _read_points(
                 )
 
     return accumulator, accumulator.point_count
-
-
-def _vertical_crs(metadata: list) -> str | None:
-    """Return the vertical reference the acquisitions agree on, if any.
-
-    Elevations are stored exactly as published — the domain CRS is horizontal,
-    so there is nothing to transform — which makes this a label rather than a
-    conversion. It is reported only when the acquisitions actually declare it
-    and agree: a cloud merged from surveys on different vertical references has
-    no single answer, and asserting one would be worse than admitting none.
-    """
-    declared = {meta.vertical_crs for meta in metadata if meta.vertical_crs}
-    return declared.pop() if len(declared) == 1 else None
 
 
 def _crs_name(crs: CRS) -> str:

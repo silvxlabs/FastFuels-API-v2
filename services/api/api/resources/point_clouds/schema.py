@@ -59,23 +59,12 @@ class PointCloudGeoreference(BaseModel):
         description=(
             "Coordinate reference system the points are stored in, as an "
             "authority code (e.g. `EPSG:32613`). This is always the domain's "
-            "CRS: uploads in a different CRS are reprojected during ingestion."
+            "CRS: uploads in a different CRS are reprojected during ingestion. "
+            "Only horizontal coordinates are transformed — elevations are "
+            "stored exactly as the source provided them and are never "
+            "converted between reference surfaces."
         ),
         examples=["EPSG:32613", "EPSG:5070"],
-    )
-    vertical_crs: str | None = Field(
-        default=None,
-        description=(
-            "Reference surface the `z` coordinates are measured from, when it "
-            "is known — for example `EPSG:5703` (NAVD88 orthometric heights), "
-            "which is what USGS 3DEP publishes. Elevations are stored exactly "
-            "as the source provided them and are never vertically transformed, "
-            "so two clouds in the same domain can differ by tens of metres in "
-            "`z` if they use different reference surfaces. Null when the source "
-            "did not declare one, in which case the elevations cannot be "
-            "assumed comparable with another cloud's."
-        ),
-        examples=["EPSG:5703"],
     )
     bounds: tuple[float, float, float, float, float, float] = Field(
         ...,
@@ -256,7 +245,6 @@ class PointCloud(BaseModel):
                     },
                     "georeference": {
                         "crs": "EPSG:32612",
-                        "vertical_crs": "EPSG:5703",
                         "bounds": [
                             500000.0,
                             5060000.0,

@@ -146,8 +146,7 @@ async def create_3dep_point_cloud(
 
     Points are reprojected to the domain's CRS. Only horizontal coordinates are
     transformed — elevations are stored exactly as USGS published them, never
-    converted. `georeference.vertical_crs` records what they are measured from
-    when the survey declares it, and is null when it does not.
+    converted between reference surfaces.
 
     ## Error Responses
 

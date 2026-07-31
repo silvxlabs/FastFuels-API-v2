@@ -42,7 +42,6 @@ def handler_result():
         "buffer": io.BytesIO(b"laz"),
         "georeference": {
             "crs": "EPSG:32612",
-            "vertical_crs": "EPSG:5703",
             "bounds": [0, 0, 0, 1, 1, 1],
         },
         "summary": {"point_count": 10, "point_classes": [2], "density": 1.0},

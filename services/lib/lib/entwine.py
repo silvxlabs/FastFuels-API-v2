@@ -295,7 +295,12 @@ def select_datasets(
         # Contributions are disjoint by construction, so summing them is a true
         # union. Summing raw per-acquisition overlaps would not be: acquisitions
         # overlap each other freely and routinely sum past 100%.
-        coverage_fraction=min(coverage_fraction, 1.0),
+        #
+        # Rounded because the sum accumulates float error: a fully covered
+        # two-acquisition domain measures 0.9999999999999999, which is stored
+        # and returned to the user as a gap that does not exist. Six places is
+        # far finer than COVERAGE_EPSILON, so no real shortfall is hidden.
+        coverage_fraction=round(min(coverage_fraction, 1.0), 6),
         estimated_point_count=sum(d.estimated_points for d in datasets),
         catalog_fetched_on=_catalog_fetched_on,
     )

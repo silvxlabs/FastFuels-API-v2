@@ -57,10 +57,19 @@ def patched_catalog():
 
     ``search_3dep_ept`` reprojects the catalog to the ROI CRS, so the synthetic
     catalog is authored in the ROI CRS and the reprojection is a no-op.
+
+    Both globals have to be patched. ``load_catalog`` treats a cache with no
+    fetch timestamp as stale and re-reads, so patching ``_catalog`` alone leaves
+    the synthetic catalog inert on a clean module state and every test using it
+    silently queries the live USGS catalog over the network instead.
     """
 
     def install(catalog: gpd.GeoDataFrame):
-        return patch("lib.entwine._catalog", catalog)
+        return patch.multiple(
+            "lib.entwine",
+            _catalog=catalog,
+            _catalog_fetched_on=datetime.now(UTC),
+        )
 
     return install
 
@@ -164,6 +173,29 @@ class TestSelectionCoverage:
         with patched_catalog(catalog):
             selection = select_datasets(roi, search_3dep_ept(roi))
         assert selection.coverage_fraction == pytest.approx(1.0, abs=1e-6)
+
+    def test_full_coverage_reports_exactly_one(self, roi, patched_catalog):
+        """A fully covered domain must read 1.0, not 0.9999999999999999.
+
+        Summing four contributions accumulates float error, and the result is
+        stored on the resource and returned to the user — where a sixteenth
+        decimal place reads as a coverage gap that does not exist. This split
+        (0.565 + 0.179 + 0.149 + 0.107) sums low in IEEE 754.
+        """
+        catalog = make_catalog(
+            [
+                ("A", box(-10, -10, 177, 1010), 10),
+                ("B", box(149, -10, 714, 1010), 10),
+                ("C", box(689, -10, 851, 1010), 10),
+                ("D", box(821, -10, 1010, 1010), 10),
+            ]
+        )
+        with patched_catalog(catalog):
+            selection = select_datasets(roi, search_3dep_ept(roi))
+
+        assert len(selection.datasets) == 4
+        assert sum(d.contribution_fraction for d in selection.datasets) != 1.0
+        assert selection.coverage_fraction == 1.0
 
     def test_zero_coverage_when_no_candidates(self, roi, patched_catalog):
         with patched_catalog(make_catalog([("FAR", box(9000, 9000, 9500, 9500), 10)])):

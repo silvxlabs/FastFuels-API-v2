@@ -31,11 +31,15 @@ from lib.config import (
     GRIDS_COLLECTION,
     INVENTORIES_BUCKET,
     INVENTORIES_COLLECTION,
+    POINT_CLOUDS_BUCKET,
+    POINT_CLOUDS_COLLECTION,
 )
 from lib.testing import (
+    SHARED_TEST_DOMAINS_DIR,
     SHARED_TEST_FEATURES_DIR,
     SHARED_TEST_GRIDS_DIR,
     SHARED_TEST_INVENTORIES_DIR,
+    SHARED_TEST_POINT_CLOUDS_DIR,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +47,7 @@ logger = logging.getLogger(__name__)
 STATIC_GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 STATIC_INVENTORIES_DIR = SHARED_TEST_INVENTORIES_DIR
 STATIC_FEATURES_DIR = SHARED_TEST_FEATURES_DIR
+STATIC_POINT_CLOUDS_DIR = SHARED_TEST_POINT_CLOUDS_DIR
 E2E_CREATE_TIMEOUT_SECONDS = 240.0
 # Per-request read timeout for completion-poll GETs. The client default (30s)
 # is too tight when the service under test is cold-starting after a fresh
@@ -69,6 +74,10 @@ STATIC_RESOURCE_TYPES = {
     "features": StaticResourceType(
         collection=FEATURES_COLLECTION,
         template_dir=STATIC_FEATURES_DIR,
+    ),
+    "pointclouds": StaticResourceType(
+        collection=POINT_CLOUDS_COLLECTION,
+        template_dir=STATIC_POINT_CLOUDS_DIR,
     ),
 }
 
@@ -397,6 +406,83 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
     yield _create
 
 
+def _save_point_cloud_json_template(point_cloud: dict, static_name: str) -> None:
+    """Save a completed point cloud document as a JSON template.
+
+    Always overwrites so the template stays consistent with the regenerated LAZ
+    in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS).
+    """
+    out_path = STATIC_POINT_CLOUDS_DIR / f"{static_name}.json"
+    template = {k: v for k, v in point_cloud.items() if k not in STRIP_FIELDS}
+    _save_json_file(out_path, template)
+    logger.info(f"Saved point cloud JSON template to {out_path}")
+
+
+@pytest.fixture
+def create_static_point_cloud_fixture(firestore_client, test_owner_id):
+    """Factory fixture that creates a static point cloud fixture in GCS.
+
+    Creates a point cloud via the API, polls for completion, copies the LAZ to a
+    static path, saves a JSON template, then cleans up the temporary cloud.
+
+    A point cloud is a single ``cloud.laz`` under a ``{bucket}/{id}/`` prefix, so
+    the same directory copy grids and inventories use applies unchanged — the
+    prefix just happens to hold one object.
+
+    A 3DEP fetch is slower than a raster job (it streams octree nodes from the
+    USGS archive), so the completion poll gets a longer budget than the default.
+    """
+
+    def _create(
+        client,
+        domain_id,
+        endpoint,
+        body,
+        static_name,
+        dependencies: dict[str, list[str]] | None = None,
+        timeout: int = 900,
+    ):
+        registered = _register_dependencies(
+            firestore_client, dependencies, test_owner_id, domain_id
+        )
+
+        try:
+            url = f"/domains/{domain_id}{endpoint}"
+            response = client.post(url, json=body, timeout=E2E_CREATE_TIMEOUT_SECONDS)
+            assert response.status_code == 201, (
+                f"POST {url} returned {response.status_code}: {response.text}"
+            )
+            point_cloud = response.json()
+            point_cloud_id = point_cloud["id"]
+            logger.info(f"Created point cloud {point_cloud_id} via {url}")
+
+            completed = _poll_for_completion(
+                client, domain_id, "pointclouds", point_cloud_id, timeout=timeout
+            )
+
+            fs = gcsfs.GCSFileSystem()
+            src = f"{POINT_CLOUDS_BUCKET}/{point_cloud_id}"
+            dst = f"{POINT_CLOUDS_BUCKET}/{static_name}"
+            _overwrite_static_dir(fs, src, dst)
+            logger.info(f"Copied LAZ gs://{src} -> gs://{dst}")
+
+            _save_point_cloud_json_template(completed, static_name)
+
+            delete_url = f"/domains/{domain_id}/pointclouds/{point_cloud_id}"
+            del_response = client.delete(delete_url, timeout=30.0)
+            logger.info(
+                f"Deleted point cloud {point_cloud_id}: {del_response.status_code}"
+            )
+
+            return completed
+
+        finally:
+            for resource_type, ref in registered:
+                _unregister_static_resource(firestore_client, resource_type, ref)
+
+    yield _create
+
+
 def _save_feature_json_template(feature: dict, static_name: str) -> None:
     """Save a completed feature document as a JSON template.
 
@@ -484,6 +570,48 @@ def create_static_feature_fixture(firestore_client, test_owner_id):
 
 
 @pytest.fixture(scope="session")
+def blackfoot_domain(client):
+    """Create the Blackfoot domain via the API, clean up after.
+
+    The payload is built from ``shared_data/domains/blackfoot.json`` — the same
+    document downstream services seed — so a fixture generated here sits on
+    exactly the geometry the existing ``static-test-blackfoot-*`` fixtures use.
+    Authoring the coordinates separately here would let the two drift apart
+    silently, and a point cloud that no longer registers with the blackfoot CHM
+    is useless as an input to it.
+
+    Unlike Blue Mountain this domain is a slightly rotated quadrilateral rather
+    than an axis-aligned box, which is what makes it worth keeping: it exercises
+    the point-in-polygon clip in the worker instead of the bounding-box fast
+    path an axis-aligned domain takes.
+    """
+    # Read directly rather than through lib.testing.load_json: that helper
+    # stamps Firestore timestamp fields, which have no place in a request body.
+    with open(SHARED_TEST_DOMAINS_DIR / "blackfoot.json") as f:
+        source = json.load(f)
+    payload = {
+        "type": "FeatureCollection",
+        "features": source["features"],
+        "crs": source["crs"],
+        "name": "Blackfoot static test domain",
+        "description": "3DEP point cloud fixture source (#329, #330).",
+    }
+    response = client.post("/domains", json=payload, timeout=E2E_CREATE_TIMEOUT_SECONDS)
+    assert response.status_code == 201, (
+        f"POST /domains returned {response.status_code}: {response.text}"
+    )
+    domain = response.json()
+    logger.info(f"Created Blackfoot domain {domain['id']}")
+
+    yield domain
+
+    del_response = client.delete(
+        f"/domains/{domain['id']}", params={"force": True}, timeout=30.0
+    )
+    logger.info(f"Deleted Blackfoot domain {domain['id']}: {del_response.status_code}")
+
+
+@pytest.fixture
 def blue_mountain_domain(client):
     """Create the Blue Mountain domain via the API, clean up after.
 

@@ -54,6 +54,12 @@ class TestRequireCrs:
         assert exc.value.code == "MISSING_CRS"
 
     def test_compound_crs_resolves_to_horizontal(self, tmp_path):
+        """A compound CRS reprojects on its horizontal half.
+
+        Handing pyproj the compound CRS instead would build a transform that
+        tries to convert elevations between reference surfaces, which is
+        exactly what this pipeline does not do.
+        """
         path = tmp_path / "cloud.laz"
         header = laspy.LasHeader(version="1.4", point_format=6)
         header.offsets = [500000.0, 4300000.0, 1800.0]
@@ -69,6 +75,7 @@ class TestRequireCrs:
         with laspy.open(str(path)) as reader:
             crs = _require_crs(reader.header)
         assert crs.to_epsg() == 32612
+        assert not crs.is_compound
 
 
 class TestCensus:
@@ -142,4 +149,104 @@ class TestRewrite:
         np.testing.assert_allclose(np.asarray(out.x), np.asarray(src.x), atol=0.011)
         np.testing.assert_array_equal(
             np.asarray(out.classification), np.asarray(src.classification)
+        )
+
+
+class TestRewritePreservesTheSourceHeader:
+    """A rewrite must not silently re-encode the file it was handed.
+
+    The uploader reprojects and recompresses one file; it is not merging
+    sources, so every header property that is not the CRS has to survive. Each
+    of these was a real regression at some point: routing this path through the
+    canonical merge header replaced the scaling, the point format's extra
+    dimensions, and the GPS time encoding, all without any error.
+    """
+
+    def _source(self, path, *, scales, point_format=3, extra=None):
+        header = laspy.LasHeader(
+            version="1.2", point_format=laspy.PointFormat(point_format)
+        )
+        header.scales = [scales] * 3
+        header.offsets = [500000.0, 4300000.0, 0.0]
+        header.global_encoding.gps_time_type = laspy.header.GpsTimeType.STANDARD
+        if extra:
+            header.add_extra_dim(laspy.ExtraBytesParams(name=extra, type=np.float32))
+        header.add_crs(pyproj.CRS.from_user_input("EPSG:32612"))
+
+        las = laspy.LasData(header)
+        count = 5
+        las.points = laspy.point.record.ScaleAwarePointRecord.zeros(
+            count, header=header
+        )
+        # Points 10 micrometres apart: distinguishable only at a sub-millimetre
+        # scale, which is exactly what a terrestrial scan relies on.
+        las.x = 500000.0 + np.array([1e-5, 3e-5, 4e-5, 5e-5, 6e-5])
+        las.y = np.full(count, 4300000.0)
+        las.z = np.full(count, 1500.0)
+        if extra:
+            las[extra] = np.arange(count, dtype=np.float32)
+        las.write(str(path))
+        return las
+
+    def test_sub_millimetre_scale_is_preserved(self, tmp_path):
+        """Re-encoding at a coarser scale collapses distinct points into one."""
+        path = tmp_path / "fine.las"
+        self._source(path, scales=1e-5)
+
+        with _open_cloud(str(path)) as reader:
+            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
+
+        out = laspy.read(buf)
+        assert out.header.scales[0] == pytest.approx(1e-5)
+        assert len(set(np.asarray(out.x).tolist())) == 5
+
+    def test_scale_survives_a_reprojection(self, tmp_path):
+        """The reproject path builds the header too, so it needs the same check."""
+        path = tmp_path / "fine_reproject.las"
+        self._source(path, scales=1e-5)
+        transformer = Transformer.from_crs("EPSG:32612", "EPSG:32612", always_xy=True)
+
+        with _open_cloud(str(path)) as reader:
+            buf, _, _ = _rewrite(
+                reader, pyproj.CRS.from_user_input("EPSG:32612"), transformer
+            )
+
+        out = laspy.read(buf)
+        assert out.header.scales[0] == pytest.approx(1e-5)
+        assert len(set(np.asarray(out.x).tolist())) == 5
+
+    def test_extra_dimensions_are_preserved(self, tmp_path):
+        """Scanner exports carry amplitude or reflectance as extra bytes."""
+        path = tmp_path / "extra.las"
+        source = self._source(path, scales=0.001, extra="Amplitude")
+
+        with _open_cloud(str(path)) as reader:
+            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
+
+        out = laspy.read(buf)
+        assert "Amplitude" in out.header.point_format.extra_dimension_names
+        assert np.array_equal(
+            np.asarray(out["Amplitude"]), np.asarray(source["Amplitude"])
+        )
+
+    def test_point_format_and_colour_are_preserved(self, tmp_path):
+        path = tmp_path / "rgb.las"
+        self._source(path, scales=0.001, point_format=3)
+
+        with _open_cloud(str(path)) as reader:
+            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
+
+        assert laspy.read(buf).header.point_format.id == 3
+
+    def test_gps_time_encoding_is_preserved(self, tmp_path):
+        """A fresh header would claim Week Time and misdate every point."""
+        path = tmp_path / "gps.las"
+        self._source(path, scales=0.001)
+
+        with _open_cloud(str(path)) as reader:
+            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
+
+        out = laspy.read(buf)
+        assert out.header.global_encoding.gps_time_type == (
+            laspy.header.GpsTimeType.STANDARD
         )

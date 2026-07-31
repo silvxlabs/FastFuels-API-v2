@@ -147,13 +147,23 @@ class TestCreate3DepPointCloud:
         assert data["summary"] is None
         assert data["checksum"]
 
+        # Read the document back to confirm it was persisted. The worker claims
+        # the task within milliseconds, so status is asserted as an early state
+        # rather than pinned to "pending", which races.
         doc = (
             firestore_client.collection(POINT_CLOUDS_COLLECTION)
             .document(data["id"])
             .get()
         )
         assert doc.exists
-        assert doc.to_dict()["status"] == "pending"
+        stored = doc.to_dict()
+        assert stored["status"] in {"pending", "running"}
+        assert stored["id"] == data["id"]
+        assert stored["type"] == "als"
+        assert stored["domain_id"] == covered_domain["id"]
+        assert stored["name"] == "Bondurant ALS"
+        assert stored["checksum"] == data["checksum"]
+        assert stored["source"]["name"] == "3dep"
 
     def test_records_resolved_provenance(
         self, client, covered_domain, cleanup_point_clouds

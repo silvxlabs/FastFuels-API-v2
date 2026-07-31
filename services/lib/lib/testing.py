@@ -10,6 +10,7 @@ SHARED_TEST_GRIDS_DIR = SHARED_TEST_DATA_DIR / "grids"
 SHARED_TEST_INVENTORIES_DIR = SHARED_TEST_DATA_DIR / "inventories"
 SHARED_TEST_EXPORTS_DIR = SHARED_TEST_DATA_DIR / "exports"
 SHARED_TEST_FEATURES_DIR = SHARED_TEST_DATA_DIR / "features"
+SHARED_TEST_POINT_CLOUDS_DIR = SHARED_TEST_DATA_DIR / "pointclouds"
 
 # Lifecycle fields the API stamps on every document it writes.
 _TIMESTAMP_FIELDS = ("created_on", "modified_on")

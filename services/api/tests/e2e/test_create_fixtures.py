@@ -307,3 +307,46 @@ def test_create_blue_mtn_osm_water(
         body={"name": "static-test-blue-mtn-osm-water"},
         static_name="static-test-blue-mtn-osm-water",
     )
+
+
+@pytest.mark.dependency()
+def test_create_blackfoot_3dep_point_cloud(
+    create_static_point_cloud_fixture, client, blackfoot_domain
+):
+    """Create a static 3DEP point cloud fixture on the Blackfoot domain.
+
+    Blackfoot rather than Blue Mountain: Blue Mountain has no 3DEP lidar at all
+    (it is this PR's zero-coverage negative test), while Blackfoot is fully
+    covered by a single acquisition — one acquisition means no seam, so the
+    fixture is deterministic. It is also already the domain behind
+    ``static-test-blackfoot-chm``, which is what #330 will build from this
+    cloud.
+
+    This is the only fixture that exercises the API -> Cloud Tasks -> lakitu
+    path, so it doubles as the end-to-end check that the worker is reachable
+    and wired up.
+
+    The acquisition is pinned rather than auto-selected. The catalog is live and
+    USGS publishes new surveys, so an unpinned fetch could silently regenerate
+    this fixture from different lidar on a later run.
+    """
+    completed = create_static_point_cloud_fixture(
+        client=client,
+        domain_id=blackfoot_domain["id"],
+        endpoint="/pointclouds/3dep",
+        body={
+            "name": "static-test-blackfoot-3dep",
+            "datasets": ["MT_Statewide_P3_4_B21"],
+        },
+        static_name="static-test-blackfoot-3dep",
+    )
+
+    # Guard the properties #330 depends on, so a regenerated fixture that is
+    # subtly wrong fails here rather than in a downstream CHM test.
+    assert completed["type"] == "als"
+    assert completed["source"]["datasets"] == ["MT_Statewide_P3_4_B21"]
+    assert completed["source"]["coverage_fraction"] == 1.0
+    assert completed["georeference"]["crs"] == "EPSG:32612"
+    # Ground and unclassified: a CHM needs both a surface and returns above it.
+    assert {1, 2} <= set(completed["summary"]["point_classes"])
+    assert completed["summary"]["point_count"] > 1_000_000

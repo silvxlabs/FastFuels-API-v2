@@ -7,13 +7,23 @@ All handlers return xr.Dataset where each variable name is a band name.
 
 import io
 import logging
+import socket
+import ssl
 import traceback
 from collections.abc import Callable
+from urllib.parse import urlparse
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+# GDAL surfaces a remote-read failure as two unrelated exception types:
+# rioxarray's open() wraps it in RasterioIOError, while reads issued during
+# reprojection let the raw CPLE_* error through. Neither subclasses the other,
+# and the CPLE hierarchy has no public import path, so both must be named.
+from rasterio._err import CPLE_BaseError
+from rasterio.errors import RasterioIOError
 from rioxarray.merge import merge_arrays
 
 from griddle.handlers.tiles import TileMetadata
@@ -34,6 +44,40 @@ META_VERSION_CONFIG = {
     },
 }
 NAIP_INDEX_PATH = f"{TABLES_BUCKET}/naip_chm_index_optimized.parquet"
+
+TILE_READ_ERRORS = (RasterioIOError, CPLE_BaseError)
+
+# OpenSSL's X509_V_ERR_CERT_HAS_EXPIRED.
+CERT_HAS_EXPIRED = 10
+
+
+def _certificate_expired(url: str) -> bool:
+    """Is this host failing TLS verification purely because its cert lapsed?
+
+    GDAL's own error text is not a usable signal. It varies across builds, and
+    once its /vsicurl cache holds a failed read for a URL, a repeat open in the
+    same process reports "not recognized as being in a supported file format"
+    with no mention of TLS at all — so a griddle container that already served
+    one such request would misread the next one.
+
+    Asking the host directly is stable, and OpenSSL's numeric verify code
+    distinguishes a merely-expired certificate from an untrusted, self-signed,
+    or hostname-mismatched one. Only the first is worth working around.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        return False
+    try:
+        with socket.create_connection(
+            (parsed.hostname, parsed.port or 443), timeout=10
+        ) as sock:
+            context = ssl.create_default_context()
+            with context.wrap_socket(sock, server_hostname=parsed.hostname):
+                return False
+    except ssl.SSLCertVerificationError as e:
+        return e.verify_code == CERT_HAS_EXPIRED
+    except OSError:
+        return False
 
 
 def _query_tile_index(index_path: str, roi: gpd.GeoDataFrame) -> pd.DataFrame:
@@ -74,7 +118,6 @@ def _process_intersecting_tiles(
     then mosaics them with nodata-aware compositing.
     """
     n_tiles = len(fetch_urls)
-    tile_arrays = []
     method_name = alignment.get("method") or "bilinear"
     # All tiles in a single fetch share the same scale (Meta = 1.0,
     # NAIP = 100.0). The scale is applied once after merging.
@@ -84,39 +127,85 @@ def _process_intersecting_tiles(
             message="Mixed scale factors across tiles are not supported.",
         )
 
-    with cog_env(**gdal_env):
-        for i, url in enumerate(fetch_urls):
-            progress(
-                f"Fetching CHM tile {i + 1}/{n_tiles}...",
-                10 + int(60 * (i + 1) / n_tiles),
-            )
+    def read_tiles(env: dict[str, str]) -> list[xr.DataArray]:
+        """Open and window every tile under one GDAL environment."""
+        arrays = []
+        with cog_env(**env):
+            for i, url in enumerate(fetch_urls):
+                progress(
+                    f"Fetching CHM tile {i + 1}/{n_tiles}...",
+                    10 + int(60 * (i + 1) / n_tiles),
+                )
 
-            raster = RasterConnection(url, connection_type="rioxarray", cache=True)
-            dest = resolve_alignment_destination(
-                alignment,
-                roi,
-                target_grid_doc,
-                raster.target_native_resolution(roi)[0],
-                extent_buffer_cells=extent_buffer_cells,
-            )
-            data = raster.extract_window(
-                roi=roi,
-                interpolation_padding_cells=extent_buffer_cells,
-                resampling=RESAMPLING_METHOD_MAP[method_name],
-                destination_resolution=alignment.get("resolution")
-                if alignment["target"] == "native"
-                else None,
-                **dest,
-            )
+                raster = RasterConnection(url, connection_type="rioxarray", cache=True)
+                dest = resolve_alignment_destination(
+                    alignment,
+                    roi,
+                    target_grid_doc,
+                    raster.target_native_resolution(roi)[0],
+                    extent_buffer_cells=extent_buffer_cells,
+                )
+                data = raster.extract_window(
+                    roi=roi,
+                    interpolation_padding_cells=extent_buffer_cells,
+                    resampling=RESAMPLING_METHOD_MAP[method_name],
+                    destination_resolution=alignment.get("resolution")
+                    if alignment["target"] == "native"
+                    else None,
+                    **dest,
+                )
 
-            # Squeeze band dimension to satisfy strict 2D requirements.
-            # Keep the tile in its native dtype so merge_arrays can compose
-            # with the source nodata sentinel — applying the scale factor
-            # here would convert the sentinel into an indistinguishable
-            # float value (e.g. NAIP 65535/100 = 655.35) and merge_arrays
-            # would then overwrite valid pixels with scaled-nodata garbage
-            # across tile boundaries.
-            tile_arrays.append(data.squeeze("band", drop=True))
+                # Squeeze band dimension to satisfy strict 2D requirements.
+                # Keep the tile in its native dtype so merge_arrays can compose
+                # with the source nodata sentinel — applying the scale factor
+                # here would convert the sentinel into an indistinguishable
+                # float value (e.g. NAIP 65535/100 = 655.35) and merge_arrays
+                # would then overwrite valid pixels with scaled-nodata garbage
+                # across tile boundaries.
+                arrays.append(data.squeeze("band", drop=True))
+        return arrays
+
+    def unavailable() -> ProcessingError:
+        """Upstream tile host is unreachable — expected and retryable.
+
+        Called from inside an ``except`` block so ``format_exc`` captures the
+        originating GDAL error for the log, not this frame.
+        """
+        return ProcessingError(
+            code="TILE_SOURCE_UNAVAILABLE",
+            message=(
+                "The canopy height tile server could not be reached. Please "
+                "try again shortly."
+            ),
+            suggestion="Retry the request in a few minutes.",
+            traceback=traceback.format_exc(),
+        )
+
+    try:
+        tile_arrays = read_tiles(gdal_env)
+    except TILE_READ_ERRORS as e:
+        # Every tile in one fetch comes from a single index, so they share a
+        # host; the first URL answers for all of them.
+        if not _certificate_expired(fetch_urls[0]):
+            raise unavailable() from e
+
+        # The tile host's certificate has lapsed (#478). The bytes are still
+        # served correctly and the data is public and read-only, so retry once
+        # with peer verification off rather than failing the job over someone
+        # else's expired certificate. Deliberately narrow: only when the host
+        # is confirmed expired-but-otherwise-valid, only on the retry, and only
+        # for the tile reads in this call — every other TLS failure (untrusted
+        # issuer, hostname mismatch, self-signed) still hard-fails.
+        logging.getLogger(__name__).warning(
+            "CHM tile host %s has an expired certificate; retrying with peer "
+            "verification disabled (see issue #478). Original error: %s",
+            urlparse(fetch_urls[0]).hostname,
+            e,
+        )
+        try:
+            tile_arrays = read_tiles({**gdal_env, "GDAL_HTTP_UNSAFESSL": "YES"})
+        except TILE_READ_ERRORS as retry_error:
+            raise unavailable() from retry_error
 
     progress("Building dataset...", 80)
 

@@ -32,18 +32,22 @@ from lib.config import (
     FEATURES_COLLECTION,
     GRIDS_BUCKET,
     GRIDS_COLLECTION,
+    POINT_CLOUDS_BUCKET,
+    POINT_CLOUDS_COLLECTION,
 )
 from lib.firestore.documents import delete_document, get_document, set_document
 from lib.gcs.blobs import (
     delete_directory,
     delete_file,
     exists,
+    get_gcsfs_client,
     upload_file,
 )
 from lib.testing import (
     SHARED_TEST_DOMAINS_DIR,
     SHARED_TEST_FEATURES_DIR,
     SHARED_TEST_GRIDS_DIR,
+    SHARED_TEST_POINT_CLOUDS_DIR,
     load_json,
 )
 from lib.zarr_utils import load_zarr
@@ -59,6 +63,7 @@ logger = logging.getLogger(__name__)
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
 GRIDS_DIR = SHARED_TEST_GRIDS_DIR
 FEATURES_DIR = SHARED_TEST_FEATURES_DIR
+POINT_CLOUDS_DIR = SHARED_TEST_POINT_CLOUDS_DIR
 
 
 class MockRequest:
@@ -232,6 +237,8 @@ def griddle_runner():
     grid_ids = []
     feature_blobs: list[str] = []
     feature_doc_ids: list[str] = []
+    point_cloud_blobs: list[str] = []
+    point_cloud_doc_ids: list[str] = []
     datasets = []
 
     def _run(
@@ -244,6 +251,7 @@ def griddle_runner():
         feature_doc: bool = False,
         feature_type: str = "road",
         modifications: list[dict] | None = None,
+        point_cloud: str | None = None,
     ) -> GriddleResult:
         # Create domain document
         domain_data = load_json(DOMAINS_DIR / domain_file)
@@ -302,6 +310,27 @@ def griddle_runner():
                 )
                 feature_doc_ids.append(feature_id)
 
+        # Optionally stand up a point cloud for handlers that read one. The
+        # LAZ is copied from a static object rather than synthesized, so the
+        # test exercises a real 3DEP cloud; the copy gives it a test-scoped id,
+        # since the handler derives the GCS path from the id alone.
+        # Auto-injects ``source_point_cloud_id`` into ``source_overrides``.
+        if point_cloud is not None:
+            point_cloud_id = f"test-{uuid4().hex}"
+            src = f"gs://{POINT_CLOUDS_BUCKET}/{point_cloud}/cloud.laz"
+            dst = f"gs://{POINT_CLOUDS_BUCKET}/{point_cloud_id}/cloud.laz"
+            get_gcsfs_client().cp(src, dst)
+            point_cloud_blobs.append(dst)
+
+            pc_data = load_json(POINT_CLOUDS_DIR / f"{point_cloud}.json")
+            pc_data["id"] = point_cloud_id
+            pc_data["domain_id"] = domain_id
+            set_document(POINT_CLOUDS_COLLECTION, point_cloud_id, pc_data)
+            point_cloud_doc_ids.append(point_cloud_id)
+
+            source_overrides = dict(source_overrides or {})
+            source_overrides.setdefault("source_point_cloud_id", point_cloud_id)
+
         # Create grid document
         grid_data = load_json(GRIDS_DIR / grid_file)
         grid_data["domain_id"] = domain_id
@@ -359,6 +388,13 @@ def griddle_runner():
 
     for feature_doc_id in feature_doc_ids:
         delete_document(FEATURES_COLLECTION, feature_doc_id)
+
+    for point_cloud_blob in point_cloud_blobs:
+        if exists(point_cloud_blob):
+            delete_file(point_cloud_blob)
+
+    for point_cloud_doc_id in point_cloud_doc_ids:
+        delete_document(POINT_CLOUDS_COLLECTION, point_cloud_doc_id)
 
     for domain_id in domain_ids:
         delete_document(DOMAINS_COLLECTION, domain_id)

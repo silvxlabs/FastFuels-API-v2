@@ -350,3 +350,57 @@ def test_create_blackfoot_3dep_point_cloud(
     # Ground and unclassified: a CHM needs both a surface and returns above it.
     assert {1, 2} <= set(completed["summary"]["point_classes"])
     assert completed["summary"]["point_count"] > 1_000_000
+
+
+@pytest.mark.dependency(depends=["test_create_blackfoot_3dep_point_cloud"])
+def test_create_blackfoot_point_cloud_chm(
+    create_static_fixture, client, blackfoot_domain
+):
+    """Build a CHM grid from the static 3DEP cloud (#330).
+
+    The first half of #330's acceptance criterion: point cloud -> CHM grid. The
+    cloud carries ASPRS ground classification, so ground is read rather than
+    inferred, and `source.ground` records that.
+    """
+    completed = create_static_fixture(
+        client=client,
+        domain_id=blackfoot_domain["id"],
+        endpoint="/grids/canopy/point_cloud",
+        body={"source_point_cloud_id": "static-test-blackfoot-3dep"},
+        static_name="static-test-blackfoot-point-cloud-chm",
+        dependencies={"pointclouds": ["static-test-blackfoot-3dep"]},
+    )
+
+    # The band the downstream tree detection validates on.
+    band = completed["bands"][0]
+    assert band["key"] == "chm"
+    assert band["unit"] == "m"
+    # Ground came from the classification, and was well constrained.
+    ground = completed["source"]["ground"]
+    assert ground["ground_source"] == "classification"
+    assert ground["ground_coverage"] > 0.5
+    # Conifer forest, not terrain: a ground-normalization failure would put the
+    # maximum in the hundreds, since this cloud spans 1026-1274 m elevation.
+    assert 20.0 < band["summary"]["max"] < 60.0
+
+
+@pytest.mark.dependency(depends=["test_create_blackfoot_point_cloud_chm"])
+def test_create_blackfoot_point_cloud_chm_inventory(
+    create_static_inventory_fixture, client, blackfoot_domain
+):
+    """Detect trees in the point-cloud CHM (#330).
+
+    The second half of the acceptance criterion: the grid built from a point
+    cloud is interchangeable with the Meta/NAIP/LANDFIRE CHM sources, so the
+    existing individual-tree-detection endpoint consumes it unchanged.
+    """
+    completed = create_static_inventory_fixture(
+        client=client,
+        domain_id=blackfoot_domain["id"],
+        endpoint="/inventories/tree/chm",
+        body={"source_chm_grid_id": "static-test-blackfoot-point-cloud-chm"},
+        static_name="static-test-blackfoot-point-cloud-chm-inventory",
+        dependencies={"grids": ["static-test-blackfoot-point-cloud-chm"]},
+    )
+
+    assert {"x", "y", "height"} <= {c["key"] for c in completed["columns"]}

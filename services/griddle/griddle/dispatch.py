@@ -12,6 +12,7 @@ import xarray as xr
 
 from griddle.handlers import (
     chm,
+    chm_point_cloud,
     compose,
     landfire,
     layerset,
@@ -21,7 +22,7 @@ from griddle.handlers import (
     threedep,
     uniform,
 )
-from lib.config import GRIDS_COLLECTION
+from lib.config import GRIDS_COLLECTION, POINT_CLOUDS_COLLECTION
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 
@@ -375,6 +376,27 @@ def handle_uniform(
     )
 
 
+def _load_point_cloud_doc(point_cloud_id: str) -> dict:
+    """Load the source point cloud document.
+
+    The API validates the cloud when the request comes in, but a job can sit in
+    the queue for a while, so the document is read again here rather than
+    trusting a create-time snapshot.
+    """
+    try:
+        _, snapshot = get_document(POINT_CLOUDS_COLLECTION, point_cloud_id)
+    except DocumentNotFoundError:
+        raise ProcessingError(
+            code="SOURCE_NOT_FOUND",
+            message=f"Point cloud '{point_cloud_id}' not found.",
+            suggestion=(
+                "The point cloud may have been deleted after this grid was "
+                "created. Create the grid again from a point cloud that exists."
+            ),
+        )
+    return snapshot.to_dict()
+
+
 def handle_canopy(
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
@@ -431,11 +453,30 @@ def handle_canopy(
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
             )
+        case "point_cloud":
+            point_cloud_id = source["source_point_cloud_id"]
+            point_cloud = _load_point_cloud_doc(point_cloud_id)
+            summary = point_cloud.get("summary") or {}
+            dataset, ground = chm_point_cloud.fetch_point_cloud_chm(
+                roi=domain_gdf,
+                point_cloud_id=point_cloud_id,
+                point_classes=summary.get("point_classes") or [],
+                # Always present: the API resolves it at create time, because a
+                # point cloud has no native cell size for a null to defer to.
+                resolution=alignment["resolution"],
+                progress=progress,
+                extent_buffer_cells=extent_buffer_cells,
+            )
+            # How ground was obtained, and how well constrained it was. Without
+            # this a derived-ground CHM over a large building looks like a
+            # confident answer instead of an unconstrained one.
+            source["ground"] = ground
+            return dataset
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown canopy product: {product}",
-                suggestion="Supported products: meta, naip, landfire",
+                suggestion="Supported products: meta, naip, landfire, point_cloud",
             )
 
 

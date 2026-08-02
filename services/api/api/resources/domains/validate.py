@@ -24,9 +24,8 @@ from geopandas import GeoDataFrame
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
-# TEMPORARY (#330 scale profiling): raised from 1.6e7 (16 km2) to 1.0e8
-# (100 km2) so a 64 km2 domain can be created. REVERT THIS COMMIT.
-MAX_DOMAIN_AREA_SQ_METERS = 1.0e8
+# Maximum domain area in square meters (16 square kilometers)
+MAX_DOMAIN_AREA_SQ_METERS = 1.6e7
 
 # Default CRS if not specified
 DEFAULT_CRS = "EPSG:4326"

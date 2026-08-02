@@ -73,7 +73,7 @@ DEFAULT_POINT_CLOUD_RESOLUTION_M = 1.0
 # so grid size — not point count — is what bounds the work. Rejecting an
 # oversized lattice here means a doomed request never becomes a failed grid.
 # Matches the cap the landscape and QUIC-Fire exports already apply.
-MAX_CHM_CELLS = int(os.getenv("CHM_MAX_CELLS", 200_000_000))
+MAX_CHM_CELLS = int(os.getenv("CHM_MAX_CELLS", 50_000_000))
 
 
 @router.post(

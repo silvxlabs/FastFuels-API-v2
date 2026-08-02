@@ -3,6 +3,7 @@ Async Cloud Tasks operations for FastAPI routes.
 """
 
 import json
+from datetime import timedelta
 
 from google.api_core.exceptions import AlreadyExists
 from google.cloud import run_v2, tasks_v2
@@ -11,16 +12,29 @@ from ring import lru
 
 from lib.config import GCP_PROJECT, GCP_REGION
 
+# Cloud Tasks accepts a dispatch deadline between 15 seconds and 30 minutes for
+# HTTP targets, and uses 10 minutes when none is given.
+MIN_DISPATCH_DEADLINE = timedelta(seconds=15)
+MAX_DISPATCH_DEADLINE = timedelta(minutes=30)
+DEFAULT_DISPATCH_DEADLINE = timedelta(minutes=10)
+
 
 @lru(force_asyncio=True)
-async def _get_service_url(service: str) -> str:
-    """Get Cloud Run service URL.
+async def _get_service_target(service: str) -> tuple[str, timedelta]:
+    """Get a Cloud Run service's URL and the deadline tasks targeting it get.
 
-    Uses the Cloud Run async API to look up the service URI and caches the
-    result using ring LRU.
+    The deadline is read from the service rather than configured alongside it.
+    Cloud Tasks abandons a request once its own deadline passes and hands the
+    task back to the queue for retry, so a deadline shorter than the service's
+    request timeout turns a slow-but-successful job into a retried failure.
+    Deriving it means raising a service's timeout is one change, not two that
+    silently have to agree.
+
+    Both values are cached together for the process lifetime, so a timeout
+    changed on a deployed service is picked up on the next revision of this one.
 
     Returns:
-        The service URL.
+        Tuple of (service URL, dispatch deadline clamped to Cloud Tasks' range).
 
     Raises:
         google.api_core.exceptions.NotFound: If the service does not exist.
@@ -28,7 +42,10 @@ async def _get_service_url(service: str) -> str:
     name = f"projects/{GCP_PROJECT}/locations/{GCP_REGION}/services/{service}"
     async with run_v2.ServicesAsyncClient() as client:
         svc = await client.get_service(name=name)
-    return svc.uri
+
+    timeout = svc.template.timeout or DEFAULT_DISPATCH_DEADLINE
+    deadline = max(MIN_DISPATCH_DEADLINE, min(MAX_DISPATCH_DEADLINE, timeout))
+    return svc.uri, deadline
 
 
 async def create_http_task_async(
@@ -49,7 +66,7 @@ async def create_http_task_async(
             in-place modification) must pass a unique name here or the task
             is silently dropped as AlreadyExists.
     """
-    url = await _get_service_url(service)
+    url, dispatch_deadline = await _get_service_target(service)
 
     async with tasks_v2.CloudTasksAsyncClient() as client:
         parent = client.queue_path(GCP_PROJECT, GCP_REGION, queue)
@@ -62,6 +79,7 @@ async def create_http_task_async(
                 "headers": {"Content-Type": "application/json"},
                 "body": json.dumps({"id": task_id}).encode(),
             },
+            dispatch_deadline=dispatch_deadline,
         )
 
         try:

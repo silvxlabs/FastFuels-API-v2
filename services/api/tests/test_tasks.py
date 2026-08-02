@@ -9,6 +9,7 @@ gcloud auth application-default login.
 import asyncio
 import errno
 import uuid
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,7 +46,7 @@ async def _clear_cache(tasks_module):
     """Clear ring LRU cache for all known service keys."""
     for service in ["griddle", "test-service", "cache-test"]:
         try:
-            await tasks_module._get_service_url.delete(service)
+            await tasks_module._get_service_target.delete(service)
         except Exception:
             pass
 
@@ -64,7 +65,7 @@ async def tasks_module():
 @pytest.fixture
 def mock_service_url(tasks_module):
     """Set up Cloud Run mock to return a URL for griddle."""
-    mock_svc = MagicMock(uri="https://griddle.example.com")
+    mock_svc = _service(uri="https://griddle.example.com")
     mock_client = MagicMock()
     mock_client.__aenter__.return_value = mock_client
     mock_client.get_service = AsyncMock(return_value=mock_svc)
@@ -73,32 +74,39 @@ def mock_service_url(tasks_module):
         yield
 
 
-class TestGetServiceUrl:
-    """Tests for _get_service_url function."""
+def _service(uri: str, timeout: timedelta = timedelta(seconds=540)):
+    """A Cloud Run service stub carrying both fields the dispatcher reads."""
+    svc = MagicMock(uri=uri)
+    svc.template.timeout = timeout
+    return svc
+
+
+class TestGetServiceTarget:
+    """Tests for _get_service_target function."""
 
     async def test_reads_url_from_cloud_run(self, tasks_module):
         """Reads URI from Cloud Run service."""
-        mock_svc = MagicMock(uri="https://griddle.example.com")
+        mock_svc = _service(uri="https://griddle.example.com")
         mock_client = MagicMock()
         mock_client.__aenter__.return_value = mock_client
         mock_client.get_service = AsyncMock(return_value=mock_svc)
 
         with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
-            url = await tasks_module._get_service_url("griddle")
+            url, _ = await tasks_module._get_service_target("griddle")
 
         assert url == "https://griddle.example.com"
         mock_client.get_service.assert_called_once()
 
     async def test_caches_result(self, tasks_module):
         """Second call returns cached result without hitting Cloud Run."""
-        mock_svc = MagicMock(uri="https://cache-test.example.com")
+        mock_svc = _service(uri="https://cache-test.example.com")
         mock_client = MagicMock()
         mock_client.__aenter__.return_value = mock_client
         mock_client.get_service = AsyncMock(return_value=mock_svc)
 
         with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
-            await tasks_module._get_service_url("cache-test")
-            url = await tasks_module._get_service_url("cache-test")
+            await tasks_module._get_service_target("cache-test")
+            url, _ = await tasks_module._get_service_target("cache-test")
 
         assert url == "https://cache-test.example.com"
         mock_client.get_service.assert_called_once()
@@ -113,7 +121,46 @@ class TestGetServiceUrl:
 
         with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
             with pytest.raises(NotFound):
-                await tasks_module._get_service_url("nonexistent")
+                await tasks_module._get_service_target("nonexistent")
+
+    async def _deadline_for(self, tasks_module, timeout, service):
+        mock_client = MagicMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.get_service = AsyncMock(
+            return_value=_service(uri="https://x.example.com", timeout=timeout)
+        )
+        with patch("api.tasks.run_v2.ServicesAsyncClient", return_value=mock_client):
+            _, deadline = await tasks_module._get_service_target(service)
+        return deadline
+
+    async def test_deadline_follows_the_service_request_timeout(self, tasks_module):
+        """A task must outlive the request it dispatches.
+
+        Cloud Tasks abandons a request at its own deadline and hands the task
+        back for retry, so a deadline below the service timeout would turn a
+        slow success into a retried failure.
+        """
+        deadline = await self._deadline_for(
+            tasks_module, timedelta(seconds=1200), "griddle"
+        )
+
+        assert deadline == timedelta(seconds=1200)
+
+    async def test_deadline_is_clamped_to_the_cloud_tasks_maximum(self, tasks_module):
+        """Cloud Tasks rejects anything past 30 minutes for an HTTP target."""
+        deadline = await self._deadline_for(
+            tasks_module, timedelta(hours=1), "test-service"
+        )
+
+        assert deadline == timedelta(minutes=30)
+
+    async def test_service_without_a_timeout_keeps_the_previous_default(
+        self, tasks_module
+    ):
+        """An unset timeout must not collapse the deadline to zero."""
+        deadline = await self._deadline_for(tasks_module, timedelta(0), "cache-test")
+
+        assert deadline == timedelta(minutes=10)
 
 
 class TestCreateHttpTaskAsync:

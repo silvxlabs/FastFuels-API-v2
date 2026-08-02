@@ -61,7 +61,7 @@ def _run(iter_points, point_classes, resolution=1.0, roi=None):
     # The handler downloads the cloud once and replays the buffer; both are
     # stubbed so the algorithm runs without GCS.
     with (
-        patch.object(chm_point_cloud, "_download_cloud", return_value=io.BytesIO()),
+        patch.object(chm_point_cloud, "_open_cloud", return_value=lambda: io.BytesIO()),
         patch.object(chm_point_cloud, "_iter_points", iter_points),
     ):
         return chm_point_cloud.fetch_point_cloud_chm(
@@ -264,14 +264,15 @@ class TestReadingFromStorage:
         las.classification = np.array([2, 5, 5], dtype=np.uint8)
         las.write(str(path))
 
-    def test_download_reads_the_cloud_path_for_the_id(self, tmp_path):
+    def test_small_cloud_is_buffered_and_read_from_memory(self, tmp_path):
         path = tmp_path / "cloud.laz"
         self._write_laz(path)
         client = MagicMock()
+        client.size.return_value = path.stat().st_size
         client.cat.return_value = path.read_bytes()
 
         with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
-            cloud = chm_point_cloud._download_cloud("some-cloud-id")
+            cloud = chm_point_cloud._open_cloud("some-cloud-id", cells=1_000_000)
 
         assert client.cat.call_args[0][0].endswith("/some-cloud-id/cloud.laz")
         x, y, z, classification = next(chm_point_cloud._iter_points(cloud))
@@ -279,14 +280,67 @@ class TestReadingFromStorage:
         assert z.tolist() == pytest.approx([10.0, 20.0, 30.0])
         assert classification.tolist() == [2, 5, 5]
 
+    def test_large_cloud_is_streamed_rather_than_buffered(self, tmp_path, monkeypatch):
+        """Above the threshold the object is re-opened per pass.
+
+        A full-resolution 3DEP cloud over a large domain runs to gigabytes —
+        1.04 billion points and 7.3 GB compressed over 64 km2, measured — which
+        no worker should hold in memory.
+        """
+        path = tmp_path / "cloud.laz"
+        self._write_laz(path)
+        monkeypatch.setattr(chm_point_cloud, "MAX_BUFFERED_LAZ_BYTES", 1)
+
+        client = MagicMock()
+        client.size.return_value = 10_000_000_000
+        client.open.side_effect = lambda *a, **k: open(path, "rb")
+
+        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
+            cloud = chm_point_cloud._open_cloud("big-cloud-id", cells=1_000_000)
+            first = [c[2].tolist() for c in chm_point_cloud._iter_points(cloud)]
+            second = [c[2].tolist() for c in chm_point_cloud._iter_points(cloud)]
+
+        client.cat.assert_not_called()
+        assert client.open.call_count == 2
+        assert first == second
+
+    def test_large_lattice_leaves_no_room_to_buffer_a_small_cloud(self, tmp_path):
+        """The buffer and the rasters share one worker, so the grid gets a vote.
+
+        A cloud well under the standalone threshold is still streamed when the
+        output lattice already claims most of the memory budget — buffering it
+        would push the two working sets past the worker's limit together.
+        """
+        path = tmp_path / "cloud.laz"
+        self._write_laz(path)
+
+        size = 1_500_000_000
+        client = MagicMock()
+        client.size.return_value = size
+        client.open.side_effect = lambda *a, **k: open(path, "rb")
+
+        # A lattice large enough to leave less headroom than the cloud needs,
+        # while the cloud stays under the standalone threshold that would
+        # otherwise buffer it.
+        headroom = size // 2
+        cells = (chm_point_cloud.MEMORY_BUDGET_BYTES - headroom) // (
+            chm_point_cloud.RASTER_BYTES_PER_CELL
+        )
+        assert size < chm_point_cloud.MAX_BUFFERED_LAZ_BYTES
+
+        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
+            chm_point_cloud._open_cloud("big-grid", cells=cells)
+
+        client.cat.assert_not_called()
+
     def test_buffer_is_replayable_across_passes(self, tmp_path):
         """The algorithm reads the cloud two or three times off one download."""
         path = tmp_path / "cloud.laz"
         self._write_laz(path)
-        cloud = chm_point_cloud._ReplayableBuffer(path.read_bytes())
+        buffer = chm_point_cloud._ReplayableBuffer(path.read_bytes())
 
-        first = [c[2].tolist() for c in chm_point_cloud._iter_points(cloud)]
-        second = [c[2].tolist() for c in chm_point_cloud._iter_points(cloud)]
+        first = [c[2].tolist() for c in chm_point_cloud._iter_points(lambda: buffer)]
+        second = [c[2].tolist() for c in chm_point_cloud._iter_points(lambda: buffer)]
 
         assert first == second
         assert first[0] == pytest.approx([10.0, 20.0, 30.0])
@@ -296,6 +350,7 @@ class TestReadingFromStorage:
         path = tmp_path / "cloud.laz"
         self._write_laz(path)
         client = MagicMock()
+        client.size.return_value = path.stat().st_size
         client.cat.return_value = path.read_bytes()
 
         with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):

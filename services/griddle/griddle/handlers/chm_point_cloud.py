@@ -19,7 +19,9 @@ a visible cause.
 """
 
 import io
+import os
 from collections.abc import Callable, Iterator
+from typing import IO
 
 import geopandas as gpd
 import laspy
@@ -74,6 +76,18 @@ PMF_MAX_DISTANCE_M = 2.5
 # than from the eroded and dilated surface, which reads about 0.1 m low.
 GROUND_SNAP_TOLERANCE_M = 0.5
 
+# Largest LAZ held in memory between passes. Above this the object is re-read
+# per pass instead, trading network for a bounded footprint.
+MAX_BUFFERED_LAZ_BYTES = int(os.getenv("CHM_MAX_BUFFERED_LAZ_BYTES", 2 * 1024**3))
+
+# What the handler may hold at once, and what the rasters cost. A buffered cloud
+# and the rasters draw on the same worker memory, so the buffering decision has
+# to account for the lattice: measured peak grows at 37.2 B/cell (fitted across
+# 4M-121M cells under an 8 GiB cgroup, r^2 > 0.999), so a 150M cell grid needs
+# 5.8 GB on its own and cannot also hold a 2 GiB cloud.
+RASTER_BYTES_PER_CELL = 40
+MEMORY_BUDGET_BYTES = int(os.getenv("CHM_MEMORY_BUDGET_BYTES", 6 * 1024**3))
+
 # A cell whose height exceeds *every* neighbour by more than this is a lone
 # spurious return rather than a treetop. Applied to the finished raster so the
 # band stays a true maximum.
@@ -125,7 +139,7 @@ def fetch_point_cloud_chm(
     lattice = (origin_x, origin_y, height, width)
 
     progress("Reading point cloud...", 10)
-    cloud = _download_cloud(point_cloud_id)
+    cloud = _open_cloud(point_cloud_id, height * width)
 
     if GROUND_CLASS in point_classes:
         progress("Reading ground returns...", 15)
@@ -185,29 +199,52 @@ class _ReplayableBuffer(io.BytesIO):
         pass
 
 
-def _download_cloud(point_cloud_id: str) -> _ReplayableBuffer:
-    """Fetch a point cloud's LAZ into memory, once.
+def _open_cloud(point_cloud_id: str, cells: int) -> Callable[[], IO[bytes]]:
+    """Return a factory yielding a readable LAZ stream, one per pass.
 
     The algorithm reads the cloud two or three times — a ground pass, an
-    optional snap-back pass, and the canopy pass. Re-fetching per pass would
-    pull the object over the network each time, so it is held compressed for
-    the duration of the job instead.
+    optional snap-back pass, and the canopy pass — so how the bytes are held
+    between passes is a real trade rather than a detail.
 
-    Compressed is the right form to hold: a 200M point cloud (the ingest
-    ceiling, matched by the 1 GiB upload cap) is ~1.3 GB as LAZ against roughly
-    4 GB for the decoded coordinates it would take to cache the same points.
-    Decoding from a buffer also measured ~2.6x faster than streaming the same
-    object through gcsfs, since range reads carry per-request overhead.
+    A small cloud is fetched once and replayed from memory, which avoids
+    re-reading it over the network and is meaningfully faster: decoding from a
+    buffer measured ~2.6x the throughput of streaming the same object through
+    gcsfs, since range reads carry per-request overhead.
+
+    Otherwise each pass re-opens the object. Buffering does not scale — a full
+    resolution 3DEP cloud over 64 km2 is ~1 billion points and ~7.3 GB
+    compressed — and paying the extra reads is far better than failing outright
+    on a large domain.
+
+    Whether a cloud is "small" depends on the grid as well as the file, because
+    the buffer and the rasters occupy the same worker at the same time.
+
+    Args:
+        point_cloud_id: Point cloud whose LAZ to read.
+        cells: Cells in the output lattice, which sets the raster working set.
+
+    Returns:
+        A callable returning a fresh readable stream positioned for one pass.
     """
-    return _ReplayableBuffer(get_gcsfs_client().cat(_cloud_path(point_cloud_id)))
+    path = _cloud_path(point_cloud_id)
+    fs = get_gcsfs_client()
+
+    headroom = MEMORY_BUDGET_BYTES - cells * RASTER_BYTES_PER_CELL
+    if fs.size(path) <= min(MAX_BUFFERED_LAZ_BYTES, headroom):
+        buffer = _ReplayableBuffer(fs.cat(path))
+        return lambda: buffer
+
+    return lambda: fs.open(path, "rb")
 
 
-def _iter_points(cloud: _ReplayableBuffer) -> Iterator[tuple]:
+def _iter_points(open_cloud: Callable[[], IO[bytes]]) -> Iterator[tuple]:
     """Yield (x, y, z, classification) arrays a chunk at a time.
 
-    Rewinds first, so a caller can make as many passes over the buffer as the
-    algorithm needs.
+    Takes a factory rather than a stream so each pass gets its own reader:
+    ``laspy.open`` closes what it is handed, which a buffered cloud survives
+    and a freshly-opened remote one does not need to.
     """
+    cloud = open_cloud()
     cloud.seek(0)
     with laspy.open(cloud) as reader:
         for points in reader.chunk_iterator(CHUNK_POINTS):

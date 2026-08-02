@@ -77,14 +77,12 @@ PMF_MAX_DISTANCE_M = 2.5
 GROUND_SNAP_TOLERANCE_M = 0.5
 
 # Largest LAZ held in memory between passes. Above this the object is re-read
-# per pass instead, trading network for a bounded footprint.
-MAX_BUFFERED_LAZ_BYTES = int(os.getenv("CHM_MAX_BUFFERED_LAZ_BYTES", 2 * 1024**3))
+# per pass instead, trading network for a bounded footprint. 4 GiB covers any
+# cloud over the 16 km2 domain cap at realistic densities.
+MAX_BUFFERED_LAZ_BYTES = int(os.getenv("CHM_MAX_BUFFERED_LAZ_BYTES", 4 * 1024**3))
 
-# What the handler may hold at once, and what the rasters cost. A buffered cloud
-# and the rasters draw on the same worker memory, so the buffering decision has
-# to account for the lattice: measured peak grows at 37.2 B/cell (fitted across
-# 4M-121M cells under an 8 GiB cgroup, r^2 > 0.999), so a 150M cell grid needs
-# 5.8 GB on its own and cannot also hold a 2 GiB cloud.
+# A buffered cloud and the rasters share the worker, so the buffering decision
+# subtracts the lattice's share. Peak measured at 37.2 B/cell.
 RASTER_BYTES_PER_CELL = 40
 MEMORY_BUDGET_BYTES = int(os.getenv("CHM_MEMORY_BUDGET_BYTES", 6 * 1024**3))
 
@@ -202,22 +200,10 @@ class _ReplayableBuffer(io.BytesIO):
 def _open_cloud(point_cloud_id: str, cells: int) -> Callable[[], IO[bytes]]:
     """Return a factory yielding a readable LAZ stream, one per pass.
 
-    The algorithm reads the cloud two or three times — a ground pass, an
-    optional snap-back pass, and the canopy pass — so how the bytes are held
-    between passes is a real trade rather than a detail.
-
-    A small cloud is fetched once and replayed from memory, which avoids
-    re-reading it over the network and is meaningfully faster: decoding from a
-    buffer measured ~2.6x the throughput of streaming the same object through
-    gcsfs, since range reads carry per-request overhead.
-
-    Otherwise each pass re-opens the object. Buffering does not scale — a full
-    resolution 3DEP cloud over 64 km2 is ~1 billion points and ~7.3 GB
-    compressed — and paying the extra reads is far better than failing outright
-    on a large domain.
-
-    Whether a cloud is "small" depends on the grid as well as the file, because
-    the buffer and the rasters occupy the same worker at the same time.
+    A cloud small enough to hold alongside the rasters is fetched once and
+    replayed from memory, which measured ~2.6x the throughput of streaming the
+    same object through gcsfs. Anything larger is re-opened per pass, since
+    buffering does not scale to a multi-gigabyte cloud.
 
     Args:
         point_cloud_id: Point cloud whose LAZ to read.

@@ -27,7 +27,6 @@ viz = [
 [tool.pytest.ini_options]
 markers = [
     "integration: tests requiring network access (deselect with '-m \"not integration\"')",
-    "scale: multi-minute jobs against billion-point clouds (deselect with '-m \"not scale\"')",
 ]
 
 [tool.uv.sources]

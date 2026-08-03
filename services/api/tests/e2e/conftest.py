@@ -321,6 +321,8 @@ def create_static_fixture(firestore_client, test_owner_id):
             del_response = client.delete(delete_url, timeout=30.0)
             logger.info(f"Deleted grid {grid_id}: {del_response.status_code}")
 
+            return completed_grid
+
         finally:
             # Always clean up dependency registrations
             for resource_type, ref in registered:
@@ -397,6 +399,8 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
             delete_url = f"/domains/{domain_id}/inventories/{inventory_id}"
             del_response = client.delete(delete_url, timeout=30.0)
             logger.info(f"Deleted inventory {inventory_id}: {del_response.status_code}")
+
+            return completed_inventory
 
         finally:
             # Always clean up dependency registrations

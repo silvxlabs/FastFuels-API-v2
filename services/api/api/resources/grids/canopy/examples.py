@@ -212,3 +212,122 @@ ALL_LANDFIRE_CANOPY_EXAMPLE_VALUES = [
     ("with_buffer", EXAMPLE_LANDFIRE_CANOPY_WITH_BUFFER),
     ("native_alignment", EXAMPLE_LANDFIRE_CANOPY_NATIVE_ALIGNMENT),
 ]
+
+
+EXAMPLE_POINT_CLOUD_CHM_MINIMAL = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+}
+
+EXAMPLE_POINT_CLOUD_CHM_NAMED = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "name": "Blackfoot ALS canopy height",
+    "description": "1 m CHM rasterized from the 3DEP point cloud.",
+    "tags": ["als", "chm"],
+}
+
+EXAMPLE_POINT_CLOUD_CHM_5M = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {"target": "domain", "resolution": 5.0},
+}
+
+EXAMPLE_POINT_CLOUD_CHM_10M = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {"target": "domain", "resolution": 10.0},
+}
+
+EXAMPLE_POINT_CLOUD_CHM_30M = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {"target": "domain", "resolution": 30.0},
+}
+
+EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {"target": "grid", "grid_id": "REPLACE_WITH_GRID_ID"},
+}
+
+EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID_AT_1M = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {
+        "target": "grid",
+        "grid_id": "REPLACE_WITH_GRID_ID",
+        "resolution": 1.0,
+    },
+}
+
+CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
+    "minimal": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_MINIMAL,
+        "summary": "1 m cells (the default)",
+        "description": (
+            "The only required field is the point cloud to rasterize. Each "
+            "cell holds the height above ground of the tallest return that "
+            "falls in it, in meters.\n\n"
+            "Cells are 1 m unless you ask for something else. The point cloud "
+            "must be an airborne (`als`) cloud in this domain, with status "
+            "`completed`."
+        ),
+    },
+    "named": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_NAMED,
+        "summary": "With metadata",
+        "description": "Name, description, and tags for organizing grids.",
+    },
+    "resolution_5m": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_5M,
+        "summary": "5 m cells",
+        "description": (
+            "`alignment.resolution` sets the cell size, in meters. Larger "
+            "cells give a smaller grid that smooths over individual tree "
+            "crowns. The smallest cell size accepted is 1 m."
+        ),
+    },
+    "resolution_10m": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_10M,
+        "summary": "10 m cells",
+        "description": (
+            "At 10 m and coarser the grid describes the height of the canopy "
+            "as a whole rather than of individual trees."
+        ),
+    },
+    "resolution_30m": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_30M,
+        "summary": "30 m cells, matching LANDFIRE",
+        "description": (
+            "30 m is the cell size of the LANDFIRE canopy products. Note that "
+            "the same cell size does not by itself put two grids on the same "
+            "cells — to line up with a particular LANDFIRE grid, align to it "
+            "by id instead (see the next two examples)."
+        ),
+    },
+    "aligned_to_existing_grid": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID,
+        "summary": "Match an existing grid exactly",
+        "description": (
+            "Naming another grid in this domain produces a CHM on exactly "
+            "that grid's cells — same origin, same cell size, same shape — so "
+            "the two can be composed or exported together without "
+            "resampling.\n\n"
+            "The target must be a completed grid in this domain, using this "
+            "domain's CRS."
+        ),
+    },
+    "aligned_to_existing_grid_at_1m": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID_AT_1M,
+        "summary": "Match an existing grid, at your own cell size",
+        "description": (
+            "Adding `resolution` keeps the target grid's position and extent "
+            "but uses the cell size you give. Use this for a finer CHM that "
+            "still lines up with a coarser grid — for example 1 m canopy "
+            "heights on the cells of a 30 m LANDFIRE grid."
+        ),
+    },
+}
+
+POINT_CLOUD_CHM_EXAMPLE_VALUES = [
+    ("minimal", EXAMPLE_POINT_CLOUD_CHM_MINIMAL),
+    ("named", EXAMPLE_POINT_CLOUD_CHM_NAMED),
+    ("resolution_5m", EXAMPLE_POINT_CLOUD_CHM_5M),
+    ("resolution_10m", EXAMPLE_POINT_CLOUD_CHM_10M),
+    ("resolution_30m", EXAMPLE_POINT_CLOUD_CHM_30M),
+    ("aligned_to_existing_grid", EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID),
+]

@@ -76,9 +76,11 @@ PMF_MAX_DISTANCE_M = 2.5
 # than from the eroded and dilated surface, which reads about 0.1 m low.
 GROUND_SNAP_TOLERANCE_M = 0.5
 
-# Largest LAZ held in memory between passes. Above this the object is re-read
-# per pass instead, trading network for a bounded footprint. 4 GiB covers any
-# cloud over the 16 km2 domain cap at realistic densities.
+# Largest LAZ held in memory between passes, compared against the peak of the
+# fetch rather than the object size. Above this the object is re-read per pass
+# instead, trading network for a bounded footprint. The reachable ceiling sits
+# well under the default: 200M points (LAKITU_MAX_POINTS) at a measured
+# 6.9 B/point is ~1.3 GiB, and an upload is capped at 1 GiB.
 MAX_BUFFERED_LAZ_BYTES = int(os.getenv("CHM_MAX_BUFFERED_LAZ_BYTES", 4 * 1024**3))
 
 # A buffered cloud and the rasters share the worker, so the buffering decision
@@ -215,8 +217,12 @@ def _open_cloud(point_cloud_id: str, cells: int) -> Callable[[], IO[bytes]]:
     path = _cloud_path(point_cloud_id)
     fs = get_gcsfs_client()
 
+    # The fetch peaks at ~2x the object, measured 2.32x: gcsfs reads the
+    # response in chunks and joins them, so both copies are briefly live.
+    # Wrapping the result adds nothing — BytesIO shares an exact bytes object
+    # rather than copying it — so the download is the whole cost.
     headroom = MEMORY_BUDGET_BYTES - cells * RASTER_BYTES_PER_CELL
-    if fs.size(path) <= min(MAX_BUFFERED_LAZ_BYTES, headroom):
+    if 2 * fs.size(path) <= min(MAX_BUFFERED_LAZ_BYTES, headroom):
         buffer = _ReplayableBuffer(fs.cat(path))
         return lambda: buffer
 

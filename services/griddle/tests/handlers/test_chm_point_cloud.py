@@ -333,6 +333,33 @@ class TestReadingFromStorage:
 
         client.cat.assert_not_called()
 
+    def test_a_cloud_that_only_fits_once_is_streamed(self, tmp_path):
+        """The gate compares the peak of the fetch, not the object size.
+
+        gcsfs reads the response in chunks and joins them, so a download costs
+        about twice the object while both copies are live. A cloud that fits
+        the remaining budget once but not twice is streamed instead.
+        """
+        path = tmp_path / "cloud.laz"
+        self._write_laz(path)
+
+        headroom = chm_point_cloud.MEMORY_BUDGET_BYTES // 2
+        cells = (chm_point_cloud.MEMORY_BUDGET_BYTES - headroom) // (
+            chm_point_cloud.RASTER_BYTES_PER_CELL
+        )
+        size = int(headroom * 0.75)
+        assert size < min(headroom, chm_point_cloud.MAX_BUFFERED_LAZ_BYTES)
+        assert 2 * size > headroom
+
+        client = MagicMock()
+        client.size.return_value = size
+        client.open.side_effect = lambda *a, **k: open(path, "rb")
+
+        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
+            chm_point_cloud._open_cloud("only-fits-once", cells=cells)
+
+        client.cat.assert_not_called()
+
     def test_buffer_is_replayable_across_passes(self, tmp_path):
         """The algorithm reads the cloud two or three times off one download."""
         path = tmp_path / "cloud.laz"

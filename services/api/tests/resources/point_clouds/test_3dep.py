@@ -213,17 +213,26 @@ class TestCreateValidation:
     def test_uncovered_domain_is_rejected(
         self, client, firestore_client, domain_for_testing
     ):
+        def point_cloud_ids() -> set[str]:
+            docs = (
+                firestore_client.collection(POINT_CLOUDS_COLLECTION)
+                .where("domain_id", "==", domain_for_testing["id"])
+                .get()
+            )
+            return {d.id for d in docs}
+
+        # Measured as a delta rather than against the empty set. This domain is
+        # shared across the suite and other tests seed point clouds in it, so
+        # "the domain is empty" is not this test's to assert — only that its own
+        # rejected request added nothing.
+        before = point_cloud_ids()
+
         response = client.post(_create_route(domain_for_testing["id"]), json={})
         assert response.status_code == 422, response.text
         assert "no usgs 3dep lidar" in response.json()["detail"].lower()
 
         # A rejected request must not leave a resource behind.
-        docs = (
-            firestore_client.collection(POINT_CLOUDS_COLLECTION)
-            .where("domain_id", "==", domain_for_testing["id"])
-            .get()
-        )
-        assert [d.id for d in docs] == []
+        assert point_cloud_ids() == before
 
     def test_unknown_pinned_dataset_is_rejected(self, client, covered_domain):
         response = client.post(

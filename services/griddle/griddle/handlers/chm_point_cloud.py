@@ -62,9 +62,15 @@ GROUND_CLASS = 2
 MIN_CANOPY_HEIGHT_M = 0.0
 MAX_CANOPY_HEIGHT_M = 100.0
 
-# How far a ground gap may be filled by interpolation, in cells. Beyond this a
-# cell stays nodata rather than being extrapolated across a large void.
-GROUND_FILL_MAX_CELLS = 30
+# How far a ground gap may be filled by interpolation. Beyond this a cell stays
+# nodata rather than being extrapolated across a large void.
+#
+# In metres, converted to cells at run time, for the reason `_pmf` gives about
+# its windows: this is a physical distance, and a fixed cell count would mean
+# 30 m of interpolation at 1 m cells but 900 m at 30 m cells. 30 m keeps the
+# behaviour the derived-ground accuracy in the module docstring was measured
+# at, and sits at the same scale as the filter's largest window.
+GROUND_FILL_MAX_M = 30.0
 
 # filters.pmf's defaults, expressed in metres so they mean the same thing at
 # any resolution. The window is converted to cells at run time.
@@ -165,7 +171,7 @@ def fetch_point_cloud_chm(
     ground_distance_m = _max_ground_distance(known_ground) * resolution
 
     progress("Filling ground gaps...", 45)
-    ground = _fill_gaps(ground, GROUND_FILL_MAX_CELLS)
+    ground = _fill_gaps(ground, _fill_cells(resolution))
 
     progress("Rasterizing canopy heights...", 55)
     chm = _max_height_above(cloud, ground, lattice, resolution, progress)
@@ -357,7 +363,7 @@ def _derive_ground(cloud, lattice, resolution, progress) -> tuple[np.ndarray, st
     minimum = _min_surface(cloud, lattice, resolution, SURFACE_CLASSES)
 
     progress("Separating ground from cover...", 30)
-    provisional = _pmf(_fill_gaps(minimum, GROUND_FILL_MAX_CELLS), resolution)
+    provisional = _pmf(_fill_gaps(minimum, _fill_cells(resolution)), resolution)
 
     progress("Re-reading ground returns...", 40)
     ground = np.full(height * width, np.inf, dtype=np.float32)
@@ -407,12 +413,24 @@ def _pmf(surface: np.ndarray, resolution: float) -> np.ndarray:
     return ground
 
 
+def _fill_cells(resolution: float) -> int:
+    """``GROUND_FILL_MAX_M`` as a whole number of cells, at least one.
+
+    A cell coarser than the reach would otherwise round to zero and disable
+    the fill outright.
+    """
+    return max(1, round(GROUND_FILL_MAX_M / resolution))
+
+
 def _fill_gaps(surface: np.ndarray, max_cells: int) -> np.ndarray:
     """Interpolate NaN cells from their finite neighbours, bounded in reach.
 
     Each iteration extends the filled region by one cell, so `max_cells` caps
     how far a value travels. Anything further from real data stays NaN rather
     than being extrapolated across a void the surface says nothing about.
+
+    Takes a cell count rather than a distance so the bound stays testable in
+    the units it is applied in; `_fill_cells` converts.
     """
     filled = surface.copy()
     for _ in range(max_cells):

@@ -238,6 +238,49 @@ class TestGroundSource:
         assert excinfo.value.code == "EMPTY_POINT_CLOUD"
 
 
+class TestGroundGapFill:
+    """How far a ground surface is carried into cells with no ground return."""
+
+    @pytest.mark.parametrize("resolution", [1.0, 2.0, 5.0, 10.0, 30.0])
+    def test_the_reach_is_the_same_distance_at_every_cell_size(self, resolution):
+        """The reach is a physical distance, so it converts to cells at run
+        time. A fixed cell count would interpolate 30 m across at 1 m cells and
+        900 m across at 30 m cells — the same argument `_pmf` makes for its
+        windows."""
+        cells = chm_point_cloud._fill_cells(resolution)
+
+        assert cells * resolution == pytest.approx(
+            chm_point_cloud.GROUND_FILL_MAX_M, abs=resolution / 2
+        )
+
+    def test_one_metre_cells_keep_the_established_reach(self):
+        """1 m is the default, and the derived-ground accuracy in the module
+        docstring was measured there — it must not shift."""
+        assert chm_point_cloud._fill_cells(1.0) == 30
+
+    def test_a_cell_coarser_than_the_reach_still_fills_its_neighbour(self):
+        """Rounding to zero would disable the fill outright."""
+        assert chm_point_cloud._fill_cells(100.0) == 1
+
+    def test_gaps_within_the_reach_are_interpolated(self):
+        surface = np.full((1, 12), np.nan, dtype=np.float32)
+        surface[0, 0] = 10.0
+
+        filled = chm_point_cloud._fill_gaps(surface, 4)
+
+        assert np.isfinite(filled[0, :5]).all()
+
+    def test_gaps_beyond_the_reach_stay_nodata(self):
+        """A cell too far from any real ground return is left unknown rather
+        than extrapolated across a void the data says nothing about."""
+        surface = np.full((1, 12), np.nan, dtype=np.float32)
+        surface[0, 0] = 10.0
+
+        filled = chm_point_cloud._fill_gaps(surface, 4)
+
+        assert np.isnan(filled[0, 5:]).all()
+
+
 class TestDatasetContract:
     """What downstream consumers of a CHM grid rely on."""
 

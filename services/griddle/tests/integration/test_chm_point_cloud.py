@@ -88,3 +88,88 @@ class TestPointCloudChm:
 
         assert coarse.ds.rio.transform().a == pytest.approx(5.0)
         assert coarse.ds["chm"].size < fine.ds["chm"].size / 20
+
+
+def _align_to(grid_id, resolution=None):
+    return {
+        "alignment": {
+            "target": "grid",
+            "grid_id": grid_id,
+            "resolution": resolution,
+            "method": None,
+        }
+    }
+
+
+class TestGridAlignment:
+    """Aligning a CHM to an existing grid, against a real target lattice.
+
+    The target is a 5 m CHM built by the same pipeline, so its georeference is
+    one griddle actually wrote rather than a hand-authored fixture. Each
+    ``griddle_runner`` call stands up its own domain document from the same
+    fixture, so the target grid's lattice covers the same extent as the domain
+    the aligned run is built over.
+    """
+
+    def test_omitted_resolution_matches_the_target_lattice_exactly(
+        self, griddle_runner
+    ):
+        """Origin, cell size and shape all come from the target.
+
+        This is what makes the two grids composable without resampling. Note
+        the target is 5 m: an aligned run that fell back to the 1 m default
+        would fail on cell size alone.
+        """
+        target = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides={
+                "alignment": {"target": "domain", "resolution": 5.0, "method": None}
+            },
+        )
+
+        aligned = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides=_align_to(target.grid_id),
+        )
+
+        _assert_valid_chm(aligned.ds)
+        assert tuple(aligned.ds.rio.transform())[:6] == pytest.approx(
+            tuple(target.ds.rio.transform())[:6]
+        )
+        assert aligned.ds["chm"].shape == target.ds["chm"].shape
+
+    def test_explicit_resolution_keeps_the_target_origin(self, griddle_runner):
+        """The other mode: the target's anchor and extent, a finer cell size.
+
+        1 m cells nest exactly 5x5 inside the 5 m target's, so the two still
+        line up — the property that makes a fine CHM usable alongside a grid
+        whose lattice was chosen by a coarser product.
+        """
+        target = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides={
+                "alignment": {"target": "domain", "resolution": 5.0, "method": None}
+            },
+        )
+
+        aligned = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides=_align_to(target.grid_id, resolution=1.0),
+        )
+
+        target_transform = target.ds.rio.transform()
+        transform = aligned.ds.rio.transform()
+        assert transform.a == pytest.approx(1.0)
+        assert (transform.c, transform.f) == pytest.approx(
+            (target_transform.c, target_transform.f)
+        )
+        height, width = target.ds["chm"].shape
+        assert aligned.ds["chm"].shape == (height * 5, width * 5)

@@ -174,7 +174,7 @@ def fetch_point_cloud_chm(
     ground = _fill_gaps(ground, _fill_cells(resolution))
 
     progress("Rasterizing canopy heights...", 55)
-    chm = _max_height_above(cloud, ground, lattice, resolution, progress)
+    chm = _max_height_above(cloud, ground, lattice, resolution)
     chm = _remove_spikes(chm, SPIKE_THRESHOLD_M)
 
     if not np.isfinite(chm).any():
@@ -447,15 +447,19 @@ def _fill_gaps(surface: np.ndarray, max_cells: int) -> np.ndarray:
     return filled
 
 
-def _max_height_above(cloud, ground, lattice, resolution, progress) -> np.ndarray:
+def _max_height_above(cloud, ground, lattice, resolution) -> np.ndarray:
     """Highest height-above-ground per cell.
 
     Ground is sampled bilinearly at each point rather than read from the point's
     own cell: on a slope a cell-constant ground under-reads uphill and
     over-reads downhill, which measured 0.27 m RMSE against a per-point ground
     versus 0.17 m for bilinear.
+
+    Reports no progress despite being the longest pass. The chunk count is not
+    known until the cloud has been read, and every call writes to Firestore, so
+    a per-chunk update would cost a write per 2M points to move a bar.
     """
-    origin_x, origin_y, height, width = lattice
+    _, _, height, width = lattice
     chm = np.full(height * width, -np.inf, dtype=np.float32)
 
     for x, y, z, classification in _iter_points(cloud):

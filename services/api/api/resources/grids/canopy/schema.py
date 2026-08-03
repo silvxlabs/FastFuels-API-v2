@@ -232,8 +232,14 @@ class PointCloudChmSource(CanopySource):
         ),
     )
 
-    # Populated by griddle after processing.
-    ground: PointCloudGround | None = None
+    ground: PointCloudGround | None = Field(
+        default=None,
+        description=(
+            "How the ground surface beneath the canopy was established, and "
+            "how well the point cloud constrained it. Recorded when the grid "
+            "finishes processing; `null` before then."
+        ),
+    )
 
 
 class CreatePointCloudChmRequest(CreateSourceGridRequestBase):

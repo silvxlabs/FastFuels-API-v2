@@ -1,0 +1,76 @@
+{
+  "bands": [
+    {
+      "description": "Height of the canopy top above ground.",
+      "index": 0,
+      "key": "chm",
+      "name": "Canopy Height",
+      "nodata": null,
+      "summary": {
+        "count": 493517,
+        "max": 37.66335678100586,
+        "mean": 4.834659264945133,
+        "min": 0.0,
+        "nodata_count": 36403,
+        "std": 6.6073778619320445,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunks": {
+    "count": 4,
+    "count_by_axis": {
+      "x": 2,
+      "y": 2
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32612",
+    "shape": [
+      768,
+      690
+    ],
+    "transform": [
+      1.0,
+      0.0,
+      294094.99218481116,
+      0.0,
+      -1.0,
+      5199749.669894749
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "alignment": {
+      "method": null,
+      "resolution": 1.0,
+      "target": "domain"
+    },
+    "description": "Canopy height model rasterized from a point cloud",
+    "extent_buffer_cells": 0,
+    "ground": {
+      "ground_coverage": 0.9045,
+      "ground_source": "classification",
+      "max_ground_distance_m": 35.1
+    },
+    "name": "canopy",
+    "product": "point_cloud",
+    "source_point_cloud_checksum": null,
+    "source_point_cloud_id": "static-test-blackfoot-3dep"
+  },
+  "status": "completed",
+  "tags": []
+}

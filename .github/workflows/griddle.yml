@@ -88,7 +88,8 @@ jobs:
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
               RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }},\
               TABLES_BUCKET=${{ secrets.TABLES_BUCKET }},\
-              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }}" \
+              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
+              POINT_CLOUDS_BUCKET=${{ secrets.POINT_CLOUDS_BUCKET }}" \
             --quiet
 
   test:
@@ -125,6 +126,7 @@ jobs:
           RASTERS_BUCKET: ${{ secrets.RASTERS_BUCKET }}
           TABLES_BUCKET: ${{ secrets.TABLES_BUCKET }}
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
+          POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
         run: uv run pytest tests/ --ignore=tests/integration -v
 
       - name: Run integration tests
@@ -136,6 +138,7 @@ jobs:
           RASTERS_BUCKET: ${{ secrets.RASTERS_BUCKET }}
           TABLES_BUCKET: ${{ secrets.TABLES_BUCKET }}
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
+          POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
           DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
           INFRA_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
         run: uv run pytest tests/integration/ -n auto -v

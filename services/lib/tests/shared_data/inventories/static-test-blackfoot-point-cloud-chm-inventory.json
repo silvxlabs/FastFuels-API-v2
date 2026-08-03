@@ -1,0 +1,79 @@
+{
+  "columns": [
+    {
+      "key": "x",
+      "summary": {
+        "count": 14815,
+        "max": 294784.49218481116,
+        "mean": 294440.0416279432,
+        "min": 294095.49218481116,
+        "null_count": 0,
+        "std": 199.06567257134978,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "y",
+      "summary": {
+        "count": 14815,
+        "max": 5199749.169894749,
+        "mean": 5199305.453391205,
+        "min": 5198982.169894749,
+        "null_count": 0,
+        "std": 237.29013043548096,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "height",
+      "summary": {
+        "count": 14815,
+        "max": 37.66335678100586,
+        "mean": 11.379793099362505,
+        "min": 2.000985860824585,
+        "null_count": 0,
+        "std": 6.785816208906933,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "description": "",
+  "error": null,
+  "forestry_metrics": null,
+  "georeference": {
+    "bounds": [
+      294094.99218481116,
+      5198981.669894749,
+      294784.07535750256,
+      5199749.484544501
+    ],
+    "crs": "EPSG:32612"
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "algorithm": {
+      "footprint_size": 3,
+      "max_height": 120.0,
+      "min_height": 2.0,
+      "name": "lmf"
+    },
+    "name": "chm",
+    "source_chm_grid_checksum": null,
+    "source_chm_grid_id": "static-test-blackfoot-point-cloud-chm"
+  },
+  "status": "completed",
+  "tags": [],
+  "treatments": [],
+  "type": "tree"
+}

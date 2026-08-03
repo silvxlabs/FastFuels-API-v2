@@ -232,51 +232,41 @@ class TestAlignment:
 
         assert response.status_code == 422
 
-
-class TestCellCountCap:
-    """The lattice-size guard.
-
-    Exercised directly rather than over HTTP: `client` drives a separate server
-    process, so a monkeypatched cap in this process would not reach it, and the
-    test domain is far too small to exceed the real cap at the 1 m floor.
-    """
-
-    def test_lattice_within_the_cap_is_accepted(self, domain_for_testing):
-        from api.resources.grids.canopy.router import _validate_cell_count
-
-        _validate_cell_count(domain_for_testing, 1.0)
-
-    def test_oversized_lattice_raises_422(self, domain_for_testing, monkeypatch):
-        from api.resources.grids.canopy import router as canopy_router
-        from fastapi import HTTPException
-
-        monkeypatch.setattr(canopy_router, "MAX_CHM_CELLS", 100)
-
-        with pytest.raises(HTTPException) as excinfo:
-            canopy_router._validate_cell_count(domain_for_testing, 1.0)
-
-        assert excinfo.value.status_code == 422
-        assert "cells" in excinfo.value.detail
-        assert "resolution" in excinfo.value.detail
-
-    def test_coarser_resolution_shrinks_the_lattice(
-        self, domain_for_testing, monkeypatch
+    def test_grid_alignment_resolution_is_not_defaulted(
+        self, client, domain_for_testing, als_point_cloud, complete_grid
     ):
-        """The cap is on cells, so a coarser request can fit where 1 m cannot."""
-        from api.resources.grids.canopy import router as canopy_router
-        from fastapi import HTTPException
+        """Against a grid, `null` has something to defer to: the target's own
+        cell size. Substituting the 1 m default here would build a 1 m grid for
+        a request that asked to match a 30 m one."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "alignment": {"target": "grid", "grid_id": complete_grid["id"]},
+            },
+        )
 
-        minx, miny, maxx, maxy = _domain_bounds(domain_for_testing)
-        cells_at_1m = ((maxx - minx) / 1.0) * ((maxy - miny) / 1.0)
-        monkeypatch.setattr(canopy_router, "MAX_CHM_CELLS", int(cells_at_1m / 2))
+        assert response.status_code == 201, response.text
+        assert response.json()["source"]["alignment"]["resolution"] is None
 
-        with pytest.raises(HTTPException):
-            canopy_router._validate_cell_count(domain_for_testing, 1.0)
+    def test_grid_alignment_resolution_is_persisted_when_given(
+        self, client, domain_for_testing, als_point_cloud, complete_grid
+    ):
+        """The other alignment mode: the target's anchor, a new cell size."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "alignment": {
+                    "target": "grid",
+                    "grid_id": complete_grid["id"],
+                    "resolution": 5.0,
+                },
+            },
+        )
 
-        canopy_router._validate_cell_count(domain_for_testing, 10.0)
-
-
-def _domain_bounds(domain):
-    from lib.domain_utils import parse_domain_gdf
-
-    return parse_domain_gdf(domain).total_bounds
+        assert response.status_code == 201, response.text
+        alignment = response.json()["source"]["alignment"]
+        assert alignment["target"] == "grid"
+        assert alignment["grid_id"] == complete_grid["id"]
+        assert alignment["resolution"] == 5.0

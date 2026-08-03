@@ -1238,14 +1238,54 @@ class TestHandleCanopyPointCloud:
 
     @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
     @patch("griddle.dispatch._load_point_cloud_doc")
-    def test_uses_the_stored_resolution(self, mock_load, mock_fetch):
+    def test_threads_the_stored_alignment_to_the_handler(self, mock_load, mock_fetch):
         mock_load.return_value = {"summary": {"point_classes": [2]}}
         mock_fetch.return_value = (MagicMock(), {})
-        source = self._source(alignment={"target": "domain", "resolution": 5.0})
+        alignment = {"target": "domain", "resolution": 5.0}
 
-        handle_canopy(MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+        handle_canopy(
+            MagicMock(spec=gpd.GeoDataFrame),
+            self._source(alignment=alignment),
+            MagicMock(),
+        )
 
-        assert mock_fetch.call_args.kwargs["resolution"] == 5.0
+        assert mock_fetch.call_args.kwargs["alignment"] == alignment
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    @patch("griddle.dispatch._load_target_grid_doc")
+    def test_threads_the_target_grid_document_to_the_handler(
+        self, mock_target, mock_load, mock_fetch
+    ):
+        """`target='grid'` needs the target's lattice, which only the document
+        carries — dropping it is what made grid alignment silently a no-op."""
+        target_doc = {"georeference": {"crs": "EPSG:32612"}}
+        mock_target.return_value = target_doc
+        mock_load.return_value = {"summary": {"point_classes": [2]}}
+        mock_fetch.return_value = (MagicMock(), {})
+        alignment = {"target": "grid", "grid_id": "g-1", "resolution": None}
+
+        handle_canopy(
+            MagicMock(spec=gpd.GeoDataFrame),
+            self._source(alignment=alignment),
+            MagicMock(),
+        )
+
+        assert mock_fetch.call_args.kwargs["target_grid_doc"] is target_doc
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    def test_threads_the_extent_buffer_to_the_handler(self, mock_load, mock_fetch):
+        mock_load.return_value = {"summary": {"point_classes": [2]}}
+        mock_fetch.return_value = (MagicMock(), {})
+
+        handle_canopy(
+            MagicMock(spec=gpd.GeoDataFrame),
+            self._source(extent_buffer_cells=3),
+            MagicMock(),
+        )
+
+        assert mock_fetch.call_args.kwargs["extent_buffer_cells"] == 3
 
     @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
     @patch("griddle.dispatch._load_point_cloud_doc")

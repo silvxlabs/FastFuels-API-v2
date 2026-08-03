@@ -4,8 +4,6 @@ api/v2/resources/grids/canopy/router.py
 Router for canopy grid product endpoints.
 """
 
-import math
-import os
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -56,24 +54,17 @@ from lib.config import (
     GRIDS_COLLECTION,
     POINT_CLOUDS_COLLECTION,
 )
-from lib.domain_utils import parse_domain_gdf
 
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 
-# Cell size used when a point-cloud CHM request does not pin one. A point cloud
-# has no native pixel size to inherit, so this source supplies its own default —
-# and resolves it here, storing the result on the grid, so the worker reads a
-# value rather than reapplying a default of its own. 1 m is what the downstream
-# tree detection is tuned for.
+# Cell size used when a domain-aligned point-cloud CHM request does not pin one.
+# A point cloud has no native pixel size to inherit, so this source supplies its
+# own default — and resolves it here, storing the result on the grid, so the
+# worker reads a value rather than reapplying a default of its own. 1 m is what
+# the downstream tree detection is tuned for.
 DEFAULT_POINT_CLOUD_RESOLUTION_M = 1.0
-
-# Rasterizing a point cloud holds the output grid in memory for the whole job,
-# so grid size — not point count — is what bounds the work. Rejecting an
-# oversized lattice here means a doomed request never becomes a failed grid.
-# Matches the cap the landscape and QUIC-Fire exports already apply.
-MAX_CHM_CELLS = int(os.getenv("CHM_MAX_CELLS", 50_000_000))
 
 
 @router.post(
@@ -323,28 +314,6 @@ async def create_landfire_canopy(
     return Grid(**grid_data)
 
 
-def _validate_cell_count(domain: dict, resolution: float) -> None:
-    """Reject a lattice too large to rasterize.
-
-    Raises:
-        HTTPException: 422 when the resolved grid exceeds ``MAX_CHM_CELLS``.
-    """
-    minx, miny, maxx, maxy = parse_domain_gdf(domain).total_bounds
-    width = max(1, math.ceil((maxx - minx) / resolution))
-    height = max(1, math.ceil((maxy - miny) / resolution))
-    cells = width * height
-    if cells > MAX_CHM_CELLS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"A {resolution} m canopy height model over this domain would "
-                f"be {cells:,} cells (width={width:,}, height={height:,}), "
-                f"exceeding the cap of {MAX_CHM_CELLS:,}. Use a coarser "
-                f"`alignment.resolution` or a smaller domain."
-            ),
-        )
-
-
 @router.post(
     "/point_cloud",
     response_model=Grid,
@@ -392,10 +361,15 @@ async def create_point_cloud_chm(
 
     - **source_point_cloud_id**: The point cloud to rasterize. Must be airborne
       (`type: als`), `completed`, and in this domain.
-    - **alignment**: (optional) Output lattice. `resolution` defaults to 1 m;
-      unlike the raster-backed canopy sources there is no source pixel size to
-      inherit. `target: "native"` is not supported — a point cloud has no pixel
-      anchor to preserve.
+    - **alignment**: (optional) Output lattice. Against the domain
+      (`target: "domain"`, the default) `resolution` defaults to 1 m — unlike
+      the raster-backed canopy sources there is no source pixel size to
+      inherit. Against another grid (`target: "grid"`) omitting `resolution`
+      matches that grid cell-for-cell, and the output covers the target's
+      extent rather than the domain's; giving one keeps the target's origin at
+      the new cell size. The target grid must be in this domain's CRS.
+      `target: "native"` is not supported — a point cloud has no pixel anchor
+      to preserve.
     - **name**, **description**, **tags**: (optional) Metadata.
 
     ## Response
@@ -443,18 +417,18 @@ async def create_point_cloud_chm(
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
-    # Resolve the default here rather than leaving it to the worker. For the
-    # raster-backed sources `resolution: null` means "use the source's native
-    # cell size", which the worker can only answer at fetch time. A point cloud
-    # has no native cell size, so null has no meaning to carry forward — filling
-    # it in now keeps the cap check and the job provably on the same number, and
-    # records on the grid exactly what it was built at.
-    alignment = body.alignment.model_copy(
-        update={
-            "resolution": body.alignment.resolution or DEFAULT_POINT_CLOUD_RESOLUTION_M
-        }
-    )
-    _validate_cell_count(domain, alignment.resolution)
+    # Against a grid, `resolution: null` already means something — match that
+    # grid's lattice cell-for-cell — so it is left alone and the worker reads
+    # the cell size off the target's transform. Against the domain there is
+    # nothing for null to defer to: the raster-backed sources read it as "use
+    # the source's native cell size", and a point cloud has none. Resolving it
+    # here rather than in the worker keeps the default in one place and makes
+    # the stored grid a record of exactly what it was built at.
+    alignment = body.alignment
+    if alignment.target != "grid" and alignment.resolution is None:
+        alignment = alignment.model_copy(
+            update={"resolution": DEFAULT_POINT_CLOUD_RESOLUTION_M}
+        )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

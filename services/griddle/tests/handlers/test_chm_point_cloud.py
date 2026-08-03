@@ -57,7 +57,20 @@ def _flat_ground(size: int = 4, elevation: float = 10.0):
     return xs, ys, zs, classes
 
 
-def _run(iter_points, point_classes, resolution=1.0, roi=None):
+def _target_grid(transform, shape, crs=CRS):
+    """A stored grid document standing in as an alignment target."""
+    return {"georeference": {"crs": crs, "transform": list(transform), "shape": shape}}
+
+
+def _run(
+    iter_points,
+    point_classes,
+    resolution=1.0,
+    roi=None,
+    alignment=None,
+    target_grid_doc=None,
+    extent_buffer_cells=0,
+):
     # The handler downloads the cloud once and replays the buffer; both are
     # stubbed so the algorithm runs without GCS.
     with (
@@ -68,8 +81,10 @@ def _run(iter_points, point_classes, resolution=1.0, roi=None):
             roi=roi if roi is not None else _roi(),
             point_cloud_id="test-cloud",
             point_classes=point_classes,
-            resolution=resolution,
+            alignment=alignment or {"target": "domain", "resolution": resolution},
+            target_grid_doc=target_grid_doc,
             progress=lambda message, percent=None: None,
+            extent_buffer_cells=extent_buffer_cells,
         )
 
 
@@ -249,6 +264,80 @@ class TestDatasetContract:
         assert ds.rio.transform().a == pytest.approx(2.0)
 
 
+class TestAlignment:
+    """Which lattice the CHM lands on.
+
+    The target grid here is deliberately off the domain lattice — origin at
+    (0.5, 4.5) rather than (0.0, 4.0) — so a result anchored on the domain is
+    distinguishable from one anchored on the target.
+    """
+
+    TARGET_TRANSFORM = (2.0, 0.0, 0.5, 0.0, -2.0, 4.5)
+    TARGET_SHAPE = (2, 2)
+
+    def _target(self, crs=CRS):
+        return _target_grid(self.TARGET_TRANSFORM, self.TARGET_SHAPE, crs=crs)
+
+    def test_domain_target_is_anchored_on_the_domain(self):
+        """The default path, unchanged: the domain's own lattice."""
+        ds, _ = _run(_chunks(*_flat_ground()), [2])
+
+        transform = ds.rio.transform()
+        assert (transform.c, transform.f) == pytest.approx((0.0, 4.0))
+        assert ds["chm"].shape == (4, 4)
+
+    def test_grid_target_reproduces_the_target_lattice_exactly(self):
+        """`resolution: null` against a grid means cell-for-cell match.
+
+        Origin, cell size and shape all come from the target, so the two grids
+        compose without resampling.
+        """
+        ds, _ = _run(
+            _chunks(*_flat_ground()),
+            [2],
+            alignment={"target": "grid", "grid_id": "g-1", "resolution": None},
+            target_grid_doc=self._target(),
+        )
+
+        assert tuple(ds.rio.transform())[:6] == pytest.approx(self.TARGET_TRANSFORM)
+        assert ds["chm"].shape == self.TARGET_SHAPE
+
+    def test_grid_target_with_a_resolution_keeps_the_target_origin(self):
+        """The second alignment mode: same anchor, different cell size."""
+        ds, _ = _run(
+            _chunks(*_flat_ground()),
+            [2],
+            alignment={"target": "grid", "grid_id": "g-1", "resolution": 1.0},
+            target_grid_doc=self._target(),
+        )
+
+        transform = ds.rio.transform()
+        assert (transform.c, transform.f) == pytest.approx((0.5, 4.5))
+        assert transform.a == pytest.approx(1.0)
+        assert ds["chm"].shape == (4, 4)
+
+    def test_grid_target_in_another_crs_is_rejected(self):
+        """Points are stored in the domain CRS and this handler cannot
+        reproject them, so a foreign target lattice is a clean failure rather
+        than a silently misplaced raster."""
+        with pytest.raises(ProcessingError) as excinfo:
+            _run(
+                _chunks(*_flat_ground()),
+                [2],
+                alignment={"target": "grid", "grid_id": "g-1", "resolution": None},
+                target_grid_doc=self._target(crs="EPSG:32613"),
+            )
+
+        assert excinfo.value.code == "ALIGNMENT_CRS_MISMATCH"
+
+    def test_extent_buffer_grows_the_lattice_on_every_side(self):
+        ds, _ = _run(_chunks(*_flat_ground()), [2], extent_buffer_cells=2)
+
+        transform = ds.rio.transform()
+        assert (transform.c, transform.f) == pytest.approx((-2.0, 6.0))
+        assert ds["chm"].shape == (8, 8)
+
+
 class TestReadingFromStorage:
     """The GCS read path, against a real LAZ on disk."""
 
@@ -386,7 +475,7 @@ class TestReadingFromStorage:
                 roi=_roi(),
                 point_cloud_id="some-cloud-id",
                 point_classes=[5],
-                resolution=1.0,
+                alignment={"target": "domain", "resolution": 1.0},
                 progress=lambda message, percent=None: None,
             )
 

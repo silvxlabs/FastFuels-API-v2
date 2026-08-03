@@ -245,21 +245,26 @@ EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID = {
     "alignment": {"target": "grid", "grid_id": "REPLACE_WITH_GRID_ID"},
 }
 
+EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID_AT_1M = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {
+        "target": "grid",
+        "grid_id": "REPLACE_WITH_GRID_ID",
+        "resolution": 1.0,
+    },
+}
+
 CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
     "minimal": {
         "value": EXAMPLE_POINT_CLOUD_CHM_MINIMAL,
-        "summary": "1 m cells (the default) — feeds tree detection",
+        "summary": "1 m cells (the default)",
         "description": (
-            "The only required field is the point cloud to rasterize. It must "
-            "be an airborne (`als`) cloud in this domain with status "
-            "`completed`. Cells hold the greatest height above ground of any "
-            "return falling in them.\n\n"
-            "Omitting `alignment.resolution` gives 1 m — unlike the "
-            "raster-backed canopy sources there is no source pixel size to "
-            "inherit, so this source supplies the default. 1 m is what "
-            "individual tree detection is tuned for. The resolved value is "
-            "recorded on the created grid.\n\n"
-            "Cell size is floored at 1 m; sub-metre requests are rejected."
+            "The only required field is the point cloud to rasterize. Each "
+            "cell holds the height above ground of the tallest return that "
+            "falls in it, in meters.\n\n"
+            "Cells are 1 m unless you ask for something else. The point cloud "
+            "must be an airborne (`als`) cloud in this domain, with status "
+            "`completed`."
         ),
     },
     "named": {
@@ -269,43 +274,51 @@ CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
     },
     "resolution_5m": {
         "value": EXAMPLE_POINT_CLOUD_CHM_5M,
-        "summary": "5 m cells — canopy surface over a large area",
+        "summary": "5 m cells",
         "description": (
-            "`alignment.resolution` sets the cell size, in meters. 5 m cells "
-            "cover up to ~1,250 km² within the grid size cap. Tree detection "
-            "still runs, but its default search footprint is 3 *cells* — 15 m "
-            "here — so it will under-detect individual trees."
+            "`alignment.resolution` sets the cell size, in meters. Larger "
+            "cells give a smaller grid that smooths over individual tree "
+            "crowns. The smallest cell size accepted is 1 m."
         ),
     },
     "resolution_10m": {
         "value": EXAMPLE_POINT_CLOUD_CHM_10M,
-        "summary": "10 m cells — regional canopy height",
+        "summary": "10 m cells",
         "description": (
-            "Covers up to ~5,000 km². Where ground has to be derived (a cloud "
-            "with no ASPRS ground classification), the morphological filter "
-            "reaches its minimum window at this cell size and runs a single "
-            "30 m pass instead of the five it uses at 1 m — the derived ground "
-            "surface is correspondingly coarser. Clouds that carry ground "
-            "classification are unaffected."
+            "At 10 m and coarser the grid describes the height of the canopy "
+            "as a whole rather than of individual trees."
         ),
     },
     "resolution_30m": {
         "value": EXAMPLE_POINT_CLOUD_CHM_30M,
-        "summary": "30 m cells — composing with LANDFIRE products",
+        "summary": "30 m cells, matching LANDFIRE",
         "description": (
-            "Chiefly useful for producing a canopy height layer on the same "
-            "lattice as the 30 m LANDFIRE canopy products, so the two compose "
-            "without resampling. Too coarse for individual tree detection."
+            "30 m is the cell size of the LANDFIRE canopy products. Note that "
+            "the same cell size does not by itself put two grids on the same "
+            "cells — to line up with a particular LANDFIRE grid, align to it "
+            "by id instead (see the next two examples)."
         ),
     },
     "aligned_to_existing_grid": {
         "value": EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID,
-        "summary": "Match an existing grid's lattice",
+        "summary": "Match an existing grid exactly",
         "description": (
-            '`target: "grid"` produces a CHM that lines up cell-for-cell with '
-            "another grid in the domain, so the two compose without "
-            'resampling. `target: "native"` is not supported — a point cloud '
-            "has no source pixel anchor to preserve."
+            "Naming another grid in this domain produces a CHM on exactly "
+            "that grid's cells — same origin, same cell size, same shape — so "
+            "the two can be composed or exported together without "
+            "resampling.\n\n"
+            "The target must be a completed grid in this domain, using this "
+            "domain's CRS."
+        ),
+    },
+    "aligned_to_existing_grid_at_1m": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID_AT_1M,
+        "summary": "Match an existing grid, at your own cell size",
+        "description": (
+            "Adding `resolution` keeps the target grid's position and extent "
+            "but uses the cell size you give. Use this for a finer CHM that "
+            "still lines up with a coarser grid — for example 1 m canopy "
+            "heights on the cells of a 30 m LANDFIRE grid."
         ),
     },
 }

@@ -461,9 +461,8 @@ def handle_canopy(
                 roi=domain_gdf,
                 point_cloud_id=point_cloud_id,
                 point_classes=summary.get("point_classes") or [],
-                # Always present: the API resolves it at create time, because a
-                # point cloud has no native cell size for a null to defer to.
-                resolution=alignment["resolution"],
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
                 progress=progress,
                 extent_buffer_cells=extent_buffer_cells,
             )

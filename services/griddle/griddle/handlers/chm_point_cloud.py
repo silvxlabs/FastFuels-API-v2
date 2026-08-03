@@ -28,6 +28,7 @@ import laspy
 import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
+from affine import Affine
 from scipy.ndimage import (
     distance_transform_edt,
     grey_opening,
@@ -35,8 +36,9 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
-from lib.alignment import lattice_from_bounds
+from lib.alignment import resolve_alignment_destination
 from lib.config import POINT_CLOUDS_BUCKET
+from lib.crs import crs_equal
 from lib.errors import ProcessingError
 from lib.gcs import get_gcsfs_client
 
@@ -101,13 +103,20 @@ MEMORY_BUDGET_BYTES = int(os.getenv("CHM_MEMORY_BUDGET_BYTES", 6 * 1024**3))
 # narrower than one cell to arise.
 SPIKE_THRESHOLD_M = 25.0
 
+# What the shared alignment resolver falls back to when `target="domain"` names
+# no resolution. The API resolves that default at create time and stores it, so
+# this is unreachable for any grid the API created — it only keeps a malformed
+# source from becoming a TypeError deep in the lattice math.
+FALLBACK_RESOLUTION_M = 1.0
+
 
 def fetch_point_cloud_chm(
     roi: gpd.GeoDataFrame,
     point_cloud_id: str,
     point_classes: list[int],
-    resolution: float,
+    alignment: dict,
     progress: Callable[[str, int | None], None],
+    target_grid_doc: dict | None = None,
     extent_buffer_cells: int = 0,
 ) -> tuple[xr.Dataset, dict]:
     """Build a canopy height model from a stored point cloud.
@@ -120,23 +129,25 @@ def fetch_point_cloud_chm(
         point_classes: ASPRS classes present in the cloud, from the point cloud
             document's ``summary.point_classes``. Decides whether ground is read
             from the classification or derived.
-        resolution: Output cell size in meters.
+        alignment: Persisted alignment spec deciding the output lattice.
         progress: Progress callback (message, percent).
-        extent_buffer_cells: Output cells of buffer around the domain extent.
+        target_grid_doc: Grid document named by ``alignment.grid_id``, required
+            when ``alignment.target`` is ``"grid"``.
+        extent_buffer_cells: Output cells of buffer around the extent.
 
     Returns:
         Tuple of (Dataset with the ``chm`` variable, provenance dict recording
         how ground was obtained and how well constrained it was).
 
     Raises:
-        ProcessingError: If the cloud contributes no points to the domain.
+        ProcessingError: If the alignment cannot produce a lattice this handler
+            can rasterize onto, or if the cloud contributes no points to it.
     """
-    padding = extent_buffer_cells * resolution
-    minx, miny, maxx, maxy = roi.total_bounds
-    bounds = (minx - padding, miny - padding, maxx + padding, maxy + padding)
-    transform, (height, width) = lattice_from_bounds(bounds, resolution)
-    origin_x, origin_y = transform.c, transform.f
-    lattice = (origin_x, origin_y, height, width)
+    transform, (height, width) = _resolve_lattice(
+        roi, alignment, target_grid_doc, extent_buffer_cells
+    )
+    resolution = transform.a
+    lattice = (transform.c, transform.f, height, width)
 
     progress("Reading point cloud...", 10)
     cloud = _open_cloud(point_cloud_id, height * width)
@@ -171,7 +182,7 @@ def fetch_point_cloud_chm(
         )
 
     progress("Building dataset...", 85)
-    ds = _to_dataset(chm, bounds, resolution, roi.crs, transform)
+    ds = _to_dataset(chm, transform, roi.crs)
 
     provenance = {
         "ground_source": ground_source,
@@ -179,6 +190,66 @@ def fetch_point_cloud_chm(
         "max_ground_distance_m": round(ground_distance_m, 1),
     }
     return ds, provenance
+
+
+def _resolve_lattice(
+    roi: gpd.GeoDataFrame,
+    alignment: dict,
+    target_grid_doc: dict | None,
+    extent_buffer_cells: int,
+) -> tuple[Affine, tuple[int, int]]:
+    """Return (transform, (height, width)) for the output lattice.
+
+    Goes through the shared resolver every other source handler uses, so the
+    same request produces the same lattice here as it would from a raster
+    source: ``target="domain"`` on the domain lattice, ``target="grid"``
+    cell-for-cell on another grid — either matching it exactly, or keeping its
+    origin at a new cell size.
+
+    Raises:
+        ProcessingError: If the alignment names no lattice this handler can
+            rasterize onto, or names one in another CRS.
+    """
+    destination = resolve_alignment_destination(
+        alignment,
+        roi,
+        target_grid_doc,
+        FALLBACK_RESOLUTION_M,
+        extent_buffer_cells=extent_buffer_cells,
+    )
+
+    # The resolver returns a bare CRS override (or nothing at all) for
+    # `target="native"`, which means "reproject, keep the source's own pixel
+    # anchor" — there is no source raster here to take an anchor from. The API
+    # rejects native at create time; this covers a source that reached storage
+    # some other way.
+    if "destination_transform" not in destination:
+        raise ProcessingError(
+            code="UNSUPPORTED_ALIGNMENT",
+            message=(
+                f"alignment.target '{alignment['target']}' does not describe a "
+                f"lattice a point cloud can be rasterized onto."
+            ),
+            suggestion="Recreate the grid with alignment.target 'domain' or 'grid'.",
+        )
+
+    # Returns are read in the domain CRS and this handler does not reproject,
+    # so a target lattice in another CRS would place every cell wrongly.
+    destination_crs = destination["destination_crs"]
+    if not crs_equal(str(destination_crs), str(roi.crs)):
+        raise ProcessingError(
+            code="ALIGNMENT_CRS_MISMATCH",
+            message=(
+                f"The alignment target grid is in {destination_crs}, but this "
+                f"domain's point clouds are stored in {roi.crs}."
+            ),
+            suggestion=(
+                "Align to a grid in this domain's CRS, or use "
+                "alignment.target 'domain'."
+            ),
+        )
+
+    return destination["destination_transform"], destination["destination_shape"]
 
 
 def _cloud_path(point_cloud_id: str) -> str:
@@ -438,16 +509,15 @@ def _max_ground_distance(known: np.ndarray) -> float:
     return float(distance_transform_edt(~known).max())
 
 
-def _to_dataset(chm, bounds, resolution, crs, transform) -> xr.Dataset:
-    """Wrap the CHM array as a georeferenced Dataset with a single band."""
+def _to_dataset(chm, transform, crs) -> xr.Dataset:
+    """Wrap the CHM array as a georeferenced Dataset with a single band.
+
+    Cell centres are read off the transform rather than recomputed from bounds,
+    so the coordinates and the transform written beside them cannot disagree.
+    """
     height, width = chm.shape
-    minx, miny, _, _ = bounds
-    y_coords = (
-        np.arange(height) * (-resolution)
-        + (miny + height * resolution)
-        - resolution / 2
-    )
-    x_coords = np.arange(width) * resolution + minx + resolution / 2
+    x_coords = transform.c + (np.arange(width) + 0.5) * transform.a
+    y_coords = transform.f + (np.arange(height) + 0.5) * transform.e
 
     da = xr.DataArray(
         chm.astype(np.float32), dims=["y", "x"], coords={"y": y_coords, "x": x_coords}

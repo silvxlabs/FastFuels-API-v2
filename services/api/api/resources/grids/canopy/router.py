@@ -384,8 +384,9 @@ async def create_point_cloud_chm(
     Which path was taken, and how well the data constrained it, is recorded on
     the completed grid under `source.ground`. Derived ground is accurate in
     forested terrain and degrades over wide areas with no ground returns, such
-    as large building footprints or very dense canopy; `source.ground.coverage`
-    and `source.ground.max_ground_distance_m` are what reveal that.
+    as large building footprints or very dense canopy;
+    `source.ground.ground_coverage` and `source.ground.max_ground_distance_m`
+    are what reveal that.
 
     ## Request Body
 

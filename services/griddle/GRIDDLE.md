@@ -300,6 +300,20 @@ def fetch_topography(roi, version, bands, progress) -> xr.Dataset:
     for band in bands:
         variables[band] = _fetch_landfire_raster(roi, band, version)
     return _to_dataset(variables)
+
+# handlers/chm_point_cloud.py
+
+def fetch_point_cloud_chm(
+    roi, point_cloud_id, point_classes, resolution, progress, extent_buffer_cells
+) -> tuple[xr.Dataset, dict]:
+    """Rasterize height above ground from a stored LAZ.
+
+    The one source handler that reads a FastFuels resource rather than an
+    external service, and the one that returns provenance alongside the
+    Dataset — dispatch writes that dict onto `source.ground`. Streams the
+    cloud in chunks and accumulates on the raster, so peak memory follows
+    grid size rather than point count.
+    """
 ```
 
 **Future Handlers (Not Yet Implemented):**
@@ -309,12 +323,6 @@ def fetch_topography(roi, version, bands, progress) -> xr.Dataset:
 
 def fetch_elevation(roi: gpd.GeoDataFrame) -> xr.Dataset:
     """Fetch 3DEP elevation data."""
-    ...
-
-# handlers/meta2024.py
-
-def fetch_chm(roi: gpd.GeoDataFrame) -> xr.Dataset:
-    """Fetch Meta 2024 canopy height model."""
     ...
 ```
 

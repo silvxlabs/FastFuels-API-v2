@@ -84,7 +84,7 @@ See `schema.py` for the authoritative definition. Notable fields:
 
 Follows the #304 pattern: `checksum` is an opaque `uuid4().hex` assigned at creation (not a hash),
 changed whenever content is rebuilt, and **unaffected by metadata-only PATCH**. Derivatives capture
-the value they were built from — e.g. the CHM grid in #330 stores `source_pointcloud_checksum` —
+the value they were built from — e.g. the CHM grid in #330 stores `source_point_cloud_checksum` —
 and staleness detection is user-space (compare stored vs. current; no stale flag/warn/block in the
 API).
 

@@ -182,14 +182,14 @@ class PointCloudGround(BaseModel):
     weakly-constrained result visible instead of silently confident.
     """
 
-    source: PointCloudGroundSource = Field(
+    ground_source: PointCloudGroundSource = Field(
         description=(
             "`classification` when the point cloud's own ASPRS class 2 returns "
             "were used, `derived` when no ground classification was present and "
             "the surface was inferred from the data."
         )
     )
-    coverage: float = Field(
+    ground_coverage: float = Field(
         ge=0.0,
         le=1.0,
         description=(

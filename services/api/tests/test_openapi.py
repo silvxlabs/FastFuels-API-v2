@@ -29,4 +29,6 @@ def test_generator_sensitive_schema_titles_are_stable():
     titles = {schema.get("title") for schema in schemas.values()}
 
     assert "GeoJsonFeature" in titles
+    assert schemas["CreateDomainRequestBody"]["title"] == "GeoJsonFeatureCollection"
+    assert schemas["Domain"]["title"] == "Domain"
     assert "PointCloudThreeDepCoverageResponse" in titles

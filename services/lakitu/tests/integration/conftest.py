@@ -94,9 +94,9 @@ def seeded_point_cloud():
     yield seed
 
     for point_cloud_id in created:
-        from lakitu.storage import cloud_path
+        from lakitu.storage import cloud_prefix
 
-        directory = cloud_path(point_cloud_id).rsplit("/", 1)[0]
+        directory = cloud_prefix(point_cloud_id).rsplit("/", 1)[0]
         if exists(directory):
             delete_directory(directory)
         delete_document(POINT_CLOUDS_COLLECTION, point_cloud_id)

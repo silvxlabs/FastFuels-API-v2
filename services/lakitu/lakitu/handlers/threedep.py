@@ -2,7 +2,8 @@
 USGS 3DEP point cloud handler.
 
 Reads public airborne lidar from 3DEP for a domain, clips it to the domain,
-reprojects it to the domain's CRS, and returns it as a single LAZ.
+reprojects it to the domain's CRS, and writes it as a partitioned Parquet
+dataset.
 
 This is the point cloud side of 3DEP. The elevation raster side lives in
 griddle and shares nothing with it but the program name.
@@ -14,10 +15,13 @@ from collections.abc import Callable
 import geopandas as gpd
 import numpy as np
 import shapely
-from pyproj import CRS, Transformer
+from pyproj import CRS
 from shapely.geometry.base import BaseGeometry
 
-from lakitu.ept import fetch_metadata, fetch_nodes, make_session, walk_hierarchy
+from lakitu.chain import stream_records
+from lakitu.ept import fetch_metadata, make_session, walk_hierarchy
+from lakitu.parquet_writer import write_parquet
+from lakitu.storage import cloud_location
 from lib.entwine import (
     MAX_POINTS,
     DatasetNotFoundError,
@@ -28,12 +32,7 @@ from lib.entwine import (
     select_datasets,
 )
 from lib.errors import ProcessingError
-from lib.laz import (
-    LazAccumulator,
-    build_output_header,
-    normalize_record,
-    point_format_id_for_dimensions,
-)
+from lib.laz import build_output_header, point_format_id_for_dimensions
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,7 @@ def handle_3dep(
     source: dict,
     domain_gdf: gpd.GeoDataFrame,
     progress: Callable[[str, int | None], None],
+    point_cloud_id: str,
 ) -> dict:
     """Fetch, clip, and reproject 3DEP lidar for a domain.
 
@@ -56,9 +56,12 @@ def handle_3dep(
         source: The document's source block, carrying any pinned acquisitions.
         domain_gdf: Domain geometry, in the domain's CRS.
         progress: Progress callback (message, percent).
+        point_cloud_id: Resource id, which decides where the dataset is written.
 
     Returns:
-        Dict with ``buffer``, ``georeference``, ``summary``, and ``source_extra``.
+        Dict with ``georeference``, ``summary``, ``size_bytes``, and
+        ``source_extra``. Points are written to GCS here rather than returned:
+        the dataset is many files and never exists whole in memory.
 
     Raises:
         ProcessingError: If no lidar covers the domain, the fetch would exceed
@@ -101,22 +104,26 @@ def handle_3dep(
 
     logger.info(f"Reading {total_points:,} points from {len(metadata)} acquisitions")
 
-    accumulator, written = _read_points(
-        session, selection, metadata, all_nodes, domain_geom, domain_crs, progress
+    summary, bounds, size_bytes = _write_points(
+        session,
+        selection,
+        metadata,
+        all_nodes,
+        domain_geom,
+        domain_crs,
+        progress,
+        point_cloud_id,
     )
 
-    if written == 0:
+    if summary["point_count"] == 0:
         raise ProcessingError(
             code="EMPTY_POINT_CLOUD",
             message="No 3DEP lidar points fall inside this domain.",
             suggestion=("Check coverage for the domain before creating a point cloud."),
         )
 
-    progress("Writing point cloud", 85)
-    buffer, summary, bounds = accumulator.finish()
-
     return {
-        "buffer": buffer,
+        "size_bytes": size_bytes,
         "georeference": {
             "crs": _crs_name(domain_crs),
             "bounds": bounds,
@@ -225,7 +232,7 @@ def _estimate_kept_points(nodes: list, projected: BaseGeometry) -> int:
     return int(node_points * min(1.0, projected.area / box_area))
 
 
-def _read_points(
+def _write_points(
     session,
     selection: EptSelection,
     metadata: list,
@@ -233,68 +240,138 @@ def _read_points(
     domain_geom: BaseGeometry,
     domain_crs: CRS,
     progress: Callable[[str, int | None], None],
-) -> tuple[LazAccumulator, int]:
-    """Read every selected node, clip it, and accumulate it into one LAZ."""
-    # Point formats can differ between acquisitions, and laspy refuses to write
-    # records whose format differs from the file's, so the output format is
-    # decided once up front from what the sources declare they carry.
+    point_cloud_id: str,
+) -> tuple[dict, list[float], int]:
+    """Stream every selected node through the chain and into Parquet.
+
+    Returns:
+        ``(summary, bounds, size_bytes)``, where summary carries
+        ``point_count``, ``point_classes`` and ``density``, and bounds is
+        ``[min_x, min_y, min_z, max_x, max_y, max_z]``.
+    """
+    # Point formats can differ between acquisitions, and a merged output has to
+    # pick one, so it is decided once up front from what the sources declare.
     point_format_id = point_format_id_for_dimensions(
         name for meta in metadata for name in meta.dimension_names
     )
+    header_bounds = domain_geom.bounds
     header = build_output_header(
-        domain_crs, domain_geom.bounds, point_format_id=point_format_id
+        domain_crs, header_bounds, point_format_id=point_format_id
     )
-    accumulator = LazAccumulator(header)
 
     # Contributions are only needed to arbitrate between acquisitions. With one
-    # acquisition the domain shape alone decides, and testing the polygon is
-    # far more expensive than the rectangle it sits in.
+    # acquisition the domain shape alone decides, and testing the polygon is far
+    # more expensive than the rectangle it sits in.
     multi_source = len(selection.datasets) > 1
     axis_aligned = domain_geom.equals(domain_geom.envelope)
 
-    total_nodes = sum(len(nodes) for _, nodes in all_nodes)
-    done = 0
-    last_reported = 0
-
+    plan = []
     for index, nodes in all_nodes:
-        if not nodes:
-            continue
-        transformer = Transformer.from_crs(
-            metadata[index].crs, domain_crs, always_xy=True
-        )
         clip = selection.contributions[index] if multi_source else domain_geom
-        prepared = None if (axis_aligned and not multi_source) else clip
-        min_x, min_y, max_x, max_y = clip.bounds
+        polygon = None if (axis_aligned and not multi_source) else clip
+        plan.append((metadata[index], nodes, polygon, clip.bounds))
 
-        for node, points in fetch_nodes(session, nodes):
-            x, y = transformer.transform(np.asarray(points.x), np.asarray(points.y))
-            z = np.asarray(points.z)
+    # The writer partitions on the domain's own horizontal extent. Elevations
+    # come from the sources: horizontal reprojection leaves them untouched, so
+    # the source z-range transfers directly, and build_output_header reads only
+    # the two horizontal minima so it cannot supply them.
+    z_low = min(meta.bounds_conforming[2] for meta in metadata)
+    z_high = max(meta.bounds_conforming[5] for meta in metadata)
+    info = {
+        "mins": np.array([header_bounds[0], header_bounds[1], z_low]),
+        "maxs": np.array([header_bounds[2], header_bounds[3], z_high]),
+        "scales": np.asarray(header.scales),
+        "offsets": np.asarray(header.offsets),
+    }
 
-            # Cheap rectangle test first; the polygon test only runs for the
-            # points that survive it, and only when the shape needs it.
-            keep = (x >= min_x) & (x <= max_x) & (y >= min_y) & (y <= max_y)
-            if prepared is not None and keep.any():
-                # Boundary-exclusive: on a shared edge between two
-                # acquisitions, dropping a point is safer than duplicating it.
-                keep[keep] = shapely.contains_xy(prepared, x[keep], y[keep])
+    stats = _PointStats(info["scales"], info["offsets"])
+    total_nodes = sum(len(nodes) for _, nodes in all_nodes)
+    reporter = _NodeProgress(progress, total_nodes, stats)
 
-            if keep.any():
-                accumulator.append(
-                    normalize_record(
-                        points.points[keep], header, x[keep], y[keep], z[keep]
-                    )
-                )
+    records = stream_records(
+        session,
+        plan,
+        domain_crs.to_wkt(),
+        header_bounds,
+        point_format_id,
+        on_node=reporter,
+    )
 
-            done += 1
-            percent = 10 + int(70 * done / total_nodes)
-            if percent >= last_reported + 5:
-                last_reported = percent
-                progress(
-                    f"Reading 3DEP lidar ({accumulator.point_count:,} points)",
-                    percent,
-                )
+    progress("Writing point cloud", 15)
+    bucket, prefix = cloud_location(point_cloud_id)
+    result = write_parquet(stats.observe(records), info, bucket, prefix)
+    return stats.summary(), stats.bounds(), result["output_bytes"]
 
-    return accumulator, accumulator.point_count
+
+class _PointStats:
+    """Folds written points into the statistics the resource reports.
+
+    Accumulated on the way past rather than read back afterwards, so what is
+    reported always describes what was stored.
+    """
+
+    def __init__(self, scales, offsets):
+        self._scales = np.asarray(scales)
+        self._offsets = np.asarray(offsets)
+        self.count = 0
+        # Classification is a uint8, so a flag per value beats accumulating a
+        # set: no sort, no Python-level set union, per record.
+        self._seen_class = np.zeros(256, dtype=bool)
+        self._mins = np.full(3, np.iinfo(np.int32).max, dtype=np.int64)
+        self._maxs = np.full(3, np.iinfo(np.int32).min, dtype=np.int64)
+
+    def observe(self, records):
+        """Fold each record's extremes in, then pass it straight through.
+
+        Reduces over the stored millimetre integers and scales only the six
+        surviving scalars at the end. Scaling every point here would repeat, on
+        the busiest thread in the process, work the writer already does to route
+        the point.
+        """
+        for record in records:
+            for axis, name in enumerate(("X", "Y", "Z")):
+                column = record[name]
+                self._mins[axis] = min(self._mins[axis], int(column.min()))
+                self._maxs[axis] = max(self._maxs[axis], int(column.max()))
+            self._seen_class[record["classification"]] = True
+            self.count += record.size
+            yield record
+
+    def bounds(self) -> list[float]:
+        if self.count == 0:
+            return [*self._offsets.tolist(), *self._offsets.tolist()]
+        mins = self._mins * self._scales + self._offsets
+        maxs = self._maxs * self._scales + self._offsets
+        return [*mins.tolist(), *maxs.tolist()]
+
+    def summary(self) -> dict:
+        bounds = self.bounds()
+        area = (bounds[3] - bounds[0]) * (bounds[4] - bounds[1]) if self.count else 0.0
+        return {
+            "point_count": self.count,
+            "point_classes": [int(c) for c in np.flatnonzero(self._seen_class)],
+            "density": float(self.count / area) if area > 0 else 0.0,
+        }
+
+
+class _NodeProgress:
+    """Reports read progress over the 15-85% band, at most every 5%."""
+
+    def __init__(self, progress, total_nodes, stats):
+        self._progress = progress
+        self._total = max(total_nodes, 1)
+        self._stats = stats
+        self._done = 0
+        self._last = 0
+
+    def __call__(self) -> None:
+        self._done += 1
+        percent = 15 + int(70 * self._done / self._total)
+        if percent >= self._last + 5:
+            self._last = percent
+            self._progress(
+                f"Reading 3DEP lidar ({self._stats.count:,} points)", percent
+            )
 
 
 def _crs_name(crs: CRS) -> str:

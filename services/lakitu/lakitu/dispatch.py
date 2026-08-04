@@ -16,6 +16,7 @@ def dispatch_handler(
     point_cloud: dict,
     domain_gdf: gpd.GeoDataFrame,
     progress_callback: Callable[[str, int | None], None],
+    point_cloud_id: str,
 ) -> dict:
     """Route to the appropriate handler based on point cloud source type.
 
@@ -23,9 +24,11 @@ def dispatch_handler(
         point_cloud: Point cloud document from Firestore
         domain_gdf: Domain geometry as GeoDataFrame
         progress_callback: Function to report progress (message, percent)
+        point_cloud_id: Resource id, which decides where points are written
 
     Returns:
-        Dict with 'buffer', 'georeference', 'summary', and 'source_extra' keys
+        Dict with 'size_bytes', 'georeference', 'summary', and 'source_extra'
+        keys
 
     Raises:
         ProcessingError: If source type is unknown or processing fails
@@ -36,7 +39,7 @@ def dispatch_handler(
     match source_name:
         case "3dep":
             return threedep.handle_3dep(
-                point_cloud, source, domain_gdf, progress_callback
+                point_cloud, source, domain_gdf, progress_callback, point_cloud_id
             )
         case _:
             raise ProcessingError(

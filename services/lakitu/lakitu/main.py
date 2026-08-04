@@ -16,7 +16,7 @@ import functions_framework
 from flask import Request
 
 from lakitu.dispatch import dispatch_handler
-from lakitu.storage import delete_cloud, write_cloud
+from lakitu.storage import delete_cloud
 from lib.config import DOMAINS_COLLECTION, POINT_CLOUDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.errors import CancelledException, ProcessingError
@@ -253,17 +253,16 @@ def process_point_cloud_request(request: Request):
         domain_gdf = _load_domain(point_cloud["domain_id"])
         progress_callback = make_progress_callback(point_cloud_id)
 
-        result = dispatch_handler(point_cloud, domain_gdf, progress_callback)
-
-        progress_callback("Storing point cloud", 95)
-        size_bytes = write_cloud(point_cloud_id, result["buffer"])
+        result = dispatch_handler(
+            point_cloud, domain_gdf, progress_callback, point_cloud_id
+        )
 
         update_status(
             point_cloud_id,
             "completed",
             georeference=result["georeference"],
             summary=result["summary"],
-            size_bytes=size_bytes,
+            size_bytes=result["size_bytes"],
             source_extra=result.get("source_extra"),
         )
         logger.info("Processing complete", extra=ids)

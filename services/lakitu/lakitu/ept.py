@@ -364,25 +364,36 @@ def fetch_nodes(
     session: requests.Session,
     nodes: list[EptNode],
     max_workers: int = MAX_FETCH_WORKERS,
+    raw: bool = False,
 ) -> Iterator[tuple[EptNode, laspy.LasData]]:
-    """Download and decode nodes, overlapping network with decoding.
+    """Download nodes on a thread pool, decoding on the consuming thread.
 
-    Downloads run on a thread pool because they are network-bound and release
-    the interpreter lock; decoding happens on the consuming thread because LAZ
-    decompression holds the lock and gains nothing from more threads. The queue
-    between them bounds how many downloaded files are resident at once.
+    Downloads are network-bound and release the interpreter lock, so they thread
+    well. Decoding does not, and the reason is not the one an earlier version of
+    this docstring gave. It claimed LAZ decompression holds the lock; in fact
+    `laspy.read` with no backend argument selects LazrsParallel, which
+    decompresses on a rayon pool.
+
+    It still gains nothing, for a different reason: LAZ parallelism is per chunk,
+    chunks hold 50,000 points, and real 3DEP nodes hold 20-37k -- one chunk each,
+    with nothing to split. Eight concurrent decoders measured 1.00 effective
+    cores. The only axis left is across nodes in separate processes, which is
+    what `raw` exists to feed.
 
     Args:
         session: HTTP session to use.
         nodes: Nodes to read.
         max_workers: Concurrent downloads.
+        raw: Yield undecoded ``(node, payload_bytes)`` instead of decoding here,
+            for callers that decode in a process pool.
 
     Yields:
-        ``(node, points)`` in completion order.
+        ``(node, points)``, or ``(node, payload_bytes)`` when `raw`, in
+        completion order.
 
     Raises:
         ProcessingError: EPT_NODE_MISSING if a node the index promised is
-            absent, EPT_FETCH_FAILED if it cannot be downloaded.
+            absent, EPT_FETCH_FAILED if it cannot be downloaded or decoded.
     """
     if not nodes:
         return
@@ -390,9 +401,8 @@ def fetch_nodes(
     results: queue.Queue = queue.Queue(maxsize=_NODE_QUEUE_DEPTH)
     stop = threading.Event()
 
-    def download(node: EptNode) -> None:
-        if stop.is_set():
-            return
+    def fetch(node: EptNode) -> bytes:
+        """The archive-facing half: every failure here is a bad or absent file."""
         try:
             response = session.get(node.data_url, timeout=300)
             if response.status_code == 404:
@@ -408,18 +418,24 @@ def fetch_nodes(
                     traceback=f"404 for {node.data_url} (index count {node.count})",
                 )
             response.raise_for_status()
-            results.put((node, response.content))
-        except ProcessingError as e:
-            results.put(e)
+            return response.content
+        except ProcessingError:
+            raise
         except Exception as e:
-            results.put(
-                ProcessingError(
-                    code="EPT_FETCH_FAILED",
-                    message="Could not download USGS 3DEP lidar for this area.",
-                    suggestion="Try again shortly.",
-                    traceback=f"{node.data_url}: {e}",
-                )
-            )
+            raise ProcessingError(
+                code="EPT_FETCH_FAILED",
+                message="Could not download USGS 3DEP lidar for this area.",
+                suggestion="Try again shortly.",
+                traceback=f"{node.data_url}: {e}",
+            ) from e
+
+    def download(node: EptNode) -> None:
+        if stop.is_set():
+            return
+        try:
+            results.put((node, fetch(node)))
+        except BaseException as e:
+            results.put(e)
 
     def produce() -> None:
         # The sentinel must be enqueued whatever happens. The consumer waits on
@@ -450,28 +466,36 @@ def fetch_nodes(
             item = results.get()
             if item is None:
                 break
-            if isinstance(item, ProcessingError):
+            if isinstance(item, BaseException):
                 raise item
             node, payload = item
-            # Decoding belongs to the same ladder as the download: a truncated
-            # or corrupt node is a bad file from the archive, not a bug here,
-            # and it deserves the same message as a failed fetch.
-            try:
-                points = laspy.read(io.BytesIO(payload))
-            except Exception as e:
-                raise ProcessingError(
-                    code="EPT_FETCH_FAILED",
-                    message="USGS 3DEP lidar for this area could not be read.",
-                    suggestion="Try again shortly.",
-                    traceback=f"{node.data_url}: {e}",
-                ) from e
-            yield node, points
+            yield (node, payload) if raw else (node, _decode(node, payload))
     finally:
         stop.set()
-        # Drain so the producer never blocks on a full queue while unwinding.
+        # Drain so the producer never blocks on a full queue while unwinding:
+        # `stop` is only checked between downloads, so a worker already parked
+        # in `results.put` would never see it.
         while producer.is_alive():
             try:
                 results.get(timeout=0.1)
             except queue.Empty:
                 pass
         producer.join(timeout=5)
+
+
+def _decode(node: EptNode, payload: bytes) -> laspy.LasData:
+    """Decode one node's LAZ bytes.
+
+    Decoding belongs to the same error ladder as the download: a truncated or
+    corrupt node is a bad file from the archive, not a bug here, and it deserves
+    the same message as a failed fetch.
+    """
+    try:
+        return laspy.read(io.BytesIO(payload))
+    except Exception as e:
+        raise ProcessingError(
+            code="EPT_FETCH_FAILED",
+            message="USGS 3DEP lidar for this area could not be read.",
+            suggestion="Try again shortly.",
+            traceback=f"{node.data_url}: {e}",
+        ) from e

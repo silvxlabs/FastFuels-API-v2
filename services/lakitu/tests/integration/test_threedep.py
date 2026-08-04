@@ -14,11 +14,12 @@ Domain fixtures with known, opposite coverage:
 Run with: uv run pytest tests/integration/ -v
 """
 
-import laspy
 import numpy as np
+import pyarrow.dataset as ds
 import pytest
 from lakitu.main import process_point_cloud_request
-from lakitu.storage import cloud_path
+from lakitu.parquet_writer import COLUMNS
+from lakitu.storage import cloud_prefix
 
 from lib.gcs import get_gcsfs_client
 
@@ -26,16 +27,40 @@ from .conftest import MockRequest
 
 pytestmark = pytest.mark.integration
 
+# Every stored attribute except the LOD level, which the writer assigns.
+POINT_COLUMNS = tuple(c for c in COLUMNS if c != "lod")
+
 
 def run_worker(point_cloud_id: str):
     """Invoke the worker the way Cloud Tasks would."""
     return process_point_cloud_request(MockRequest({"id": point_cloud_id}))
 
 
-def read_written_cloud(point_cloud_id: str) -> laspy.LasData:
-    """Read back the LAZ the worker stored."""
-    with get_gcsfs_client().open(cloud_path(point_cloud_id), "rb") as stream:
-        return laspy.read(stream)
+def read_written_cloud(point_cloud_id: str):
+    """Read back the Parquet dataset the worker stored, as real-world coords.
+
+    Coordinates are stored as LAS scaled int32s, so they are decoded here the
+    same way any reader has to decode them.
+    """
+    fs = get_gcsfs_client()
+    prefix = cloud_prefix(point_cloud_id)
+    dataset = ds.dataset(prefix, filesystem=fs, format="parquet", partitioning="hive")
+    table = dataset.to_table()
+    scales, offsets = _scaling(fs, prefix)
+    xyz = (
+        np.stack([table.column(c).to_numpy() for c in ("X", "Y", "Z")], axis=1) * scales
+        + offsets
+    )
+    return table, xyz
+
+
+def _scaling(fs, prefix):
+    """Read the scale/offset the dataset was written with."""
+    import json
+
+    with fs.open(f"{prefix}/_manifest.json", "rb") as stream:
+        manifest = json.load(stream)
+    return np.asarray(manifest["scales"]), np.asarray(manifest["offsets"])
 
 
 class TestSingleAcquisition:
@@ -82,13 +107,14 @@ class TestSingleAcquisition:
         doc = read_point_cloud(point_cloud_id)
         assert doc["status"] == "completed", doc.get("error")
 
-        las = read_written_cloud(point_cloud_id)
-        assert las.header.parse_crs().to_epsg() == 32612
-        assert len(las.points) == doc["summary"]["point_count"]
+        table, xyz = read_written_cloud(point_cloud_id)
+        assert table.num_rows == doc["summary"]["point_count"]
+        # The dataset carries no CRS of its own; the resource is what georeferences
+        # it, and that is asserted above.
 
         # The bondurant fixture extent.
         min_x, min_y, max_x, max_y = 522800, 4720400, 523300, 4720900
-        x, y = np.asarray(las.x), np.asarray(las.y)
+        x, y = xyz[:, 0], xyz[:, 1]
         assert x.min() >= min_x - 0.01 and x.max() <= max_x + 0.01
         assert y.min() >= min_y - 0.01 and y.max() <= max_y + 0.01
 
@@ -145,26 +171,29 @@ class TestAcquisitionMerge:
         assert len(doc["source"]["datasets"]) >= 2
         assert doc["source"]["coverage_fraction"] == pytest.approx(1.0, abs=1e-2)
 
-        las = read_written_cloud(point_cloud_id)
+        table, _ = read_written_cloud(point_cloud_id)
+        # A point's identity is every attribute it carries, not its position.
+        # Coordinates alone are not unique: 5,697 pairs of genuinely distinct
+        # returns share a cubic millimetre in this fixture, differing in
+        # intensity, classification and source id. gps_time used to supply the
+        # discrimination and the schema no longer stores it, so the remaining
+        # attributes have to. `lod` is excluded because it is assigned here
+        # rather than read, and a duplicated point could land on two levels --
+        # which would hide exactly what this test looks for.
         identity = np.stack(
-            [
-                np.asarray(las.x),
-                np.asarray(las.y),
-                np.asarray(las.z),
-                np.asarray(las.gps_time),
-            ],
+            [table.column(c).to_numpy().astype(np.int64) for c in POINT_COLUMNS],
             axis=1,
         )
         unique = np.unique(identity, axis=0).shape[0]
-        assert unique == len(las.points)
+        assert unique == table.num_rows
 
     def test_merged_output_is_a_single_readable_cloud(
         self, seeded_domain, seeded_point_cloud, read_point_cloud
     ):
-        """Acquisitions need not share a point format; the output is one file.
+        """Acquisitions need not share a point format; the output is one schema.
 
-        laspy refuses to write records whose point format differs from the
-        file's, so a merge only works because every source is normalized first.
+        Sources carrying different LAS point formats have different dimensions,
+        so a merge only works because every source is normalized first.
         """
         domain_id = seeded_domain("threedep_ept_seam.json")
         point_cloud_id = seeded_point_cloud(domain_id)
@@ -173,9 +202,10 @@ class TestAcquisitionMerge:
         doc = read_point_cloud(point_cloud_id)
         assert doc["status"] == "completed", doc.get("error")
 
-        las = read_written_cloud(point_cloud_id)
-        assert las.header.point_format.id >= 6
-        assert len(las.points) == doc["summary"]["point_count"]
+        table, _ = read_written_cloud(point_cloud_id)
+        # tile_x/tile_y come from the hive partitioning, not the point schema.
+        assert set(COLUMNS) <= set(table.column_names)
+        assert table.num_rows == doc["summary"]["point_count"]
 
 
 class TestNoCoverage:
@@ -203,7 +233,7 @@ class TestNoCoverage:
 
         run_worker(point_cloud_id)
 
-        assert not get_gcsfs_client().exists(cloud_path(point_cloud_id))
+        assert not get_gcsfs_client().exists(cloud_prefix(point_cloud_id))
 
 
 class TestUnknownSource:

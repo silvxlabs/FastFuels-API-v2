@@ -68,5 +68,14 @@ TREEVOX_SERVICE = os.getenv("TREEVOX_SERVICE", f"treevox-v2-{INFRA_ENV}")
 UPLOADER_SERVICE = os.getenv("UPLOADER_SERVICE", f"uploader-v2-{INFRA_ENV}")
 LAKITU_SERVICE = os.getenv("LAKITU_SERVICE", f"lakitu-v2-{INFRA_ENV}")
 
+# Point-cloud write concurrency. These track the Cloud Run vCPU allocation
+# rather than taste: worker counts are sharply peaked at the core count, and
+# oversubscribing measured 2.4x the CPU for byte-identical output.
+# os.cpu_count() cannot be used -- it reports host cores, not the quota.
+LAKITU_WRITE_WORKERS = int(os.getenv("LAKITU_WRITE_WORKERS", 8))
+LAKITU_WRITE_QUEUE_DEPTH = int(os.getenv("LAKITU_WRITE_QUEUE_DEPTH", 4))
+LAKITU_CHAIN_WORKERS = int(os.getenv("LAKITU_CHAIN_WORKERS", 6))
+LAKITU_DOWNLOAD_WORKERS = int(os.getenv("LAKITU_DOWNLOAD_WORKERS", 32))
+
 # Support contact surfaced in user-facing error messages.
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support.fastfuels@silvxlabs.com")

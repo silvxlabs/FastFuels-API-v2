@@ -8,11 +8,13 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
+from geojson_pydantic import Feature as GeoJsonFeatureBase
 from geojson_pydantic import FeatureCollection
 
 # External imports
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
@@ -109,7 +111,13 @@ def _parse_coordinates(data: dict) -> dict:
     return data
 
 
-class CreateDomainRequestBody(FeatureCollection):
+class GeoJsonFeature(GeoJsonFeatureBase):
+    """Generic GeoJSON feature with a generator-safe OpenAPI title."""
+
+    model_config = ConfigDict(title="GeoJsonFeature")
+
+
+class CreateDomainRequestBody(FeatureCollection[GeoJsonFeature]):
     name: str = Field("", max_length=255, description="The name of the domain.")
     description: str = Field(
         "", max_length=2000, description="A description of the domain."

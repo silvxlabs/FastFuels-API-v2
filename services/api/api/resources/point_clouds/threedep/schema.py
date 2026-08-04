@@ -156,6 +156,7 @@ class ThreeDepCoverageResponse(BaseModel):
     )
 
     model_config = ConfigDict(
+        title="PointCloudThreeDepCoverageResponse",
         json_schema_extra={
             "examples": [
                 {
@@ -178,7 +179,7 @@ class ThreeDepCoverageResponse(BaseModel):
                     "exceeds_point_budget": False,
                 }
             ]
-        }
+        },
     )
 
 

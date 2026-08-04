@@ -10,7 +10,7 @@ LANDFIRE at 30m resolution or 3DEP at 1m/10m/30m resolution.
 from enum import IntEnum, StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.providers.threedep import ThreeDepSource
@@ -149,6 +149,8 @@ class CreateThreeDepTopographyRequest(CreateSourceGridRequestBase):
 
 class ThreeDepCoverageResponse(BaseModel):
     """Response model for 3DEP tile coverage pre-flight check."""
+
+    model_config = ConfigDict(title="TopographyThreeDepCoverageResponse")
 
     resolution: ThreeDepResolution
     available: bool

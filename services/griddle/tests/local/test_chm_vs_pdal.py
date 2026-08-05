@@ -328,6 +328,8 @@ def _compare(name, ours, theirs, output_dir, reference_dataset):
         # Over the cells the two share, not over the grid: counting nodata as a
         # disagreement would report coverage, not agreement.
         "within_10cm": float(np.mean(np.abs(difference[both]) < 0.10)),
+        "within_25cm": float(np.mean(np.abs(difference[both]) < 0.25)),
+        "within_50cm": float(np.mean(np.abs(difference[both]) < 0.50)),
         "over_1m": float(np.mean(np.abs(difference[both]) > 1.0)),
     }
 
@@ -381,8 +383,10 @@ class TestGroundSurface:
         # Parquet, and a return sitting exactly on a cell boundary can land on
         # the far side of it afterwards, taking its cell's minimum with it.
         assert stats["median_abs"] == 0.0
-        assert stats["p95_abs"] < 0.001
-        assert stats["over_1m"] < 0.0005
+        assert stats["p95_abs"] == 0.0
+        assert stats["within_10cm"] > 0.994
+        assert stats["over_1m"] < 0.0002
+        assert abs(stats["bias"]) < 0.002
 
     def test_derived_ground_matches_pdal_pmf(self, cloud_dataset, output_dir, tmp_path):
         """Our progressive morphological filter against ``filters.pmf`` itself.
@@ -407,8 +411,35 @@ class TestGroundSurface:
         theirs = _rasterise(dataset, points.x, points.y, points.z, np.minimum)
 
         stats = _compare("ground_derived", ground, theirs, output_dir, dataset)
-        assert stats["median_abs"] < 0.25
-        assert stats["rmse"] < 1.5
+        # Measured 0.00 / 0.04 / 0.285 / 98.3%; these sit just above that, so a
+        # real drift in the filter shows up rather than hiding under slack.
+        assert stats["median_abs"] == 0.0
+        assert stats["p95_abs"] < 0.06
+        assert stats["rmse"] < 0.35
+        assert stats["within_10cm"] > 0.98
+        assert abs(stats["bias"]) < 0.02
+
+
+# Just above what was measured on this fixture, so a real change in either
+# implementation trips them rather than disappearing into slack. Derived ground
+# is looser than classified because two ground estimates disagree underneath the
+# canopy rather than one.
+THRESHOLDS = {
+    "chm_classified": {
+        "median_abs": 0.10,
+        "p95_abs": 0.40,
+        "rmse": 0.45,
+        "mean_abs": 0.16,
+        "bias": 0.15,
+    },
+    "chm_derived": {
+        "median_abs": 0.11,
+        "p95_abs": 0.50,
+        "rmse": 0.65,
+        "mean_abs": 0.22,
+        "bias": 0.19,
+    },
+}
 
 
 class TestCanopyHeight:
@@ -452,6 +483,7 @@ class TestCanopyHeight:
         )
 
         stats = _compare(name, ours, theirs, output_dir, dataset)
-        assert stats["median_abs"] < 0.25
-        assert stats["rmse"] < 1.5
-        assert abs(stats["bias"]) < 0.25
+        for metric, limit in THRESHOLDS[name].items():
+            value = abs(stats[metric]) if metric == "bias" else stats[metric]
+            assert value < limit, f"{metric} {value:.4f} >= {limit}"
+        assert stats["within_50cm"] > (0.95 if derive_ground else 0.98)

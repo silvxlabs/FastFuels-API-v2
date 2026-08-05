@@ -18,7 +18,7 @@ import numpy as np
 import pyarrow.dataset as ds
 import pytest
 from lakitu.main import process_point_cloud_request
-from lakitu.parquet_writer import COLUMNS
+from lakitu.parquet_writer import columns_for, point_dtype
 from lakitu.storage import cloud_prefix
 
 from lib.gcs import get_gcsfs_client
@@ -27,6 +27,8 @@ from .conftest import MockRequest
 
 pytestmark = pytest.mark.integration
 
+# 3DEP carries no colour, so this is the schema its clouds are written with.
+COLUMNS = columns_for(point_dtype(has_color=False))
 # Every stored attribute except the LOD level, which the writer assigns.
 POINT_COLUMNS = tuple(c for c in COLUMNS if c != "lod")
 
@@ -171,21 +173,25 @@ class TestAcquisitionMerge:
         assert len(doc["source"]["datasets"]) >= 2
         assert doc["source"]["coverage_fraction"] == pytest.approx(1.0, abs=1e-2)
 
+        # Exact duplication is not directly observable any more. The stored
+        # schema is position, intensity and classification, and distinct returns
+        # do collide on all three: 5,697 coordinate pairs in this fixture are
+        # genuinely different returns, and two of them agree on every column we
+        # keep. gps_time used to break those ties and is no longer stored.
+        #
+        # What a seam failure looks like is not two coincidences, though -- it is
+        # the whole overlap read twice, which is millions of points. So the
+        # assertion is that collisions stay in coincidence territory.
         table, _ = read_written_cloud(point_cloud_id)
-        # A point's identity is every attribute it carries, not its position.
-        # Coordinates alone are not unique: 5,697 pairs of genuinely distinct
-        # returns share a cubic millimetre in this fixture, differing in
-        # intensity, classification and source id. gps_time used to supply the
-        # discrimination and the schema no longer stores it, so the remaining
-        # attributes have to. `lod` is excluded because it is assigned here
-        # rather than read, and a duplicated point could land on two levels --
-        # which would hide exactly what this test looks for.
         identity = np.stack(
             [table.column(c).to_numpy().astype(np.int64) for c in POINT_COLUMNS],
             axis=1,
         )
-        unique = np.unique(identity, axis=0).shape[0]
-        assert unique == table.num_rows
+        collisions = table.num_rows - np.unique(identity, axis=0).shape[0]
+        assert collisions / table.num_rows < 1e-5, (
+            f"{collisions} of {table.num_rows} points are indistinguishable, "
+            "which is too many to be coincidence"
+        )
 
     def test_merged_output_is_a_single_readable_cloud(
         self, seeded_domain, seeded_point_cloud, read_point_cloud

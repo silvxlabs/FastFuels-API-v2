@@ -33,52 +33,45 @@ import pyarrow.parquet as pq
 
 from lib.config import LAKITU_WRITE_QUEUE_DEPTH, LAKITU_WRITE_WORKERS
 
-# gps_time is deliberately absent. Nothing downstream reads it, and it was the
-# single largest column -- 23% of the file at 3.76 B/pt, 883k distinct values in
-# 1.1M points. LAZ compresses it because LAZ stores points in acquisition order,
-# where consecutive timestamps differ by microseconds; we sort each row group
-# spatially, which destroys the only structure a codec could exploit. Which
-# acquisitions contributed is recorded per-resource in `source_extra.datasets`.
-COLUMNS = (
-    "lod",
-    "X",
-    "Y",
-    "Z",
-    "intensity",
-    "bit_fields",
-    "classification_flags",
-    "classification",
-    "user_data",
-    "scan_angle",
-    "point_source_id",
-)
+# Position, what the point looks like, and what it is. Every service that stores
+# a point cloud writes exactly these columns, so a reader never has to ask where
+# a cloud came from.
+#
+# `classification` is here because griddle's CHM branches on it: with ground
+# returns it builds terrain from the classification, and without them it falls
+# back to deriving a ground surface, which is measurably worse. The rest of LAS
+# point format 6 -- return numbers, scan angle, point source id, user data, the
+# synthetic/keypoint/withheld flags -- is dropped because nothing reads it.
+#
+# gps_time is dropped too, and it was the expensive one: 23% of the file at
+# 3.76 B/pt, 883k distinct values in 1.1M points. LAZ compresses it only because
+# LAZ keeps points in acquisition order, where consecutive timestamps differ by
+# microseconds; sorting row groups spatially destroys the only structure a codec
+# could exploit. Which acquisitions contributed is recorded per-resource in
+# `source_extra.datasets`.
+# Colour is written only when the source carries it, so a cloud's columns say
+# what it actually has rather than padding with zeros that mean nothing. The
+# schema is fixed for a given cloud -- the point format is settled once, before
+# any point is read -- so no part of a dataset ever disagrees with another.
+_BASE_FIELDS = [
+    ("X", "<i4"),
+    ("Y", "<i4"),
+    ("Z", "<i4"),
+    ("intensity", "<u2"),
+    ("classification", "u1"),
+]
+_COLOR_FIELDS = [("red", "<u2"), ("green", "<u2"), ("blue", "<u2")]
 
-# What the chain hands the writer: every COLUMN except the derived `lod`, laid
-# out exactly as LAS point format 6 lays them out, so a canonical record's array
-# can be copied field by field with no conversion.
-#
-# 22 bytes against point format 6's 30. The chain builds this instead of passing
-# a whole record because every point crosses a process boundary twice, so the
-# eight bytes of gps_time would be pickled twice for a field nothing reads.
-#
-# Colour is absent, and that is a real limitation rather than an oversight:
-# `point_format_id_for_dimensions` promotes a colour-carrying source to LAS
-# format 7 or 8 so the LAZ path never silently drops RGB, and this schema has
-# nowhere to put it.
-POINT_DTYPE = np.dtype(
-    [
-        ("X", "<i4"),
-        ("Y", "<i4"),
-        ("Z", "<i4"),
-        ("intensity", "<u2"),
-        ("bit_fields", "u1"),
-        ("classification_flags", "u1"),
-        ("classification", "u1"),
-        ("user_data", "u1"),
-        ("scan_angle", "<i2"),
-        ("point_source_id", "<u2"),
-    ]
-)
+
+def point_dtype(has_color: bool) -> np.dtype:
+    """The record layout the chain hands the writer."""
+    return np.dtype(_BASE_FIELDS + (_COLOR_FIELDS if has_color else []))
+
+
+def columns_for(dtype: np.dtype) -> tuple[str, ...]:
+    """The written columns for a record layout: its fields, plus the LOD level."""
+    return ("lod", *dtype.names)
+
 
 # Measured on real 16 km2 output. Dictionary beats delta on anything
 # low-cardinality -- intensity has only 1,614 distinct values -- and delta beats
@@ -86,12 +79,10 @@ POINT_DTYPE = np.dtype(
 DICT_COLUMNS = [
     "lod",
     "classification",
-    "classification_flags",
-    "bit_fields",
-    "user_data",
-    "scan_angle",
-    "point_source_id",
     "intensity",
+    "red",
+    "green",
+    "blue",
 ]
 DELTA_COLUMNS = {
     "X": "DELTA_BINARY_PACKED",
@@ -266,6 +257,9 @@ def _encode(records, lod, scales, offsets):
     more encode time for the bit-spreading -- a bad trade in a path where worker
     backpressure is what binds.
     """
+    # Derived from the records rather than fixed, so a cloud with colour and one
+    # without each write exactly the columns they have.
+    columns = columns_for(records.dtype)
     buf = io.BytesIO()
     writer = None
     try:
@@ -278,7 +272,7 @@ def _encode(records, lod, scales, offsets):
             dy = (r["Y"] - r["Y"].min()).astype(np.int64)
             r = r[np.argsort((dx << 21) | dy, kind="stable")]
             arrays = []
-            for c in COLUMNS:
+            for c in columns:
                 col = (
                     np.full(sel.size, level, dtype=np.uint8)
                     if c == "lod"
@@ -286,7 +280,7 @@ def _encode(records, lod, scales, offsets):
                 )
                 arrays.append(pa.array(col))
             del r
-            table = pa.Table.from_arrays(arrays, names=list(COLUMNS))
+            table = pa.Table.from_arrays(arrays, names=list(columns))
             del arrays
             if writer is None:
                 meta = {
@@ -298,7 +292,7 @@ def _encode(records, lod, scales, offsets):
                     buf,
                     table.schema,
                     compression="zstd",
-                    use_dictionary=DICT_COLUMNS,
+                    use_dictionary=[c for c in DICT_COLUMNS if c in columns],
                     column_encoding=DELTA_COLUMNS,
                     write_statistics=True,
                 )

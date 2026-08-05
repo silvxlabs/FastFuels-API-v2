@@ -24,7 +24,7 @@ import numpy as np
 import shapely
 
 from lakitu.ept import fetch_nodes
-from lakitu.parquet_writer import POINT_DTYPE
+from lakitu.parquet_writer import point_dtype
 from lib.config import LAKITU_CHAIN_WORKERS, LAKITU_DOWNLOAD_WORKERS
 
 # Per-worker state, set once by the initializer so each task carries only its
@@ -53,6 +53,9 @@ def _chain_init(
         )
         _W["clip"] = shapely.from_wkb(clip_wkb) if clip_wkb else None
         _W["bounds"] = clip_bounds
+        # The canonical format carries RGB only when a source declared it, so
+        # this decides the record layout once for the whole cloud.
+        _W["dtype"] = point_dtype("red" in _W["header"].point_format.dimension_names)
     except BaseException:
         import sys
         import traceback
@@ -93,8 +96,9 @@ def _chain_work(payload):
     record = normalize_record(
         points.points[keep], _W["header"], x[keep], y[keep], z[keep]
     )
-    out = np.empty(len(record), dtype=POINT_DTYPE)
-    for name in POINT_DTYPE.names:
+    dtype = _W["dtype"]
+    out = np.empty(len(record), dtype=dtype)
+    for name in dtype.names:
         out[name] = record.array[name]
     return out
 

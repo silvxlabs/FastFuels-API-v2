@@ -7,11 +7,10 @@ Most tests replace ``_iter_points`` so the algorithm is exercised without GCS;
 one test drives the real LAZ reader against a file on disk.
 """
 
-import io
-from unittest.mock import MagicMock, patch
+from contextlib import ExitStack
+from unittest.mock import patch
 
 import geopandas as gpd
-import laspy
 import numpy as np
 import pyproj
 import pytest
@@ -24,20 +23,35 @@ CRS = "EPSG:32612"
 
 
 def _chunks(x, y, z, classification):
-    """Build an ``_iter_points`` replacement yielding one chunk.
+    """Build a ``_read_points`` replacement over an in-memory cloud.
 
-    Takes the downloaded buffer the real one does, and ignores it.
+    Applies the class filter the real reader pushes into Parquet, and ignores
+    the bounds: a block drops what falls outside it by cell index anyway, so
+    returning the whole cloud exercises the same code path a real partition
+    read would.
     """
 
-    def _iter(_cloud):
-        yield (
-            np.asarray(x, dtype=float),
-            np.asarray(y, dtype=float),
-            np.asarray(z, dtype=float),
-            np.asarray(classification, dtype=np.uint8),
-        )
+    def _read(_dataset, _manifest, _bounds, classes):
+        xs = np.asarray(x, dtype=float)
+        ys = np.asarray(y, dtype=float)
+        zs = np.asarray(z, dtype=float)
+        cs = np.asarray(classification, dtype=np.uint8)
+        if classes is not None:
+            keep = np.isin(cs, list(classes))
+            return xs[keep], ys[keep], zs[keep], cs[keep]
+        return xs, ys, zs, cs
 
-    return _iter
+    return _read
+
+
+# Stands in for the dataset manifest: millimetre scaling anchored at the origin,
+# with one tile wide enough that the fixtures never straddle a partition.
+_MANIFEST = {
+    "tile_m": 500.0,
+    "mins": [0.0, 0.0, 0.0],
+    "scales": [0.001, 0.001, 0.001],
+    "offsets": [0.0, 0.0, 0.0],
+}
 
 
 def _roi(size: float = 4.0) -> gpd.GeoDataFrame:
@@ -63,20 +77,31 @@ def _target_grid(transform, shape, crs=CRS):
 
 
 def _run(
-    iter_points,
+    read_points,
     point_classes,
     resolution=1.0,
     roi=None,
     alignment=None,
     target_grid_doc=None,
     extent_buffer_cells=0,
+    block_cells=None,
 ):
-    # The handler downloads the cloud once and replays the buffer; both are
-    # stubbed so the algorithm runs without GCS.
-    with (
-        patch.object(chm_point_cloud, "_open_cloud", return_value=lambda: io.BytesIO()),
-        patch.object(chm_point_cloud, "_iter_points", iter_points),
-    ):
+    # Storage and the dataset handle are stubbed so the algorithm runs without
+    # GCS. `block_cells` forces a blocking; left alone the handler picks one.
+    patches = [
+        patch.object(chm_point_cloud, "_read_manifest", return_value=_MANIFEST),
+        patch.object(chm_point_cloud, "_open_dataset", return_value=None),
+        patch.object(chm_point_cloud, "_read_points", read_points),
+    ]
+    if block_cells is not None:
+        patches.append(
+            patch.object(
+                chm_point_cloud, "_compute_block_cells", return_value=block_cells
+            )
+        )
+    with ExitStack() as stack:
+        for one in patches:
+            stack.enter_context(one)
         return chm_point_cloud.fetch_point_cloud_chm(
             roi=roi if roi is not None else _roi(),
             point_cloud_id="test-cloud",
@@ -382,146 +407,168 @@ class TestAlignment:
 
 
 class TestReadingFromStorage:
-    """The GCS read path, against a real LAZ on disk."""
+    """The dataset read path, against a real Parquet dataset on disk."""
 
-    def _write_laz(self, path):
-        header = laspy.LasHeader(version="1.4", point_format=6)
-        header.offsets = [0.0, 0.0, 0.0]
-        header.scales = [0.01, 0.01, 0.01]
-        header.add_crs(pyproj.CRS.from_epsg(32612))
-        las = laspy.LasData(header)
-        las.x = np.array([1.0, 2.0, 3.0])
-        las.y = np.array([1.0, 2.0, 3.0])
-        las.z = np.array([10.0, 20.0, 30.0])
-        las.classification = np.array([2, 5, 5], dtype=np.uint8)
-        las.write(str(path))
+    def _write_dataset(self, root):
+        """Two partitions, so a bounds-pruned read has something to exclude."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
 
-    def test_small_cloud_is_buffered_and_read_from_memory(self, tmp_path):
-        path = tmp_path / "cloud.laz"
-        self._write_laz(path)
-        client = MagicMock()
-        client.size.return_value = path.stat().st_size
-        client.cat.return_value = path.read_bytes()
+        for tile_x, xs in ((0, [1.0, 2.0, 3.0]), (1, [501.0, 502.0])):
+            directory = root / f"tile_x={tile_x}" / "tile_y=0"
+            directory.mkdir(parents=True)
+            count = len(xs)
+            table = pa.table(
+                {
+                    "lod": pa.array([0] * count, pa.uint8()),
+                    "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
+                    "Y": pa.array([1000] * count, pa.int32()),
+                    "Z": pa.array(
+                        [round(v * 1000) for v in ([10.0, 20.0, 30.0][:count])],
+                        pa.int32(),
+                    ),
+                    "intensity": pa.array([0] * count, pa.uint16()),
+                    "classification": pa.array(([2, 5, 5][:count]), pa.uint8()),
+                }
+            )
+            pq.write_table(table, directory / "part-00000.parquet")
 
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
-            cloud = chm_point_cloud._open_cloud("some-cloud-id", cells=1_000_000)
+    def test_reads_only_the_partitions_a_block_overlaps(self, tmp_path):
+        root = tmp_path / "cloud.parquet"
+        self._write_dataset(root)
+        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=None):
+            dataset = chm_point_cloud._open_dataset(str(root))
 
-        assert client.cat.call_args[0][0].endswith("/some-cloud-id/cloud.laz")
-        x, y, z, classification = next(chm_point_cloud._iter_points(cloud))
-        assert len(x) == 3
+        x, y, z, classification = chm_point_cloud._read_points(
+            dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), None
+        )
+
+        # The second tile starts at 500 m and is pruned by the partition filter.
+        assert sorted(x.tolist()) == pytest.approx([1.0, 2.0, 3.0])
         assert z.tolist() == pytest.approx([10.0, 20.0, 30.0])
         assert classification.tolist() == [2, 5, 5]
 
-    def test_large_cloud_is_streamed_rather_than_buffered(self, tmp_path, monkeypatch):
-        """Above the threshold the object is re-opened per pass.
+    def test_class_filter_is_pushed_into_the_read(self, tmp_path):
+        root = tmp_path / "cloud.parquet"
+        self._write_dataset(root)
+        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=None):
+            dataset = chm_point_cloud._open_dataset(str(root))
 
-        A full-resolution 3DEP cloud over a large domain runs to gigabytes —
-        1.04 billion points and 7.3 GB compressed over 64 km2, measured — which
-        no worker should hold in memory.
-        """
-        path = tmp_path / "cloud.laz"
-        self._write_laz(path)
-        monkeypatch.setattr(chm_point_cloud, "MAX_BUFFERED_LAZ_BYTES", 1)
-
-        client = MagicMock()
-        client.size.return_value = 10_000_000_000
-        client.open.side_effect = lambda *a, **k: open(path, "rb")
-
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
-            cloud = chm_point_cloud._open_cloud("big-cloud-id", cells=1_000_000)
-            first = [c[2].tolist() for c in chm_point_cloud._iter_points(cloud)]
-            second = [c[2].tolist() for c in chm_point_cloud._iter_points(cloud)]
-
-        client.cat.assert_not_called()
-        assert client.open.call_count == 2
-        assert first == second
-
-    def test_large_lattice_leaves_no_room_to_buffer_a_small_cloud(self, tmp_path):
-        """The buffer and the rasters share one worker, so the grid gets a vote.
-
-        A cloud well under the standalone threshold is still streamed when the
-        output lattice already claims most of the memory budget — buffering it
-        would push the two working sets past the worker's limit together.
-        """
-        path = tmp_path / "cloud.laz"
-        self._write_laz(path)
-
-        size = 1_500_000_000
-        client = MagicMock()
-        client.size.return_value = size
-        client.open.side_effect = lambda *a, **k: open(path, "rb")
-
-        # A lattice large enough to leave less headroom than the cloud needs,
-        # while the cloud stays under the standalone threshold that would
-        # otherwise buffer it.
-        headroom = size // 2
-        cells = (chm_point_cloud.MEMORY_BUDGET_BYTES - headroom) // (
-            chm_point_cloud.RASTER_BYTES_PER_CELL
+        _, _, z, classification = chm_point_cloud._read_points(
+            dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), (2,)
         )
-        assert size < chm_point_cloud.MAX_BUFFERED_LAZ_BYTES
 
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
-            chm_point_cloud._open_cloud("big-grid", cells=cells)
+        assert classification.tolist() == [2]
+        assert z.tolist() == pytest.approx([10.0])
 
-        client.cat.assert_not_called()
+    def test_a_block_over_empty_ground_reads_nothing(self, tmp_path):
+        root = tmp_path / "cloud.parquet"
+        self._write_dataset(root)
+        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=None):
+            dataset = chm_point_cloud._open_dataset(str(root))
 
-    def test_a_cloud_that_only_fits_once_is_streamed(self, tmp_path):
-        """The gate compares the peak of the fetch, not the object size.
-
-        gcsfs reads the response in chunks and joins them, so a download costs
-        about twice the object while both copies are live. A cloud that fits
-        the remaining budget once but not twice is streamed instead.
-        """
-        path = tmp_path / "cloud.laz"
-        self._write_laz(path)
-
-        headroom = chm_point_cloud.MEMORY_BUDGET_BYTES // 2
-        cells = (chm_point_cloud.MEMORY_BUDGET_BYTES - headroom) // (
-            chm_point_cloud.RASTER_BYTES_PER_CELL
+        x, _, _, _ = chm_point_cloud._read_points(
+            dataset, _MANIFEST, (2000.0, 2000.0, 2100.0, 2100.0), None
         )
-        size = int(headroom * 0.75)
-        assert size < min(headroom, chm_point_cloud.MAX_BUFFERED_LAZ_BYTES)
-        assert 2 * size > headroom
 
-        client = MagicMock()
-        client.size.return_value = size
-        client.open.side_effect = lambda *a, **k: open(path, "rb")
+        assert x.size == 0
 
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
-            chm_point_cloud._open_cloud("only-fits-once", cells=cells)
 
-        client.cat.assert_not_called()
+class TestBlockingIsInvisible:
+    """Blocking must not change the answer, only how it is computed.
 
-    def test_buffer_is_replayable_across_passes(self, tmp_path):
-        """The algorithm reads the cloud two or three times off one download."""
-        path = tmp_path / "cloud.laz"
-        self._write_laz(path)
-        buffer = chm_point_cloud._ReplayableBuffer(path.read_bytes())
+    The point passes are commutative scatter-reductions and every raster step
+    runs through a halo at least as wide as its dependency radius, so a blocked
+    run has to agree with an unblocked one cell for cell — not approximately.
 
-        first = [c[2].tolist() for c in chm_point_cloud._iter_points(lambda: buffer)]
-        second = [c[2].tolist() for c in chm_point_cloud._iter_points(lambda: buffer)]
+    Run at 10 m cells so the halos (2 cells for the filter, 3 for the fill, 6
+    for the ground-distance cap) fit inside a block small enough to tile a
+    fixture of a few thousand points. At 1 m the filter alone reaches 62 cells,
+    which would need a 252-cell grid and half a million points to exercise
+    honestly.
+    """
 
-        assert first == second
-        assert first[0] == pytest.approx([10.0, 20.0, 30.0])
+    RESOLUTION = 10.0
+    SIZE_M = 320.0
+    BLOCK_CELLS = 16  # 2x2 blocks over the 32-cell grid
 
-    def test_cloud_is_downloaded_once_for_the_whole_job(self, tmp_path):
-        """Deriving ground takes three passes; all three read one download."""
-        path = tmp_path / "cloud.laz"
-        self._write_laz(path)
-        client = MagicMock()
-        client.size.return_value = path.stat().st_size
-        client.cat.return_value = path.read_bytes()
+    def _cloud(self, spacing=5.0):
+        """Pitched ground with canopy on it, and a ground void on a block seam.
 
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=client):
-            # No ground class in the census, so the derived path runs.
-            ds, provenance = chm_point_cloud.fetch_point_cloud_chm(
-                roi=_roi(),
-                point_cloud_id="some-cloud-id",
-                point_classes=[5],
-                alignment={"target": "domain", "resolution": 1.0},
-                progress=lambda message, percent=None: None,
-            )
+        The void sits at x = 160 m, exactly where the blocks meet, so a halo too
+        narrow to see across the seam would fill it differently on each side.
+        """
+        rng = np.random.default_rng(0)
+        steps = int(self.SIZE_M / spacing)
+        xs, ys, zs, classes = [], [], [], []
+        for row in range(steps):
+            for col in range(steps):
+                px = col * spacing + spacing / 2
+                py = row * spacing + spacing / 2
+                ground = 10.0 + 0.05 * px + 0.03 * py
+                if not 140.0 < px < 180.0:
+                    xs.append(px)
+                    ys.append(py)
+                    zs.append(ground)
+                    classes.append(2)
+                if rng.random() < 0.6:
+                    xs.append(px)
+                    ys.append(py)
+                    zs.append(ground + rng.uniform(1.0, 18.0))
+                    classes.append(5)
+        return xs, ys, zs, classes
 
-        assert provenance["ground_source"] == "derived"
-        assert np.isfinite(ds["chm"].values).any()
-        assert client.cat.call_count == 1
+    # [2] takes the classified path, whose only blocked stage is the point
+    # pass, so it pins the scatter-reduction. [1] takes the derived path, where
+    # the fill and the morphological filter are blocked behind halos, so it is
+    # the case that actually exercises them — verified by forcing the halo to
+    # zero and watching this fail.
+    @pytest.mark.parametrize("point_classes", ([2], [1]))
+    def test_blocked_matches_unblocked(self, point_classes):
+        cloud = self._cloud()
+        roi = _roi(self.SIZE_M)
+
+        whole, whole_provenance = _run(
+            _chunks(*cloud),
+            point_classes,
+            resolution=self.RESOLUTION,
+            roi=roi,
+            block_cells=4096,
+        )
+        blocked, blocked_provenance = _run(
+            _chunks(*cloud),
+            point_classes,
+            resolution=self.RESOLUTION,
+            roi=roi,
+            block_cells=self.BLOCK_CELLS,
+        )
+
+        # Guard the guard: a fixture that degenerated to one block would make
+        # the comparison vacuous.
+        assert whole["chm"].shape[0] // self.BLOCK_CELLS >= 2
+        assert np.isfinite(whole["chm"].values).any()
+
+        np.testing.assert_array_equal(whole["chm"].values, blocked["chm"].values)
+        assert whole_provenance == blocked_provenance
+
+    def test_block_size_covers_the_widest_halo(self):
+        """A block has to be able to feed the halo, or the answer changes.
+
+        `_block_slices` divides evenly, so a block can come out half the
+        requested size; the floor is twice the halo to cover that.
+        """
+        assert chm_point_cloud._compute_block_cells(1.0, 500.0, halo_cells=400) == 802
+
+    def test_block_size_is_floored_at_one_cloud_tile(self):
+        # At 0.5 m a 512-cell block spans 256 m, so four of them would decode
+        # the same 500 m partition; the floor makes one block cover it.
+        assert chm_point_cloud._compute_block_cells(0.5, 500.0, halo_cells=0) == 1000
+        assert chm_point_cloud._compute_block_cells(1.0, 500.0, halo_cells=0) == 512
+        assert chm_point_cloud._compute_block_cells(10.0, 500.0, halo_cells=0) == 512
+
+    def test_blocks_are_divided_evenly(self):
+        """A greedy split leaves a remainder block narrower than the halo."""
+        sizes = [
+            stop - start for start, stop in chm_point_cloud._block_slices(1025, 512)
+        ]
+        assert sizes == [342, 341, 342]

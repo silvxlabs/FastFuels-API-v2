@@ -101,6 +101,11 @@ def choose_tile_m(extent: float, target: float = 500.0) -> float:
     number. At a fixed 500 m an extent like 5656.8 m (32 km2) gives 11.3 cells
     per tile, so tiles straddle cells and the pyramid stops being exact.
     """
+    if extent <= 0:
+        # A cloud with no horizontal extent: every point at one location, or a
+        # single point. Degenerate, but a user can upload one, and log2(0) is
+        # not a useful way to find out.
+        return target
     t = int(round(math.log2(extent / target)))
     t = max(1, min(7, t))
     return extent / (2**t)

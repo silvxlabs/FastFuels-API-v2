@@ -32,6 +32,7 @@ from lib.entwine import (
 )
 from lib.errors import ProcessingError
 from lib.laz import build_output_header, point_format_id_for_dimensions
+from lib.pointcloud.summary import PointSummary
 from lib.pointcloud.writer import write_parquet
 
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ def _write_points(
         "offsets": np.asarray(header.offsets),
     }
 
-    stats = _PointStats(info["scales"], info["offsets"])
+    stats = PointSummary(info["scales"], info["offsets"])
     total_nodes = sum(len(nodes) for _, nodes in all_nodes)
     reporter = _NodeProgress(progress, total_nodes, stats)
 
@@ -301,57 +302,6 @@ def _write_points(
     bucket, prefix = cloud_location(point_cloud_id)
     result = write_parquet(stats.observe(records), info, bucket, prefix)
     return stats.summary(), stats.bounds(), result["output_bytes"]
-
-
-class _PointStats:
-    """Folds written points into the statistics the resource reports.
-
-    Accumulated on the way past rather than read back afterwards, so what is
-    reported always describes what was stored.
-    """
-
-    def __init__(self, scales, offsets):
-        self._scales = np.asarray(scales)
-        self._offsets = np.asarray(offsets)
-        self.count = 0
-        # Classification is a uint8, so a flag per value beats accumulating a
-        # set: no sort, no Python-level set union, per record.
-        self._seen_class = np.zeros(256, dtype=bool)
-        self._mins = np.full(3, np.iinfo(np.int32).max, dtype=np.int64)
-        self._maxs = np.full(3, np.iinfo(np.int32).min, dtype=np.int64)
-
-    def observe(self, records):
-        """Fold each record's extremes in, then pass it straight through.
-
-        Reduces over the stored millimetre integers and scales only the six
-        surviving scalars at the end. Scaling every point here would repeat, on
-        the busiest thread in the process, work the writer already does to route
-        the point.
-        """
-        for record in records:
-            for axis, name in enumerate(("X", "Y", "Z")):
-                column = record[name]
-                self._mins[axis] = min(self._mins[axis], int(column.min()))
-                self._maxs[axis] = max(self._maxs[axis], int(column.max()))
-            self._seen_class[record["classification"]] = True
-            self.count += record.size
-            yield record
-
-    def bounds(self) -> list[float]:
-        if self.count == 0:
-            return [*self._offsets.tolist(), *self._offsets.tolist()]
-        mins = self._mins * self._scales + self._offsets
-        maxs = self._maxs * self._scales + self._offsets
-        return [*mins.tolist(), *maxs.tolist()]
-
-    def summary(self) -> dict:
-        bounds = self.bounds()
-        area = (bounds[3] - bounds[0]) * (bounds[4] - bounds[1]) if self.count else 0.0
-        return {
-            "point_count": self.count,
-            "point_classes": [int(c) for c in np.flatnonzero(self._seen_class)],
-            "density": float(self.count / area) if area > 0 else 0.0,
-        }
 
 
 class _NodeProgress:

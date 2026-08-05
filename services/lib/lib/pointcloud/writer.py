@@ -425,6 +425,11 @@ def write_parquet(
     scales, offsets = np.asarray(info["scales"]), np.asarray(info["offsets"])
 
     extent = float(max(maxs[:2] - mins[:2]))
+    if extent <= 0:
+        # Every point at one location, or a single point. An upload can be
+        # either. The pyramid means nothing over no area, so any positive extent
+        # will do; this keeps the cell arithmetic from dividing by zero.
+        extent = 1.0
     z_span = float(maxs[2] - mins[2])
     if tile_m is None:
         tile_m = choose_tile_m(extent)

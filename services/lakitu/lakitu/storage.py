@@ -6,19 +6,18 @@ walle sweeps when a resource is deleted, so it must stay in step with the
 uploader, which writes into the same directory.
 
 A 3DEP cloud is a partitioned Parquet dataset written in place by
-``lakitu.parquet_writer``, not a single object, so there is no upload step here
+``lib.pointcloud.writer``, not a single object, so there is no upload step here
 -- only the path it is written under and the size it came to.
 """
 
 from lib.config import POINT_CLOUDS_BUCKET
 from lib.gcs import delete_directory, exists, storage_size
-
-CLOUD_DIRNAME = "cloud.parquet"
+from lib.pointcloud import schema
 
 
 def cloud_prefix(point_cloud_id: str) -> str:
     """Return the GCS prefix of a point cloud's Parquet dataset."""
-    return f"{POINT_CLOUDS_BUCKET}/{point_cloud_id}/{CLOUD_DIRNAME}"
+    return schema.cloud_prefix(POINT_CLOUDS_BUCKET, point_cloud_id)
 
 
 def cloud_location(point_cloud_id: str) -> tuple[str, str]:
@@ -27,7 +26,7 @@ def cloud_location(point_cloud_id: str) -> tuple[str, str]:
     The writer talks to the storage client directly rather than through a path
     string, so it needs the two halves apart.
     """
-    return POINT_CLOUDS_BUCKET, f"{point_cloud_id}/{CLOUD_DIRNAME}"
+    return schema.cloud_location(POINT_CLOUDS_BUCKET, point_cloud_id)
 
 
 def cloud_size(point_cloud_id: str) -> int:

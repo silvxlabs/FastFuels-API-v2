@@ -3,8 +3,8 @@ Tests for the point-cloud CHM handler.
 
 Points are placed at exact coordinates so the expected canopy height of each
 cell is known by construction rather than asserted against a recorded output.
-Most tests replace ``_iter_points`` so the algorithm is exercised without GCS;
-one test drives the real LAZ reader against a file on disk.
+Most tests replace the point reader so the algorithm is exercised without GCS;
+`TestReadingFromStorage` drives the real one against a dataset on disk.
 """
 
 from contextlib import ExitStack
@@ -15,9 +15,11 @@ import numpy as np
 import pyproj
 import pytest
 from griddle.handlers import chm_point_cloud
+from pyarrow.fs import LocalFileSystem
 from shapely.geometry import box
 
 from lib.errors import ProcessingError
+from lib.pointcloud.reader import open_dataset, read_points
 
 CRS = "EPSG:32612"
 
@@ -89,9 +91,9 @@ def _run(
     # Storage and the dataset handle are stubbed so the algorithm runs without
     # GCS. `block_cells` forces a blocking; left alone the handler picks one.
     patches = [
-        patch.object(chm_point_cloud, "_read_manifest", return_value=_MANIFEST),
-        patch.object(chm_point_cloud, "_open_dataset", return_value=None),
-        patch.object(chm_point_cloud, "_read_points", read_points),
+        patch.object(chm_point_cloud, "read_manifest", return_value=_MANIFEST),
+        patch.object(chm_point_cloud, "open_dataset", return_value=None),
+        patch.object(chm_point_cloud, "read_points", read_points),
     ]
     if block_cells is not None:
         patches.append(
@@ -436,10 +438,9 @@ class TestReadingFromStorage:
     def test_reads_only_the_partitions_a_block_overlaps(self, tmp_path):
         root = tmp_path / "cloud.parquet"
         self._write_dataset(root)
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=None):
-            dataset = chm_point_cloud._open_dataset(str(root))
+        dataset = open_dataset(str(root), filesystem=LocalFileSystem())
 
-        x, y, z, classification = chm_point_cloud._read_points(
+        x, y, z, classification = read_points(
             dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), None
         )
 
@@ -451,10 +452,9 @@ class TestReadingFromStorage:
     def test_class_filter_is_pushed_into_the_read(self, tmp_path):
         root = tmp_path / "cloud.parquet"
         self._write_dataset(root)
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=None):
-            dataset = chm_point_cloud._open_dataset(str(root))
+        dataset = open_dataset(str(root), filesystem=LocalFileSystem())
 
-        _, _, z, classification = chm_point_cloud._read_points(
+        _, _, z, classification = read_points(
             dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), (2,)
         )
 
@@ -464,10 +464,9 @@ class TestReadingFromStorage:
     def test_a_block_over_empty_ground_reads_nothing(self, tmp_path):
         root = tmp_path / "cloud.parquet"
         self._write_dataset(root)
-        with patch.object(chm_point_cloud, "get_gcsfs_client", return_value=None):
-            dataset = chm_point_cloud._open_dataset(str(root))
+        dataset = open_dataset(str(root), filesystem=LocalFileSystem())
 
-        x, _, _, _ = chm_point_cloud._read_points(
+        x, _, _, _ = read_points(
             dataset, _MANIFEST, (2000.0, 2000.0, 2100.0, 2100.0), None
         )
 

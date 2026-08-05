@@ -20,7 +20,6 @@ from shapely.geometry.base import BaseGeometry
 
 from lakitu.chain import stream_records
 from lakitu.ept import fetch_metadata, make_session, walk_hierarchy
-from lakitu.parquet_writer import write_parquet
 from lakitu.storage import cloud_location
 from lib.entwine import (
     MAX_POINTS,
@@ -33,6 +32,7 @@ from lib.entwine import (
 )
 from lib.errors import ProcessingError
 from lib.laz import build_output_header, point_format_id_for_dimensions
+from lib.pointcloud.writer import write_parquet
 
 logger = logging.getLogger(__name__)
 

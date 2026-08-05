@@ -24,8 +24,8 @@ import numpy as np
 import shapely
 
 from lakitu.ept import fetch_nodes
-from lakitu.parquet_writer import point_dtype
 from lib.config import LAKITU_CHAIN_WORKERS, LAKITU_DOWNLOAD_WORKERS
+from lib.pointcloud.schema import point_dtype
 
 # Per-worker state, set once by the initializer so each task carries only its
 # compressed bytes.
@@ -68,7 +68,7 @@ def _chain_init(
 def _chain_work(payload):
     """Decode, reproject, clip and normalize one node. Runs in a child process.
 
-    Returns a compact POINT_DTYPE array, or None when the node contributes
+    Returns a compact `point_dtype` array, or None when the node contributes
     nothing.
     """
     import laspy

@@ -16,9 +16,12 @@ columns -- see LodAssigner.
 Coordinates stay as LAS scaled int32s with scale/offset in the file metadata,
 which keeps them small and lossless rather than exploding to float64.
 
-Work is spread across processes, not threads. The chain that feeds this writer is
-GIL-bound (see lakitu.chain), and so is the encode: measured on threads in the
-parent, Arrow encode plus zstd took 38% of the job while leaving most cores idle.
+Work is spread across processes, not threads. The encode is GIL-bound: measured
+on threads in the parent, Arrow encode plus zstd took 38% of the job while
+leaving most cores idle.
+
+The layout this writes is defined in `lib.pointcloud.schema`, and read back by
+`lib.pointcloud.reader`.
 """
 
 import io
@@ -32,63 +35,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from lib.config import LAKITU_WRITE_QUEUE_DEPTH, LAKITU_WRITE_WORKERS
-
-# Position, what the point looks like, and what it is. Every service that stores
-# a point cloud writes exactly these columns, so a reader never has to ask where
-# a cloud came from.
-#
-# `classification` is here because griddle's CHM branches on it: with ground
-# returns it builds terrain from the classification, and without them it falls
-# back to deriving a ground surface, which is measurably worse. The rest of LAS
-# point format 6 -- return numbers, scan angle, point source id, user data, the
-# synthetic/keypoint/withheld flags -- is dropped because nothing reads it.
-#
-# gps_time is dropped too, and it was the expensive one: 23% of the file at
-# 3.76 B/pt, 883k distinct values in 1.1M points. LAZ compresses it only because
-# LAZ keeps points in acquisition order, where consecutive timestamps differ by
-# microseconds; sorting row groups spatially destroys the only structure a codec
-# could exploit. Which acquisitions contributed is recorded per-resource in
-# `source_extra.datasets`.
-# Colour is written only when the source carries it, so a cloud's columns say
-# what it actually has rather than padding with zeros that mean nothing. The
-# schema is fixed for a given cloud -- the point format is settled once, before
-# any point is read -- so no part of a dataset ever disagrees with another.
-_BASE_FIELDS = [
-    ("X", "<i4"),
-    ("Y", "<i4"),
-    ("Z", "<i4"),
-    ("intensity", "<u2"),
-    ("classification", "u1"),
-]
-_COLOR_FIELDS = [("red", "<u2"), ("green", "<u2"), ("blue", "<u2")]
-
-
-def point_dtype(has_color: bool) -> np.dtype:
-    """The record layout the chain hands the writer."""
-    return np.dtype(_BASE_FIELDS + (_COLOR_FIELDS if has_color else []))
-
-
-def columns_for(dtype: np.dtype) -> tuple[str, ...]:
-    """The written columns for a record layout: its fields, plus the LOD level."""
-    return ("lod", *dtype.names)
-
-
-# Measured on real 16 km2 output. Dictionary beats delta on anything
-# low-cardinality -- intensity has only 1,614 distinct values -- and delta beats
-# plain on the sorted coordinates. BYTE_STREAM_SPLIT was tried and lost.
-DICT_COLUMNS = [
-    "lod",
-    "classification",
-    "intensity",
-    "red",
-    "green",
-    "blue",
-]
-DELTA_COLUMNS = {
-    "X": "DELTA_BINARY_PACKED",
-    "Y": "DELTA_BINARY_PACKED",
-    "Z": "DELTA_BINARY_PACKED",
-}
+from lib.pointcloud.schema import (
+    CELL_COUNT,
+    DELTA_COLUMNS,
+    DICT_COLUMNS,
+    LOD_LEVELS,
+    choose_tile_m,
+    columns_for,
+)
 
 # How much routed-but-unflushed point data the parent holds, and how big a tile
 # has to be before it is worth flushing. File size is roughly
@@ -97,8 +51,6 @@ BUFFER_BUDGET = 192 << 20
 MIN_FLUSH_BYTES = 32 << 20  # prefer flushing tiles that have grown big
 MAX_TILE_BYTES = 96 << 20  # flush a tile at this size regardless of budget
 
-LOD_LEVELS = 6  # 4**5 = 1024x decimation range; deeper is full-res
-CELL_COUNT = 128  # matches COPC, so the pyramids are comparable
 
 # Cells per level per tile. Voxels cost side**2 * nz against a column's side**2,
 # so this is what stops the deep levels exploding -- at a 500 m tile, 4 km extent
@@ -437,19 +389,6 @@ class _PinnedPool:
             p.join(timeout=30)
         if self.error is not None:
             raise self.error
-
-
-def choose_tile_m(extent, target=500.0):
-    """Tile size must divide the extent by a power of two.
-
-    Level k's LOD cell is extent/(128 * 2**k), so a tile of extent/2**t spans
-    2**(7 + k - t) cells -- an integer for every level only when t is a whole
-    number. At a fixed 500 m an extent like 5656.8 m (32 km2) gives 11.3 cells
-    per tile, so tiles straddle cells and the pyramid stops being exact.
-    """
-    t = int(round(math.log2(extent / target)))
-    t = max(1, min(7, t))
-    return extent / (2**t)
 
 
 def write_parquet(

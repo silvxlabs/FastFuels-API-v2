@@ -23,7 +23,6 @@ window — large buildings, closed evergreen canopy. ``ground_coverage`` and
 a visible cause.
 """
 
-import json
 import math
 import os
 from collections.abc import Callable
@@ -31,7 +30,6 @@ from collections.abc import Callable
 import dask.array as da
 import geopandas as gpd
 import numpy as np
-import pyarrow.dataset as pa_ds
 import rioxarray  # noqa: F401
 import xarray as xr
 from affine import Affine
@@ -47,11 +45,8 @@ from lib.alignment import resolve_alignment_destination
 from lib.config import POINT_CLOUDS_BUCKET
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
-from lib.gcs import get_gcsfs_client
-
-# Directory name of a stored point cloud's Parquet dataset, matching what
-# lakitu and the uploader write.
-CLOUD_DIRNAME = "cloud.parquet"
+from lib.pointcloud.reader import open_dataset, read_manifest, read_points
+from lib.pointcloud.schema import cloud_prefix
 
 # Block edge in cells, before the cloud-tile floor in `_compute_block_cells`.
 # Matches griddle's default storage chunk, so at 1 m and coarser the compute
@@ -183,8 +178,8 @@ def fetch_point_cloud_chm(
     lattice = (transform.c, transform.f, height, width)
 
     progress("Reading point cloud...", 10)
-    prefix = _cloud_prefix(point_cloud_id)
-    manifest = _read_manifest(prefix)
+    prefix = cloud_prefix(POINT_CLOUDS_BUCKET, point_cloud_id)
+    manifest = read_manifest(prefix)
     fill_cells = _fill_cells(resolution)
     # The widest halo any step needs, which is what the blocking has to be able
     # to feed. PMF only runs for a cloud with no ground class, so a classified
@@ -200,7 +195,7 @@ def fetch_point_cloud_chm(
     def reader(bounds, classes):
         # One dataset handle per call: these run on worker threads, and pyarrow
         # datasets are cheap to open next to the read they serve.
-        return _read_points(_open_dataset(prefix), manifest, bounds, classes)
+        return read_points(open_dataset(prefix), manifest, bounds, classes)
 
     def over_blocks(function, dtype=np.float32):
         """Assemble one dask array from a per-block function of (lattice)."""
@@ -402,92 +397,6 @@ def _resolve_lattice(
         )
 
     return destination["destination_transform"], destination["destination_shape"]
-
-
-def _cloud_prefix(point_cloud_id: str) -> str:
-    """GCS prefix of a point cloud's Parquet dataset."""
-    return f"{POINT_CLOUDS_BUCKET}/{point_cloud_id}/{CLOUD_DIRNAME}"
-
-
-def _read_manifest(prefix: str) -> dict:
-    """Read the dataset manifest, which carries its tiling and coordinate scaling.
-
-    Raises:
-        ProcessingError: If the cloud has no manifest, which means it was never
-            written or was written by a version that predates this format.
-    """
-    try:
-        with get_gcsfs_client().open(f"{prefix}/_manifest.json", "rb") as stream:
-            return json.load(stream)
-    except FileNotFoundError as e:
-        raise ProcessingError(
-            code="POINT_CLOUD_UNREADABLE",
-            message="This point cloud's stored data could not be read.",
-            suggestion="Recreate the point cloud, then retry this grid.",
-            traceback=f"{prefix}/_manifest.json: {e}",
-        ) from e
-
-
-def _open_dataset(prefix: str) -> pa_ds.Dataset:
-    """Open the partitioned dataset. `_metadata` and `_manifest.json` are skipped
-    by pyarrow's default underscore-prefix exclusion."""
-    return pa_ds.dataset(
-        prefix,
-        filesystem=get_gcsfs_client(),
-        format="parquet",
-        partitioning="hive",
-    )
-
-
-def _tile_span(
-    low: float, high: float, origin: float, tile_m: float
-) -> tuple[int, int]:
-    """Inclusive tile-index range covering a coordinate span."""
-    return (
-        int(np.floor((low - origin) / tile_m)),
-        int(np.floor((high - origin) / tile_m)),
-    )
-
-
-def _read_points(dataset, manifest: dict, bounds: tuple, classes) -> tuple:
-    """Read (x, y, z, classification) for the partitions overlapping `bounds`.
-
-    Prunes on the Hive partition columns, so a block reads only the cloud tiles
-    it touches rather than the whole cloud. Points outside `bounds` but inside
-    those tiles come back too — the caller drops them by cell index, which keeps
-    containment identical to rasterising the cloud whole.
-
-    Only the columns these passes actually use are read; intensity and colour
-    are never touched.
-    """
-    min_x, min_y, max_x, max_y = bounds
-    tile_m, origin = manifest["tile_m"], manifest["mins"]
-    tx0, tx1 = _tile_span(min_x, max_x, origin[0], tile_m)
-    ty0, ty1 = _tile_span(min_y, max_y, origin[1], tile_m)
-
-    selection = (
-        (pa_ds.field("tile_x") >= tx0)
-        & (pa_ds.field("tile_x") <= tx1)
-        & (pa_ds.field("tile_y") >= ty0)
-        & (pa_ds.field("tile_y") <= ty1)
-    )
-    if classes is not None:
-        selection = selection & pa_ds.field("classification").isin(list(classes))
-
-    table = dataset.to_table(
-        columns=["X", "Y", "Z", "classification"], filter=selection
-    )
-    if table.num_rows == 0:
-        empty = np.empty(0, dtype=np.float64)
-        return empty, empty, empty, np.empty(0, dtype=np.uint8)
-
-    scales, offsets = manifest["scales"], manifest["offsets"]
-    return (
-        table.column("X").to_numpy() * scales[0] + offsets[0],
-        table.column("Y").to_numpy() * scales[1] + offsets[1],
-        table.column("Z").to_numpy() * scales[2] + offsets[2],
-        table.column("classification").to_numpy(),
-    )
 
 
 def _block_lattice(transform: Affine, row0: int, col0: int, rows: int, cols: int):

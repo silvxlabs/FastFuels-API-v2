@@ -18,10 +18,10 @@ import numpy as np
 import pyarrow.dataset as ds
 import pytest
 from lakitu.main import process_point_cloud_request
-from lakitu.parquet_writer import columns_for, point_dtype
 from lakitu.storage import cloud_prefix
 
 from lib.gcs import get_gcsfs_client
+from lib.pointcloud.schema import columns_for, point_dtype
 
 from .conftest import MockRequest
 

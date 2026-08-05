@@ -44,6 +44,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 from griddle.handlers import chm_point_cloud
+from pyarrow.fs import LocalFileSystem
 
 PDAL_BIN = os.environ.get("PDAL_BIN") or shutil.which("pdal")
 
@@ -203,9 +204,9 @@ def _run_ours(cloud_dataset, point_classes):
         return filled
 
     with (
-        patch.object(chm_point_cloud, "_cloud_prefix", return_value=str(root)),
-        patch.object(chm_point_cloud, "get_gcsfs_client", return_value=None),
-        patch.object(chm_point_cloud, "_read_manifest", return_value=manifest),
+        patch.object(chm_point_cloud, "cloud_prefix", return_value=str(root)),
+        patch("lib.pointcloud.reader.get_gcsfs_client", return_value=LocalFileSystem()),
+        patch.object(chm_point_cloud, "read_manifest", return_value=manifest),
         patch.object(chm_point_cloud, "_fill_gaps", side_effect=capture_ground),
     ):
         dataset, provenance = chm_point_cloud.fetch_point_cloud_chm(

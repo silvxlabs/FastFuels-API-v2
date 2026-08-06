@@ -25,6 +25,7 @@ from griddle.handlers import (
 from lib.config import GRIDS_COLLECTION, POINT_CLOUDS_COLLECTION
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.landfire import LANDFIRE_VERSIONS
 
 META_CHM_ATTRIBUTION = {
     "1": {
@@ -136,7 +137,7 @@ def handle_landfire(
 
     match product:
         case "fbfm13":
-            version = source.get("version", "2024")
+            version = source.get("version", LANDFIRE_VERSIONS["fbfm13"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
             return landfire.fetch_fbfm13(
@@ -148,7 +149,7 @@ def handle_landfire(
                 target_grid_doc=target_grid_doc,
             )
         case "fbfm40":
-            version = source.get("version", "2024")
+            version = source.get("version", LANDFIRE_VERSIONS["fbfm40"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
             return landfire.fetch_fbfm40(
@@ -160,7 +161,7 @@ def handle_landfire(
                 target_grid_doc=target_grid_doc,
             )
         case "fccs":
-            version = source.get("version", "2023")
+            version = source.get("version", LANDFIRE_VERSIONS["fccs"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_bare_ground = source.get("remove_bare_ground", False)
             return landfire.fetch_fccs(

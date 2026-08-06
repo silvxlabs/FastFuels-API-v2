@@ -19,16 +19,13 @@ from api.resources.grids.providers.landfire import (
     check_no_duplicate_non_burnable,
 )
 from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
+from lib.landfire import LANDFIRE_VERSIONS
 
-
-class LandfireFbfm40Version(StrEnum):
-    """Available LANDFIRE FBFM40 data versions."""
-
-    v2019 = "2019"
-    v2020 = "2020"
-    v2022 = "2022"
-    v2023 = "2023"
-    v2024 = "2024"
+# Build the version enum class from LANDFIRE_VERSIONS
+LandfireFbfm40Version = StrEnum(
+    "LandfireFbfm40Version",
+    {f"v{version}": version for version in LANDFIRE_VERSIONS["fbfm40"]["available"]},
+)
 
 
 class LandfireFbfm40Source(LandfireSource):
@@ -52,7 +49,9 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
     To convert codes to fuel parameters, use /grids/lookup/fbfm40.
     """
 
-    version: LandfireFbfm40Version = LandfireFbfm40Version.v2024
+    version: LandfireFbfm40Version = LandfireFbfm40Version(
+        LANDFIRE_VERSIONS["fbfm40"]["default"]
+    )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
 
     @field_validator("remove_non_burnable")

@@ -13,12 +13,13 @@ from typing import Literal
 
 from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
+from lib.landfire import LANDFIRE_VERSIONS
 
-
-class LandfireFccsVersion(StrEnum):
-    """Available LANDFIRE FCCS data versions."""
-
-    v2023 = "2023"
+# Build the version enum class from LANDFIRE_VERSIONS
+LandfireFccsVersion = StrEnum(
+    "LandfireFccsVersion",
+    {f"v{version}": version for version in LANDFIRE_VERSIONS["fccs"]["available"]},
+)
 
 
 class LandfireFccsSource(LandfireSource):
@@ -40,7 +41,9 @@ class CreateLandfireFccsRequest(CreateSourceGridRequestBase):
     To convert IDs to fuel parameters, use /grids/lookup/fccs.
     """
 
-    version: LandfireFccsVersion = LandfireFccsVersion.v2023
+    version: LandfireFccsVersion = LandfireFccsVersion(
+        LANDFIRE_VERSIONS["fccs"]["default"]
+    )
     remove_bare_ground: bool = False
 
 

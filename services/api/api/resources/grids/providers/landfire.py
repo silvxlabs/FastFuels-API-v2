@@ -42,15 +42,6 @@ class NonBurnableFuelModel(StrEnum):
     NB9 = "NB9"  # Bare ground (99)
 
 
-NB_CODE_MAP: dict[str, int] = {
-    "NB1": 91,
-    "NB2": 92,
-    "NB3": 93,
-    "NB8": 98,
-    "NB9": 99,
-}
-
-
 def check_no_duplicate_non_burnable(v):
     """Shared validator for remove_non_burnable fields."""
     if v is not None and len(v) != len(set(v)):

@@ -15,7 +15,7 @@ from collections.abc import Callable
 import geopandas as gpd
 import numpy as np
 import shapely
-from pyproj import CRS
+from pyproj import CRS, Transformer
 from shapely.geometry.base import BaseGeometry
 
 from lakitu.chain import stream_records
@@ -32,6 +32,7 @@ from lib.entwine import (
 )
 from lib.errors import ProcessingError
 from lib.laz import build_output_header, point_format_id_for_dimensions
+from lib.pointcloud.schema import choose_tile_m
 from lib.pointcloud.summary import PointSummary
 from lib.pointcloud.writer import write_parquet
 
@@ -233,6 +234,45 @@ def _estimate_kept_points(nodes: list, projected: BaseGeometry) -> int:
     return int(node_points * min(1.0, projected.area / box_area))
 
 
+def _by_locality(nodes: list, transformer, origin: tuple, tile_m: float) -> list:
+    """Order nodes so the ones in flight together land in the same output tiles.
+
+    The index walk returns nodes shallowest-first, which at the deep levels --
+    where 90% of the points are -- means consecutive nodes are scattered across
+    the whole domain. The writer buffers points per tile and flushes the largest
+    when its budget fills, so a scattered arrival order spreads one fixed buffer
+    across every tile at once and every flush writes a small file. Measured at
+    16 km2 before this: 464 files over 72 tiles, averaging 4.8 MB.
+
+    Ordering by the writer's own tile grid means the stream sweeps one tile at a
+    time, so few are open at once and each is written in one or two pieces. Node
+    bounds are in the acquisition's CRS and the tiles are in the domain's, so
+    centres are transformed first: an untransformed sweep runs diagonally across
+    the tile grid and keeps a whole row of tiles open instead of one.
+
+    Args:
+        nodes: Nodes from `walk_hierarchy`, in the acquisition's CRS.
+        transformer: pyproj transformer from the acquisition's CRS to the domain's.
+        origin: ``(min_x, min_y)`` of the tiling, in the domain's CRS.
+        tile_m: Tile size, matching what the writer partitions on.
+
+    Returns:
+        The same nodes, ordered by tile row then column, shallowest first within
+        a tile so coarse nodes land before the detail that refines them.
+    """
+    if not nodes:
+        return nodes
+    centres_x = [(n.bounds[0] + n.bounds[3]) / 2 for n in nodes]
+    centres_y = [(n.bounds[1] + n.bounds[4]) / 2 for n in nodes]
+    xs, ys = transformer.transform(centres_x, centres_y)
+    keyed = [
+        (int((y - origin[1]) // tile_m), int((x - origin[0]) // tile_m), n.depth, i)
+        for i, (n, x, y) in enumerate(zip(nodes, xs, ys))
+    ]
+    keyed.sort()
+    return [nodes[k[3]] for k in keyed]
+
+
 def _write_points(
     session,
     selection: EptSelection,
@@ -266,11 +306,35 @@ def _write_points(
     multi_source = len(selection.datasets) > 1
     axis_aligned = domain_geom.equals(domain_geom.envelope)
 
+    # Decided here rather than left to the writer, because the node order below
+    # has to agree with the tiling it feeds.
+    tile_m = choose_tile_m(
+        float(
+            max(
+                header_bounds[2] - header_bounds[0], header_bounds[3] - header_bounds[1]
+            )
+        )
+    )
+
     plan = []
     for index, nodes in all_nodes:
         clip = selection.contributions[index] if multi_source else domain_geom
         polygon = None if (axis_aligned and not multi_source) else clip
-        plan.append((metadata[index], nodes, polygon, clip.bounds))
+        plan.append(
+            (
+                metadata[index],
+                _by_locality(
+                    nodes,
+                    Transformer.from_crs(
+                        metadata[index].crs, domain_crs, always_xy=True
+                    ),
+                    (header_bounds[0], header_bounds[1]),
+                    tile_m,
+                ),
+                polygon,
+                clip.bounds,
+            )
+        )
 
     # The writer partitions on the domain's own horizontal extent. Elevations
     # come from the sources: horizontal reprojection leaves them untouched, so
@@ -300,7 +364,7 @@ def _write_points(
 
     progress("Writing point cloud", 15)
     bucket, prefix = cloud_location(point_cloud_id)
-    result = write_parquet(stats.observe(records), info, bucket, prefix)
+    result = write_parquet(stats.observe(records), info, bucket, prefix, tile_m=tile_m)
     return stats.summary(), stats.bounds(), result["output_bytes"]
 
 

@@ -43,10 +43,21 @@ from lib.pointcloud.schema import (
 )
 
 # How much routed-but-unflushed point data the parent holds, and how big a tile
-# has to be before it is worth flushing. File size is roughly
-# BUFFER_BUDGET / active tiles, so the budget is what sets it.
+# has to be before it is worth flushing.
+#
+# A tile is written once per flush, so file size is roughly
+# BUFFER_BUDGET / active tiles. Two things set the count: how many tiles the
+# arriving points touch at once, and how much the parent may hold. Feeding
+# points in spatial order took 16 km2 from 464 files to 272 on its own.
+#
+# Raising the budget buys fewer files and costs wall clock, which matters more.
+# Measured at 16 km2 against 192 MiB, all with the ordered feed: 384 MiB gave
+# 129 files for +23% wall, 512 MiB gave 128 for +49%, 768 MiB gave 124 for +36%.
+# It also costs memory several times over, because a buffered byte is copied
+# again by the concatenate, the pickle, and the worker's encode -- 320 MiB of
+# extra budget measured as 2.2 GiB of extra peak. Ordering the feed is the lever
+# that is free; this one is not.
 BUFFER_BUDGET = 192 << 20
-MIN_FLUSH_BYTES = 32 << 20  # prefer flushing tiles that have grown big
 MAX_TILE_BYTES = 96 << 20  # flush a tile at this size regardless of budget
 
 
@@ -200,18 +211,16 @@ def _worker_init(bucket, prefix, scales, offsets):
         raise
 
 
-def _pin(tile, n):
-    """Which worker owns a tile. Any stable spread works; this is cheap."""
-    return ((tile[0] * 73856093) ^ (tile[1] * 19349663)) % n
-
-
 def _write_worker(in_q, out_q, init_args):
-    """Own a subset of tiles end to end: LOD, encode, compress, upload.
+    """Take any flush off the shared queue and carry it to GCS: LOD, encode, upload.
 
-    Tasks are routed by `_pin` so a tile always reaches the same process, and
-    one FIFO queue per worker preserves flush order within a tile. Neither is
-    needed for the LOD any more -- a stride carries no state between flushes --
-    but keeping a tile on one worker still keeps its part files in sequence.
+    Workers used to own a fixed subset of tiles, because a tile's LOD grids had
+    to survive its repeated flushes. A stride carries no state between flushes,
+    so nothing is owned and every worker draws from one queue. That matters once
+    points arrive in spatial order: consecutive flushes are then neighbouring
+    tiles, which under a hash pinning would land on the same worker and block the
+    parent on one queue while the rest idled. Part numbers come from the parent,
+    so they stay in sequence whoever writes them.
     """
     try:
         _worker_init(*init_args)
@@ -241,25 +250,26 @@ def _write_worker(in_q, out_q, init_args):
         out_q.put(None)
 
 
-class _PinnedPool:
-    """Tile-pinned worker processes with a collector thread.
+class _WritePool:
+    """Write worker processes drawing from one queue, with a collector thread.
 
     The parent must never block on a full input queue while nobody drains the
-    output queue, so collection runs on its own thread. Input queues are shallow
-    on purpose: they are the backpressure.
+    output queue, so collection runs on its own thread. The queue is shallow on
+    purpose: it is the backpressure. Sharing it means a slow flush occupies one
+    worker rather than stalling everything routed behind it.
     """
 
     def __init__(self, n, ctx, init_args, on_result, depth):
         self.n = n
         self.out_q = ctx.Queue()
-        self.in_qs = [ctx.Queue(maxsize=depth) for _ in range(n)]
+        self.in_q = ctx.Queue(maxsize=depth * n)
         self.procs = [
             ctx.Process(
                 target=_write_worker,
-                args=(self.in_qs[i], self.out_q, init_args),
+                args=(self.in_q, self.out_q, init_args),
                 daemon=True,
             )
-            for i in range(n)
+            for _ in range(n)
         ]
         for p in self.procs:
             p.start()
@@ -284,11 +294,11 @@ class _PinnedPool:
     def submit(self, tile, recs, rel):
         if self.error is not None:
             raise self.error
-        self.in_qs[_pin(tile, self.n)].put((tile, recs, rel))
+        self.in_q.put((tile, recs, rel))
 
     def close(self):
-        for q in self.in_qs:
-            q.put(None)
+        for _ in range(self.n):
+            self.in_q.put(None)
         self._collector.join()
         for p in self.procs:
             p.join(timeout=30)
@@ -355,7 +365,7 @@ def write_parquet(
 
     # forkserver, not fork: this process has a collector thread, and forking a
     # threaded process can inherit a lock held by a thread the child lacks.
-    pool = _PinnedPool(
+    pool = _WritePool(
         workers,
         multiprocessing.get_context("forkserver"),
         (bucket, prefix, scales, offsets),
@@ -403,9 +413,13 @@ def write_parquet(
                 buffered += part.nbytes
             for big_tile in [k for k, n in sizes.items() if n >= MAX_TILE_BYTES]:
                 flush(big_tile)
+            # Largest first. Evicting the least-recently-touched tile instead
+            # was tried, on the theory that spatial ordering makes the stalest
+            # tile a finished one: it produced 441 files against 274, because a
+            # stale tile is often a sliver a coarse node clipped, and freeing
+            # almost nothing per flush means flushing many of them.
             while buffered > BUFFER_BUDGET:
-                big = [t for t, n in sizes.items() if n >= MIN_FLUSH_BYTES]
-                flush(max(big, key=sizes.get) if big else max(sizes, key=sizes.get))
+                flush(max(sizes, key=sizes.get))
             total += out.size
         for tile in list(buffers):
             flush(tile)

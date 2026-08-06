@@ -73,11 +73,12 @@ def _chain_work(payload):
     """
     import laspy
 
+    from lib.crs import reproject
     from lib.laz import normalize_record
 
     points = laspy.read(io.BytesIO(payload))
     min_x, min_y, max_x, max_y = _W["bounds"]
-    x, y = _W["transformer"].transform(np.asarray(points.x), np.asarray(points.y))
+    x, y = reproject(_W["transformer"], np.asarray(points.x), np.asarray(points.y))
     z = np.asarray(points.z)
 
     # Cheap rectangle test first; the polygon test only runs for the points that

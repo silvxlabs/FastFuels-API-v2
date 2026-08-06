@@ -35,7 +35,7 @@ _REQUEST_TIMEOUT = 60
 # How long a loaded product list is reused, in seconds. LFPS coverage doesn't
 # change intra-day, so a short TTL is only there to eventually pick up a new
 # product/version without a process restart.
-LFPS_PRODUCTS_TTL_SECONDS = float(os.getenv("LFPS_PRODUCTS_TTL_SECONDS", 600))
+LFPS_PRODUCTS_TTL_SECONDS = float(os.getenv("LFPS_PRODUCTS_TTL_SECONDS", 3600))
 
 _products: list["LfpsProduct"] | None = None
 _products_fetched_on: datetime | None = None

@@ -33,7 +33,6 @@ from lib.entwine import (
 from lib.errors import ProcessingError
 from lib.laz import build_output_header, point_format_id_for_dimensions
 from lib.pointcloud.schema import choose_tile_m
-from lib.pointcloud.summary import PointSummary
 from lib.pointcloud.writer import write_parquet
 
 logger = logging.getLogger(__name__)
@@ -349,9 +348,8 @@ def _write_points(
         "offsets": np.asarray(header.offsets),
     }
 
-    stats = PointSummary(info["scales"], info["offsets"])
     total_nodes = sum(len(nodes) for _, nodes in all_nodes)
-    reporter = _NodeProgress(progress, total_nodes, stats)
+    reporter = _NodeProgress(progress, total_nodes)
 
     records = stream_records(
         session,
@@ -364,17 +362,16 @@ def _write_points(
 
     progress("Writing point cloud", 15)
     bucket, prefix = cloud_location(point_cloud_id)
-    result = write_parquet(stats.observe(records), info, bucket, prefix, tile_m=tile_m)
-    return stats.summary(), stats.bounds(), result["output_bytes"]
+    result = write_parquet(records, info, bucket, prefix, tile_m=tile_m)
+    return result["summary"], result["bounds"], result["output_bytes"]
 
 
 class _NodeProgress:
     """Reports read progress over the 15-85% band, at most every 5%."""
 
-    def __init__(self, progress, total_nodes, stats):
+    def __init__(self, progress, total_nodes):
         self._progress = progress
         self._total = max(total_nodes, 1)
-        self._stats = stats
         self._done = 0
         self._last = 0
 
@@ -383,9 +380,7 @@ class _NodeProgress:
         percent = 15 + int(70 * self._done / self._total)
         if percent >= self._last + 5:
             self._last = percent
-            self._progress(
-                f"Reading 3DEP lidar ({self._stats.count:,} points)", percent
-            )
+            self._progress(f"Reading 3DEP lidar ({self._done:,} nodes)", percent)
 
 
 def _crs_name(crs: CRS) -> str:

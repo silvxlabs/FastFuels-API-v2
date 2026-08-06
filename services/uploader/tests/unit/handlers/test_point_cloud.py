@@ -22,6 +22,8 @@ from uploader.handlers.point_cloud import (
 )
 
 from lib.errors import ProcessingError
+from lib.pointcloud.summary import PointSummary
+from lib.pointcloud.writer import _summarize
 from tests.pointcloud_helpers import make_test_las
 
 
@@ -88,6 +90,10 @@ def _store_capturing(reader, dst_crs, transformer, tmp_path=None):
     workers under forkserver, which re-imports the module in each child and so
     cannot see a patch made in the parent. What this pins is the uploader's own
     contribution: the records it produces and the scaling it chose.
+
+    The stub still reduces those records the way the real writer does, because
+    the reported summary is derived from them and several cases below assert on
+    it. Stubbing that out too would let a record-level regression pass.
     """
     captured = {}
 
@@ -95,7 +101,17 @@ def _store_capturing(reader, dst_crs, transformer, tmp_path=None):
         captured["info"] = info
         captured["prefix"] = prefix
         captured["records"] = list(records)
-        return {"points": 0, "tiles": 0, "files": 0, "output_bytes": 1234}
+        summary = PointSummary(info["scales"], info["offsets"])
+        for record in captured["records"]:
+            summary.fold(*_summarize(record))
+        return {
+            "points": summary.count,
+            "tiles": 0,
+            "files": 0,
+            "output_bytes": 1234,
+            "summary": summary.summary(),
+            "bounds": summary.bounds(),
+        }
 
     with patch.object(point_cloud, "write_parquet", fake_write_parquet):
         summary, bounds, size_bytes = _store(reader, dst_crs, transformer, "pc-1")

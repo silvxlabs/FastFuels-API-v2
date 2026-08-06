@@ -10,9 +10,11 @@ import io
 
 import numpy as np
 import pyarrow.parquet as pq
+import pytest
 
 from lib.pointcloud.schema import LOD_LEVELS, point_dtype
-from lib.pointcloud.writer import _encode, _grid_key, assign_lod
+from lib.pointcloud.summary import PointSummary
+from lib.pointcloud.writer import _encode, _grid_key, _summarize, assign_lod
 
 DTYPE = point_dtype(has_color=False)
 SCALES = np.array([0.01, 0.01, 0.01])
@@ -88,6 +90,39 @@ def test_encode_writes_one_row_group_per_level():
     for index, group in enumerate(groups):
         stats = group.column(lod_column).statistics
         assert stats.min == stats.max == index
+
+
+def test_summary_folds_across_flushes():
+    """Per-flush reduction must equal reducing the whole cloud at once.
+
+    The write workers each see one flush; the resource reports one set of
+    figures. Splitting unevenly, because real flushes are whatever the buffer
+    budget happened to evict.
+    """
+    r = records(100_000, seed=3)
+    summary = PointSummary(SCALES, OFFSETS)
+    for lo, hi in ((0, 7), (7, 40_001), (40_001, 40_002), (40_002, 100_000)):
+        summary.fold(*_summarize(r[lo:hi]))
+
+    assert summary.count == len(r)
+    assert summary.summary()["point_count"] == len(r)
+    assert summary.summary()["point_classes"] == sorted(
+        set(r["classification"].tolist())
+    )
+    expected = [
+        float(r[c].min()) * s + o for c, s, o in zip(("X", "Y", "Z"), SCALES, OFFSETS)
+    ] + [float(r[c].max()) * s + o for c, s, o in zip(("X", "Y", "Z"), SCALES, OFFSETS)]
+    assert summary.bounds() == pytest.approx(expected)
+
+
+def test_summary_of_no_points_is_not_an_error():
+    """A cloud with nothing in it reports zero rather than sentinel extremes."""
+    summary = PointSummary(SCALES, OFFSETS)
+    assert summary.summary() == {
+        "point_count": 0,
+        "point_classes": [],
+        "density": 0.0,
+    }
 
 
 def test_encode_orders_points_spatially():

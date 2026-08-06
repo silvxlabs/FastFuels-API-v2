@@ -41,6 +41,7 @@ from lib.pointcloud.schema import (
     choose_tile_m,
     columns_for,
 )
+from lib.pointcloud.summary import PointSummary
 
 # How much routed-but-unflushed point data the parent holds, and how big a tile
 # has to be before it is worth flushing.
@@ -217,6 +218,27 @@ def _encode(records, lod, scales, offsets):
     return buf.getvalue()
 
 
+def _summarize(records):
+    """Reduce one flush to what the resource reports about itself.
+
+    Runs in the write worker, on points it is about to encode anyway, so the
+    reduction is spread across the pool and lands while the data is still hot.
+    Every point belongs to exactly one flush, so folding these is exact.
+
+    Returns:
+        ``(mins, maxs, classes, count)`` over the stored integers, for
+        `lib.pointcloud.summary.PointSummary.fold`.
+    """
+    seen = np.zeros(256, dtype=bool)
+    seen[records["classification"]] = True
+    return (
+        np.array([records[c].min() for c in ("X", "Y", "Z")], dtype=np.int64),
+        np.array([records[c].max() for c in ("X", "Y", "Z")], dtype=np.int64),
+        np.flatnonzero(seen),
+        records.size,
+    )
+
+
 # Per-process state for the write workers, set once by the initializer so each
 # task carries only its points.
 _W = {}
@@ -264,7 +286,7 @@ def _write_worker(in_q, out_q, init_args):
                 buf = io.BytesIO()
                 # FileMetaData does not pickle; the parent revives the bytes.
                 md.write_metadata_file(buf)
-                out_q.put(("ok", len(data), buf.getvalue(), rel))
+                out_q.put(("ok", len(data), buf.getvalue(), rel, _summarize(recs)))
             except BaseException as e:
                 import traceback
 
@@ -316,7 +338,7 @@ class _WritePool:
                 if self.error is None:
                     self.error = RuntimeError(f"{item[3]}: {item[1]}\n{item[2]}")
                 continue
-            self._on_result(item[1], item[2])
+            self._on_result(item[1], item[2], item[4])
 
     def submit(self, tile, recs, rel):
         if self.error is not None:
@@ -358,7 +380,10 @@ def write_parquet(
         depth: Per-worker queue depth, which is the parent's backpressure.
 
     Returns:
-        Dict with ``points``, ``tiles``, ``files`` and ``output_bytes``.
+        Dict with ``points``, ``tiles``, ``files``, ``output_bytes``, and the
+        ``summary`` and ``bounds`` the resource reports about itself. The last
+        two are reduced in the write workers rather than by the caller, because
+        every point already passes through one on its way to a file.
 
     Raises:
         RuntimeError: If any write worker failed.
@@ -378,17 +403,18 @@ def write_parquet(
 
     buffers, sizes, counts, nparts = {}, {}, {}, {}
     buffered = 0
-    total = 0
     lock = threading.Lock()
     stats = {"written_bytes": 0, "files": 0}
     footers = []
+    summary = PointSummary(scales, offsets)
 
-    def on_result(nbytes_out, md_bytes):
+    def on_result(nbytes_out, md_bytes, folded):
         md = pq.read_metadata(io.BytesIO(md_bytes))
         with lock:
             stats["written_bytes"] += nbytes_out
             stats["files"] += 1
             footers.append(md)
+            summary.fold(*folded)
 
     # forkserver, not fork: this process has a collector thread, and forking a
     # threaded process can inherit a lock held by a thread the child lacks.
@@ -447,7 +473,6 @@ def write_parquet(
             # almost nothing per flush means flushing many of them.
             while buffered > BUFFER_BUDGET:
                 flush(max(sizes, key=sizes.get))
-            total += out.size
         for tile in list(buffers):
             flush(tile)
     finally:
@@ -456,7 +481,7 @@ def write_parquet(
     manifest = {
         "tiles": len(counts),
         "tile_m": tile_m,
-        "points": total,
+        "points": summary.count,
         "lod_levels": LOD_LEVELS,
         "n_tx": n_tx,
         "scales": list(map(float, scales)),
@@ -475,8 +500,10 @@ def write_parquet(
         sink.put("_metadata", mbuf.getvalue())
 
     return {
-        "points": total,
+        "points": summary.count,
         "tiles": len(counts),
         "files": stats["files"],
         "output_bytes": stats["written_bytes"] + sink.bytes_written,
+        "summary": summary.summary(),
+        "bounds": summary.bounds(),
     }

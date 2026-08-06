@@ -14,6 +14,12 @@ class PointSummary:
 
     Accumulated on the way past rather than read back afterwards, so what is
     reported always describes what was stored.
+
+    The per-point reduction happens wherever the points already are — the write
+    workers, which hold each flush anyway — and this only folds the handful of
+    scalars each one returns. It used to run on the parent thread, six strided
+    reductions and a scatter over every point in the cloud, on the one thread
+    that also routes every point and drains every queue.
     """
 
     def __init__(self, scales, offsets):
@@ -21,27 +27,27 @@ class PointSummary:
         self._offsets = np.asarray(offsets)
         self.count = 0
         # Classification is a uint8, so a flag per value beats accumulating a
-        # set: no sort, no Python-level set union, per record.
+        # set: no sort, no Python-level set union, per fold.
         self._seen_class = np.zeros(256, dtype=bool)
         self._mins = np.full(3, np.iinfo(np.int32).max, dtype=np.int64)
         self._maxs = np.full(3, np.iinfo(np.int32).min, dtype=np.int64)
 
-    def observe(self, records):
-        """Fold each record's extremes in, then pass it straight through.
+    def fold(self, mins, maxs, classes, count):
+        """Merge one flush's extremes in.
 
         Reduces over the stored integers and scales only the six surviving
-        scalars at the end. Scaling every point here would repeat, on the
-        busiest thread in the process, work the writer already does to route the
-        point.
+        scalars at the end, so nothing here is per-point.
+
+        Args:
+            mins: Per-axis minima of X, Y, Z, as stored integers.
+            maxs: Per-axis maxima of X, Y, Z, as stored integers.
+            classes: The classification values the flush contained.
+            count: How many points it held.
         """
-        for record in records:
-            for axis, name in enumerate(("X", "Y", "Z")):
-                column = record[name]
-                self._mins[axis] = min(self._mins[axis], int(column.min()))
-                self._maxs[axis] = max(self._maxs[axis], int(column.max()))
-            self._seen_class[record["classification"]] = True
-            self.count += record.size
-            yield record
+        np.minimum(self._mins, mins, out=self._mins)
+        np.maximum(self._maxs, maxs, out=self._maxs)
+        self._seen_class[classes] = True
+        self.count += count
 
     def bounds(self) -> list[float]:
         """``[min_x, min_y, min_z, max_x, max_y, max_z]`` in world units."""

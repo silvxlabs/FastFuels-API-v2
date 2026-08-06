@@ -47,7 +47,6 @@ from lib.laz import (
     point_format_id_for_dimensions,
 )
 from lib.pointcloud.schema import cloud_location, point_dtype
-from lib.pointcloud.summary import PointSummary
 from lib.pointcloud.writer import write_parquet
 
 # ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
@@ -227,10 +226,9 @@ def _store(reader, dst_crs, transformer, resource_id):
                 out[name] = record.array[name]
             yield out
 
-    stats = PointSummary(info["scales"], info["offsets"])
     bucket, prefix = cloud_location(POINT_CLOUDS_BUCKET, resource_id)
-    result = write_parquet(stats.observe(records()), info, bucket, prefix)
-    return stats.summary(), stats.bounds(), result["output_bytes"]
+    result = write_parquet(records(), info, bucket, prefix)
+    return result["summary"], result["bounds"], result["output_bytes"]
 
 
 def _output_bounds(src_header, transformer) -> tuple:

@@ -69,8 +69,7 @@ DELTA_COLUMNS = {
     "Z": "DELTA_BINARY_PACKED",
 }
 
-LOD_LEVELS = 6  # 4**5 = 1024x decimation range; deeper is full-res
-CELL_COUNT = 128  # matches COPC, so the pyramids are comparable
+LOD_LEVELS = 6  # level k holds 1 in 4**(5-k); level 5 is the whole tile
 
 
 def point_dtype(has_color: bool) -> np.dtype:

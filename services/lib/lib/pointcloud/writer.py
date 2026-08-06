@@ -9,9 +9,9 @@ Each part is written one row group per LOD level, so a ``lod <= k`` filter prune
 on row-group statistics. Writing a single row group spanning every level made the
 pyramid correct but useless: pushdown prunes row groups, not rows.
 
-The LOD is a real pyramid: level k's cell is ``extent / (2**k * CELL_COUNT)``,
-the union of every level-k COPC node's sampling grid. Cells are voxels, not
-columns -- see LodAssigner.
+The LOD is a stride: level k holds 1 in 4**(L-1-k) of a tile's points, so
+``lod <= k`` is a nested, unbiased subsample and the deepest level is the whole
+tile -- see assign_lod.
 
 Coordinates stay as LAS scaled int32s with scale/offset in the file metadata,
 which keeps them small and lossless rather than exploding to float64.
@@ -26,7 +26,6 @@ The layout this writes is defined in `lib.pointcloud.schema`, and read back by
 
 import io
 import json
-import math
 import multiprocessing
 import threading
 
@@ -36,7 +35,6 @@ import pyarrow.parquet as pq
 
 from lib.config import LAKITU_WRITE_QUEUE_DEPTH, LAKITU_WRITE_WORKERS
 from lib.pointcloud.schema import (
-    CELL_COUNT,
     DELTA_COLUMNS,
     DICT_COLUMNS,
     LOD_LEVELS,
@@ -50,21 +48,6 @@ from lib.pointcloud.schema import (
 BUFFER_BUDGET = 192 << 20
 MIN_FLUSH_BYTES = 32 << 20  # prefer flushing tiles that have grown big
 MAX_TILE_BYTES = 96 << 20  # flush a tile at this size regardless of budget
-
-
-# Cells per level per tile. Voxels cost side**2 * nz against a column's side**2,
-# so this is what stops the deep levels exploding -- at a 500 m tile, 4 km extent
-# and 300 m of relief, level 3 wants 1.26M cells and level 4 wants 10.1M. Past
-# the budget a level keeps as many z bins as fit instead of going flat.
-#
-# It binds the int32 claim scratch at 4 bytes per cell, more tightly than the
-# bool grids, so the claim is shared across every tile a worker owns rather than
-# allocated per tile: 4.2 MB per worker, not per tile.
-#
-# 1 << 20 keeps a tile's grids near 3.3 MB against 0.35 MB for flat columns.
-# Raising it mostly buys z bins at levels 4-5, where the XY cell is already
-# sub-metre and vertical collapse is barely visible; 1 << 22 cost 9.4 MB a tile.
-GRID_CELL_BUDGET = 1 << 20
 
 
 class GcsSink:
@@ -89,105 +72,45 @@ class GcsSink:
         self.bytes_written += len(data)
 
 
-class LodAssigner:
-    """Per-tile LOD occupancy grids, sort-free.
+def assign_lod(count, levels=LOD_LEVELS):
+    """Assign each point a pyramid level by stride: level k keeps 1 in 4**(L-1-k).
 
-    Cell size stays the GLOBAL one -- extent/(2**k * CELL_COUNT) -- so levels
-    mean the same thing everywhere; only the extent covered is tile-local. Tile
-    boundaries fall on cell boundaries at every level (a 500 m tile is exactly 16
-    level-0 cells at a 4 km extent), so a tile-local grid is a clean subset of
-    the global one and the pyramid is unchanged.
+    Levels are nested -- ``lod <= k`` is a 1-in-4**(L-1-k) sample of the tile,
+    and each level is a strict superset of the one above -- so a reader gets a
+    geometric ladder of point counts and the deepest level is the whole tile.
+    There is no residual: every point belongs to a level.
 
-    Cells are cubic voxels, not columns, on every level whose grid fits
-    GRID_CELL_BUDGET. A column would put exactly one point in a 31 x 31 m cell at
-    level 0 and pick it by EPT arrival order, which is unrelated to height, so a
-    coarse preview of a forest was an arbitrary vertical draw rather than
-    ground-plus-canopy -- measured on a real tile, level 0's Z spread was *wider*
-    than the full cloud's. It also made the pyramid a quadtree, where COPC's is
-    an octree, so the levels did not mean what a COPC-shaped viewer expects.
+    Deliberately not voxel sampling. An occupancy grid keeps at most one point
+    per cell, which equalises density, but measured against this on a real
+    7.8M-point tile the difference is not worth what it costs:
 
-    Making this per-tile is what lets LOD assignment leave the main process:
-    tiles are independent, so their assignments share no mutable state.
+    * both cover 100% of the tile's occupied 15 m cells at every level (99.8% at
+      the very coarsest, 7,663 points), so there are no holes to fix;
+    * a stride is an unbiased sample, so a preview's class mix and height
+      distribution match the full cloud exactly -- ground stays at 30.0% at every
+      level, where voxel sampling drifted it to 35.2%;
+    * a grid costs `side**2 * nz` cells that have to persist for the life of a
+      tile, because a tile is flushed many times. Sized to reach point spacing
+      over a 500 m tile that is 25 MB per tile, or 6.4 GB across a 64 km2
+      domain. A stride costs nothing and needs no state at all.
 
-    First-writer-wins scatter: claim slots in a scratch array, gather to see who
-    won, reset only the touched entries.
+    The order this strides is the order points arrived, which is not spatially
+    sorted. That is the pessimistic case and it was measured that way.
+
+    Args:
+        count: Number of points to assign.
+        levels: Number of pyramid levels; level ``levels - 1`` holds everything.
+
+    Returns:
+        uint8 array of levels, one per point.
     """
-
-    def __init__(
-        self, origin, tile_m, extent, z_origin, z_span, levels=LOD_LEVELS, claim=None
-    ):
-        self.origin = np.asarray(origin, dtype=float)
-        self.z_origin = float(z_origin)
-        self.extent = float(extent)
-        self.levels = levels
-        self.cell = [self.extent / (CELL_COUNT * (2**k)) for k in range(levels)]
-        self.side = [max(1, int(round(tile_m / c))) for c in self.cell]
-        # Cubic voxels where the budget allows, and where it does not, as many
-        # bins as fit rather than falling back to a flat column. Collapsing to
-        # 2D was the first cut and it was too brittle: z_span is the raw header
-        # range, so a handful of noise points hundreds of metres up would push a
-        # level over budget and cost it every bit of vertical structure. Taller
-        # bins still separate ground from canopy; one bin does not.
-        self.nz = [
-            max(1, min(int(math.ceil(z_span / c)), GRID_CELL_BUDGET // (s * s)))
-            for s, c in zip(self.side, self.cell)
-        ]
-        # Bin height, which equals the cell size until the budget caps a level.
-        self.zcell = [z_span / n if n > 1 else float("inf") for n in self.nz]
-        self.grids = [
-            np.zeros(s * s * n, dtype=bool) for s, n in zip(self.side, self.nz)
-        ]
-        # Reusable across tiles: it is scratch, reset before it is handed back,
-        # and every tile in a job shares one tile_m/extent/z_span so one size
-        # fits all. Callers that assign tiles concurrently must not share it.
-        need = max(s * s * n for s, n in zip(self.side, self.nz))
-        self.claim = (
-            claim
-            if claim is not None and claim.size >= need
-            else np.full(need, -1, dtype=np.int32)
-        )
-
-    def assign(self, x, y, z):
-        lod = np.full(len(x), self.levels, dtype=np.uint8)
-        remaining = np.arange(len(x), dtype=np.int64)
-        claim = self.claim
-        for k in range(self.levels):
-            if remaining.size == 0:
-                break
-            side = self.side[k]
-            nz = self.nz[k]
-            w = self.cell[k]
-            xi = np.clip(
-                ((x[remaining] - self.origin[0]) / w).astype(np.int64), 0, side - 1
-            )
-            yi = np.clip(
-                ((y[remaining] - self.origin[1]) / w).astype(np.int64), 0, side - 1
-            )
-            flat = xi * side + yi
-            del xi, yi
-            if nz > 1:
-                zi = np.clip(
-                    ((z[remaining] - self.z_origin) / self.zcell[k]).astype(np.int64),
-                    0,
-                    nz - 1,
-                )
-                flat = flat * nz + zi
-                del zi
-            grid = self.grids[k]
-            cand = np.flatnonzero(~grid[flat])
-            if cand.size:
-                f = flat[cand]
-                n = f.size
-                claim[f[::-1]] = np.arange(n - 1, -1, -1, dtype=np.int32)
-                won = claim[f] == np.arange(n, dtype=np.int32)
-                claim[f] = -1
-                winners = cand[won]
-                lod[remaining[winners]] = k
-                grid[f[won]] = True
-                keep = np.ones(remaining.size, dtype=bool)
-                keep[winners] = False
-                remaining = remaining[keep]
-        return lod
+    lod = np.full(count, levels - 1, dtype=np.uint8)
+    index = np.arange(count)
+    # Coarse last so it wins: a point taken by level k must not be re-taken by a
+    # finer level, which is what makes the levels nested.
+    for k in range(levels - 2, -1, -1):
+        lod[index % (4 ** (levels - 1 - k)) == 0] = k
+    return lod
 
 
 def _file_metadata(data, path):
@@ -282,42 +205,24 @@ def _pin(tile, n):
     return ((tile[0] * 73856093) ^ (tile[1] * 19349663)) % n
 
 
-def _write_worker(in_q, out_q, init_args, grid_args):
+def _write_worker(in_q, out_q, init_args):
     """Own a subset of tiles end to end: LOD, encode, compress, upload.
 
-    A tile's LOD grids have to survive its repeated flushes, which is why this
-    exists instead of a plain ProcessPoolExecutor: tasks are routed by `_pin`, so
-    every flush of a tile reaches the same process and finds its grids. One FIFO
-    queue per worker also preserves flush order within a tile, which
-    first-writer-wins assignment depends on.
+    Tasks are routed by `_pin` so a tile always reaches the same process, and
+    one FIFO queue per worker preserves flush order within a tile. Neither is
+    needed for the LOD any more -- a stride carries no state between flushes --
+    but keeping a tile on one worker still keeps its part files in sequence.
     """
     try:
         _worker_init(*init_args)
-        mins, tile_m, extent, z_span = grid_args
         scales, offsets = _W["scales"], _W["offsets"]
-        assigners = {}
-        shared_claim = None
         while True:
             item = in_q.get()
             if item is None:
                 break
             tile, recs, rel = item
             try:
-                assigner = assigners.get(tile)
-                if assigner is None:
-                    origin = (mins[0] + tile[0] * tile_m, mins[1] + tile[1] * tile_m)
-                    assigner = assigners[tile] = LodAssigner(
-                        origin, tile_m, extent, mins[2], z_span, claim=shared_claim
-                    )
-                    # Safe here and only here: this loop assigns one tile at a
-                    # time, so no two assigners touch the scratch at once.
-                    shared_claim = assigner.claim
-                x = recs["X"] * scales[0] + offsets[0]
-                y = recs["Y"] * scales[1] + offsets[1]
-                z = recs["Z"] * scales[2] + offsets[2]
-                lod = assigner.assign(x, y, z)
-                del x, y, z
-                data = _encode(recs, lod, scales, offsets)
+                data = _encode(recs, assign_lod(len(recs)), scales, offsets)
                 _W["sink"].put(rel, data)
                 md = _file_metadata(data, rel)
                 buf = io.BytesIO()
@@ -344,14 +249,14 @@ class _PinnedPool:
     on purpose: they are the backpressure.
     """
 
-    def __init__(self, n, ctx, init_args, grid_args, on_result, depth):
+    def __init__(self, n, ctx, init_args, on_result, depth):
         self.n = n
         self.out_q = ctx.Queue()
         self.in_qs = [ctx.Queue(maxsize=depth) for _ in range(n)]
         self.procs = [
             ctx.Process(
                 target=_write_worker,
-                args=(self.in_qs[i], self.out_q, init_args, grid_args),
+                args=(self.in_qs[i], self.out_q, init_args),
                 daemon=True,
             )
             for i in range(n)
@@ -430,7 +335,6 @@ def write_parquet(
         # either. The pyramid means nothing over no area, so any positive extent
         # will do; this keeps the cell arithmetic from dividing by zero.
         extent = 1.0
-    z_span = float(maxs[2] - mins[2])
     if tile_m is None:
         tile_m = choose_tile_m(extent)
     n_tx = int(np.ceil((maxs[1] - mins[1]) / tile_m)) + 1
@@ -455,7 +359,6 @@ def write_parquet(
         workers,
         multiprocessing.get_context("forkserver"),
         (bucket, prefix, scales, offsets),
-        (mins, tile_m, extent, z_span),
         on_result,
         depth,
     )

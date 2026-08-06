@@ -42,12 +42,14 @@ assembled whole. Peak memory stopped tracking the point count as a result — a
 16 km² fetch peaks at 1.4 GB and a 64 km² one at 1.5 GB.
 
 Each part is written one row group per LOD level so a `lod <= k` filter prunes
-on statistics; pushdown prunes row groups, not rows. The pyramid is voxel-based,
-so a coarse level samples vertical structure rather than collapsing each column
-to whichever point happened to arrive first.
+on statistics; pushdown prunes row groups, not rows. The pyramid is a stride —
+level `k` holds 1 in `4**(5-k)` of a tile — so the levels are nested, exactly
+4× apart, and unbiased: a preview's class mix matches the full cloud. It was a
+per-tile voxel grid until the grid was found to cost `side**2 * nz` cells per
+live tile, 6.4 GB across a 64 km² domain, and to skew the class mix it sampled.
 
 Measured against the LAZ writer it replaces, at 16 km² / 343.6M points: 630s →
-126s and 2.42 GB → 2.76 GB. `gps_time` is not stored — it was 23% of the file
+113s and 2.42 GB → 2.23 GB. `gps_time` is not stored — it was 23% of the file
 and nothing reads it. Colour is not stored either, which is a real limitation:
 a colour-carrying source is promoted to LAS format 7 or 8 so the LAZ path never
 drops RGB, and this schema has nowhere to put it.
@@ -94,15 +96,28 @@ Download concurrency is a **separate knob** from chain concurrency. Downloads
 are network-bound and were never the limiter until the chain got fast; then
 fetch wait hit 54s of a 167s job until `LAKITU_DOWNLOAD_WORKERS` was raised.
 
-Worker counts are sharply peaked at the core count and must track the Cloud Run
-vCPU allocation — 3 chain workers on 2 vCPU cost 2.4x the CPU of 2 for identical
-output. `os.cpu_count()` cannot be used to infer it: it reports host cores, not
-the quota, and read 4 on a 2 vCPU service. Hence the explicit
+Worker counts must track the Cloud Run vCPU allocation, but not by matching it.
+At 2 vCPU they are sharply peaked at the core count — 3 chain workers there cost
+2.4x the CPU of 2 for identical output. At 8 vCPU the opposite holds: the
+shipping 6 chain + 8 write, which is 14 processes on 8 cores, beat every smaller
+combination tried — 4+4 by 13%, 3+3 by 30%. Oversubscription stops being waste
+once the parent thread is the limiter, because the parent's serial work sets the
+floor and the workers only have to stay ahead of it.
+
+`os.cpu_count()` cannot be used to infer the allocation anyway: it reports host
+cores, not the quota, and read 4 on a 2 vCPU service. Hence the explicit
 `LAKITU_WRITE_WORKERS` / `LAKITU_CHAIN_WORKERS` config.
 
-At 16 km², 8 vCPU is 126s against 234s at 4 vCPU and 486s at 2 vCPU — 20% more
-vCPU-seconds than 4 vCPU for 1.7x the speed, and cheaper than the LAZ writer at
-every shape.
+At 16 km², measured together on one build: 140s at 8 vCPU against 234s at 4 and
+486s at 2 — 20% more vCPU-seconds than 4 vCPU for 1.7x the speed, and cheaper
+than the LAZ writer at every shape, because Cloud Run bills allocated vCPU x
+request time rather than CPU consumed.
+
+That curve is also where the ceiling shows. 2 → 4 vCPU is near-linear and 4 → 8
+is not, because past roughly 4 vCPU the serial parent thread — routing every
+point, concatenating every flush, draining both queues — sets the floor rather
+than the workers. Work removed from a *worker* is worth almost nothing at 8 vCPU
+and close to its full CPU cost at 2.
 
 Cloud Tasks cancels an attempt at its dispatch deadline (600s by default for an
 HTTP target) and retries it, and this worker treats any retry as terminal, so

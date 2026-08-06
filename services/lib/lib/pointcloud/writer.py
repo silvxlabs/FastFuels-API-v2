@@ -50,13 +50,18 @@ from lib.pointcloud.schema import (
 # arriving points touch at once, and how much the parent may hold. Feeding
 # points in spatial order took 16 km2 from 464 files to 272 on its own.
 #
-# Raising the budget buys fewer files and costs wall clock, which matters more.
-# Measured at 16 km2 against 192 MiB, all with the ordered feed: 384 MiB gave
-# 129 files for +23% wall, 512 MiB gave 128 for +49%, 768 MiB gave 124 for +36%.
-# It also costs memory several times over, because a buffered byte is copied
-# again by the concatenate, the pickle, and the worker's encode -- 320 MiB of
-# extra budget measured as 2.2 GiB of extra peak. Ordering the feed is the lever
-# that is free; this one is not.
+# Raising the budget buys fewer files and costs some wall clock. Measured with
+# the network removed and three runs per budget, at the real 343.6M-point scale:
+# 384 MiB gave +3.8% wall, 768 MiB gave +15.0%, against a 3-6% spread within a
+# budget. An earlier single-run pass reported +23% and +36% for the same two,
+# which was the harness rather than the writer.
+#
+# The cost is ramp-up and tail, not memory pressure: the pool idles while the
+# parent fills the first buffer and the parent idles while the pool drains the
+# last one. Both are fixed, so the penalty falls as the job grows -- 768 MiB cost
+# +30.9% over 60M points and +15.0% over 343.6M. A larger domain can afford a
+# larger budget, and flushing a tile once the locality sweep has passed it would
+# retire the trade-off rather than tune it.
 BUFFER_BUDGET = 192 << 20
 MAX_TILE_BYTES = 96 << 20  # flush a tile at this size regardless of budget
 
@@ -131,17 +136,41 @@ def _file_metadata(data, path):
     return md
 
 
+# Cells per axis in the sort key. Must keep the packed key inside a uint16:
+# above 256 numpy stops radix-sorting it and the sort costs what an exact one
+# does. See _grid_key.
+_SORT_CELLS = 256
+
+
+def _grid_key(xs, ys):
+    """Each point's cell in a _SORT_CELLS square over the extent, packed to uint16."""
+
+    def cell(v):
+        lo, hi = int(v.min()), int(v.max())
+        # The +1 puts the maximum in the last cell rather than one past the end.
+        return (v - lo).astype(np.uint64) * _SORT_CELLS // (hi - lo + 1)
+
+    return (cell(xs) * _SORT_CELLS + cell(ys)).astype(np.uint16)
+
+
 def _encode(records, lod, scales, offsets):
-    """One row group per LOD level, X/Y-sorted within each.
+    """One row group per LOD level, spatially ordered within each.
 
-    Sorts on a single packed int64 key per level instead of a 3-key lexsort;
-    tile-local millimetre coordinates fit well inside 21 bits each.
+    The ordering is for compression alone. Row-group statistics are min/max,
+    which no permutation changes, so pushdown gets nothing from it; what it buys
+    is DELTA_BINARY_PACKED on X/Y/Z, worth 16% of the file on a real dense tile.
 
-    Morton (Z-order) interleaving was tried, to make X and Y both locally
-    coherent rather than leaving X near-sorted and Y sawtoothing. It was worth
-    3.6% while gps_time was still stored, but only 1.3% without it, against 62%
-    more encode time for the bit-spreading -- a bad trade in a path where worker
-    backpressure is what binds.
+    Points are ordered by their cell in a coarse grid over the level's extent.
+    Two things make that the right key. It fits a uint16, which numpy radix-sorts
+    in a single pass instead of falling back to merge sort, and it keeps X and Y
+    coherent together -- sorting on a packed (x, y) key orders by X and leaves Y
+    sawtoothing inside each run. Measured against that packed key on a real tile:
+    45% less CPU for 0.9% more file.
+
+    That is the Z-order benefit without Z-order's cost. Morton interleaving was
+    tried directly and rejected -- 62% more encode time for the bit-spreading.
+    Finer grids compress better still (512 cells gave 4.9% less file) but need a
+    uint32 key, which hands the radix sort back.
     """
     # Derived from the records rather than fixed, so a cloud with colour and one
     # without each write exactly the columns they have.
@@ -154,9 +183,7 @@ def _encode(records, lod, scales, offsets):
             if sel.size == 0:
                 continue
             r = records[sel]
-            dx = (r["X"] - r["X"].min()).astype(np.int64)
-            dy = (r["Y"] - r["Y"].min()).astype(np.int64)
-            r = r[np.argsort((dx << 21) | dy, kind="stable")]
+            r = r[np.argsort(_grid_key(r["X"], r["Y"]), kind="stable")]
             arrays = []
             for c in columns:
                 col = (

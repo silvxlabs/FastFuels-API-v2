@@ -9,6 +9,13 @@ Each part is written one row group per LOD level, so a ``lod <= k`` filter prune
 on row-group statistics. Writing a single row group spanning every level made the
 pyramid correct but useless: pushdown prunes row groups, not rows.
 
+A tile should be one part file. It is written when the last node that can reach
+it has been routed -- see the ``schedule`` argument to `write_parquet` -- rather
+than when the parent runs short of buffer. Evicting under pressure instead made
+file count scale with data volume rather than with area: 64 km2 wrote 2,953 files
+over 260 tiles, so the coarsest LOD of one tile was scattered across as many as
+33 objects and a preview of the whole cloud had to open all 2,953.
+
 The LOD is a stride: level k holds 1 in 4**(L-1-k) of a tile's points, so
 ``lod <= k`` is a nested, unbiased subsample and the deepest level is the whole
 tile -- see assign_lod.
@@ -33,7 +40,11 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from lib.config import LAKITU_WRITE_QUEUE_DEPTH, LAKITU_WRITE_WORKERS
+from lib.config import (
+    LAKITU_BUFFER_BUDGET_MB,
+    LAKITU_WRITE_QUEUE_DEPTH,
+    LAKITU_WRITE_WORKERS,
+)
 from lib.pointcloud.schema import (
     DELTA_COLUMNS,
     DICT_COLUMNS,
@@ -46,24 +57,32 @@ from lib.pointcloud.summary import PointSummary
 # How much routed-but-unflushed point data the parent holds, and how big a tile
 # has to be before it is worth flushing.
 #
-# A tile is written once per flush, so file size is roughly
-# BUFFER_BUDGET / active tiles. Two things set the count: how many tiles the
-# arriving points touch at once, and how much the parent may hold. Feeding
-# points in spatial order took 16 km2 from 464 files to 272 on its own.
+# What the budget means depends on whether a `schedule` is supplied. Without
+# one it is the flush trigger: the largest tile is evicted whenever the budget
+# is exceeded, so file size is roughly BUFFER_BUDGET / active tiles and the
+# budget is the only thing standing between the writer and one file per node.
 #
-# Raising the budget buys fewer files and costs some wall clock. Measured with
-# the network removed and three runs per budget, at the real 343.6M-point scale:
-# 384 MiB gave +3.8% wall, 768 MiB gave +15.0%, against a 3-6% spread within a
-# budget. An earlier single-run pass reported +23% and +36% for the same two,
-# which was the harness rather than the writer.
+# With a schedule it is a backstop. Tiles are written when they are finished, so
+# every eviction the budget forces is a tile that was going to be one file and
+# is now two. Size it to the peak the schedule needs, not to a memory floor.
 #
-# The cost is ramp-up and tail, not memory pressure: the pool idles while the
-# parent fills the first buffer and the parent idles while the pool drains the
-# last one. Both are fixed, so the penalty falls as the job grows -- 768 MiB cost
-# +30.9% over 60M points and +15.0% over 343.6M. A larger domain can afford a
-# larger budget, and flushing a tile once the locality sweep has passed it would
-# retire the trade-off rather than tune it.
-BUFFER_BUDGET = 192 << 20
+# Measured at 64 km2 (1.045B points, 260 tiles), one image, env-switched arms,
+# every arm writing an identical point count:
+#
+#   eviction only, 192 MiB   2,953 files   11.4/tile   2.72 GB RSS   317 s
+#   schedule,      192 MiB   1,069 files    4.1/tile   2.96 GB RSS   309 s
+#   schedule,      512 MiB     449 files    1.7/tile   3.92 GB RSS   365 s
+#   schedule,     1024 MiB     359 files    1.4/tile   5.12 GB RSS   385 s
+#
+# The schedule itself is free -- 309 s against 317 s -- so the whole cost of the
+# 512 MiB default is the budget: +15% wall, +1.2 GB RSS. Size a budget from
+# measured RSS, not from this number: buffers hold lists of small arrays and
+# np.concatenate doubles at flush, so RSS grew about 3x the budget increase.
+#
+# What the files buy is the read. A whole-cloud `lod <= 0` preview took 243 s
+# over 3,210 files and 26.6 s over 359 -- latency against object count, not
+# bytes, since the preview is ~1 M points either way.
+BUFFER_BUDGET = LAKITU_BUFFER_BUDGET_MB << 20
 MAX_TILE_BYTES = 96 << 20  # flush a tile at this size regardless of budget
 
 
@@ -362,19 +381,26 @@ def write_parquet(
     prefix,
     *,
     tile_m=None,
+    schedule=None,
     workers=LAKITU_WRITE_WORKERS,
     depth=LAKITU_WRITE_QUEUE_DEPTH,
 ):
     """Route records into tiles and write a partitioned Parquet dataset.
 
     Args:
-        records: Iterable of PDRF-6 structured arrays, in any order.
+        records: Iterable of PDRF-6 structured arrays, in any order. With a
+            `schedule`, ``(node_index, array)`` pairs instead, so the writer can
+            tell which of the scheduled nodes has landed.
         info: Source bounds and scaling -- ``mins``, ``maxs``, ``scales``,
             ``offsets``, each a length-3 sequence.
         bucket: Destination GCS bucket name.
         prefix: Destination prefix within the bucket. The dataset is written
             directly under it.
         tile_m: Tile edge in metres. Defaults to `choose_tile_m`.
+        schedule: Optional ``{tile: last_node_index}`` from `plan_nodes`. Each
+            tile is written once its last node has been routed, which is what
+            makes a tile one file rather than one per buffer eviction. None
+            falls back to evicting the largest tile under budget pressure.
         workers: Write processes. Must not exceed the vCPU allocation --
             oversubscribing measured 2.4x the CPU for identical output.
         depth: Per-worker queue depth, which is the parent's backpressure.
@@ -439,8 +465,42 @@ def write_parquet(
         # intended backpressure.
         pool.submit(tile, np.concatenate(parts), rel)
 
+    # Tiles owed to each node index, and how far the arrival stream is complete.
+    # Nodes come back in download-completion order, not the order they were
+    # scheduled in, so a tile is only final once every node up to its last one
+    # has actually landed -- not merely once that one node has. `watermark` is
+    # the highest index with no gap below it, which is exactly that test.
+    due_at = {}
+    if schedule is not None:
+        for tile, last in schedule.items():
+            due_at.setdefault(last, []).append(tile)
+    arrived = set()
+    watermark = 0
+    swept = 0
+
+    def write_finished():
+        """Write every tile the arrival stream has moved past, whole."""
+        nonlocal swept
+        for i in range(swept, watermark):
+            for tile in due_at.get(i, ()):
+                flush(tile)
+        swept = watermark
+
     try:
-        for out in records:
+        for item in records:
+            if schedule is None:
+                out = item
+            else:
+                index, out = item
+                arrived.add(index)
+                while watermark in arrived:
+                    arrived.discard(watermark)
+                    watermark += 1
+                # A node that contributed no points still has to advance the
+                # watermark, or the tiles waiting on it are never written.
+                if out is None:
+                    write_finished()
+                    continue
             x = out["X"] * scales[0] + offsets[0]
             y = out["Y"] * scales[1] + offsets[1]
             tx = np.maximum(((x - mins[0]) / tile_m).astype(np.int32), 0)
@@ -464,6 +524,7 @@ def write_parquet(
                 sizes[key] = sizes.get(key, 0) + part.nbytes
                 counts[key] = counts.get(key, 0) + part.size
                 buffered += part.nbytes
+            write_finished()
             for big_tile in [k for k, n in sizes.items() if n >= MAX_TILE_BYTES]:
                 flush(big_tile)
             # Largest first. Evicting the least-recently-touched tile instead
@@ -471,6 +532,9 @@ def write_parquet(
             # tile a finished one: it produced 441 files against 274, because a
             # stale tile is often a sliver a coarse node clipped, and freeing
             # almost nothing per flush means flushing many of them.
+            #
+            # Under a schedule this is a backstop, and each time it fires it
+            # splits a tile that the schedule was about to write in one piece.
             while buffered > BUFFER_BUDGET:
                 flush(max(sizes, key=sizes.get))
         for tile in list(buffers):

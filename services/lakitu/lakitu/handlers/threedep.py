@@ -21,6 +21,7 @@ from shapely.geometry.base import BaseGeometry
 from lakitu.chain import stream_records
 from lakitu.ept import fetch_metadata, make_session, walk_hierarchy
 from lakitu.storage import cloud_location
+from lib.config import LAKITU_TILE_SCHEDULE
 from lib.entwine import (
     MAX_POINTS,
     DatasetNotFoundError,
@@ -233,43 +234,89 @@ def _estimate_kept_points(nodes: list, projected: BaseGeometry) -> int:
     return int(node_points * min(1.0, projected.area / box_area))
 
 
-def _by_locality(nodes: list, transformer, origin: tuple, tile_m: float) -> list:
-    """Order nodes so the ones in flight together land in the same output tiles.
+def _node_extent(node, transformer) -> tuple:
+    """A node's horizontal bounds in the domain CRS, from all four corners.
+
+    Two corners would clip the bulge: a straight edge in the acquisition's CRS
+    is a curve in the domain's, the same reason the query box is densified
+    before it is projected.
+    """
+    xs = [node.bounds[0], node.bounds[3], node.bounds[0], node.bounds[3]]
+    ys = [node.bounds[1], node.bounds[1], node.bounds[4], node.bounds[4]]
+    px, py = transformer.transform(xs, ys)
+    return min(px), min(py), max(px), max(py)
+
+
+def plan_nodes(all_nodes: list, transformers: dict, origin: tuple, tile_m: float):
+    """Order every node across every acquisition, and say when each tile is done.
 
     The index walk returns nodes shallowest-first, which at the deep levels --
     where 90% of the points are -- means consecutive nodes are scattered across
-    the whole domain. The writer buffers points per tile and flushes the largest
-    when its budget fills, so a scattered arrival order spreads one fixed buffer
-    across every tile at once and every flush writes a small file. Measured at
-    16 km2 before this: 464 files over 72 tiles, averaging 4.8 MB.
+    the whole domain. The writer buffers points per tile, so a scattered arrival
+    order spreads one buffer across every tile at once and every flush writes a
+    small file. Measured at 16 km2 before any ordering: 464 files over 72 tiles.
 
-    Ordering by the writer's own tile grid means the stream sweeps one tile at a
-    time, so few are open at once and each is written in one or two pieces. Node
-    bounds are in the acquisition's CRS and the tiles are in the domain's, so
-    centres are transformed first: an untransformed sweep runs diagonally across
-    the tile grid and keeps a whole row of tiles open instead of one.
+    Ordering by the writer's own tile grid makes the stream sweep one tile row at
+    a time. Two things that an earlier per-acquisition sweep got wrong:
+
+    * **Coarse nodes go first.** A node's span halves with depth, so the shallow
+      ones cover far more than a tile -- measured on the 64 km2 domain, depth <=
+      9 is 0.2% of nodes and 3.25% of points but spans up to 400 km, touching
+      every tile in the domain. Left in the sweep they mean no tile is ever
+      finished, because the next coarse node reopens tiles the sweep has passed.
+      Hoisted ahead of it, they land before the sweep starts and every tile the
+      sweep completes is genuinely complete.
+    * **One order across all acquisitions.** Ordering within each acquisition
+      sweeps the grid once per acquisition, so every seam tile is written, closed
+      and reopened.
+
+    Ordering is by tile row then column. Morton order over the tiles was tried
+    and is worse: its quads have to be descended and returned to, so tiles on a
+    quad boundary stay open across the recursion, where a row sweep finishes a
+    row and never comes back.
 
     Args:
-        nodes: Nodes from `walk_hierarchy`, in the acquisition's CRS.
-        transformer: pyproj transformer from the acquisition's CRS to the domain's.
-        origin: ``(min_x, min_y)`` of the tiling, in the domain's CRS.
+        all_nodes: ``(source_index, nodes)`` per acquisition, from the index walk.
+        transformers: Per source index, acquisition CRS to domain CRS.
+        origin: ``(min_x, min_y)`` of the tiling, in the domain CRS.
         tile_m: Tile size, matching what the writer partitions on.
 
     Returns:
-        The same nodes, ordered by tile row then column, shallowest first within
-        a tile so coarse nodes land before the detail that refines them.
+        ``(plan, schedule)``. `plan` is ``(source_index, node)`` in the order to
+        read them; `schedule` maps each tile to the index in `plan` of the last
+        node that can put a point in it, which is when the writer may write it.
     """
-    if not nodes:
-        return nodes
-    centres_x = [(n.bounds[0] + n.bounds[3]) / 2 for n in nodes]
-    centres_y = [(n.bounds[1] + n.bounds[4]) / 2 for n in nodes]
-    xs, ys = transformer.transform(centres_x, centres_y)
-    keyed = [
-        (int((y - origin[1]) // tile_m), int((x - origin[0]) // tile_m), n.depth, i)
-        for i, (n, x, y) in enumerate(zip(nodes, xs, ys))
-    ]
-    keyed.sort()
-    return [nodes[k[3]] for k in keyed]
+    entries = []
+    for source, nodes in all_nodes:
+        for node in nodes:
+            x0, y0, x1, y1 = _node_extent(node, transformers[source])
+            entries.append((source, node, (x0, y0, x1, y1)))
+
+    def tile_of(v, axis):
+        return int((v - origin[axis]) // tile_m)
+
+    def key(entry):
+        _, node, (x0, y0, x1, y1) = entry
+        row = tile_of((y0 + y1) / 2, 1)
+        col = tile_of((x0 + x1) / 2, 0)
+        # A node wider than a tile cannot be placed in the sweep at all.
+        if max(x1 - x0, y1 - y0) > tile_m:
+            return (0, node.depth, row, col)
+        return (1, row, col, node.depth)
+
+    entries.sort(key=key)
+
+    schedule = {}
+    for index, (_, _, (x0, y0, x1, y1)) in enumerate(entries):
+        # One tile of halo. The extent is the projected bounding box of a
+        # reprojected cube, so a point can land marginally outside it; claiming
+        # a tile late only delays a write, where claiming one early splits it.
+        for tx in range(tile_of(x0, 0) - 1, tile_of(x1, 0) + 2):
+            for ty in range(tile_of(y0, 1) - 1, tile_of(y1, 1) + 2):
+                if tx >= 0 and ty >= 0:
+                    schedule[(tx, ty)] = index
+
+    return [(source, node) for source, node, _ in entries], schedule
 
 
 def _write_points(
@@ -315,25 +362,28 @@ def _write_points(
         )
     )
 
-    plan = []
-    for index, nodes in all_nodes:
+    transformers = {
+        index: Transformer.from_crs(metadata[index].crs, domain_crs, always_xy=True)
+        for index, _ in all_nodes
+    }
+    # A list, not a dict: the chain workers index straight into it, and an
+    # acquisition the walk found no nodes in still has to hold its slot.
+    sources = []
+    for index in range(len(metadata)):
         clip = selection.contributions[index] if multi_source else domain_geom
         polygon = None if (axis_aligned and not multi_source) else clip
-        plan.append(
+        sources.append(
             (
-                metadata[index],
-                _by_locality(
-                    nodes,
-                    Transformer.from_crs(
-                        metadata[index].crs, domain_crs, always_xy=True
-                    ),
-                    (header_bounds[0], header_bounds[1]),
-                    tile_m,
-                ),
-                polygon,
+                metadata[index].crs.to_wkt(),
+                polygon.wkb if polygon is not None else None,
                 clip.bounds,
             )
         )
+    plan, schedule = plan_nodes(
+        all_nodes, transformers, (header_bounds[0], header_bounds[1]), tile_m
+    )
+    if not LAKITU_TILE_SCHEDULE:
+        schedule = None
 
     # The writer partitions on the domain's own horizontal extent. Elevations
     # come from the sources: horizontal reprojection leaves them untouched, so
@@ -354,15 +404,20 @@ def _write_points(
     records = stream_records(
         session,
         plan,
+        sources,
         domain_crs.to_wkt(),
         header_bounds,
         point_format_id,
         on_node=reporter,
     )
+    if schedule is None:
+        records = (record for _, record in records if record is not None)
 
     progress("Writing point cloud", 15)
     bucket, prefix = cloud_location(point_cloud_id)
-    result = write_parquet(records, info, bucket, prefix, tile_m=tile_m)
+    result = write_parquet(
+        records, info, bucket, prefix, tile_m=tile_m, schedule=schedule
+    )
     return result["summary"], result["bounds"], result["output_bytes"]
 
 

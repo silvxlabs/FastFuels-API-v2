@@ -48,6 +48,58 @@ level `k` holds 1 in `4**(5-k)` of a tile — so the levels are nested, exactly
 per-tile voxel grid until the grid was found to cost `side**2 * nz` cells per
 live tile, 6.4 GB across a 64 km² domain, and to skew the class mix it sampled.
 
+Which level a given point lands in is not reproducible across runs: the stride
+runs over arrival order within a flush, so two runs of the same domain put
+1,022,619 and 1,021,204 points in level 0. The totals are exact and the sample
+is unbiased either way; nothing should depend on a preview being byte-identical.
+
+## A tile is one file, and that is scheduled
+
+Tiles are the partition; part files are how many times a tile was written. Those
+came apart badly. The parent used to flush the largest live tile whenever its
+buffer filled, which makes file count scale with **data volume** rather than with
+area — all records pass through one fixed window, so more data means more
+flushes, and more area means more tiles live per flush. Measured at 64 km²:
+2,953 files over 260 tiles, up to 33 for a single tile, against 157 over 72 at
+16 km².
+
+That is paid on every read. A tile split 33 ways has its coarsest level in 33
+places, so a whole-cloud `lod <= 0` preview — about a million points — spent
+**243 s** opening 3,210 objects.
+
+`plan_nodes` now returns, with the node order, the index of the last node that
+can put a point in each tile; the writer holds a tile until that node has
+arrived and then writes it whole. Two things make that possible:
+
+- **Coarse nodes are read before the sweep.** A node's span halves with depth,
+  so shallow ones cover far more than a tile: at 64 km², depth ≤ 9 is 0.2% of
+  nodes and 3.25% of points but spans up to 400 km. Left in the sweep, each one
+  reopens tiles the sweep has passed and no tile is ever final.
+- **One order across all acquisitions.** Ordering within each acquisition sweeps
+  the grid once per acquisition and reopens every seam tile.
+
+Nodes arrive in download-completion order, not plan order, so the writer tracks
+a watermark — the highest node index with no gap below it — and a tile is final
+only when its last toucher is under that. Morton order over the tiles was tried
+and is worse than row-major: its quads must be descended and returned to, so
+tiles on a quad boundary stay open across the recursion.
+
+Measured at 64 km², identical point counts across every arm:
+
+| flush | budget | files | per tile | peak RSS | wall |
+|---|---|---|---|---|---|
+| eviction | 192 MiB | 2,953 | 11.4 | 2.72 GB | 317 s |
+| schedule | 192 MiB | 1,069 | 4.1 | 2.96 GB | 309 s |
+| **schedule** | **512 MiB** | **449** | **1.7** | **3.92 GB** | **365 s** |
+| schedule | 1024 MiB | 359 | 1.4 | 5.12 GB | 385 s |
+
+The schedule is free; the budget is not. 512 MiB ships because it costs 15% wall
+for 6.6× fewer files, and takes the `lod <= 0` preview from 243 s to **26.6 s**.
+Size a budget from measured RSS rather than from the budget: buffers hold lists
+of small arrays and `np.concatenate` doubles at flush, so RSS grew about 3× the
+budget increase. The floor is above 260 because `MAX_TILE_BYTES` still splits the
+densest tiles, which is the part-file size cap working as intended.
+
 Measured against the LAZ writer it replaces, at 16 km² / 343.6M points: 630s →
 113s and 2.42 GB → 2.23 GB. `gps_time` is not stored — it was 23% of the file
 and nothing reads it. Colour is not stored either, which is a real limitation:
@@ -88,9 +140,18 @@ axis left is across nodes in separate processes.
 Threading the chain anyway cost **+41% CPU for ~17% wall**, GIL contention
 burning futex traffic under gVisor. Moving it to processes gave 30% wall for +4%
 CPU. Two process pools do the work now: `chain.py` decodes, reprojects, clips
-and normalizes one node per task, and `parquet_writer.py` runs tile-pinned
-workers that own LOD assignment, encode and upload for the tiles hashed to them.
-Tiles are pinned because a tile's LOD grids must survive its repeated flushes.
+and normalizes one node per task, and `lib/pointcloud/writer.py` runs workers
+that take any flush off one shared queue and carry it to GCS.
+
+Neither pool is partitioned. The write workers used to own a fixed subset of
+tiles, because a tile's LOD grids had to survive its repeated flushes; a stride
+carries no state between flushes, so nothing is owned. Pinning is actively wrong
+once points arrive in spatial order, since consecutive flushes are neighbouring
+tiles and a hash would land them on the same worker. The chain pool likewise
+serves every acquisition rather than one per acquisition — the per-source
+transformer and clip are task arguments, not initializer arguments — because one
+pool per acquisition forces one node order per acquisition, and the tile
+schedule needs a single order across all of them.
 
 Download concurrency is a **separate knob** from chain concurrency. Downloads
 are network-bound and were never the limiter until the chain got fast; then

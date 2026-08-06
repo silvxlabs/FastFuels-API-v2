@@ -32,9 +32,15 @@ from lib.pointcloud.schema import point_dtype
 _W = {}
 
 
-def _chain_init(
-    src_crs_wkt, dst_crs_wkt, header_bounds, point_format_id, clip_wkb, clip_bounds
-):
+def _chain_init(sources, dst_crs_wkt, header_bounds, point_format_id):
+    """Set up one worker for every acquisition, not just one.
+
+    The per-source transformer and clip used to be initializer arguments, which
+    meant one pool per acquisition and so one node order per acquisition. The
+    writer can only finish a tile once, so a seam tile was written, closed and
+    reopened on the second sweep. Keying them by source index instead lets a
+    single pool serve one globally ordered plan.
+    """
     # An exception here kills the worker and the parent only ever sees
     # BrokenProcessPool, so say what actually failed before going down.
     try:
@@ -42,17 +48,22 @@ def _chain_init(
 
         from lib.laz import build_output_header
 
-        _W["transformer"] = Transformer.from_crs(
-            src_crs_wkt, dst_crs_wkt, always_xy=True
-        )
+        _W["sources"] = [
+            {
+                "transformer": Transformer.from_crs(
+                    src_crs_wkt, dst_crs_wkt, always_xy=True
+                ),
+                "clip": shapely.from_wkb(clip_wkb) if clip_wkb else None,
+                "bounds": clip_bounds,
+            }
+            for src_crs_wkt, clip_wkb, clip_bounds in sources
+        ]
         # Rebuilt rather than pickled: laspy headers hold VLRs and a CRS object,
         # and reconstructing from the same inputs is cheaper and exact. add_crs
         # wants a pyproj CRS, so the WKT has to be revived first.
         _W["header"] = build_output_header(
             CRS.from_wkt(dst_crs_wkt), header_bounds, point_format_id=point_format_id
         )
-        _W["clip"] = shapely.from_wkb(clip_wkb) if clip_wkb else None
-        _W["bounds"] = clip_bounds
         # The canonical format carries RGB only when a source declared it, so
         # this decides the record layout once for the whole cloud.
         _W["dtype"] = point_dtype("red" in _W["header"].point_format.dimension_names)
@@ -65,7 +76,7 @@ def _chain_init(
         raise
 
 
-def _chain_work(payload):
+def _chain_work(source, payload):
     """Decode, reproject, clip and normalize one node. Runs in a child process.
 
     Returns a compact `point_dtype` array, or None when the node contributes
@@ -76,15 +87,16 @@ def _chain_work(payload):
     from lib.crs import reproject
     from lib.laz import normalize_record
 
+    src = _W["sources"][source]
     points = laspy.read(io.BytesIO(payload))
-    min_x, min_y, max_x, max_y = _W["bounds"]
-    x, y = reproject(_W["transformer"], np.asarray(points.x), np.asarray(points.y))
+    min_x, min_y, max_x, max_y = src["bounds"]
+    x, y = reproject(src["transformer"], np.asarray(points.x), np.asarray(points.y))
     z = np.asarray(points.z)
 
     # Cheap rectangle test first; the polygon test only runs for the points that
     # survive it, and only where two acquisitions must be arbitrated.
     keep = (x >= min_x) & (x <= max_x) & (y >= min_y) & (y <= max_y)
-    clip = _W["clip"]
+    clip = src["clip"]
     if clip is not None and keep.any():
         # Boundary-exclusive: on a shared edge between two acquisitions,
         # dropping a point is safer than duplicating it.
@@ -107,6 +119,7 @@ def _chain_work(payload):
 def stream_records(
     session,
     plan,
+    sources,
     dst_crs_wkt,
     header_bounds,
     point_format_id,
@@ -116,15 +129,23 @@ def stream_records(
     batch=250,
     on_node=None,
 ):
-    """Fetch every planned node and yield normalized PDRF-6 records.
+    """Fetch every planned node and yield ``(plan index, records)``.
+
+    The index is what lets the writer know which tiles are finished. Nodes are
+    downloaded on a thread pool and come back in completion order, so a node's
+    position in the stream says nothing about the plan; the index does, and a
+    node that contributes no points still yields its index with None so the
+    tiles waiting on it are not stranded.
 
     Args:
         session: Requests session for the EPT archive.
-        plan: Sequence of ``(meta, nodes, clip, bounds)`` per acquisition, in the
-            domain CRS. ``clip`` is the polygon a point must fall inside, or None
-            when ``bounds`` alone decides -- which is the common case of one
-            acquisition under an axis-aligned domain, where the polygon test is
-            far more expensive than the rectangle it sits in.
+        plan: ``(source index, node)`` in read order, from `plan_nodes` -- one
+            sequence across every acquisition, so the tile sweep happens once.
+        sources: Per source index, ``(src_crs_wkt, clip_wkb, clip_bounds)``.
+            ``clip_wkb`` is the polygon a point must fall inside, or None when
+            the bounds alone decide -- the common case of one acquisition under
+            an axis-aligned domain, where the polygon test is far more expensive
+            than the rectangle it sits in.
         dst_crs_wkt: Target CRS as WKT -- the domain's.
         header_bounds: Horizontal bounds for the output header.
         point_format_id: LAS point format every acquisition is normalized to.
@@ -136,50 +157,50 @@ def stream_records(
         on_node: Optional callback invoked once per completed node.
 
     Yields:
-        PDRF-6 structured arrays, in node completion order.
+        ``(plan index, records)``, records being a PDRF-6 structured array or
+        None, in node completion order.
 
     Raises:
         ProcessingError: If a node cannot be downloaded or decoded.
     """
+    if not plan:
+        return
     # forkserver, not fork: the caller has a collector thread running, and
     # forking a threaded process can inherit a lock held by a thread the child
     # does not have.
     ctx = multiprocessing.get_context("forkserver")
+    # Nodes are frozen dataclasses carrying their own base URL, so one map
+    # serves every acquisition without the batches having to stay separate.
+    where = {node: (index, source) for index, (source, node) in enumerate(plan)}
+    nodes = [node for _, node in plan]
 
-    for meta, nodes, clip, bounds in plan:
-        if not nodes:
-            continue
-        args = (
-            meta.crs.to_wkt(),
-            dst_crs_wkt,
-            header_bounds,
-            point_format_id,
-            clip.wkb if clip is not None else None,
-            bounds,
-        )
-        with ProcessPoolExecutor(
-            max_workers=workers, mp_context=ctx, initializer=_chain_init, initargs=args
-        ) as pool:
-            # Bounded so submissions cannot outrun the pool and grow without
-            # limit; results are drained in order.
-            inflight = deque()
-            for off in range(0, len(nodes), batch):
-                for _node, payload in fetch_nodes(
-                    session,
-                    nodes[off : off + batch],
-                    raw=True,
-                    max_workers=download_workers,
-                ):
-                    inflight.append(pool.submit(_chain_work, payload))
-                    if len(inflight) >= workers * 2:
-                        record = inflight.popleft().result()
-                        if on_node is not None:
-                            on_node()
-                        if record is not None:
-                            yield record
-            while inflight:
-                record = inflight.popleft().result()
-                if on_node is not None:
-                    on_node()
-                if record is not None:
-                    yield record
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=ctx,
+        initializer=_chain_init,
+        initargs=(sources, dst_crs_wkt, header_bounds, point_format_id),
+    ) as pool:
+        # Bounded so submissions cannot outrun the pool and grow without limit;
+        # results are drained in order.
+        inflight = deque()
+
+        def drain():
+            index, future = inflight.popleft()
+            record = future.result()
+            if on_node is not None:
+                on_node()
+            return index, record
+
+        for off in range(0, len(nodes), batch):
+            for node, payload in fetch_nodes(
+                session,
+                nodes[off : off + batch],
+                raw=True,
+                max_workers=download_workers,
+            ):
+                index, source = where[node]
+                inflight.append((index, pool.submit(_chain_work, source, payload)))
+                if len(inflight) >= workers * 2:
+                    yield drain()
+        while inflight:
+            yield drain()

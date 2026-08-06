@@ -77,5 +77,17 @@ LAKITU_WRITE_QUEUE_DEPTH = int(os.getenv("LAKITU_WRITE_QUEUE_DEPTH", 4))
 LAKITU_CHAIN_WORKERS = int(os.getenv("LAKITU_CHAIN_WORKERS", 6))
 LAKITU_DOWNLOAD_WORKERS = int(os.getenv("LAKITU_DOWNLOAD_WORKERS", 32))
 
+# How much routed-but-unwritten point data the parent holds. Under the tile
+# schedule this is a backstop rather than the flush trigger -- every time it
+# fires it splits a tile that was going to be written whole -- so it is sized to
+# the peak the schedule actually needs, not to a memory floor. 512 MiB was
+# measured at 64 km2: it costs 15% wall and 1.2 GB of RSS over 192 MiB, and
+# takes the output from 1,069 files to 449. See writer.BUFFER_BUDGET.
+LAKITU_BUFFER_BUDGET_MB = int(os.getenv("LAKITU_BUFFER_BUDGET_MB", 512))
+
+# Flush each tile when its last node has been routed, rather than evicting the
+# largest tile under buffer pressure. Off keeps the eviction-only behaviour.
+LAKITU_TILE_SCHEDULE = os.getenv("LAKITU_TILE_SCHEDULE", "1") == "1"
+
 # Support contact surfaced in user-facing error messages.
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support.fastfuels@silvxlabs.com")

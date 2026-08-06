@@ -12,9 +12,15 @@ import numpy as np
 import pyarrow.parquet as pq
 import pytest
 
-from lib.pointcloud.schema import LOD_LEVELS, point_dtype
+from lib.pointcloud.schema import LOD_LEVELS, point_dtype, tile_span
 from lib.pointcloud.summary import PointSummary
-from lib.pointcloud.writer import _encode, _grid_key, _summarize, assign_lod
+from lib.pointcloud.writer import (
+    _encode,
+    _grid_key,
+    _summarize,
+    _tile_of,
+    assign_lod,
+)
 
 DTYPE = point_dtype(has_color=False)
 SCALES = np.array([0.01, 0.01, 0.01])
@@ -133,3 +139,57 @@ def test_encode_orders_points_spatially():
     step = np.abs(np.diff(deepest["X"].to_numpy().astype(np.int64))).mean()
     unsorted_step = np.abs(np.diff(r["X"].astype(np.int64))).mean()
     assert step < unsorted_step / 10
+
+
+# The writer places a point in a tile; `tile_span` decides which tiles a reader
+# opens for a box. They have to agree everywhere, including outside the bounds
+# the dataset declares -- a LAS header's bbox is declared, not measured, so an
+# upload cropped without a header rewrite has points beyond it.
+MINS = np.array([1000.0, 2000.0])
+TILE_M = 500.0
+
+
+def tile_a_reader_would_open(x, y):
+    """The tile a box query at exactly (x, y) prunes to."""
+    tx0, _ = tile_span(x, x, MINS[0], TILE_M)
+    ty0, _ = tile_span(y, y, MINS[1], TILE_M)
+    return tx0, ty0
+
+
+@pytest.mark.parametrize(
+    "x,y",
+    [
+        (1000.0, 2000.0),  # exactly the origin
+        (1250.0, 2250.0),  # inside
+        (999.9, 2250.0),  # a fraction below the origin, where truncation folded
+        (700.0, 2250.0),  # a tile below the origin
+        (-4000.0, 2250.0),  # far below
+        (1250.0, 9000.0),  # far above, where the packing collided
+    ],
+)
+def test_writer_and_reader_agree_on_which_tile_a_point_is_in(x, y):
+    tx, ty, _ = _tile_of(np.array([x]), np.array([y]), MINS, TILE_M)
+    assert (int(tx[0]), int(ty[0])) == tile_a_reader_would_open(x, y)
+
+
+def test_points_outside_the_declared_bounds_keep_their_own_tile():
+    """Clamping them into the edge tile hid them from every box query."""
+    x = np.array([1250.0, 700.0, 9000.0])
+    y = np.array([2250.0, 2250.0, 2250.0])
+    tx, ty, _ = _tile_of(x, y, MINS, TILE_M)
+    assert list(tx) == [0, -1, 16]
+    assert list(ty) == [0, 0, 0]
+
+
+def test_distinct_tiles_never_share_a_packed_id():
+    """A collision merges two tiles under one key and writes both into one."""
+    rng = np.random.default_rng(0)
+    # Deliberately far outside the declared extent, in both directions.
+    x = rng.uniform(-20_000, 40_000, 50_000)
+    y = rng.uniform(-20_000, 40_000, 50_000)
+    tx, ty, tid = _tile_of(x, y, MINS, TILE_M)
+    pairs = {(int(a), int(b)) for a, b in zip(tx, ty)}
+    assert len(set(tid.tolist())) == len(pairs)
+    for packed in set(tid.tolist()):
+        sel = tid == packed
+        assert len(set(zip(tx[sel].tolist(), ty[sel].tolist()))) == 1

@@ -149,6 +149,39 @@ def assign_lod(count, levels=LOD_LEVELS):
     return lod
 
 
+def _tile_of(x, y, mins, tile_m):
+    """Each point's tile, and a packed id that sorts points into tiles.
+
+    Two things this must not do, because both put a point in a tile the reader
+    will never look in. `schema.tile_span` floors, so this has to floor too --
+    ``astype`` truncates toward zero, which folds every point in
+    ``[-tile_m, 0)`` into tile 0 rather than tile -1. And neither index is
+    clamped to the declared bounds: a LAS header's bounding box is a declared
+    value that laspy does not re-derive from the points, so an upload cropped
+    without a header rewrite has points outside it, and clamping those into the
+    edge tile hides them from every box query.
+
+    The packed id is offset by this batch's own minima rather than by the grid
+    width, which keeps it injective whatever range the tiles span. Packing
+    against a fixed width let a point past the declared maximum collide with a
+    real tile and be written into that tile's partition.
+
+    Args:
+        x: Point x coordinates in world units.
+        y: Point y coordinates in world units.
+        mins: Dataset origin, ``(min_x, min_y, ...)``, which anchors the grid.
+        tile_m: Tile edge in metres.
+
+    Returns:
+        ``(tile_x, tile_y, packed_id)``, one entry per point.
+    """
+    tx = np.floor((x - mins[0]) / tile_m).astype(np.int32)
+    ty = np.floor((y - mins[1]) / tile_m).astype(np.int32)
+    ty0 = ty.min()
+    tid = (tx - tx.min()).astype(np.int64) * (int(ty.max() - ty0) + 1) + (ty - ty0)
+    return tx, ty, tid
+
+
 def _file_metadata(data, path):
     """FileMetaData for the just-written bytes, tagged with its dataset path."""
     md = pq.ParquetFile(io.BytesIO(data)).metadata
@@ -425,7 +458,6 @@ def write_parquet(
         extent = 1.0
     if tile_m is None:
         tile_m = choose_tile_m(extent)
-    n_tx = int(np.ceil((maxs[1] - mins[1]) / tile_m)) + 1
 
     buffers, sizes, counts, nparts = {}, {}, {}, {}
     buffered = 0
@@ -503,9 +535,7 @@ def write_parquet(
                     continue
             x = out["X"] * scales[0] + offsets[0]
             y = out["Y"] * scales[1] + offsets[1]
-            tx = np.maximum(((x - mins[0]) / tile_m).astype(np.int32), 0)
-            ty = np.maximum(((y - mins[1]) / tile_m).astype(np.int32), 0)
-            tid = tx * n_tx + ty
+            tx, ty, tid = _tile_of(x, y, mins, tile_m)
             # Small bounded range -> numpy radix-sorts int16 under kind="stable".
             order = (
                 np.argsort(tid.astype(np.int16), kind="stable")
@@ -547,7 +577,6 @@ def write_parquet(
         "tile_m": tile_m,
         "points": summary.count,
         "lod_levels": LOD_LEVELS,
-        "n_tx": n_tx,
         "scales": list(map(float, scales)),
         "offsets": list(map(float, offsets)),
         "mins": list(map(float, mins)),

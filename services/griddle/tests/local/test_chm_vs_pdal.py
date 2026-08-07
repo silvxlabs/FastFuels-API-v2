@@ -67,16 +67,116 @@ SAMPLE_EDGE_M = 400.0
 # (max_window_size 33, cell_size 1) with nothing to reconcile.
 RESOLUTION = 1.0
 
+# What a stored cloud quantises coordinates to, and so what PDAL's intermediates
+# have to be written at for the two arms to hold the same numbers.
+LAS_SCALE = 0.001
+
 CACHE = Path(os.environ.get("PDAL_COMPARE_CACHE", "/tmp/griddle-pdal-compare"))
+
+# Point cloud id of a real lakitu-written dataset. Set it and every comparison
+# runs against what the writer actually produced -- LOD row groups, delta
+# encoded coordinates, the tile partitions the schedule chose -- instead of the
+# fixture built below, which proves the algorithms and nothing about the writer.
+#
+#     PDAL_COMPARE_CLOUD=static-test-blackfoot-16km \
+#         PDAL_BIN=... uv run --active pytest tests/local -v -s
+#
+# Worth doing on more than one cloud: the two differ by 38x in density, and
+# density is what the ground interpolation is sensitive to.
+REAL_CLOUD = os.environ.get("PDAL_COMPARE_CLOUD")
+
+# The window staged from it. Smaller than SAMPLE_EDGE_M because a real cloud is
+# far denser -- 400 m of the 16 km fixture is 4M points, which is a long wait in
+# PDAL's Delaunay pass for no extra signal.
+REAL_EDGE_M = 200.0
+
+# Every cloud these comparisons use is Blackfoot, in the domain CRS lakitu
+# stored it in.
+REAL_CRS = "EPSG:32612"
 
 
 # --- fixtures ---------------------------------------------------------------
+
+
+def _stage_real_cloud():
+    """Copy a window of a real stored dataset down, and mirror it as LAZ.
+
+    The part files are taken verbatim so our arm reads exactly what lakitu
+    wrote. PDAL's arm is fed the same points read back out through
+    `read_points`, so the two arms cannot diverge on which returns they saw --
+    only on what they did with them.
+
+    The manifest is copied unchanged. Its ``mins`` is the origin the real tile
+    indices were derived from, so rewriting it to the window would make every
+    tile lookup miss; the window travels beside it instead.
+    """
+    import laspy
+    import pyproj
+
+    from lib.config import POINT_CLOUDS_BUCKET
+    from lib.gcs import get_gcsfs_client
+    from lib.pointcloud.reader import open_dataset, read_manifest, read_points
+    from lib.pointcloud.schema import cloud_prefix, tile_span
+
+    staged = CACHE / f"real-{REAL_CLOUD}"
+    if (staged / "window.json").exists():
+        return staged
+    staged.mkdir(parents=True, exist_ok=True)
+    root = staged / "cloud.parquet"
+
+    prefix = cloud_prefix(POINT_CLOUDS_BUCKET, REAL_CLOUD)
+    manifest = read_manifest(prefix)
+    tile_m, origin = manifest["tile_m"], manifest["mins"]
+    min_x = float(np.floor(origin[0]) + 50.0)
+    min_y = float(np.floor(origin[1]) + 50.0)
+    window = (min_x, min_y, min_x + REAL_EDGE_M, min_y + REAL_EDGE_M)
+
+    fs = get_gcsfs_client()
+    tx0, tx1 = tile_span(window[0], window[2], origin[0], tile_m)
+    ty0, ty1 = tile_span(window[1], window[3], origin[1], tile_m)
+    for tx in range(tx0, tx1 + 1):
+        for ty in range(ty0, ty1 + 1):
+            remote = f"{prefix}/tile_x={tx}/tile_y={ty}"
+            if not fs.exists(remote):
+                continue
+            local = root / f"tile_x={tx}" / f"tile_y={ty}"
+            local.mkdir(parents=True, exist_ok=True)
+            for name in fs.ls(remote):
+                with fs.open(name, "rb") as stream:
+                    (local / Path(name).name).write_bytes(stream.read())
+    (root / "_manifest.json").write_text(json.dumps(manifest))
+
+    dataset = open_dataset(str(root), filesystem=LocalFileSystem())
+    x, y, z, classification = read_points(dataset, manifest, window)
+    inside = (x >= window[0]) & (x < window[2]) & (y >= window[1]) & (y < window[3])
+    x, y, z = x[inside], y[inside], z[inside]
+
+    header = laspy.LasHeader(version="1.4", point_format=6)
+    header.scales = manifest["scales"]
+    header.offsets = [window[0], window[1], float(np.min(z))]
+    header.add_crs(pyproj.CRS.from_user_input(REAL_CRS))
+    las = laspy.LasData(header)
+    las.x, las.y, las.z = x, y, z
+    las.classification = classification[inside]
+    # filters.pmf refuses a cloud where only some points carry return numbers.
+    las.return_number = np.ones(len(x), dtype=np.uint8)
+    las.number_of_returns = np.ones(len(x), dtype=np.uint8)
+    las.write(str(staged / "window.laz"))
+
+    (staged / "window.json").write_text(
+        json.dumps({"window": list(window), "crs": REAL_CRS, "points": int(len(x))})
+    )
+    print(f"\nstaged {len(x):,} points of {REAL_CLOUD} over {window}")
+    return staged
 
 
 @pytest.fixture(scope="module")
 def sample_laz():
     """A cropped copy of the static cloud, cached between runs."""
     import laspy
+
+    if REAL_CLOUD:
+        return _stage_real_cloud() / "window.laz"
 
     from lib.config import POINT_CLOUDS_BUCKET
     from lib.gcs import get_gcsfs_client
@@ -117,6 +217,10 @@ def cloud_dataset(sample_laz, tmp_path_factory):
     import laspy
     import pyarrow as pa
     import pyarrow.parquet as pq
+
+    if REAL_CLOUD:
+        root = _stage_real_cloud() / "cloud.parquet"
+        return root, json.loads((root / "_manifest.json").read_text())
 
     las = laspy.read(str(sample_laz))
     root = tmp_path_factory.mktemp("cloud") / "cloud.parquet"
@@ -183,10 +287,13 @@ def _run_ours(cloud_dataset, point_classes):
     from shapely.geometry import box
 
     root, manifest = cloud_dataset
-    mins, maxs = manifest["mins"], manifest["maxs"]
-    roi = gpd.GeoDataFrame(
-        geometry=[box(mins[0], mins[1], maxs[0], maxs[1])], crs="EPSG:32612"
-    )
+    if REAL_CLOUD:
+        window = json.loads((_stage_real_cloud() / "window.json").read_text())
+        extent, crs = window["window"], window["crs"]
+    else:
+        mins, maxs = manifest["mins"], manifest["maxs"]
+        extent, crs = (mins[0], mins[1], maxs[0], maxs[1]), REAL_CRS
+    roi = gpd.GeoDataFrame(geometry=[box(*extent)], crs=crs)
 
     captured = []
     real_fill = chm_point_cloud._fill_gaps
@@ -267,11 +374,28 @@ def _pdal_points(stages, workdir, name, extra_dims=""):
     algorithmic difference. Comparing point sets instead isolates the thing
     under test: which returns each implementation calls ground, and what height
     it gives them.
+
+    The intermediate is written at the scale a stored cloud uses. ``writers.las``
+    defaults to 0.01, so leaving it alone re-quantises millimetre coordinates to
+    centimetres and moves any return within 5 mm of a cell edge across it —
+    which swaps that cell's extreme for a different point's. It reads as an
+    algorithmic disagreement and is not one: it cost 0.5% of cells on a
+    0.65 pt/m2 cloud and 1.5% on a 25 pt/m2 one, because density decides how
+    many returns sit near an edge.
     """
     import laspy
 
     target = workdir / f"{name}.las"
-    writer = {"type": "writers.las", "filename": str(target)}
+    writer = {
+        "type": "writers.las",
+        "filename": str(target),
+        "scale_x": LAS_SCALE,
+        "scale_y": LAS_SCALE,
+        "scale_z": LAS_SCALE,
+        "offset_x": "auto",
+        "offset_y": "auto",
+        "offset_z": "auto",
+    }
     if extra_dims:
         writer["extra_dims"] = extra_dims
     _pdal([*stages, writer], workdir)
@@ -355,7 +479,9 @@ def _compare(name, ours, theirs, output_dir, reference_dataset):
 class TestGroundSurface:
     """Our ground against PDAL's, which is the input every height depends on."""
 
-    def test_classified_ground_matches_pdal(self, cloud_dataset, output_dir, tmp_path):
+    def test_classified_ground_matches_pdal(
+        self, cloud_dataset, sample_laz, output_dir, tmp_path
+    ):
         """Same returns, same reduction — so this one has to be exact.
 
         Nothing algorithmic differs here: both take the lowest class-2 return in
@@ -368,7 +494,7 @@ class TestGroundSurface:
 
         points = _pdal_points(
             [
-                str(CACHE / "sample.laz"),
+                str(sample_laz),
                 {"type": "filters.range", "limits": "Classification[2:2]"},
             ],
             tmp_path,
@@ -389,7 +515,9 @@ class TestGroundSurface:
         assert stats["over_1m"] < 0.0002
         assert abs(stats["bias"]) < 0.002
 
-    def test_derived_ground_matches_pdal_pmf(self, cloud_dataset, output_dir, tmp_path):
+    def test_derived_ground_matches_pdal_pmf(
+        self, cloud_dataset, sample_laz, output_dir, tmp_path
+    ):
         """Our progressive morphological filter against ``filters.pmf`` itself.
 
         The handler's docstring claims to implement Zhang et al. 2003 at PDAL's
@@ -400,7 +528,7 @@ class TestGroundSurface:
 
         points = _pdal_points(
             [
-                str(CACHE / "sample.laz"),
+                str(sample_laz),
                 _strip_classification(),
                 _pmf_stage(),
                 {"type": "filters.range", "limits": "Classification[2:2]"},
@@ -451,7 +579,14 @@ class TestCanopyHeight:
         [([2], False, "chm_classified"), ([1], True, "chm_derived")],
     )
     def test_chm_matches_pdal(
-        self, cloud_dataset, output_dir, tmp_path, point_classes, derive_ground, name
+        self,
+        cloud_dataset,
+        sample_laz,
+        output_dir,
+        tmp_path,
+        point_classes,
+        derive_ground,
+        name,
     ):
         """Not the same algorithm, so the bar is 'negligible', not 'identical'.
 
@@ -463,7 +598,7 @@ class TestCanopyHeight:
         dataset, _, _ = _run_ours(cloud_dataset, point_classes=point_classes)
         ours = dataset["chm"].values.astype(np.float64)
 
-        stages = [str(CACHE / "sample.laz")]
+        stages = [str(sample_laz)]
         if derive_ground:
             stages += [_strip_classification(), _pmf_stage()]
         stages.append({"type": "filters.hag_delaunay"})

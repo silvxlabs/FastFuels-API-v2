@@ -19,6 +19,7 @@ threedep = ["s3fs>=2024.2.0", "geopandas>=1.1.2"]
 entwine = ["geopandas>=1.1.2", "shapely>=2.0", "requests>=2.32", "pyarrow>=18.0.0", "gcsfs>=2026.2.0"]
 pointcloud = ["laspy[lazrs]>=2.7.0", "numpy>=2.0.0", "pyproj>=3.6"]
 lfps = ["requests>=2.32"]
+landfire_coverage = ["geopandas>=1.1.2", "shapely>=2.0", "pyarrow>=18.0.0", "requests>=2.32","gcsfs>=2026.2.0"]
 
 [dependency-groups]
 dev = ["pytest>=8.0.0"]

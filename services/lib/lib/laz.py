@@ -1,26 +1,22 @@
 """
-Canonical LAZ output for point cloud workers.
+Canonical point schema for point cloud workers.
 
-Every point cloud v2 stores is written through here, so that a cloud assembled
+Every point v2 stores is normalized through here, so that a cloud assembled
 from many sources looks exactly like a cloud rewritten from one upload. Workers
-supply points; this module owns the output format.
+supply points; this module owns the schema they are converted to. Storage is
+Parquet (`lib.pointcloud.writer`) — the header built here is a conversion
+target, never written to a file.
 
-The canonical output is **LAS 1.4, point format 6, with no extra dimensions**.
+The canonical schema is **LAS 1.4, point format 6, with no extra dimensions**.
 Point format 6 is a lossless superset of the formats USGS and most vendors
 publish (0-5): classification widens from 5 bits to a full byte, return numbers
 widen, and GPS time is always present. Normalizing on it means a single write
 path regardless of what came in, and — more importantly — it is the only way to
-merge points from two sources at all: laspy refuses to write a record whose
-point format differs from the file header's, and it compares extra dimensions
-too, so even two point-format-1 sources disagree if one carries an extra
-dimension the other lacks.
-
-Output is built in an in-memory buffer because LAZ writers must seek back to
-backfill the header and chunk table on close, which neither a GCS stream nor a
-RAM-backed worker filesystem makes cheap. Callers bound the point count.
+merge points from two sources at all: laspy's record conversion compares point
+formats and extra dimensions, so even two point-format-1 sources disagree if
+one carries an extra dimension the other lacks.
 """
 
-import io
 import math
 from collections.abc import Iterable
 
@@ -87,10 +83,10 @@ def build_output_header(
     scaling and attributes are silently replaced (see the uploader).
 
     Scale and offset are fixed up front from the extent rather than derived from
-    the data. A LAZ header must be final before the first point is written, so
-    deriving the offset from the points would mean buffering them all first.
-    Anchoring to the extent is exact for any point inside it and makes the
-    output byte-reproducible for a given domain.
+    the data. The header is built in the worker pool initializer, before any
+    node has been decoded, so deriving the offset from the points would mean
+    buffering them all first. Anchoring to the extent is exact for any point
+    inside it and makes the output byte-reproducible for a given domain.
 
     Args:
         crs: Output CRS, as anything ``laspy.LasHeader.add_crs`` accepts
@@ -170,66 +166,3 @@ def normalize_record(
     out.y = y
     out.z = z
     return out
-
-
-class LazAccumulator:
-    """Streams points into an in-memory LAZ, tracking what was written.
-
-    Statistics are accumulated from the points as they are written rather than
-    read back afterwards, so what is reported always describes what was stored.
-    """
-
-    def __init__(self, header: laspy.LasHeader):
-        self._buffer = io.BytesIO()
-        self._header = header
-        self._writer = laspy.open(
-            self._buffer, mode="w", header=header, do_compress=True, closefd=False
-        )
-        self._count = 0
-        self._classes: set[int] = set()
-        self._mins = np.array([np.inf, np.inf, np.inf])
-        self._maxs = np.array([-np.inf, -np.inf, -np.inf])
-
-    def append(self, record: PackedPointRecord) -> None:
-        """Write a record and fold it into the running statistics."""
-        if len(record) == 0:
-            return
-
-        x = np.asarray(record.x)
-        y = np.asarray(record.y)
-        z = np.asarray(record.z)
-        self._mins = np.minimum(self._mins, [x.min(), y.min(), z.min()])
-        self._maxs = np.maximum(self._maxs, [x.max(), y.max(), z.max()])
-        self._classes |= set(np.unique(np.asarray(record.classification)).tolist())
-        self._count += len(record)
-        self._writer.write_points(record)
-
-    @property
-    def point_count(self) -> int:
-        """Points written so far."""
-        return self._count
-
-    def finish(self) -> tuple[io.BytesIO, dict, list[float]]:
-        """Close the writer and return the buffer, statistics, and bounds.
-
-        Returns:
-            ``(buffer, stats, bounds)`` where stats carries ``point_count``,
-            ``point_classes``, and ``density`` (points per square metre over the
-            written horizontal extent), and bounds is
-            ``[min_x, min_y, min_z, max_x, max_y, max_z]``.
-        """
-        self._writer.close()
-
-        mins, maxs = self._mins, self._maxs
-        if self._count == 0:
-            mins = np.array(self._header.offsets, dtype=float)
-            maxs = np.array(self._header.offsets, dtype=float)
-
-        area = (maxs[0] - mins[0]) * (maxs[1] - mins[1])
-        stats = {
-            "point_count": self._count,
-            "point_classes": sorted(int(c) for c in self._classes),
-            "density": float(self._count / area) if area > 0 else 0.0,
-        }
-        self._buffer.seek(0)
-        return self._buffer, stats, [*mins.tolist(), *maxs.tolist()]

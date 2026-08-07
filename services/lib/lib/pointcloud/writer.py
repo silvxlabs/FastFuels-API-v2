@@ -16,6 +16,18 @@ file count scale with data volume rather than with area: 64 km2 wrote 2,953 file
 over 260 tiles, so the coarsest LOD of one tile was scattered across as many as
 33 objects and a preview of the whole cloud had to open all 2,953.
 
+An upload has no schedule to pass -- it is one LAS file read in chunks, with no
+octree to say which tiles a chunk can still reach -- so it runs the eviction
+path, and that is deliberate. Measured on two real uploads at the size cap, both
+about 4.5 GB of records: 238 files over 64 tiles, and 136 over 88. The severity
+is a property of the file's own point order rather than of its size or area. The
+first has none, so all 64 tiles stayed live for the whole job and a tile's writes
+were spread over a median of 171 other flushes; the second sweeps a diagonal
+strip, so 49 of its 88 tiles were written once and never reopened. 1.5-3.7x the
+ideal file count is not the 33-way split the schedule was built for, and deriving
+a schedule from a first pass over the coordinates would cost a whole extra decode
+of the file to buy it back.
+
 The LOD is a stride: level k holds 1 in 4**(L-1-k) of a tile's points, so
 ``lod <= k`` is a nested, unbiased subsample and the deepest level is the whole
 tile -- see assign_lod.

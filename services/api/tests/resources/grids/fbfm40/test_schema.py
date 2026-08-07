@@ -13,12 +13,13 @@ from api.resources.grids.fbfm40.schema import (
     LandfireFbfm40Source,
 )
 from api.resources.grids.providers.landfire import (
-    NB_CODE_MAP,
     LandfireSource,
     NonBurnableFuelModel,
 )
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
+
+from lib.landfire import NB_CODE_MAP
 
 
 class TestLandfireSource:

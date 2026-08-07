@@ -106,23 +106,24 @@ and nothing reads it. Colour is not stored either, which is a real limitation:
 a colour-carrying source is promoted to LAS format 7 or 8 so the LAZ path never
 drops RGB, and this schema has nowhere to put it.
 
-## The point budget
+## How many points a fetch reads
 
-`LAKITU_MAX_POINTS` (default 200M) bounds a fetch. It was sized when the output
-had to fit in memory, which is no longer true — 64 km² is 1.04B points and
-writes in 488s — so the number is now a policy choice about job duration rather
-than a memory guard. The budget is checked
-twice: the API rejects a request whose catalog-derived estimate is over, and the
-worker re-checks from the octree index *before downloading anything*. The second
-check is much the sharper of the two, since it counts the nodes that actually
-exist rather than assuming a uniform density across a published extent.
+There is no cap. `LAKITU_MAX_POINTS` used to bound a fetch at 200M, sized when
+the whole output had to fit in memory. Parquet is written out-of-core, so that
+reason is gone and the limit was removed rather than re-derived: 64 km² is 1.04B
+points and writes in 488s. What still bounds a fetch is the Cloud Tasks dispatch
+deadline (see below), which is a real ceiling rather than a proxy for one.
 
-Neither check is exact, and the worker's has one subtlety worth knowing. Nodes
-are selected by bounding box but kept by contribution polygon, so on an
-irregular seam two acquisitions' boxes both approximate the whole domain.
-Summing raw node counts would charge the domain to each of them and roughly
-double the total — enough to reject a fetch that was well inside the budget — so
-each acquisition's count is scaled by its contribution's share of its own box.
+Two estimates survive the removal, both advisory. The API reports
+`estimated_point_count` from catalog density over the domain area, for callers
+sizing a request. The worker computes its own from the octree index and logs it,
+which is sharper because it counts the nodes that actually exist.
+
+The worker's has one subtlety worth knowing. Nodes are selected by bounding box
+but kept by contribution polygon, so on an irregular seam two acquisitions'
+boxes both approximate the whole domain. Summing raw node counts would charge
+the domain to each of them and roughly double the total, so each acquisition's
+count is scaled by its contribution's share of its own box.
 
 ## Why processes, not threads
 
@@ -183,9 +184,12 @@ and close to its full CPU cost at 2.
 Cloud Tasks cancels an attempt at its dispatch deadline (600s by default for an
 HTTP target) and retries it, and this worker treats any retry as terminal, so
 that deadline — not Cloud Run's timeout — is the real ceiling on a fetch. The
-service's timeout is set to match it rather than exceed it. Measured fetches run
-about three minutes at the point-budget ceiling, so this has not been close to
-binding; if it ever is, the answer is a smaller `LAKITU_MAX_POINTS`.
+service's timeout is set to match it rather than exceed it. With the point cap
+removed this is the only ceiling left, and it is closer than it used to be:
+64 km² / 1.04B points writes in 488s, about 80% of the deadline. A domain past
+that fails at the deadline as a generic `UNEXPECTED_FAILURE`, since a retry is
+indistinguishable from any other cause here. Raise the deadline and the
+service's timeout together, or the extra time is never reached.
 
 
 ## Correctness notes

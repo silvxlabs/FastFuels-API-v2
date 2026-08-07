@@ -69,11 +69,6 @@ MIN_CONTRIBUTION_FRACTION = 1e-4
 # Selection stops once this little of the domain is left uncovered.
 COVERAGE_EPSILON = 1e-4
 
-# Ceiling on the points a single fetch may read. The output LAZ is built in
-# memory (LAZ writers need a seekable target, and worker-local disk is RAM), so
-# this is what bounds the worker's peak memory.
-MAX_POINTS = int(os.getenv("LAKITU_MAX_POINTS", 200_000_000))
-
 # Grid size that geometry is snapped to before differencing, in metres. Repeated
 # difference operations otherwise leave slivers along shared edges.
 _PRECISION_GRID = 0.01

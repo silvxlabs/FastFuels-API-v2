@@ -23,7 +23,6 @@ from lakitu.ept import fetch_metadata, make_session, walk_hierarchy
 from lakitu.storage import cloud_location
 from lib.config import LAKITU_TILE_SCHEDULE
 from lib.entwine import (
-    MAX_POINTS,
     DatasetNotFoundError,
     DatasetOutsideDomainError,
     EptCatalogError,
@@ -66,8 +65,8 @@ def handle_3dep(
         the dataset is many files and never exists whole in memory.
 
     Raises:
-        ProcessingError: If no lidar covers the domain, the fetch would exceed
-            the point budget, or the acquisition cannot be read.
+        ProcessingError: If no lidar covers the domain, or the acquisition
+            cannot be read.
     """
     domain_crs = domain_gdf.crs
     domain_geom = domain_gdf.union_all()
@@ -90,19 +89,6 @@ def handle_3dep(
         metadata.append(meta)
         all_nodes.append((index, nodes))
         total_points += _estimate_kept_points(nodes, projected)
-
-    # Checking before any node is downloaded costs one index walk and avoids
-    # pulling gigabytes that would only be discarded.
-    if total_points > MAX_POINTS:
-        raise ProcessingError(
-            code="POINT_BUDGET_EXCEEDED",
-            message=(
-                f"This domain covers roughly {total_points:,} 3DEP lidar "
-                f"points, more than the {MAX_POINTS:,} point limit for a "
-                "single point cloud."
-            ),
-            suggestion="Use a smaller domain.",
-        )
 
     logger.info(f"Reading {total_points:,} points from {len(metadata)} acquisitions")
 

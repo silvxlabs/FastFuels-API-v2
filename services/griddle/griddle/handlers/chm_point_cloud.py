@@ -291,7 +291,7 @@ def _fetch(
     ground_distance_m = _blocked_ground_distance(known_ground, block_cells, resolution)
 
     progress("Filling ground gaps...", 45)
-    ground = _fill_gaps(ground, fill_cells)
+    ground = _blocked_fill_gaps(ground, block_cells, fill_cells)
 
     progress("Rasterizing canopy heights...", 55)
     chm = over_blocks(
@@ -352,6 +352,36 @@ def _blocked_ground_distance(known, block_cells, resolution) -> float:
         cap_cells=cap_cells,
     )
     return float(distance.max().compute()) * resolution
+
+
+def _blocked_fill_gaps(surface, block_cells: int, max_cells: int) -> np.ndarray:
+    """`_fill_gaps` over blocks, with a halo as wide as its reach.
+
+    The only whole-grid pass left in the handler, and the reason it had to go:
+    `_fill_gaps` is pure array work with no dask around it, so it ran at exactly
+    1.00 core in every in-region measurement no matter what the container was
+    given. At 64 km2 that was 36-82 s the allocation could not touch.
+
+    Blocking is exact here. Each iteration extends the filled region by one cell
+    and there are `max_cells` of them, so a cell's value depends only on inputs
+    within `max_cells` and a halo that wide feeds it everything the whole-grid
+    pass would have seen. `boundary="none"` leaves the grid's own edges to be
+    handled by `uniform_filter`'s `mode="nearest"`, exactly as before.
+
+    Most blocks also finish far sooner than the whole grid does: `_fill_gaps`
+    breaks as soon as nothing is missing, and gaps are local, so a block with no
+    NaN costs one pass instead of `max_cells` of them.
+    """
+    blocks = da.from_array(surface, chunks=(block_cells, block_cells))
+    filled = da.map_overlap(
+        _fill_gaps,
+        blocks,
+        depth=_overlap_depth(blocks, max_cells),
+        boundary="none",
+        dtype=np.float32,
+        max_cells=max_cells,
+    )
+    return np.asarray(filled.compute())
 
 
 def _block_of(surface, transform, block_lattice, resolution) -> np.ndarray:

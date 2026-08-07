@@ -633,6 +633,55 @@ class TestBlockingIsInvisible:
         assert sizes == [342, 341, 342]
 
 
+class TestFillGapsIsBlockInvariant:
+    """Blocking the fill must not let the chunking into the answer.
+
+    `_fill_gaps` propagates one cell per iteration, so its reach is `max_cells`
+    and a halo that wide should feed a block everything the whole-grid pass saw.
+    `uniform_filter`'s `mode="nearest"` also perturbs the outermost cell of
+    whatever array it is handed, which then travels inward one cell per
+    iteration -- so this asserts the equality rather than trusting the argument.
+    """
+
+    @staticmethod
+    def _surface(seed=0):
+        rng = np.random.default_rng(seed)
+        surface = rng.random((600, 600)).astype(np.float32) * 20.0
+        # Scattered dropouts, which interpolate, plus one void wider than the
+        # reach, whose interior must stay NaN however it is blocked.
+        surface[rng.random((600, 600)) < 0.35] = np.nan
+        surface[200:320, 150:290] = np.nan
+        return surface
+
+    def test_matches_the_whole_grid_fill(self):
+        surface = self._surface()
+        expected = chm_point_cloud._fill_gaps(surface, 30)
+        actual = chm_point_cloud._blocked_fill_gaps(surface, 200, 30)
+        assert np.array_equal(np.isnan(expected), np.isnan(actual))
+        finite = ~np.isnan(expected)
+        np.testing.assert_allclose(expected[finite], actual[finite], rtol=1e-6)
+
+    def test_same_answer_at_every_block_size(self):
+        surface = self._surface(seed=3)
+        answers = [
+            chm_point_cloud._blocked_fill_gaps(surface, block, 30)
+            for block in (150, 200, 300, 600)
+        ]
+        for other in answers[1:]:
+            assert np.array_equal(np.isnan(answers[0]), np.isnan(other))
+            finite = ~np.isnan(answers[0])
+            np.testing.assert_allclose(answers[0][finite], other[finite], rtol=1e-6)
+
+    def test_a_void_wider_than_the_reach_keeps_its_core(self):
+        """The bound is the point of `_fill_gaps`; blocking must not relax it."""
+        surface = np.full((400, 400), 5.0, dtype=np.float32)
+        surface[100:300, 100:300] = np.nan
+        filled = chm_point_cloud._blocked_fill_gaps(surface, 200, 30)
+        # 30 cells of reach from each edge leaves the middle untouched.
+        assert np.isnan(filled[150:250, 150:250]).all()
+        assert not np.isnan(filled[100:130, 200]).any()
+
+
 class TestGroundDistanceIsBlockInvariant:
     """The reported distance must describe the data, not the chunking.
 

@@ -30,9 +30,9 @@ the native stack — and this service is where that would be isolated.
 
 ## Output is a partitioned Parquet dataset
 
-`<id>/cloud.parquet/tile_x=<i>/tile_y=<j>/part-*.parquet`, plus a `_metadata`
-footer carrying every row group's statistics and a `_manifest.json`. Not a
-single LAZ, and not COPC.
+`<id>/cloud.parquet/tile_x=<i>/tile_y=<j>/part-*.parquet`, plus a
+`_manifest.json` carrying the tiling and coordinate scaling. Not a single LAZ,
+and not COPC.
 
 Partitions *are* the output, which is what makes one pass enough. COPC needs a
 second pass not for its LOD but for physical grouping: every node must be one

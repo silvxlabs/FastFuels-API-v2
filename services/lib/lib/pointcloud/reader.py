@@ -45,7 +45,7 @@ def read_manifest(prefix: str) -> dict:
 def open_dataset(prefix: str, filesystem=None) -> pa_ds.Dataset:
     """Open the partitioned dataset.
 
-    ``_metadata`` and ``_manifest.json`` are skipped by pyarrow's default
+    Discovers by listing. ``_manifest.json`` is skipped by pyarrow's default
     underscore-prefix exclusion.
 
     Args:

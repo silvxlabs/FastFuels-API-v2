@@ -1,9 +1,16 @@
 """Spatially-partitioned, LOD-tagged Parquet.
 
 The output is a Hive-partitioned dataset -- ``tile_x=<i>/tile_y=<j>/part-*.parquet``
-plus a ``_metadata`` footer and a ``_manifest.json`` -- rather than one file. A
-reader that wants a box opens ``_metadata``, which carries every row group's
-statistics, and touches only the parts that overlap.
+plus a ``_manifest.json`` -- rather than one file. A reader that wants a box
+prunes on the partition columns, which come from the paths, so it touches only
+the parts that overlap.
+
+There is no combined ``_metadata`` footer. One was written and nothing ever read
+it: `reader.open_dataset` discovers by listing, and replacing the footer with the
+bytes "GARBAGE" left the dataset opening and counting rows fine. Reinstating it
+would be cheap -- the workers already hold a per-file `FileMetaData` -- but the
+read it saves is one LIST per job, and a tile is one file, so the path already
+says which file a tile is in without consulting a footer.
 
 Each part is written one row group per LOD level, so a ``lod <= k`` filter prunes
 on row-group statistics. Writing a single row group spanning every level made the
@@ -120,6 +127,25 @@ class GcsSink:
         self.bytes_written += len(data)
 
 
+def clear_prefix(bucket, prefix):
+    """Delete anything already stored under a dataset prefix.
+
+    Part numbers restart at zero on every run, so a re-run that produces fewer
+    parts for a tile than its predecessor leaves the higher-numbered files in
+    place. Readers discover by listing, so those orphans come back as points --
+    a silent duplicate rather than an error.
+
+    Imported here rather than at module scope for the same reason `GcsSink`
+    defers its client: forkserver children re-import this module, and none of
+    them clears anything.
+    """
+    from lib.gcs import delete_directory, exists
+
+    path = f"{bucket}/{prefix.rstrip('/')}"
+    if exists(path):
+        delete_directory(path)
+
+
 def assign_lod(count, levels=LOD_LEVELS):
     """Assign each point a pyramid level by stride: level k keeps 1 in 4**(L-1-k).
 
@@ -192,13 +218,6 @@ def _tile_of(x, y, mins, tile_m):
     ty0 = ty.min()
     tid = (tx - tx.min()).astype(np.int64) * (int(ty.max() - ty0) + 1) + (ty - ty0)
     return tx, ty, tid
-
-
-def _file_metadata(data, path):
-    """FileMetaData for the just-written bytes, tagged with its dataset path."""
-    md = pq.ParquetFile(io.BytesIO(data)).metadata
-    md.set_file_path(path)
-    return md
 
 
 # Cells per axis in the sort key. Must keep the packed key inside a uint16:
@@ -346,11 +365,7 @@ def _write_worker(in_q, out_q, init_args):
             try:
                 data = _encode(recs, assign_lod(len(recs)), scales, offsets)
                 _W["sink"].put(rel, data)
-                md = _file_metadata(data, rel)
-                buf = io.BytesIO()
-                # FileMetaData does not pickle; the parent revives the bytes.
-                md.write_metadata_file(buf)
-                out_q.put(("ok", len(data), buf.getvalue(), rel, _summarize(recs)))
+                out_q.put(("ok", len(data), rel, _summarize(recs)))
             except BaseException as e:
                 import traceback
 
@@ -402,7 +417,7 @@ class _WritePool:
                 if self.error is None:
                     self.error = RuntimeError(f"{item[3]}: {item[1]}\n{item[2]}")
                 continue
-            self._on_result(item[1], item[2], item[4])
+            self._on_result(item[1], item[3])
 
     def submit(self, tile, recs, rel):
         if self.error is not None:
@@ -471,19 +486,20 @@ def write_parquet(
     if tile_m is None:
         tile_m = choose_tile_m(extent)
 
+    # Before anything is written, not after: a run that dies partway must not
+    # leave a mix of its own parts and its predecessor's behind.
+    clear_prefix(bucket, prefix)
+
     buffers, sizes, counts, nparts = {}, {}, {}, {}
     buffered = 0
     lock = threading.Lock()
     stats = {"written_bytes": 0, "files": 0}
-    footers = []
     summary = PointSummary(scales, offsets)
 
-    def on_result(nbytes_out, md_bytes, folded):
-        md = pq.read_metadata(io.BytesIO(md_bytes))
+    def on_result(nbytes_out, folded):
         with lock:
             stats["written_bytes"] += nbytes_out
             stats["files"] += 1
-            footers.append(md)
             summary.fold(*folded)
 
     # forkserver, not fork: this process has a collector thread, and forking a
@@ -596,13 +612,6 @@ def write_parquet(
     }
     sink = GcsSink(bucket, prefix)
     sink.put("_manifest.json", json.dumps(manifest).encode())
-    if footers:
-        combined = footers[0]
-        for md in footers[1:]:
-            combined.append_row_groups(md)
-        mbuf = io.BytesIO()
-        combined.write_metadata_file(mbuf)
-        sink.put("_metadata", mbuf.getvalue())
 
     return {
         "points": summary.count,

@@ -181,6 +181,34 @@ def test_points_outside_the_declared_bounds_keep_their_own_tile():
     assert list(ty) == [0, 0, 0]
 
 
+def test_an_orphan_part_is_read_back_as_points(tmp_path):
+    """Why `clear_prefix` exists, stated as the failure it prevents.
+
+    Part numbers restart at zero each run, so a re-run producing fewer parts for
+    a tile leaves the higher-numbered files behind. Nothing rejects them: the
+    reader discovers by listing, so they come back as extra points.
+    """
+    import pyarrow as pa
+    import pyarrow.dataset as pa_ds
+
+    root = tmp_path / "cloud.parquet"
+    part = root / "tile_x=0" / "tile_y=0" / "part-00000.parquet"
+    part.parent.mkdir(parents=True)
+    table = pa.table({"X": np.arange(10, dtype=np.int32)})
+    pq.write_table(table, part)
+
+    def rows():
+        return pa_ds.dataset(
+            str(root), format="parquet", partitioning="hive"
+        ).count_rows()
+
+    assert rows() == 10
+
+    # A shorter re-run would overwrite part-00000 and never touch part-00001.
+    pq.write_table(table, part.parent / "part-00001.parquet")
+    assert rows() == 20, "orphan silently doubled the cloud"
+
+
 def test_distinct_tiles_never_share_a_packed_id():
     """A collision merges two tiles under one key and writes both into one."""
     rng = np.random.default_rng(0)

@@ -17,6 +17,7 @@ asyncio.to_thread() to avoid blocking the event loop.
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -32,13 +33,24 @@ BASE_URL = "https://lfps.usgs.gov/api"
 # 2 hours; this is just the HTTP request timeout for each individual call.
 _REQUEST_TIMEOUT = 60
 
-# How long a loaded product list is reused, in seconds. LFPS coverage doesn't
-# change intra-day, so a short TTL is only there to eventually pick up a new
-# product/version without a process restart.
+# LANDFIRE updates its product catalog only a handful of times a year,
+# so caching for an hour costs nothing in staleness
 LFPS_PRODUCTS_TTL_SECONDS = float(os.getenv("LFPS_PRODUCTS_TTL_SECONDS", 3600))
+
+# Trailing season+year suffix on seasonal fuels layers, e.g. "_SP26" in
+# LF2025_FBFM40_SP26. The year is the season's own year, one ahead of the
+# base layer's `version` year -- not something this field needs to capture.
+_SEASON_PATTERN = re.compile(r"_(SP|SU|ES|FA)\d{2}$")
 
 _products: list["LfpsProduct"] | None = None
 _products_fetched_on: datetime | None = None
+
+
+def _parse_season(layer_name: str) -> str | None:
+    """Extract the season code from a seasonal layer name, e.g. "SP" from
+    "LF2025_FBFM40_SP26". None for a non-seasonal (annual) layer."""
+    match = _SEASON_PATTERN.search(layer_name)
+    return match.group(1) if match else None
 
 
 class LfpsJobFailedError(Exception):
@@ -73,6 +85,7 @@ class LfpsProduct:
     version: str
     conus: bool
     geo_areas: str
+    season: str | None
 
 
 @dataclass(frozen=True)
@@ -122,6 +135,7 @@ def list_products(refresh: bool = False) -> list[LfpsProduct]:
             version=p["version"],
             conus=p["conus"],
             geo_areas=p["geoAreas"],
+            season=_parse_season(p["layerName"]),
         )
         for p in raw_products
     ]

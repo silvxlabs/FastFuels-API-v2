@@ -45,7 +45,7 @@ def make_products_response(names: list[str]) -> dict:
     }
 
 
-def _make_product(layer_name: str) -> LfpsProduct:
+def _make_product(layer_name: str, season: str | None = None) -> LfpsProduct:
     """Build an `LfpsProduct` directly, for pre-seeding the cache in tests."""
     return LfpsProduct(
         layer_name=layer_name,
@@ -55,6 +55,7 @@ def _make_product(layer_name: str) -> LfpsProduct:
         version=layer_name.split("_")[0].removeprefix("LF"),
         conus=True,
         geo_areas="SW, NW",
+        season=season,
     )
 
 
@@ -120,6 +121,28 @@ class TestListProducts:
                     result = list_products()
 
         assert [p.layer_name for p in result] == ["OLD", "NEW"]
+
+    def test_seasonal_layer_parses_season_code(self):
+        body = make_products_response(["LF2025_FBFM40_SP26"])
+        with patch("lib.landfire_lfps._products", None):
+            with patch(
+                "lib.landfire_lfps.requests.get",
+                return_value=mock_response(body),
+            ):
+                products = list_products()
+
+        assert products[0].season == "SP"
+
+    def test_annual_layer_has_no_season(self):
+        body = make_products_response(["LF2025_FBFM40"])
+        with patch("lib.landfire_lfps._products", None):
+            with patch(
+                "lib.landfire_lfps.requests.get",
+                return_value=mock_response(body),
+            ):
+                products = list_products()
+
+        assert products[0].season is None
 
 
 class TestSubmitJob:
@@ -266,9 +289,3 @@ class TestDownload:
         mock_get.assert_called_once()
         assert mock_get.call_args[0][0] == "https://lfps.usgs.gov/.../job-123.zip"
         assert content == b"PK\x03\x04zip-bytes"
-
-
-def _succeeded_job(output_file: str):
-    from lib.landfire_lfps import LfpsJob
-
-    return LfpsJob(job_id="job-123", status="Succeeded", output_file=output_file)

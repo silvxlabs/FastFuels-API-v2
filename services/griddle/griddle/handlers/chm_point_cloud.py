@@ -421,7 +421,14 @@ def _run_blocks(
             code="POINT_CLOUD_UNREADABLE",
             message="This point cloud's stored data could not be read.",
             suggestion="Retry, and contact support if it fails again.",
-            traceback=f"block worker died during the {kind!r} pass: {e}",
+            # A worker dying is nearly always the container running out of
+            # memory, which Cloud Run does not log -- the child is killed, not
+            # the server, so nothing appears above this line. GRIDDLE_READ_WORKERS
+            # against the memory limit is the first thing to check.
+            traceback=(
+                f"block worker died during the {kind!r} pass with "
+                f"{GRIDDLE_READ_WORKERS} workers, usually out of memory: {e}"
+            ),
         ) from e
     return out
 

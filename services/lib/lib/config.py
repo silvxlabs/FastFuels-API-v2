@@ -105,9 +105,19 @@ GRIDDLE_DASK_WORKERS = int(os.getenv("GRIDDLE_DASK_WORKERS", 2))
 # instance-cached, so every block shares one asyncio event loop, and pyarrow
 # reaches it through a handler that takes the GIL.
 #
-# Each worker is a fresh interpreter holding one block's points, so this trades
-# resident memory for read throughput -- size it to the vCPU allocation, as
-# LAKITU_WRITE_WORKERS is, and not above it.
+# MEMORY, not vCPU, is what bounds this. Each worker is a fresh interpreter
+# holding a whole block's points, and the height pass reads every surface class,
+# so a worker needs 2-4 GiB. Measured at 64 km2 / 1 m, a worker dies and the job
+# fails whenever the container cannot feed them all:
+#
+#   2 workers /  8 GiB  ok, 298 s      4 workers /  8 GiB  FAILS
+#   4 workers / 16 GiB  ok, 266 s      8 workers /  8 GiB  FAILS
+#   8 workers / 32 GiB  ok, 251 s
+#
+# So raise this only together with the memory limit. Raising it to match a vCPU
+# bump alone is the failing column above. It buys little anyway: the ground read
+# is already saturated at 2 workers (107 s, 112 s, 117 s at 2, 4 and 8) and only
+# the height pass scales, so 4x the workers and 4x the memory is 1.19x.
 GRIDDLE_READ_WORKERS = int(os.getenv("GRIDDLE_READ_WORKERS", 2))
 
 # Support contact surfaced in user-facing error messages.

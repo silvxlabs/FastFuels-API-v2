@@ -14,7 +14,7 @@ import geopandas as gpd
 import numpy as np
 import pyproj
 import pytest
-from griddle.handlers import chm_point_cloud
+from griddle.handlers import chm_blocks, chm_point_cloud
 from pyarrow.fs import LocalFileSystem
 from scipy.ndimage import distance_transform_edt
 from shapely.geometry import box
@@ -94,8 +94,11 @@ def _run(
     # GCS. `block_cells` forces a blocking; left alone the handler picks one.
     patches = [
         patch.object(chm_point_cloud, "read_manifest", return_value=_MANIFEST),
-        patch.object(chm_point_cloud, "open_dataset", return_value=None),
-        patch.object(chm_point_cloud, "read_points", read_points),
+        # One worker so the pass runs here and these patches reach it; a
+        # forkserver child would re-import and see the real reader.
+        patch.object(chm_point_cloud, "GRIDDLE_READ_WORKERS", 1),
+        patch("lib.pointcloud.reader.open_dataset", return_value=None),
+        patch("lib.pointcloud.reader.read_points", read_points),
     ]
     if block_cells is not None:
         patches.append(
@@ -599,7 +602,7 @@ class TestBlockingIsInvisible:
 
     def test_a_block_stops_short_of_the_next_partition(self):
         """Every edge but the origin is exclusive, or an aligned block reads twice."""
-        min_x, min_y, max_x, max_y = chm_point_cloud._block_bounds(
+        min_x, min_y, max_x, max_y = chm_blocks.block_bounds(
             (1000.0, 2000.0, 500, 500), 1.0
         )
         assert min_x == 1000.0
@@ -618,7 +621,7 @@ class TestBlockingIsInvisible:
         tile_m, cloud_origin = 500.0, (1000.0, 1500.0)
         for row in range(4):
             for col in range(4):
-                bounds = chm_point_cloud._block_bounds(
+                bounds = chm_blocks.block_bounds(
                     (1000.0 + col * 500.0, 3500.0 - row * 500.0, 500, 500), 1.0
                 )
                 tx0, tx1 = tile_span(bounds[0], bounds[2], cloud_origin[0], tile_m)
@@ -723,3 +726,87 @@ class TestGroundDistanceIsBlockInvariant:
     def test_zero_when_every_cell_has_ground(self):
         known = np.ones((300, 300), dtype=bool)
         assert chm_point_cloud._blocked_ground_distance(known, 128, 1.0) == 0.0
+
+
+def _pool_dataset(root, tile_m=4.0):
+    """A 2x2-tile cloud over an 8 m square: ground everywhere, canopy on top."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    for tile_x in (0, 1):
+        for tile_y in (0, 1):
+            xs, ys, zs, cs = [], [], [], []
+            for col in range(4):
+                for row in range(4):
+                    x = tile_x * tile_m + col + 0.5
+                    y = tile_y * tile_m + row + 0.5
+                    xs += [x, x]
+                    ys += [y, y]
+                    zs += [10.0, 25.0]
+                    cs += [2, 5]
+            directory = root / f"tile_x={tile_x}" / f"tile_y={tile_y}"
+            directory.mkdir(parents=True)
+            pq.write_table(
+                pa.table(
+                    {
+                        "lod": pa.array([0] * len(xs), pa.uint8()),
+                        "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
+                        "Y": pa.array([round(v * 1000) for v in ys], pa.int32()),
+                        "Z": pa.array([round(v * 1000) for v in zs], pa.int32()),
+                        "intensity": pa.array([0] * len(xs), pa.uint16()),
+                        "classification": pa.array(cs, pa.uint8()),
+                    }
+                ),
+                directory / "part-00000.parquet",
+            )
+    return {
+        "tile_m": tile_m,
+        "mins": [0.0, 0.0, 0.0],
+        "scales": [0.001, 0.001, 0.001],
+        "offsets": [0.0, 0.0, 0.0],
+    }
+
+
+class TestBlockPool:
+    """The passes run on real worker processes, not only the inline path.
+
+    Every other test forces a single worker so it can stub the reader in this
+    process, which leaves what production actually uses -- a forkserver pool --
+    unexercised: whether a job pickles, whether a worker opens its own dataset,
+    and whether the blocks land in the right place in the assembled grid.
+    """
+
+    def test_a_real_pool_produces_the_same_grid(self, tmp_path):
+        root = tmp_path / "cloud.parquet"
+        manifest = _pool_dataset(root)
+
+        def run(workers):
+            with (
+                patch.object(chm_point_cloud, "cloud_prefix", return_value=str(root)),
+                patch.object(chm_point_cloud, "read_manifest", return_value=manifest),
+                patch.object(chm_point_cloud, "GRIDDLE_READ_WORKERS", workers),
+                # Four blocks over the 8 m grid, so the pool has real work to
+                # place rather than one block that cannot land wrongly.
+                patch.object(chm_point_cloud, "_compute_block_cells", return_value=4),
+                # Travels to the worker in the initializer; a patch would
+                # not, since the worker is a separate interpreter.
+                patch.object(chm_point_cloud, "BLOCK_FILESYSTEM", LocalFileSystem()),
+            ):
+                dataset, provenance = chm_point_cloud.fetch_point_cloud_chm(
+                    roi=_roi(size=8.0),
+                    point_cloud_id="pool-test",
+                    point_classes=[2, 5],
+                    alignment={"target": "domain", "resolution": 1.0},
+                    progress=lambda *_a, **_k: None,
+                )
+            return dataset["chm"].values, provenance
+
+        inline, inline_provenance = run(1)
+        pooled, pooled_provenance = run(2)
+
+        # The fixture puts 15 m of canopy over every cell, so a block landing in
+        # the wrong slot would still have to survive this.
+        assert np.allclose(inline, 15.0)
+        assert np.array_equal(np.isnan(inline), np.isnan(pooled))
+        np.testing.assert_array_equal(inline, pooled)
+        assert inline_provenance == pooled_provenance

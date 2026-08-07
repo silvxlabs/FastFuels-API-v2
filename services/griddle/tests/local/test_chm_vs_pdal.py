@@ -43,7 +43,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-from griddle.handlers import chm_point_cloud
+from griddle.handlers import chm_blocks, chm_point_cloud
 from pyarrow.fs import LocalFileSystem
 
 PDAL_BIN = os.environ.get("PDAL_BIN") or shutil.which("pdal")
@@ -312,6 +312,7 @@ def _run_ours(cloud_dataset, point_classes):
 
     with (
         patch.object(chm_point_cloud, "cloud_prefix", return_value=str(root)),
+        patch.object(chm_point_cloud, "GRIDDLE_READ_WORKERS", 1),
         patch("lib.pointcloud.reader.get_gcsfs_client", return_value=LocalFileSystem()),
         patch.object(chm_point_cloud, "read_manifest", return_value=manifest),
         patch.object(chm_point_cloud, "_fill_gaps", side_effect=capture_ground),
@@ -409,7 +410,7 @@ def _rasterise(dataset, x, y, values, how):
     lattice = (transform.c, transform.f, height, width)
     fill = np.inf if how is np.minimum else -np.inf
     raster = np.full(height * width, fill, dtype=np.float32)
-    index, inside = chm_point_cloud._cell_indices(
+    index, inside = chm_blocks.cell_indices(
         np.asarray(x), np.asarray(y), lattice, RESOLUTION
     )
     how.at(raster, index[inside], np.asarray(values)[inside].astype(np.float32))
@@ -610,8 +611,8 @@ class TestCanopyHeight:
         # the surfaces rather than of each one's outlier policy.
         height = np.asarray(points.HeightAboveGround)
         keep = (
-            (height >= chm_point_cloud.MIN_CANOPY_HEIGHT_M)
-            & (height < chm_point_cloud.MAX_CANOPY_HEIGHT_M)
+            (height >= chm_blocks.MIN_CANOPY_HEIGHT_M)
+            & (height < chm_blocks.MAX_CANOPY_HEIGHT_M)
             & np.isfinite(height)
         )
         theirs = _rasterise(

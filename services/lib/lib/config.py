@@ -97,5 +97,18 @@ LAKITU_TILE_SCHEDULE = os.getenv("LAKITU_TILE_SCHEDULE", "1") == "1"
 # default and completed in 666 s at 2.
 GRIDDLE_DASK_WORKERS = int(os.getenv("GRIDDLE_DASK_WORKERS", 2))
 
+# Worker processes for griddle's point-cloud block reads. Processes rather than
+# threads because that read is throughput-bound inside one interpreter, not
+# latency-bound: at 8 vCPU with the dataset shared, raising dask threads 8 -> 16
+# -> 32 moved the 64 km2 ground read 99.4 s -> 102.6 s -> 103.0 s while
+# per-thread wait grew linearly and CPU stayed near 1.6 cores. gcsfs is
+# instance-cached, so every block shares one asyncio event loop, and pyarrow
+# reaches it through a handler that takes the GIL.
+#
+# Each worker is a fresh interpreter holding one block's points, so this trades
+# resident memory for read throughput -- size it to the vCPU allocation, as
+# LAKITU_WRITE_WORKERS is, and not above it.
+GRIDDLE_READ_WORKERS = int(os.getenv("GRIDDLE_READ_WORKERS", 2))
+
 # Support contact surfaced in user-facing error messages.
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support.fastfuels@silvxlabs.com")

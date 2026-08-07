@@ -16,6 +16,7 @@ import pyproj
 import pytest
 from griddle.handlers import chm_point_cloud
 from pyarrow.fs import LocalFileSystem
+from scipy.ndimage import distance_transform_edt
 from shapely.geometry import box
 
 from lib.errors import ProcessingError
@@ -551,19 +552,59 @@ class TestBlockingIsInvisible:
         assert whole_provenance == blocked_provenance
 
     def test_block_size_covers_the_widest_halo(self):
-        """A block has to be able to feed the halo, or the answer changes.
+        """A block has to be able to feed the halo, or the answer changes."""
+        # 2 * (400 + 1) = 802 cells needed, which takes two 500-cell tiles.
+        assert chm_point_cloud._compute_block_cells(1.0, 500.0, halo_cells=400) == 1000
+        assert chm_point_cloud._compute_block_cells(1.0, 500.0, halo_cells=600) == 1500
 
-        `_block_slices` divides evenly, so a block can come out half the
-        requested size; the floor is twice the halo to cover that.
-        """
-        assert chm_point_cloud._compute_block_cells(1.0, 500.0, halo_cells=400) == 802
-
-    def test_block_size_is_floored_at_one_cloud_tile(self):
-        # At 0.5 m a 512-cell block spans 256 m, so four of them would decode
-        # the same 500 m partition; the floor makes one block cover it.
+    def test_block_size_is_a_whole_number_of_cloud_tiles(self):
+        """A block that stops mid-partition decodes that partition anyway."""
+        # One 500-cell tile clears both the halo and the 512-cell default,
+        # which is rounded to the nearest tile rather than up: rounding up
+        # would double the block's area for a storage-chunk match `save_zarr`
+        # re-does on write.
+        assert chm_point_cloud._compute_block_cells(1.0, 500.0, halo_cells=0) == 500
+        # At 0.5 m one tile is already 1000 cells.
         assert chm_point_cloud._compute_block_cells(0.5, 500.0, halo_cells=0) == 1000
-        assert chm_point_cloud._compute_block_cells(1.0, 500.0, halo_cells=0) == 512
-        assert chm_point_cloud._compute_block_cells(10.0, 500.0, halo_cells=0) == 512
+        # At 10 m a tile is 50 cells, so the default decides how many.
+        assert chm_point_cloud._compute_block_cells(10.0, 500.0, halo_cells=0) == 500
+
+    def test_block_edges_land_on_cloud_tile_boundaries(self):
+        """Cut on the tiles, so a block reads each partition once.
+
+        The lattice origin and the cloud's origin have no reason to agree, and
+        an offset block reads two tiles per axis where it needs one.
+        """
+        # Lattice starting 120 m east of the cloud's own origin, 1 m cells.
+        cuts = chm_point_cloud._tile_cuts(2000, 1120.0, 1.0, 1000.0, 500.0)
+        assert cuts == [380, 880, 1380, 1880]
+        # 380 is skipped because a 380-cell leading block could not feed the
+        # halo, and 1880 because it would leave a 120-cell tail. Both merge
+        # into their neighbour, which keeps every edge on a tile boundary.
+        assert chm_point_cloud._block_slices(2000, 500, cuts) == [
+            (0, 880),
+            (880, 1380),
+            (1380, 2000),
+        ]
+
+    def test_tile_cuts_run_ascending_on_the_row_axis(self):
+        """Rows count downward while northings count up; the cuts still sort."""
+        # transform.f is the north edge, transform.e negative.
+        assert chm_point_cloud._tile_cuts(2000, 3000.0, -1.0, 1000.0, 500.0) == [
+            500,
+            1000,
+            1500,
+        ]
+
+    def test_a_block_stops_short_of_the_next_partition(self):
+        """The upper edges are exclusive, or every aligned block reads twice."""
+        min_x, min_y, max_x, max_y = chm_point_cloud._block_bounds(
+            (1000.0, 2000.0, 500, 500), 1.0
+        )
+        assert min_x == 1000.0
+        assert max_y == 2000.0
+        assert max_x < 1500.0
+        assert min_y > 1500.0
 
     def test_blocks_are_divided_evenly(self):
         """A greedy split leaves a remainder block narrower than the halo."""
@@ -571,3 +612,46 @@ class TestBlockingIsInvisible:
             stop - start for start, stop in chm_point_cloud._block_slices(1025, 512)
         ]
         assert sizes == [342, 341, 342]
+
+
+class TestGroundDistanceIsBlockInvariant:
+    """The reported distance must describe the data, not the chunking.
+
+    It reduced over the halo before, so a cell only as well served as a halo it
+    did not itself have could set the maximum. The same ground read 40 m at a
+    512-cell block and 38 m at 500.
+    """
+
+    @staticmethod
+    def _known(seed=0):
+        rng = np.random.default_rng(seed)
+        known = rng.random((600, 600)) < 0.02
+        # One wide void, which is the thing the metric exists to find.
+        known[200:320, 150:290] = False
+        return known
+
+    def test_same_answer_at_every_block_size(self):
+        known = self._known()
+        answers = {
+            block: chm_point_cloud._blocked_ground_distance(known, block, 1.0)
+            for block in (150, 200, 256, 300, 512, 600)
+        }
+        assert len(set(answers.values())) == 1, answers
+
+    def test_matches_the_unblocked_transform(self):
+        known = self._known()
+        cap = chm_point_cloud.GROUND_DISTANCE_CAP_M
+        expected = min(float(distance_transform_edt(~known).max()), cap)
+        assert chm_point_cloud._blocked_ground_distance(
+            known, 256, 1.0
+        ) == pytest.approx(expected)
+
+    def test_saturates_where_no_ground_is_in_reach(self):
+        known = np.zeros((300, 300), dtype=bool)
+        assert chm_point_cloud._blocked_ground_distance(known, 128, 1.0) == (
+            chm_point_cloud.GROUND_DISTANCE_CAP_M
+        )
+
+    def test_zero_when_every_cell_has_ground(self):
+        known = np.ones((300, 300), dtype=bool)
+        assert chm_point_cloud._blocked_ground_distance(known, 128, 1.0) == 0.0

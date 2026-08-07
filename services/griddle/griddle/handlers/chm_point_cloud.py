@@ -176,8 +176,20 @@ def fetch_point_cloud_chm(
         int(np.ceil(GROUND_DISTANCE_CAP_M / resolution)),
         0 if GROUND_CLASS in point_classes else _pmf_depth_cells(resolution),
     )
-    block_cells = _compute_block_cells(resolution, manifest["tile_m"], halo_cells)
-    blocks = (_block_slices(height, block_cells), _block_slices(width, block_cells))
+    tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
+    block_cells = _compute_block_cells(resolution, tile_m, halo_cells)
+    blocks = (
+        _block_slices(
+            height,
+            block_cells,
+            _tile_cuts(height, transform.f, transform.e, tile_origin[1], tile_m),
+        ),
+        _block_slices(
+            width,
+            block_cells,
+            _tile_cuts(width, transform.c, transform.a, tile_origin[0], tile_m),
+        ),
+    )
 
     def reader(bounds, classes):
         # One dataset handle per call: these run on worker threads, and pyarrow
@@ -299,23 +311,24 @@ def _blocked_ground_distance(known, block_cells, resolution) -> float:
     Blocked with a halo as wide as the cap, so a cell whose nearest ground lies
     within the cap finds it inside its own halo and the answer below the cap is
     exact. `max` is commutative, so combining the blocks is just a reduction.
+
+    The halo is trimmed before that reduction, which is not cosmetic. A halo
+    cell is only as well served as *its* own halo, which it does not have, so
+    its distance can be an overestimate; reducing over it let the answer depend
+    on the chunking rather than on the data. Measured on one 2 km grid, the same
+    ground read 40 m at a 512-cell block and 38 m at 500.
     """
     cap_cells = GROUND_DISTANCE_CAP_M / resolution
     blocks = da.from_array(known, chunks=(block_cells, block_cells))
-    overlapped = da.overlap.overlap(
+    distance = da.map_overlap(
+        _ground_distance_cells,
         blocks,
         depth=_overlap_depth(blocks, int(np.ceil(cap_cells))),
         boundary="none",
-    )
-    per_block = da.map_blocks(
-        lambda block: np.array(
-            [[_max_ground_distance(block, cap_cells)]], dtype=np.float64
-        ),
-        overlapped,
         dtype=np.float64,
-        chunks=(1, 1),
+        cap_cells=cap_cells,
     )
-    return float(per_block.max().compute()) * resolution
+    return float(distance.max().compute()) * resolution
 
 
 def _block_of(surface, transform, block_lattice, resolution) -> np.ndarray:
@@ -397,46 +410,112 @@ def _block_lattice(transform: Affine, row0: int, col0: int, rows: int, cols: int
 
 
 def _block_bounds(lattice, resolution: float) -> tuple:
-    """World bounds of a block lattice, for partition pruning."""
+    """World bounds of a block lattice, for partition pruning.
+
+    Half-open on the two sides the lattice itself is half-open on. `_cell_indices`
+    floors, so a point sitting exactly on ``max_x`` belongs to the next block's
+    first column and one exactly on ``min_y`` to the next block's first row.
+    Left closed, those two edges each pull in a whole neighbouring partition for
+    no points at all -- and once the blocks are cut on tile boundaries that is
+    not an edge case, it is every block, doubling the partitions read per axis.
+    """
     origin_x, origin_y, rows, cols = lattice
     return (
         origin_x,
-        origin_y - rows * resolution,
-        origin_x + cols * resolution,
+        np.nextafter(origin_y - rows * resolution, np.inf),
+        np.nextafter(origin_x + cols * resolution, -np.inf),
         origin_y,
     )
 
 
 def _compute_block_cells(resolution: float, tile_m: float, halo_cells: int) -> int:
-    """Block edge in cells.
+    """Block edge in cells, rounded up to a whole number of cloud tiles.
 
-    Three floors, in increasing order of consequence:
+    Two floors decide the size:
 
     - the default, which matches griddle's storage chunk so that at 1 m and
       coarser the compute blocks and the written chunks coincide;
-    - one cloud tile, because a block narrower than a partition decodes that
-      whole partition and keeps a fraction of it — four 256 m blocks would read
-      a 500 m tile four times. Costs nothing: `save_zarr` restores the storage
-      chunking when it rechunks on write;
-    - twice the widest halo. This one is correctness, not economy. A halo wider
-      than a block cannot be supplied, and `_block_slices` divides evenly, so a
-      block can come out as small as half the requested size; sizing for twice
-      the halo keeps every block able to feed it.
+    - twice the widest halo. This one is correctness, not economy: a halo wider
+      than a block cannot be supplied.
+
+    A whole number of tiles because a block is only cheap to read if it stops
+    where a partition stops. `read_points` prunes on the partition columns and
+    nothing finer, so a block overlapping a tile by one cell decodes that tile
+    entirely — a block sized like a tile but out of step with it reads four
+    where it needs one. Measured at 1 m on a 4 km domain: 4.89 partition reads
+    per tile over a run, against the 2 the two passes actually need.
+
+    The halo floor is rounded *up* to a whole tile because it is a correctness
+    bound. The default is rounded to the *nearest* whole tile instead: it only
+    buys matching storage chunks, which `save_zarr` restores on write anyway,
+    and rounding it up would double a block's area — and a block's points are
+    what peak memory tracks.
     """
-    return max(
-        DEFAULT_BLOCK_CELLS, math.ceil(tile_m / resolution), 2 * (halo_cells + 1)
+    tile_cells = tile_m / resolution
+    tiles_per_block = max(
+        1,
+        math.ceil(2 * (halo_cells + 1) / tile_cells),
+        round(DEFAULT_BLOCK_CELLS / tile_cells),
     )
+    return max(1, int(round(tiles_per_block * tile_cells)))
 
 
-def _block_slices(extent: int, block: int) -> list[tuple[int, int]]:
-    """Half-open (start, stop) pairs tiling `extent` in even blocks.
+def _tile_cuts(
+    count: int, anchor: float, step: float, tile_origin: float, tile_m: float
+) -> list[int]:
+    """Cell indices strictly inside ``(0, count)`` where a cloud tile begins.
 
+    Args:
+        count: Cells on this axis.
+        anchor: World coordinate of cell zero's leading edge.
+        step: World distance per cell, negative on the row axis, where the
+            lattice runs north to south while the index runs downward.
+        tile_origin: The cloud's own origin on this axis, which anchors its
+            tiling — ``manifest["mins"]``, never the lattice.
+        tile_m: Tile edge in metres.
+
+    Returns:
+        Ascending cell indices, whichever way the axis runs. Empty when no tile
+        boundary falls inside the extent, which is the single-tile case.
+    """
+    if tile_m <= 0 or step == 0:
+        return []
+    low = min(anchor, anchor + step * count)
+    high = max(anchor, anchor + step * count)
+    first = math.floor((low - tile_origin) / tile_m) + 1
+    last = math.ceil((high - tile_origin) / tile_m)
+    cuts = set()
+    for k in range(first, last):
+        index = int(round((tile_origin + k * tile_m - anchor) / step))
+        if 0 < index < count:
+            cuts.add(index)
+    return sorted(cuts)
+
+
+def _block_slices(
+    extent: int, block: int, cuts: list[int] | None = None
+) -> list[tuple[int, int]]:
+    """Half-open (start, stop) pairs tiling `extent`.
+
+    Cuts on cloud tile boundaries where there are any, so a block reads as few
+    partitions as it can. A boundary closer than `block` to the previous cut, or
+    to the end, is skipped rather than emitted — every block therefore comes out
+    at least `block` wide, which is what keeps it able to feed the halo the
+    overlapped steps need.
+
+    Falls back to an even division when the extent holds no usable boundary.
     Even rather than greedy: a greedy split leaves a remainder block that can be
     a single cell wide, and a block narrower than the halo silently under-feeds
-    the overlapped steps.
+    those steps.
     """
-    count = max(1, math.ceil(extent / block))
-    edges = [round(index * extent / count) for index in range(count + 1)]
+    edges = [0]
+    for cut in cuts or ():
+        if cut - edges[-1] >= block and extent - cut >= block:
+            edges.append(cut)
+    if len(edges) == 1:
+        count = max(1, math.ceil(extent / block))
+        edges = [round(index * extent / count) for index in range(count)]
+    edges.append(extent)
     return list(zip(edges[:-1], edges[1:], strict=True))
 
 
@@ -660,8 +739,8 @@ def _remove_spikes(chm: np.ndarray, threshold: float) -> np.ndarray:
     return despiked
 
 
-def _max_ground_distance(known: np.ndarray, cap_cells: float) -> float:
-    """Furthest any cell sits from a ground return, in cells, saturating at `cap_cells`.
+def _ground_distance_cells(known: np.ndarray, cap_cells: float) -> np.ndarray:
+    """How far each cell sits from a ground return, in cells, saturating at `cap_cells`.
 
     This is the variable that predicted ground-derivation error across the
     validation clouds — better than coverage alone, since scattered gaps
@@ -674,14 +753,19 @@ def _max_ground_distance(known: np.ndarray, cap_cells: float) -> float:
     plus a halo of `cap_cells`, any cell whose true nearest ground is within the
     cap has it inside the halo, so the answer below the cap is exact.
 
+    Per cell rather than reduced here, so the caller can drop the halo before
+    reducing — see `_blocked_ground_distance` on why that matters.
+
     `distance_transform_edt` is called for distances only; asking it for indices
     as well is what allocates gigabytes on a large grid.
     """
     if known.all():
-        return 0.0
+        return np.zeros(known.shape, dtype=np.float64)
     if not known.any():
-        return float(cap_cells)
-    return float(min(distance_transform_edt(~known).max(), cap_cells))
+        # No ground anywhere in reach, so every cell is at least the cap away.
+        # `distance_transform_edt` has no zero to measure to in this case.
+        return np.full(known.shape, float(cap_cells), dtype=np.float64)
+    return np.minimum(distance_transform_edt(~known), cap_cells)
 
 
 def _to_dataset(chm, transform, crs) -> xr.Dataset:

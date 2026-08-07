@@ -214,10 +214,16 @@ def _fetch(
         ),
     )
 
+    # One dataset for the whole run, shared by every block. Opening it is not
+    # cheap -- it discovers and lists the cloud's hive partitions -- and it was
+    # being done per block: 0.54 s a time, 512 times, 14% of all the thread time
+    # the read path spent. A `pyarrow.Dataset` is immutable and safe to scan
+    # from several threads, and sharing one took a 64 km2 CHM from 292 s to
+    # 226 s with byte-identical output.
+    dataset = open_dataset(prefix)
+
     def reader(bounds, classes):
-        # One dataset handle per call: these run on worker threads, and pyarrow
-        # datasets are cheap to open next to the read they serve.
-        return read_points(open_dataset(prefix), manifest, bounds, classes)
+        return read_points(dataset, manifest, bounds, classes)
 
     def over_blocks(function, dtype=np.float32):
         """Assemble one dask array from a per-block function of (lattice)."""

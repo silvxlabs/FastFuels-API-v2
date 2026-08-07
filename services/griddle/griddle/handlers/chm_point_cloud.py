@@ -26,6 +26,7 @@ a visible cause.
 import math
 from collections.abc import Callable
 
+import dask
 import dask.array as da
 import geopandas as gpd
 import numpy as np
@@ -41,7 +42,7 @@ from scipy.ndimage import (
 )
 
 from lib.alignment import resolve_alignment_destination
-from lib.config import POINT_CLOUDS_BUCKET
+from lib.config import GRIDDLE_DASK_WORKERS, POINT_CLOUDS_BUCKET
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
 from lib.pointcloud.reader import open_dataset, read_manifest, read_points
@@ -158,6 +159,28 @@ def fetch_point_cloud_chm(
         ProcessingError: If the alignment cannot produce a lattice this handler
             can rasterize onto, or if the cloud contributes no points to it.
     """
+    with dask.config.set(scheduler="threads", num_workers=GRIDDLE_DASK_WORKERS):
+        return _fetch(
+            roi,
+            point_cloud_id,
+            point_classes,
+            alignment,
+            progress,
+            target_grid_doc,
+            extent_buffer_cells,
+        )
+
+
+def _fetch(
+    roi: gpd.GeoDataFrame,
+    point_cloud_id: str,
+    point_classes: list[int],
+    alignment: dict,
+    progress: Callable[[str, int | None], None],
+    target_grid_doc: dict | None,
+    extent_buffer_cells: int,
+) -> tuple[xr.Dataset, dict]:
+    """Body of `fetch_point_cloud_chm`, under a pinned dask thread pool."""
     transform, (height, width) = _resolve_lattice(
         roi, alignment, target_grid_doc, extent_buffer_cells
     )

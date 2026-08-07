@@ -89,5 +89,13 @@ LAKITU_BUFFER_BUDGET_MB = int(os.getenv("LAKITU_BUFFER_BUDGET_MB", 512))
 # largest tile under buffer pressure. Off keeps the eviction-only behaviour.
 LAKITU_TILE_SCHEDULE = os.getenv("LAKITU_TILE_SCHEDULE", "1") == "1"
 
+# Dask worker threads for griddle's blocked point-cloud work. Set explicitly for
+# the same reason the lakitu worker counts are: dask sizes its pool from
+# `os.cpu_count()`, which under Cloud Run reports the host's cores rather than
+# the vCPU quota. Each thread holds a block's points, so peak memory is threads
+# x block area -- a 64 km2 CHM at 1 m OOMed an 8 GiB / 2 vCPU container on the
+# default and completed in 666 s at 2.
+GRIDDLE_DASK_WORKERS = int(os.getenv("GRIDDLE_DASK_WORKERS", 2))
+
 # Support contact surfaced in user-facing error messages.
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support.fastfuels@silvxlabs.com")

@@ -286,15 +286,17 @@ def _fetch(
             extra_for=lambda bl: _ground_window(ground, transform, bl, resolution),
         )
 
-    chm = da.map_overlap(
-        _remove_spikes,
-        da.from_array(chm, chunks=(block_cells, block_cells)),
-        depth=_overlap_depth(da.from_array(chm, chunks=(block_cells, block_cells)), 1),
-        boundary="none",
-        dtype=np.float32,
-        threshold=SPIKE_THRESHOLD_M,
+    blocked_chm = da.from_array(chm, chunks=(block_cells, block_cells))
+    chm = np.asarray(
+        da.map_overlap(
+            _remove_spikes,
+            blocked_chm,
+            depth=_overlap_depth(blocked_chm, 1),
+            boundary="none",
+            dtype=np.float32,
+            threshold=SPIKE_THRESHOLD_M,
+        ).compute()
     )
-    chm = np.asarray(chm.compute())
 
     if not np.isfinite(chm).any():
         raise ProcessingError(

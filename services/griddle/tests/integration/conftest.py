@@ -311,15 +311,16 @@ def griddle_runner():
                 feature_doc_ids.append(feature_id)
 
         # Optionally stand up a point cloud for handlers that read one. The
-        # LAZ is copied from a static object rather than synthesized, so the
-        # test exercises a real 3DEP cloud; the copy gives it a test-scoped id,
-        # since the handler derives the GCS path from the id alone.
+        # The cloud is copied from a static dataset rather than synthesized, so
+        # the test exercises a real 3DEP cloud; the copy gives it a test-scoped
+        # id, since the handler derives the GCS path from the id alone. It is a
+        # directory of Parquet parts, not one object, so the copy is recursive.
         # Auto-injects ``source_point_cloud_id`` into ``source_overrides``.
         if point_cloud is not None:
             point_cloud_id = f"test-{uuid4().hex}"
-            src = f"gs://{POINT_CLOUDS_BUCKET}/{point_cloud}/cloud.laz"
-            dst = f"gs://{POINT_CLOUDS_BUCKET}/{point_cloud_id}/cloud.laz"
-            get_gcsfs_client().cp(src, dst)
+            src = f"gs://{POINT_CLOUDS_BUCKET}/{point_cloud}/cloud.parquet"
+            dst = f"gs://{POINT_CLOUDS_BUCKET}/{point_cloud_id}/cloud.parquet"
+            get_gcsfs_client().cp(src, dst, recursive=True)
             point_cloud_blobs.append(dst)
 
             pc_data = load_json(POINT_CLOUDS_DIR / f"{point_cloud}.json")
@@ -391,7 +392,7 @@ def griddle_runner():
 
     for point_cloud_blob in point_cloud_blobs:
         if exists(point_cloud_blob):
-            delete_file(point_cloud_blob)
+            get_gcsfs_client().rm(point_cloud_blob, recursive=True)
 
     for point_cloud_doc_id in point_cloud_doc_ids:
         delete_document(POINT_CLOUDS_COLLECTION, point_cloud_doc_id)

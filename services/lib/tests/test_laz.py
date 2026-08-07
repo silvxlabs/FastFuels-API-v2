@@ -1,14 +1,12 @@
 """
-Unit tests for lib.laz canonical LAZ output.
+Unit tests for the lib.laz canonical point schema.
 
 Everything runs in memory against synthetic records — no network, no files.
-The cross-format cases are the point of this module: merging point clouds from
-different sources fails loudly in laspy unless records are normalized first.
+The cross-format cases are the point of this module: point clouds from
+different sources cannot be merged unless records are normalized first.
 
 Run with: uv run --extra pointcloud pytest tests/test_laz.py -v
 """
-
-import io
 
 import laspy
 import numpy as np
@@ -19,7 +17,6 @@ from pyproj import CRS
 
 from lib.laz import (
     CANONICAL_POINT_FORMAT_ID,
-    LazAccumulator,
     build_output_header,
     normalize_record,
     point_format_id_for_dimensions,
@@ -155,14 +152,13 @@ class TestPointFormatSelection:
                 _dims(coloured.point_format, plain.point_format)
             ),
         )
-        acc = LazAccumulator(header)
-        acc.append(normalize_record(coloured, header, *output_coords(4)))
-        acc.append(normalize_record(plain, header, *output_coords(2)))
-        buffer, stats, _ = acc.finish()
+        first = normalize_record(coloured, header, *output_coords(4))
+        second = normalize_record(plain, header, *output_coords(2))
 
-        reread = laspy.read(buffer)
-        assert stats["point_count"] == 6
-        assert list(np.asarray(reread.red)[:4]) == [100, 200, 300, 400]
+        # The colourless source contributes zeros rather than blocking the
+        # merge, which is the whole point of promoting the shared format.
+        merged = np.concatenate([np.asarray(first.red), np.asarray(second.red)])
+        assert list(merged) == [100, 200, 300, 400, 0, 0]
 
 
 class TestNormalizeRecord:
@@ -239,109 +235,23 @@ class TestNormalizeRecord:
 
 
 class TestCrossFormatMerge:
-    """Tests for writing records from different sources into one file."""
-
-    def test_writes_normalized_legacy_record(self):
-        """Guards the LaspyException raised on a point-format mismatch."""
-        source = make_source(1, extra="OriginId")
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        acc = LazAccumulator(header)
-        acc.append(normalize_record(source, header, *output_coords(len(source))))
-        _, stats, _ = acc.finish()
-        assert stats["point_count"] == len(source)
+    """Tests that normalization is what lets differing sources merge at all."""
 
     def test_merges_different_point_formats(self):
-        """Point format 1 and point format 6 sources into one output file.
+        """Point format 1 and point format 6 sources into one record layout.
 
         This is the multi-acquisition case: two 3DEP acquisitions need not
-        agree on point format, and laspy will not write mismatched records.
+        agree on point format, and their points are only concatenable once
+        both have been converted to the canonical one.
         """
         legacy = make_source(1, count=6, extra="OriginId")
         modern = make_source(6, count=4, version="1.4")
         header = build_output_header(DOMAIN_CRS, BOUNDS)
 
-        acc = LazAccumulator(header)
-        acc.append(normalize_record(legacy, header, *output_coords(6)))
-        acc.append(normalize_record(modern, header, *output_coords(4)))
-        buffer, stats, _ = acc.finish()
+        assert legacy.point_format != modern.point_format
 
-        assert stats["point_count"] == 10
-        reread = laspy.read(buffer)
-        assert len(reread.points) == 10
+        first = normalize_record(legacy, header, *output_coords(6))
+        second = normalize_record(modern, header, *output_coords(4))
 
-    def test_raw_append_of_mismatched_record_still_fails(self):
-        """Sanity check that normalization is what makes the merge work."""
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        acc = LazAccumulator(header)
-        with pytest.raises(laspy.LaspyException):
-            acc.append(make_source(1))
-
-
-class TestLazAccumulator:
-    """Tests for the streaming writer and its statistics."""
-
-    def test_round_trips_through_a_real_laz(self):
-        source = make_source(1, count=20)
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        x, y, z = output_coords(20)
-
-        acc = LazAccumulator(header)
-        acc.append(normalize_record(source, header, x, y, z))
-        buffer, stats, bounds = acc.finish()
-
-        reread = laspy.read(buffer)
-        assert len(reread.points) == 20
-        assert reread.header.parse_crs().equals(DOMAIN_CRS)
-        assert np.allclose(np.asarray(reread.x), x, atol=0.01)
-        assert bounds[0] == pytest.approx(x.min(), abs=0.01)
-        assert bounds[3] == pytest.approx(x.max(), abs=0.01)
-        assert stats["point_count"] == 20
-
-    def test_statistics_describe_what_was_written(self):
-        source = make_source(1, count=10)
-        source.classification = np.array([2] * 5 + [5] * 3 + [1] * 2)
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        acc = LazAccumulator(header)
-        acc.append(normalize_record(source, header, *output_coords(10)))
-        _, stats, _ = acc.finish()
-
-        assert stats["point_classes"] == [1, 2, 5]
-        assert stats["point_count"] == 10
-        assert stats["density"] > 0
-
-    def test_classes_accumulate_across_appends(self):
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        acc = LazAccumulator(header)
-        for classification in (2, 5):
-            source = make_source(1, count=4)
-            source.classification = np.full(4, classification)
-            acc.append(normalize_record(source, header, *output_coords(4)))
-        _, stats, _ = acc.finish()
-        assert stats["point_classes"] == [2, 5]
-        assert stats["point_count"] == 8
-
-    def test_empty_cloud_finishes_cleanly(self):
-        """No points is a valid, if useless, outcome — it must not crash."""
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        buffer, stats, bounds = LazAccumulator(header).finish()
-        assert stats["point_count"] == 0
-        assert stats["point_classes"] == []
-        assert stats["density"] == 0.0
-        assert all(np.isfinite(bounds))
-        assert len(laspy.read(buffer).points) == 0
-
-    def test_appending_an_empty_record_is_a_noop(self):
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        acc = LazAccumulator(header)
-        acc.append(ScaleAwarePointRecord.zeros(0, header=header))
-        assert acc.point_count == 0
-        _, stats, _ = acc.finish()
-        assert stats["point_count"] == 0
-
-    def test_output_is_compressed(self):
-        source = make_source(1, count=1000)
-        header = build_output_header(DOMAIN_CRS, BOUNDS)
-        acc = LazAccumulator(header)
-        acc.append(normalize_record(source, header, *output_coords(1000)))
-        buffer, _, _ = acc.finish()
-        assert laspy.open(io.BytesIO(buffer.getvalue())).header.are_points_compressed
+        assert first.point_format == second.point_format == header.point_format
+        assert np.concatenate([first.array, second.array]).size == 10

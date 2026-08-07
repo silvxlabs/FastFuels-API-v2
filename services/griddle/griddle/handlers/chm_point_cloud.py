@@ -1,10 +1,15 @@
 """
 Canopy height model from a point cloud.
 
-Rasterises height above ground from a stored LAZ onto the domain lattice. The
-cloud is streamed in chunks and every global computation happens on the raster,
-so peak memory is set by the grid size rather than the point count — a 168M
-point cloud measured 0.61 GB end to end.
+Rasterises height above ground onto the lattice the alignment defines, from the
+point cloud's partitioned Parquet dataset.
+
+The work is blocked over that lattice: each block reads only the cloud
+partitions it overlaps and rasterises them itself, so no pass ever holds more
+than one block's points and peak memory tracks the output grid rather than the
+cloud. Blocking does not change the answer — the point passes are commutative
+scatter-reductions, and the raster steps that are not cell-local run through a
+halo at least as wide as their dependency radius.
 
 Ground comes from the cloud's own ASPRS class 2 returns when it has them. When
 it does not — user uploads carry no guarantee of a classification, let alone an
@@ -18,13 +23,16 @@ window — large buildings, closed evergreen canopy. ``ground_coverage`` and
 a visible cause.
 """
 
-import io
-import os
-from collections.abc import Callable, Iterator
-from typing import IO
+import math
+import multiprocessing
+from collections.abc import Callable
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
+from contextlib import contextmanager
 
+import dask
+import dask.array as da
 import geopandas as gpd
-import laspy
 import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
@@ -36,31 +44,28 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
+from griddle.handlers import chm_blocks
+from griddle.handlers.chm_blocks import GROUND_CLASS, SURFACE_CLASSES
 from lib.alignment import resolve_alignment_destination
-from lib.config import POINT_CLOUDS_BUCKET
+from lib.config import (
+    GRIDDLE_DASK_WORKERS,
+    GRIDDLE_READ_WORKERS,
+    POINT_CLOUDS_BUCKET,
+)
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
-from lib.gcs import get_gcsfs_client
+from lib.pointcloud.reader import read_manifest
+from lib.pointcloud.schema import cloud_prefix
 
-# Points are read in chunks of this many. Peak memory is one chunk plus the
-# rasters; 2M keeps the chunk well under 100 MB for any point format.
-CHUNK_POINTS = 2_000_000
+# Block edge in cells, before the cloud-tile floor in `_compute_block_cells`.
+# Matches griddle's default storage chunk, so at 1 m and coarser the compute
+# blocks and the written chunks are the same size.
+DEFAULT_BLOCK_CELLS = 512
 
-# ASPRS classes that can contribute to a canopy surface: never-classified (0),
-# unclassified (1), ground (2), and the three vegetation classes. This
-# deliberately excludes noise (7, 18), water (9) and buildings (6).
-#
-# Two traps here. Many 3DEP acquisitions classify only ground and unclassified,
-# so vegetation lives in class 1 — filtering *to* classes 3-5 returns nothing.
-# And a genuinely unclassified upload is all class 0, so omitting it (as v1's
-# `Classification >= 1 && <= 5` did) yields an empty CHM for exactly the clouds
-# the derived-ground path exists to serve.
-SURFACE_CLASSES = (0, 1, 2, 3, 4, 5)
-GROUND_CLASS = 2
-
-# Heights outside this range are not canopy. Matches the v1 sanity filter.
-MIN_CANOPY_HEIGHT_M = 0.0
-MAX_CANOPY_HEIGHT_M = 100.0
+# How far `max_ground_distance_m` is measured before it saturates. The number
+# only carries information near the distances the filter can bridge — 30 m of
+# fill, a 33 m widest window — so measuring further costs halo for nothing.
+GROUND_DISTANCE_CAP_M = 60.0
 
 # How far a ground gap may be filled by interpolation. Beyond this a cell stays
 # nodata rather than being extrapolated across a large void.
@@ -78,23 +83,6 @@ PMF_MAX_WINDOW_M = 33.0
 PMF_SLOPE = 1.0
 PMF_INITIAL_DISTANCE_M = 0.15
 PMF_MAX_DISTANCE_M = 2.5
-
-# A point within this distance of the provisional surface is taken to be a
-# ground return. Used to re-derive the ground from real measurements rather
-# than from the eroded and dilated surface, which reads about 0.1 m low.
-GROUND_SNAP_TOLERANCE_M = 0.5
-
-# Largest LAZ held in memory between passes, compared against the peak of the
-# fetch rather than the object size. Above this the object is re-read per pass
-# instead, trading network for a bounded footprint. The reachable ceiling sits
-# well under the default: 200M points (LAKITU_MAX_POINTS) at a measured
-# 6.9 B/point is ~1.3 GiB, and an upload is capped at 1 GiB.
-MAX_BUFFERED_LAZ_BYTES = int(os.getenv("CHM_MAX_BUFFERED_LAZ_BYTES", 4 * 1024**3))
-
-# A buffered cloud and the rasters share the worker, so the buffering decision
-# subtracts the lattice's share. Peak measured at 37.2 B/cell.
-RASTER_BYTES_PER_CELL = 40
-MEMORY_BUDGET_BYTES = int(os.getenv("CHM_MEMORY_BUDGET_BYTES", 6 * 1024**3))
 
 # A cell whose height exceeds *every* neighbour by more than this is a lone
 # spurious return rather than a treetop. Applied to the finished raster so the
@@ -115,6 +103,12 @@ SPIKE_THRESHOLD_M = 25.0
 # source from becoming a TypeError deep in the lattice math.
 FALLBACK_RESOLUTION_M = 1.0
 
+# Filesystem the block workers read through; None means GCS. A worker is a
+# separate interpreter, so patching this module cannot reach one -- an override
+# has to be a value that travels in the pool initializer, which is what this is.
+# Only set when reading a dataset off local disk.
+BLOCK_FILESYSTEM = None
+
 
 def fetch_point_cloud_chm(
     roi: gpd.GeoDataFrame,
@@ -127,11 +121,21 @@ def fetch_point_cloud_chm(
 ) -> tuple[xr.Dataset, dict]:
     """Build a canopy height model from a stored point cloud.
 
+    The output lattice comes from the alignment, and the work is blocked over
+    it: each block reads only the cloud partitions it overlaps and rasterises
+    them itself. Peak memory is a few rasters over the output grid plus one
+    block's points, so it tracks the grid rather than the cloud.
+
+    Blocking does not change the answer. The point passes are commutative
+    scatter-reductions, so their result is independent of how points are
+    grouped, and the raster steps that are not cell-local run through
+    `map_overlap` with a halo at least as wide as their dependency radius.
+
     Args:
         roi: Domain geometry, in the domain's projected CRS. The stored cloud is
             already in this CRS — the uploader reprojects on ingest and lakitu
             writes 3DEP clouds in the domain CRS — so no reprojection happens.
-        point_cloud_id: Point cloud whose LAZ to read.
+        point_cloud_id: Point cloud whose dataset to read.
         point_classes: ASPRS classes present in the cloud, from the point cloud
             document's ``summary.point_classes``. Decides whether ground is read
             from the classification or derived.
@@ -149,33 +153,150 @@ def fetch_point_cloud_chm(
         ProcessingError: If the alignment cannot produce a lattice this handler
             can rasterize onto, or if the cloud contributes no points to it.
     """
+    with dask.config.set(scheduler="threads", num_workers=GRIDDLE_DASK_WORKERS):
+        return _fetch(
+            roi,
+            point_cloud_id,
+            point_classes,
+            alignment,
+            progress,
+            target_grid_doc,
+            extent_buffer_cells,
+        )
+
+
+def _fetch(
+    roi: gpd.GeoDataFrame,
+    point_cloud_id: str,
+    point_classes: list[int],
+    alignment: dict,
+    progress: Callable[[str, int | None], None],
+    target_grid_doc: dict | None,
+    extent_buffer_cells: int,
+) -> tuple[xr.Dataset, dict]:
+    """Body of `fetch_point_cloud_chm`, under a pinned dask thread pool."""
     transform, (height, width) = _resolve_lattice(
         roi, alignment, target_grid_doc, extent_buffer_cells
     )
     resolution = transform.a
-    lattice = (transform.c, transform.f, height, width)
 
     progress("Reading point cloud...", 10)
-    cloud = _open_cloud(point_cloud_id, height * width)
+    prefix = cloud_prefix(POINT_CLOUDS_BUCKET, point_cloud_id)
+    manifest = read_manifest(prefix)
+    fill_cells = _fill_cells(resolution)
+    # The widest halo any step needs, which is what the blocking has to be able
+    # to feed. PMF only runs for a cloud with no ground class, so a classified
+    # cloud is not charged for its much wider reach.
+    halo_cells = max(
+        fill_cells,
+        int(np.ceil(GROUND_DISTANCE_CAP_M / resolution)),
+        0 if GROUND_CLASS in point_classes else _pmf_depth_cells(resolution),
+    )
+    tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
+    block_cells = _compute_block_cells(resolution, tile_m, halo_cells)
+    blocks = (
+        _block_slices(
+            height,
+            block_cells,
+            _tile_cuts(height, transform.f, transform.e, tile_origin[1], tile_m),
+        ),
+        _block_slices(
+            width,
+            block_cells,
+            _tile_cuts(width, transform.c, transform.a, tile_origin[0], tile_m),
+        ),
+    )
 
-    if GROUND_CLASS in point_classes:
-        progress("Reading ground returns...", 15)
-        ground = _min_surface(cloud, lattice, resolution, (GROUND_CLASS,))
-        ground_source = "classification"
-    else:
-        progress("Deriving ground surface...", 15)
-        ground, ground_source = _derive_ground(cloud, lattice, resolution, progress)
+    tiles = [
+        (row0, row1, col0, col1) for row0, row1 in blocks[0] for col0, col1 in blocks[1]
+    ]
 
-    known_ground = np.isfinite(ground)
-    coverage = float(known_ground.mean())
-    ground_distance_m = _max_ground_distance(known_ground) * resolution
+    with _block_pool(prefix, manifest, BLOCK_FILESYSTEM) as pool:
 
-    progress("Filling ground gaps...", 45)
-    ground = _fill_gaps(ground, _fill_cells(resolution))
+        def over_blocks(kind, classes=None, extra_for=None):
+            """Rasterise every block on the pool and assemble the grid.
 
-    progress("Rasterizing canopy heights...", 55)
-    chm = _max_height_above(cloud, ground, lattice, resolution)
-    chm = _remove_spikes(chm, SPIKE_THRESHOLD_M)
+            `extra_for` supplies whatever raster a pass samples, per block, so a
+            task carries its own slice rather than the whole grid.
+            """
+            return _run_blocks(
+                pool,
+                transform,
+                tiles,
+                (height, width),
+                kind,
+                resolution,
+                classes,
+                extra_for,
+            )
+
+        if GROUND_CLASS in point_classes:
+            progress("Reading ground returns...", 15)
+            ground = over_blocks("min", classes=(GROUND_CLASS,))
+            ground_source = "classification"
+        else:
+            progress("Deriving ground surface...", 15)
+            minimum = da.from_array(
+                over_blocks("min", classes=SURFACE_CLASSES),
+                chunks=(block_cells, block_cells),
+            )
+            # Each step re-halos from the materialised intermediate, so the
+            # depths are per-step rather than one accumulated worst case.
+            provisional = da.map_overlap(
+                _fill_gaps,
+                minimum,
+                depth=_overlap_depth(minimum, fill_cells),
+                boundary="none",
+                dtype=np.float32,
+                max_cells=fill_cells,
+            )
+            provisional = da.map_overlap(
+                _pmf,
+                provisional,
+                depth=_overlap_depth(provisional, _pmf_depth_cells(resolution)),
+                boundary="none",
+                dtype=np.float32,
+                resolution=resolution,
+            )
+            progress("Separating ground from cover...", 30)
+            provisional = np.asarray(provisional.compute())
+
+            progress("Re-reading ground returns...", 40)
+            ground = over_blocks(
+                "snap",
+                extra_for=lambda bl: _block_of(provisional, transform, bl, resolution),
+            )
+            ground_source = "derived"
+
+        # Ground is needed whole from here: the provenance reduces over all of
+        # it, and the height pass interpolates it across block edges.
+        known_ground = np.isfinite(ground)
+        coverage = float(known_ground.mean())
+
+        ground_distance_m = _blocked_ground_distance(
+            known_ground, block_cells, resolution
+        )
+
+        progress("Filling ground gaps...", 45)
+        ground = _blocked_fill_gaps(ground, block_cells, fill_cells)
+
+        progress("Rasterizing canopy heights...", 55)
+        chm = over_blocks(
+            "max",
+            extra_for=lambda bl: _ground_window(ground, transform, bl, resolution),
+        )
+
+    blocked_chm = da.from_array(chm, chunks=(block_cells, block_cells))
+    chm = np.asarray(
+        da.map_overlap(
+            _remove_spikes,
+            blocked_chm,
+            depth=_overlap_depth(blocked_chm, 1),
+            boundary="none",
+            dtype=np.float32,
+            threshold=SPIKE_THRESHOLD_M,
+        ).compute()
+    )
 
     if not np.isfinite(chm).any():
         raise ProcessingError(
@@ -196,6 +317,186 @@ def fetch_point_cloud_chm(
         "max_ground_distance_m": round(ground_distance_m, 1),
     }
     return ds, provenance
+
+
+def _blocked_ground_distance(known, block_cells, resolution) -> float:
+    """Furthest any cell sits from a ground return, in metres, saturating.
+
+    Blocked with a halo as wide as the cap, so a cell whose nearest ground lies
+    within the cap finds it inside its own halo and the answer below the cap is
+    exact. `max` is commutative, so combining the blocks is just a reduction.
+
+    The halo is trimmed before that reduction, which is not cosmetic. A halo
+    cell is only as well served as *its* own halo, which it does not have, so
+    its distance can be an overestimate; reducing over it let the answer depend
+    on the chunking rather than on the data. Measured on one 2 km grid, the same
+    ground read 40 m at a 512-cell block and 38 m at 500.
+    """
+    cap_cells = GROUND_DISTANCE_CAP_M / resolution
+    blocks = da.from_array(known, chunks=(block_cells, block_cells))
+    distance = da.map_overlap(
+        _ground_distance_cells,
+        blocks,
+        depth=_overlap_depth(blocks, int(np.ceil(cap_cells))),
+        boundary="none",
+        dtype=np.float64,
+        cap_cells=cap_cells,
+    )
+    return float(distance.max().compute()) * resolution
+
+
+class _InlineExecutor:
+    """Runs each block in the calling process, for a single worker.
+
+    A pool of one buys no concurrency and costs a whole interpreter, and reading
+    in-process is also what lets a caller stub the reader -- a patch in this
+    process cannot reach a forkserver child.
+    """
+
+    def submit(self, function, *args):
+        future = Future()
+        try:
+            future.set_result(function(*args))
+        except Exception as e:
+            future.set_exception(e)
+        return future
+
+
+@contextmanager
+def _block_pool(prefix: str, manifest: dict, filesystem=None):
+    """One forkserver pool serving every point pass of a run.
+
+    forkserver, not fork: gcsfs pins its event loop to the PID that built it and
+    refuses to run in a forked child (`lib.gcs.blobs`), and this process has
+    already built one. Each worker opens its own dataset in the initializer, so
+    the handles are never shared across the fork.
+
+    One pool rather than one per pass. Starting it costs a fresh interpreter and
+    a pyarrow import per worker, which is why `chm_blocks` is import-light and
+    why the pool spans the ground read, the snap and the height pass instead of
+    being rebuilt between them.
+    """
+    if GRIDDLE_READ_WORKERS <= 1:
+        chm_blocks.worker_init(prefix, manifest, filesystem)
+        yield _InlineExecutor()
+        return
+
+    context = multiprocessing.get_context("forkserver")
+    with ProcessPoolExecutor(
+        max_workers=GRIDDLE_READ_WORKERS,
+        mp_context=context,
+        initializer=chm_blocks.worker_init,
+        initargs=(prefix, manifest, filesystem),
+    ) as pool:
+        yield pool
+
+
+def _run_blocks(
+    pool, transform, tiles, shape, kind, resolution, classes, extra_for
+) -> np.ndarray:
+    """Rasterise every block on `pool` and write the results into one grid.
+
+    Results are written into a preallocated grid as they complete rather than
+    concatenated at the end, so the parent holds one output raster and not also
+    a list of every block that made it.
+
+    Raises:
+        ProcessingError: If a worker dies, which surfaces from the pool as a
+            bare BrokenProcessPool with no indication of what was running.
+    """
+    out = np.empty(shape, dtype=np.float32)
+    submitted = {}
+    for row0, row1, col0, col1 in tiles:
+        lattice = chm_blocks.block_lattice(
+            transform, row0, col0, row1 - row0, col1 - col0
+        )
+        extra = extra_for(lattice) if extra_for is not None else None
+        job = (kind, lattice, resolution, classes, extra)
+        submitted[pool.submit(chm_blocks.run_block, job)] = (row0, row1, col0, col1)
+
+    try:
+        for future in as_completed(submitted):
+            row0, row1, col0, col1 = submitted[future]
+            out[row0:row1, col0:col1] = future.result()
+    except BrokenProcessPool as e:
+        raise ProcessingError(
+            code="POINT_CLOUD_UNREADABLE",
+            message="This point cloud's stored data could not be read.",
+            suggestion="Retry, and contact support if it fails again.",
+            # A worker dying is nearly always the container running out of
+            # memory, which Cloud Run does not log -- the child is killed, not
+            # the server, so nothing appears above this line. GRIDDLE_READ_WORKERS
+            # against the memory limit is the first thing to check.
+            traceback=(
+                f"block worker died during the {kind!r} pass with "
+                f"{GRIDDLE_READ_WORKERS} workers, usually out of memory: {e}"
+            ),
+        ) from e
+    return out
+
+
+def _ground_window(ground, transform, block_lattice, resolution):
+    """The block's slice of the ground raster grown by one cell, and its lattice.
+
+    One cell is exactly what bilinear sampling of a point inside the block can
+    reach -- the sample sits half a cell back, so a point in the first column
+    reads columns -1 and 0. Clipped to the grid, which costs nothing: sampling
+    clamps to the array's own edge, and clamping to a slice that stops at the
+    grid edge is the same as clamping to the grid.
+    """
+    origin_x, origin_y, rows, cols = block_lattice
+    col0 = int(round((origin_x - transform.c) / resolution))
+    row0 = int(round((transform.f - origin_y) / resolution))
+    grid_rows, grid_cols = ground.shape
+    lo_row, lo_col = max(0, row0 - 1), max(0, col0 - 1)
+    hi_row = min(grid_rows, row0 + rows + 1)
+    hi_col = min(grid_cols, col0 + cols + 1)
+    window = ground[lo_row:hi_row, lo_col:hi_col]
+    lattice = (
+        transform.c + lo_col * resolution,
+        transform.f - lo_row * resolution,
+        hi_row - lo_row,
+        hi_col - lo_col,
+    )
+    return np.ascontiguousarray(window), lattice
+
+
+def _blocked_fill_gaps(surface, block_cells: int, max_cells: int) -> np.ndarray:
+    """`_fill_gaps` over blocks, with a halo as wide as its reach.
+
+    The only whole-grid pass left in the handler, and the reason it had to go:
+    `_fill_gaps` is pure array work with no dask around it, so it ran at exactly
+    1.00 core in every in-region measurement no matter what the container was
+    given. At 64 km2 that was 36-82 s the allocation could not touch.
+
+    Blocking is exact here. Each iteration extends the filled region by one cell
+    and there are `max_cells` of them, so a cell's value depends only on inputs
+    within `max_cells` and a halo that wide feeds it everything the whole-grid
+    pass would have seen. `boundary="none"` leaves the grid's own edges to be
+    handled by `uniform_filter`'s `mode="nearest"`, exactly as before.
+
+    Most blocks also finish far sooner than the whole grid does: `_fill_gaps`
+    breaks as soon as nothing is missing, and gaps are local, so a block with no
+    NaN costs one pass instead of `max_cells` of them.
+    """
+    blocks = da.from_array(surface, chunks=(block_cells, block_cells))
+    filled = da.map_overlap(
+        _fill_gaps,
+        blocks,
+        depth=_overlap_depth(blocks, max_cells),
+        boundary="none",
+        dtype=np.float32,
+        max_cells=max_cells,
+    )
+    return np.asarray(filled.compute())
+
+
+def _block_of(surface, transform, block_lattice, resolution) -> np.ndarray:
+    """The slice of a whole-grid raster covering one block."""
+    origin_x, origin_y, rows, cols = block_lattice
+    col0 = int(round((origin_x - transform.c) / resolution))
+    row0 = int(round((transform.f - origin_y) / resolution))
+    return surface[row0 : row0 + rows, col0 : col0 + cols]
 
 
 def _resolve_lattice(
@@ -258,124 +559,106 @@ def _resolve_lattice(
     return destination["destination_transform"], destination["destination_shape"]
 
 
-def _cloud_path(point_cloud_id: str) -> str:
-    """GCS path of a point cloud's LAZ."""
-    return f"{POINT_CLOUDS_BUCKET}/{point_cloud_id}/cloud.laz"
+def _compute_block_cells(resolution: float, tile_m: float, halo_cells: int) -> int:
+    """Block edge in cells, rounded up to a whole number of cloud tiles.
 
+    Two floors decide the size:
 
-class _ReplayableBuffer(io.BytesIO):
-    """An in-memory LAZ that survives being read.
+    - the default, which matches griddle's storage chunk so that at 1 m and
+      coarser the compute blocks and the written chunks coincide;
+    - twice the widest halo. This one is correctness, not economy: a halo wider
+      than a block cannot be supplied.
 
-    ``laspy.open`` used as a context manager closes the stream it was handed,
-    but the algorithm makes two or three passes over the same bytes. Ignoring
-    ``close`` is what keeps one download replayable; the buffer is released when
-    the handler returns and the last reference goes away.
+    A whole number of tiles because a block is only cheap to read if it stops
+    where a partition stops. `read_points` prunes on the partition columns and
+    nothing finer, so a block overlapping a tile by one cell decodes that tile
+    entirely — a block sized like a tile but out of step with it reads four
+    where it needs one. Measured at 1 m on a 4 km domain: 4.89 partition reads
+    per tile over a run, against the 2 the two passes actually need.
+
+    The halo floor is rounded *up* to a whole tile because it is a correctness
+    bound. The default is rounded to the *nearest* whole tile instead: it only
+    buys matching storage chunks, which `save_zarr` restores on write anyway,
+    and rounding it up would double a block's area — and a block's points are
+    what peak memory tracks.
     """
+    tile_cells = tile_m / resolution
+    tiles_per_block = max(
+        1,
+        math.ceil(2 * (halo_cells + 1) / tile_cells),
+        round(DEFAULT_BLOCK_CELLS / tile_cells),
+    )
+    return max(1, int(round(tiles_per_block * tile_cells)))
 
-    def close(self) -> None:
-        pass
 
-
-def _open_cloud(point_cloud_id: str, cells: int) -> Callable[[], IO[bytes]]:
-    """Return a factory yielding a readable LAZ stream, one per pass.
-
-    A cloud small enough to hold alongside the rasters is fetched once and
-    replayed from memory, which measured ~2.6x the throughput of streaming the
-    same object through gcsfs. Anything larger is re-opened per pass, since
-    buffering does not scale to a multi-gigabyte cloud.
+def _tile_cuts(
+    count: int, anchor: float, step: float, tile_origin: float, tile_m: float
+) -> list[int]:
+    """Cell indices strictly inside ``(0, count)`` where a cloud tile begins.
 
     Args:
-        point_cloud_id: Point cloud whose LAZ to read.
-        cells: Cells in the output lattice, which sets the raster working set.
+        count: Cells on this axis.
+        anchor: World coordinate of cell zero's leading edge.
+        step: World distance per cell, negative on the row axis, where the
+            lattice runs north to south while the index runs downward.
+        tile_origin: The cloud's own origin on this axis, which anchors its
+            tiling — ``manifest["mins"]``, never the lattice.
+        tile_m: Tile edge in metres.
 
     Returns:
-        A callable returning a fresh readable stream positioned for one pass.
+        Ascending cell indices, whichever way the axis runs. Empty when no tile
+        boundary falls inside the extent, which is the single-tile case.
     """
-    path = _cloud_path(point_cloud_id)
-    fs = get_gcsfs_client()
+    if tile_m <= 0 or step == 0:
+        return []
+    low = min(anchor, anchor + step * count)
+    high = max(anchor, anchor + step * count)
+    first = math.floor((low - tile_origin) / tile_m) + 1
+    last = math.ceil((high - tile_origin) / tile_m)
+    cuts = set()
+    for k in range(first, last):
+        index = int(round((tile_origin + k * tile_m - anchor) / step))
+        if 0 < index < count:
+            cuts.add(index)
+    return sorted(cuts)
 
-    # The fetch peaks at ~2x the object, measured 2.32x: gcsfs reads the
-    # response in chunks and joins them, so both copies are briefly live.
-    # Wrapping the result adds nothing — BytesIO shares an exact bytes object
-    # rather than copying it — so the download is the whole cost.
-    headroom = MEMORY_BUDGET_BYTES - cells * RASTER_BYTES_PER_CELL
-    if 2 * fs.size(path) <= min(MAX_BUFFERED_LAZ_BYTES, headroom):
-        buffer = _ReplayableBuffer(fs.cat(path))
-        return lambda: buffer
 
-    return lambda: fs.open(path, "rb")
+def _block_slices(
+    extent: int, block: int, cuts: list[int] | None = None
+) -> list[tuple[int, int]]:
+    """Half-open (start, stop) pairs tiling `extent`.
 
+    Cuts on cloud tile boundaries where there are any, so a block reads as few
+    partitions as it can. A boundary closer than `block` to the previous cut, or
+    to the end, is skipped rather than emitted — every block therefore comes out
+    at least `block` wide, which is what keeps it able to feed the halo the
+    overlapped steps need.
 
-def _iter_points(open_cloud: Callable[[], IO[bytes]]) -> Iterator[tuple]:
-    """Yield (x, y, z, classification) arrays a chunk at a time.
-
-    Takes a factory rather than a stream so each pass gets its own reader:
-    ``laspy.open`` closes what it is handed, which a buffered cloud survives
-    and a freshly-opened remote one does not need to.
+    Falls back to an even division when the extent holds no usable boundary.
+    Even rather than greedy: a greedy split leaves a remainder block that can be
+    a single cell wide, and a block narrower than the halo silently under-feeds
+    those steps.
     """
-    cloud = open_cloud()
-    cloud.seek(0)
-    with laspy.open(cloud) as reader:
-        for points in reader.chunk_iterator(CHUNK_POINTS):
-            yield (
-                np.asarray(points.x),
-                np.asarray(points.y),
-                np.asarray(points.z),
-                np.asarray(points.classification),
-            )
+    edges = [0]
+    for cut in cuts or ():
+        if cut - edges[-1] >= block and extent - cut >= block:
+            edges.append(cut)
+    if len(edges) == 1:
+        count = max(1, math.ceil(extent / block))
+        edges = [round(index * extent / count) for index in range(count)]
+    edges.append(extent)
+    return list(zip(edges[:-1], edges[1:], strict=True))
 
 
-def _cell_indices(x, y, lattice, resolution):
-    """Return (flat_index, in_bounds_mask) for points on the output lattice.
+def _overlap_depth(array, required: int) -> int:
+    """Halo to ask dask for, capped by what the blocking can supply.
 
-    A point contributes to the cell its coordinates fall in — square
-    containment, so every return inside a cell counts exactly once.
+    Only binds when the grid is a single block, where the block already holds
+    every cell any step can reach and the halo is moot. `_compute_block_cells`
+    is what keeps it from binding anywhere it would matter.
     """
-    origin_x, origin_y, height, width = lattice
-    col = np.floor((x - origin_x) / resolution).astype(np.int64)
-    row = np.floor((origin_y - y) / resolution).astype(np.int64)
-    inside = (col >= 0) & (col < width) & (row >= 0) & (row < height)
-    return row * width + col, inside
-
-
-def _min_surface(cloud, lattice, resolution, classes) -> np.ndarray:
-    """Lowest z per cell over the given classes, NaN where no point falls."""
-    _, _, height, width = lattice
-    surface = np.full(height * width, np.inf, dtype=np.float32)
-    for x, y, z, classification in _iter_points(cloud):
-        keep = np.isin(classification, classes)
-        index, inside = _cell_indices(x[keep], y[keep], lattice, resolution)
-        np.minimum.at(surface, index[inside], z[keep][inside].astype(np.float32))
-    surface[~np.isfinite(surface)] = np.nan
-    return surface.reshape(height, width)
-
-
-def _derive_ground(cloud, lattice, resolution, progress) -> tuple[np.ndarray, str]:
-    """Derive a ground surface from a cloud with no usable classification.
-
-    Builds the minimum surface over all returns, opens the non-ground objects
-    out of it with a progressive morphological filter, then re-derives the
-    surface from the points that filter accepts. That last pass matters: the
-    opened surface has been eroded and dilated, and using it directly reads
-    about 0.1 m low.
-    """
-    _, _, height, width = lattice
-    minimum = _min_surface(cloud, lattice, resolution, SURFACE_CLASSES)
-
-    progress("Separating ground from cover...", 30)
-    provisional = _pmf(_fill_gaps(minimum, _fill_cells(resolution)), resolution)
-
-    progress("Re-reading ground returns...", 40)
-    ground = np.full(height * width, np.inf, dtype=np.float32)
-    for x, y, z, classification in _iter_points(cloud):
-        keep = np.isin(classification, SURFACE_CLASSES)
-        x, y, z = x[keep], y[keep], z[keep]
-        index, inside = _cell_indices(x, y, lattice, resolution)
-        x, y, z, index = x[inside], y[inside], z[inside], index[inside]
-        near = np.abs(z - provisional.reshape(-1)[index]) <= GROUND_SNAP_TOLERANCE_M
-        np.minimum.at(ground, index[near], z[near].astype(np.float32))
-    ground[~np.isfinite(ground)] = np.nan
-    return ground.reshape(height, width), "derived"
+    smallest = min(min(sizes) for sizes in array.chunks)
+    return int(max(0, min(required, smallest - 1)))
 
 
 def _pmf(surface: np.ndarray, resolution: float) -> np.ndarray:
@@ -413,6 +696,25 @@ def _pmf(surface: np.ndarray, resolution: float) -> np.ndarray:
     return ground
 
 
+def _pmf_depth_cells(resolution: float) -> int:
+    """Halo `_pmf` needs, in cells.
+
+    `grey_opening(W)` is an erosion followed by a dilation, so an output cell
+    depends on inputs within `W - 1`. The filter reapplies that over a ladder of
+    windows and each pass reads the previous one's output, so the radii add:
+    ~62 cells at 1 m, and near 60 m at any resolution since the windows are
+    themselves derived from a distance.
+    """
+    max_window_cells = max(3, round(PMF_MAX_WINDOW_M / resolution))
+    depth, exponent = 0, 0
+    while True:
+        window = 2 * (2**exponent) + 1
+        if window > max_window_cells:
+            return max(1, depth)
+        depth += window - 1
+        exponent += 1
+
+
 def _fill_cells(resolution: float) -> int:
     """``GROUND_FILL_MAX_M`` as a whole number of cells, at least one.
 
@@ -447,55 +749,6 @@ def _fill_gaps(surface: np.ndarray, max_cells: int) -> np.ndarray:
     return filled
 
 
-def _max_height_above(cloud, ground, lattice, resolution) -> np.ndarray:
-    """Highest height-above-ground per cell.
-
-    Ground is sampled bilinearly at each point rather than read from the point's
-    own cell: on a slope a cell-constant ground under-reads uphill and
-    over-reads downhill, which measured 0.27 m RMSE against a per-point ground
-    versus 0.17 m for bilinear.
-
-    Reports no progress despite being the longest pass. The chunk count is not
-    known until the cloud has been read, and every call writes to Firestore, so
-    a per-chunk update would cost a write per 2M points to move a bar.
-    """
-    _, _, height, width = lattice
-    chm = np.full(height * width, -np.inf, dtype=np.float32)
-
-    for x, y, z, classification in _iter_points(cloud):
-        keep = np.isin(classification, SURFACE_CLASSES)
-        x, y, z = x[keep], y[keep], z[keep]
-        above = z - _sample_bilinear(ground, x, y, lattice, resolution)
-        index, inside = _cell_indices(x, y, lattice, resolution)
-        usable = (
-            inside
-            & (above >= MIN_CANOPY_HEIGHT_M)
-            & (above < MAX_CANOPY_HEIGHT_M)
-            & np.isfinite(above)
-        )
-        np.maximum.at(chm, index[usable], above[usable].astype(np.float32))
-
-    chm[~np.isfinite(chm)] = np.nan
-    return chm.reshape(height, width)
-
-
-def _sample_bilinear(surface, x, y, lattice, resolution) -> np.ndarray:
-    """Bilinearly interpolate a raster at point coordinates."""
-    origin_x, origin_y, height, width = lattice
-    col = (x - origin_x) / resolution - 0.5
-    row = (origin_y - y) / resolution - 0.5
-    col0 = np.clip(np.floor(col).astype(np.int64), 0, width - 2)
-    row0 = np.clip(np.floor(row).astype(np.int64), 0, height - 2)
-    tx = np.clip(col - col0, 0.0, 1.0)
-    ty = np.clip(row - row0, 0.0, 1.0)
-    return (
-        surface[row0, col0] * (1 - tx) * (1 - ty)
-        + surface[row0, col0 + 1] * tx * (1 - ty)
-        + surface[row0 + 1, col0] * (1 - tx) * ty
-        + surface[row0 + 1, col0 + 1] * tx * ty
-    )
-
-
 def _remove_spikes(chm: np.ndarray, threshold: float) -> np.ndarray:
     """Drop cells that tower over every neighbour by more than `threshold`.
 
@@ -515,20 +768,33 @@ def _remove_spikes(chm: np.ndarray, threshold: float) -> np.ndarray:
     return despiked
 
 
-def _max_ground_distance(known: np.ndarray) -> float:
-    """Furthest any cell sits from a cell holding a real ground return, in cells.
+def _ground_distance_cells(known: np.ndarray, cap_cells: float) -> np.ndarray:
+    """How far each cell sits from a ground return, in cells, saturating at `cap_cells`.
 
     This is the variable that predicted ground-derivation error across the
     validation clouds — better than coverage alone, since scattered gaps
-    interpolate fine while one wide void does not. `distance_transform_edt` is
-    called for distances only; asking it for indices as well is what allocates
-    gigabytes on a large grid.
+    interpolate fine while one wide void does not.
+
+    Bounded rather than global, and blocked rather than whole-grid, because the
+    number only carries information near the distances the filter can bridge:
+    `GROUND_FILL_MAX_M` is 30 m and PMF's widest window is 33 m, so anything
+    past the cap says "badly constrained" and nothing more. Computed on a block
+    plus a halo of `cap_cells`, any cell whose true nearest ground is within the
+    cap has it inside the halo, so the answer below the cap is exact.
+
+    Per cell rather than reduced here, so the caller can drop the halo before
+    reducing — see `_blocked_ground_distance` on why that matters.
+
+    `distance_transform_edt` is called for distances only; asking it for indices
+    as well is what allocates gigabytes on a large grid.
     """
     if known.all():
-        return 0.0
+        return np.zeros(known.shape, dtype=np.float64)
     if not known.any():
-        return float("inf")
-    return float(distance_transform_edt(~known).max())
+        # No ground anywhere in reach, so every cell is at least the cap away.
+        # `distance_transform_edt` has no zero to measure to in this case.
+        return np.full(known.shape, float(cap_cells), dtype=np.float64)
+    return np.minimum(distance_transform_edt(~known), cap_cells)
 
 
 def _to_dataset(chm, transform, crs) -> xr.Dataset:

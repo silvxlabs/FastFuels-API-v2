@@ -3,27 +3,29 @@ Point cloud upload handler for the Uploader service.
 
 Ingests an uploaded point cloud (LAS or LAZ), validates that it is a readable
 cloud with a coordinate reference system, reprojects it to the domain CRS when
-necessary, and stores it as LAZ in POINT_CLOUDS_BUCKET. Unlike raster grids —
-where reprojection means resampling and is therefore rejected on a CRS
-mismatch — point reprojection is an exact per-point coordinate transform, so
-mismatched uploads are transformed rather than refused. The stored cloud is
-always in the domain CRS.
+necessary, and stores it as a partitioned Parquet dataset in
+POINT_CLOUDS_BUCKET. Unlike raster grids — where reprojection means resampling
+and is therefore rejected on a CRS mismatch — point reprojection is an exact
+per-point coordinate transform, so mismatched uploads are transformed rather
+than refused. The stored cloud is always in the domain CRS.
+
+The stored format is `lib.pointcloud`, the same one lakitu writes for 3DEP.
+That is deliberate: a point cloud is one resource type, and a reader should not
+have to ask where it came from. Everything about the layout — the columns, the
+tiling, the encodings — is defined once in `lib.pointcloud.schema`.
 
 Everything streams: the staged upload is read from GCS in bounded chunks
-(laspy + gcsfs), and rewritten output is built in an in-memory buffer (LAZ
-writers need a seekable target, which GCS is not). No local disk is used —
-on Cloud Run the filesystem is RAM-backed, and per-instance memory is the
-budget this handler is designed around. Peak usage is bounded by the upload
-size cap, not the point count.
+(laspy + gcsfs) and written straight out as partitions, so nothing is ever held
+whole. No local disk is used — on Cloud Run the filesystem is RAM-backed, and
+per-instance memory is the budget this handler is designed around.
 
-A compressed upload already in the domain CRS is copied server-side without
-rewriting. Stored format is LAZ, not COPC: every maintained COPC writer needs
-the native PDAL stack plus scratch space ~8x the compressed input, which is
-RAM on Cloud Run. COPC is planned as a lossless LAZ -> COPC batch upgrade once
-that build can run on real disk (see the service README).
+**A compressed upload already in the domain CRS used to be copied server-side
+without rewriting. That is gone.** Every upload is now decoded and re-encoded,
+because the stored format is no longer the uploaded one. The cost is smaller
+than it looks: the copy path already decoded every point to census it, so what
+is added is the encode, not the decode.
 """
 
-import io
 from datetime import UTC, datetime
 
 import laspy
@@ -38,10 +40,15 @@ from lib.config import (
 )
 from lib.errors import ProcessingError
 from lib.firestore import get_document, update_document
-from lib.gcs import delete_file, get_gcsfs_client, storage_size, upload_buffer
-from lib.laz import LazAccumulator, normalize_record
+from lib.gcs import delete_file, get_gcsfs_client
+from lib.laz import (
+    build_output_header,
+    normalize_record,
+    point_format_id_for_dimensions,
+)
+from lib.pointcloud.schema import cloud_location, point_dtype
+from lib.pointcloud.writer import write_parquet
 
-_OUTPUT_FILENAME = "cloud.laz"
 # ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
 _CHUNK_POINTS = 2_000_000
 
@@ -58,7 +65,6 @@ def handle_point_cloud(
         doc: Point cloud document loaded from Firestore.
     """
     src = f"{bucket}/{object_name}"
-    dest = f"{POINT_CLOUDS_BUCKET}/{resource_id}/{_OUTPUT_FILENAME}"
 
     try:
         domain_crs_name = _domain_crs_name(doc["domain_id"])
@@ -67,27 +73,16 @@ def handle_point_cloud(
         with get_gcsfs_client().open(src, "rb") as stream:
             with _open_cloud(stream) as reader:
                 src_crs = _require_crs(reader.header)
-                if src_crs.equals(domain_crs, ignore_axis_order=True):
-                    if reader.header.are_points_compressed:
-                        # Already LAZ in the domain CRS: census the points,
-                        # then copy the bytes server-side — no rewrite.
-                        stats = _census(reader)
-                        bounds = [*reader.header.mins, *reader.header.maxs]
-                    else:
-                        # Uncompressed LAS: recompress to LAZ, same coords.
-                        buf, stats, bounds = _rewrite(reader, domain_crs, None)
-                else:
-                    # CRS mismatch: exact per-point transform to the domain
-                    # CRS (horizontal only — elevations pass through).
+                transformer = None
+                if not src_crs.equals(domain_crs, ignore_axis_order=True):
+                    # Exact per-point transform to the domain CRS (horizontal
+                    # only — elevations pass through).
                     transformer = Transformer.from_crs(
                         src_crs, domain_crs, always_xy=True
                     )
-                    buf, stats, bounds = _rewrite(reader, domain_crs, transformer)
-
-        if stats["rewritten"]:
-            upload_buffer(dest, buf)
-        else:
-            get_gcsfs_client().copy(src, dest)
+                summary, bounds, size_bytes = _store(
+                    reader, domain_crs, transformer, resource_id
+                )
 
         update_document(
             POINT_CLOUDS_COLLECTION,
@@ -96,12 +91,8 @@ def handle_point_cloud(
                 "status": "completed",
                 "modified_on": datetime.now(UTC),
                 "georeference": {"crs": domain_crs_name, "bounds": bounds},
-                "summary": {
-                    "point_count": stats["point_count"],
-                    "point_classes": stats["point_classes"],
-                    "density": stats["density"],
-                },
-                "size_bytes": storage_size(dest),
+                "summary": summary,
+                "size_bytes": size_bytes,
                 "progress": {"message": "Complete", "percent": 100},
             },
         )
@@ -175,81 +166,85 @@ def _require_crs(header: laspy.LasHeader) -> PyprojCRS:
     return crs
 
 
-def _census(reader: laspy.LasReader) -> dict:
-    """Single chunked pass over a reader: point count and classification set.
+def _store(reader, dst_crs, transformer, resource_id):
+    """Stream the cloud into a partitioned Parquet dataset in the domain CRS.
 
-    Density is points per square meter over the header's horizontal extent.
-    """
-    classes: set[int] = set()
-    count = 0
-    for points in reader.chunk_iterator(_CHUNK_POINTS):
-        classes |= set(np.unique(np.asarray(points.classification)).tolist())
-        count += len(points)
+    Normalises through `lib.laz` exactly as the 3DEP path does, so an upload and
+    a fetch produce the same columns from the same source dimensions. That is
+    also what makes classification uniform: LAS formats 0-5 pack it in a byte
+    with the synthetic and withheld flags, and only the canonical format
+    separates them.
 
-    header = reader.header
-    area = (header.maxs[0] - header.mins[0]) * (header.maxs[1] - header.mins[1])
-    return {
-        "rewritten": False,
-        "point_count": count,
-        "point_classes": sorted(int(c) for c in classes),
-        "density": (count / area) if area > 0 else 0.0,
-    }
+    The canonical header is used for the point *format* only; the source's
+    **scaling is kept**. `build_output_header` warns against exactly this call
+    for a single file, because it imposes millimetre scaling — and a terrestrial
+    scan relying on sub-millimetre precision would have distinct points collapse
+    into one, silently. That does not apply to the coordinates here because the
+    dataset records its own scale in the manifest, so the source's survives.
 
-
-def _rewrite(
-    reader: laspy.LasReader,
-    dst_crs: PyprojCRS,
-    transformer: Transformer | None,
-) -> tuple[io.BytesIO, dict, list[float]]:
-    """Stream a cloud into an in-memory LAZ, optionally reprojecting it.
-
-    Reads in bounded chunks, transforms X/Y when a transformer is given
-    (elevations pass through untouched), and writes compressed LAZ through
-    ``lib.laz``. Statistics and bounds are computed from the written
-    (output-CRS) coordinates, so what is reported is what was stored.
-
-    The output header reproduces the source's own: same version, point format,
-    scaling, and global encoding. Only the CRS and the offsets change, because
-    only those are what a reprojection alters. This is one file being rewritten,
-    not a merge, so there is no format conflict to resolve — and anything the
-    header does not carry forward is data the user loses without being told.
-    That is why this builds its own header instead of going through
-    ``lib.laz.build_output_header``, which is the *canonical* header for merging
-    several sources into one and deliberately imposes its own format and scale.
+    What does not survive: extra dimensions, and gps_time. Both were preserved
+    when this wrote LAZ, and neither has anywhere to go in a fixed schema.
 
     Args:
         reader: Open LAS/LAZ reader positioned at the start of the points.
-        dst_crs: CRS recorded on the output header (the domain CRS).
+        dst_crs: CRS to store in (the domain CRS).
         transformer: Coordinate transform to apply, or None to keep coords.
+        resource_id: Point cloud id, which decides where the dataset is written.
 
     Returns:
-        (buffer, stats dict, [minx, miny, minz, maxx, maxy, maxz]).
+        ``(summary, bounds, size_bytes)``.
     """
     src_header = reader.header
-    header = laspy.LasHeader(
-        version=src_header.version, point_format=src_header.point_format
+    point_format_id = point_format_id_for_dimensions(
+        src_header.point_format.dimension_names
     )
+    bounds_2d = _output_bounds(src_header, transformer)
+    header = build_output_header(dst_crs, bounds_2d, point_format_id=point_format_id)
+    # The canonical header is for the format, not the precision. Keeping the
+    # source scale costs nothing here — the dataset records its own scale in the
+    # manifest, so a reader decodes with whatever this cloud was stored at.
     header.scales = src_header.scales
-    header.global_encoding = src_header.global_encoding
-    # Offsets must be near the data and fixed before writing; the transformed
-    # header minimum is exact for transformer=None and close enough otherwise.
-    if transformer is not None:
-        origin_x, origin_y = transformer.transform(
-            src_header.mins[0], src_header.mins[1]
-        )
-    else:
-        origin_x, origin_y = src_header.mins[0], src_header.mins[1]
-    header.offsets = [origin_x, origin_y, src_header.mins[2]]
-    header.add_crs(dst_crs)
+    dtype = point_dtype("red" in header.point_format.dimension_names)
 
-    accumulator = LazAccumulator(header)
-    for points in reader.chunk_iterator(_CHUNK_POINTS):
-        x = np.asarray(points.x)
-        y = np.asarray(points.y)
-        z = np.asarray(points.z)
-        if transformer is not None:
-            x, y = transformer.transform(x, y)
-        accumulator.append(normalize_record(points, header, x, y, z))
+    info = {
+        "mins": np.array([bounds_2d[0], bounds_2d[1], src_header.mins[2]]),
+        "maxs": np.array([bounds_2d[2], bounds_2d[3], src_header.maxs[2]]),
+        "scales": np.asarray(header.scales),
+        "offsets": np.asarray(header.offsets),
+    }
 
-    buf, stats, bounds = accumulator.finish()
-    return buf, {"rewritten": True, **stats}, bounds
+    def records():
+        for points in reader.chunk_iterator(_CHUNK_POINTS):
+            x = np.asarray(points.x)
+            y = np.asarray(points.y)
+            z = np.asarray(points.z)
+            if transformer is not None:
+                x, y = transformer.transform(x, y)
+            record = normalize_record(points, header, x, y, z)
+            out = np.empty(len(record), dtype=dtype)
+            for name in dtype.names:
+                out[name] = record.array[name]
+            yield out
+
+    bucket, prefix = cloud_location(POINT_CLOUDS_BUCKET, resource_id)
+    result = write_parquet(records(), info, bucket, prefix)
+    return result["summary"], result["bounds"], result["output_bytes"]
+
+
+def _output_bounds(src_header, transformer) -> tuple:
+    """Horizontal bounds of the stored cloud, in the destination CRS.
+
+    Transforms all four corners rather than just the minimum, because a
+    reprojected rectangle is not a rectangle and its extreme is not necessarily
+    a corner of the source one. Only used to place the tile origin and size the
+    LOD cells, both of which tolerate being slightly generous; the bounds
+    actually reported come from the points themselves.
+    """
+    min_x, min_y = src_header.mins[0], src_header.mins[1]
+    max_x, max_y = src_header.maxs[0], src_header.maxs[1]
+    if transformer is None:
+        return (min_x, min_y, max_x, max_y)
+    xs, ys = transformer.transform(
+        [min_x, min_x, max_x, max_x], [min_y, max_y, min_y, max_y]
+    )
+    return (min(xs), min(ys), max(xs), max(ys))

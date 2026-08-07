@@ -6,7 +6,6 @@ these exercise the request handling, status transitions, and the exception
 ladder without touching Firestore, GCS, or the network.
 """
 
-import io
 from unittest.mock import patch
 
 import pytest
@@ -39,7 +38,7 @@ def point_cloud():
 @pytest.fixture
 def handler_result():
     return {
-        "buffer": io.BytesIO(b"laz"),
+        "size_bytes": 4096,
         "georeference": {
             "crs": "EPSG:32612",
             "bounds": [0, 0, 0, 1, 1, 1],
@@ -83,7 +82,6 @@ class TestSuccess:
     """Tests for the completion path."""
 
     @patch("lakitu.main.update_progress")
-    @patch("lakitu.main.write_cloud", return_value=4096)
     @patch("lakitu.main.dispatch_handler")
     @patch("lakitu.main._load_domain")
     @patch("lakitu.main.update_status")
@@ -94,7 +92,6 @@ class TestSuccess:
         mock_status,
         _mock_domain,
         mock_dispatch,
-        mock_write,
         _mock_progress,
         point_cloud,
         handler_result,
@@ -116,7 +113,6 @@ class TestSuccess:
         assert completion["size_bytes"] == 4096
 
     @patch("lakitu.main.update_progress")
-    @patch("lakitu.main.write_cloud", return_value=1)
     @patch("lakitu.main.dispatch_handler")
     @patch("lakitu.main._load_domain")
     @patch("lakitu.main.update_status")
@@ -127,7 +123,6 @@ class TestSuccess:
         mock_status,
         _mock_domain,
         mock_dispatch,
-        _mock_write,
         _mock_progress,
         point_cloud,
         handler_result,

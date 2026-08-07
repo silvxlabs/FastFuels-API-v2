@@ -19,19 +19,19 @@ def test_routes_3dep_to_its_handler(domain_gdf):
     point_cloud = {"id": "pc-1", "source": {"name": "3dep"}}
     progress = MagicMock()
     with patch("lakitu.dispatch.threedep.handle_3dep") as mock_handler:
-        mock_handler.return_value = {"buffer": None}
-        result = dispatch_handler(point_cloud, domain_gdf, progress)
+        mock_handler.return_value = {"size_bytes": 0}
+        result = dispatch_handler(point_cloud, domain_gdf, progress, "pc-1")
 
-    assert result == {"buffer": None}
+    assert result == {"size_bytes": 0}
     mock_handler.assert_called_once_with(
-        point_cloud, point_cloud["source"], domain_gdf, progress
+        point_cloud, point_cloud["source"], domain_gdf, progress, "pc-1"
     )
 
 
 def test_unknown_source_raises(domain_gdf):
     point_cloud = {"id": "pc-1", "source": {"name": "carrier-pigeon"}}
     with pytest.raises(ProcessingError) as exc:
-        dispatch_handler(point_cloud, domain_gdf, MagicMock())
+        dispatch_handler(point_cloud, domain_gdf, MagicMock(), "pc-1")
     assert exc.value.code == "UNKNOWN_SOURCE"
 
 
@@ -39,5 +39,5 @@ def test_upload_source_is_not_handled_here(domain_gdf):
     """Uploads are ingested by the uploader on a GCS event, not dispatched."""
     point_cloud = {"id": "pc-1", "source": {"name": "upload"}}
     with pytest.raises(ProcessingError) as exc:
-        dispatch_handler(point_cloud, domain_gdf, MagicMock())
+        dispatch_handler(point_cloud, domain_gdf, MagicMock(), "pc-1")
     assert exc.value.code == "UNKNOWN_SOURCE"

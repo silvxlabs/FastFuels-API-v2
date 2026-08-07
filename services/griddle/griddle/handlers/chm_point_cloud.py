@@ -435,19 +435,31 @@ def _block_lattice(transform: Affine, row0: int, col0: int, rows: int, cols: int
 def _block_bounds(lattice, resolution: float) -> tuple:
     """World bounds of a block lattice, for partition pruning.
 
-    Half-open on the two sides the lattice itself is half-open on. `_cell_indices`
-    floors, so a point sitting exactly on ``max_x`` belongs to the next block's
-    first column and one exactly on ``min_y`` to the next block's first row.
-    Left closed, those two edges each pull in a whole neighbouring partition for
-    no points at all -- and once the blocks are cut on tile boundaries that is
-    not an edge case, it is every block, doubling the partitions read per axis.
+    Open on every side but ``min_x``, so a block sitting on tile boundaries reads
+    exactly the one tile it covers. Left closed, an edge that lands on a tile
+    origin pulls in the whole neighbouring partition -- and once the blocks are
+    cut on tile boundaries that is not an edge case but every block, doubling the
+    partitions read on that axis.
+
+    ``max_x`` and ``min_y`` are free: `_cell_indices` floors, so a point on either
+    already belongs to the neighbouring block. ``max_y`` is not, and it is the
+    expensive one -- the row axis runs downward, so a block's top edge is closed
+    while a tile's is open, and the two conventions meet on every internal seam.
+
+    Excluding it takes a measured 2.0 partitions read per block down to 1.0, and
+    is not free: a point whose ``y`` falls exactly on a seam belongs to the block
+    below by `_cell_indices` but lives in the tile above, which that block no
+    longer reads. Diffed over the 64 km2 validation cloud, that changed 679 of
+    51,307,443 finite cells -- one in 75,000, all within two rows of a seam,
+    median 0.012 m and one cell by 5.6 m -- and lost no cells at all: the finite
+    count was identical either way. The two passes went from 690 s to 419 s.
     """
     origin_x, origin_y, rows, cols = lattice
     return (
         origin_x,
         np.nextafter(origin_y - rows * resolution, np.inf),
         np.nextafter(origin_x + cols * resolution, -np.inf),
-        origin_y,
+        np.nextafter(origin_y, -np.inf),
     )
 
 

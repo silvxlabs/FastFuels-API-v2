@@ -21,6 +21,7 @@ from shapely.geometry import box
 
 from lib.errors import ProcessingError
 from lib.pointcloud.reader import open_dataset, read_points
+from lib.pointcloud.schema import tile_span
 
 CRS = "EPSG:32612"
 
@@ -597,14 +598,32 @@ class TestBlockingIsInvisible:
         ]
 
     def test_a_block_stops_short_of_the_next_partition(self):
-        """The upper edges are exclusive, or every aligned block reads twice."""
+        """Every edge but the origin is exclusive, or an aligned block reads twice."""
         min_x, min_y, max_x, max_y = chm_point_cloud._block_bounds(
             (1000.0, 2000.0, 500, 500), 1.0
         )
         assert min_x == 1000.0
-        assert max_y == 2000.0
         assert max_x < 1500.0
         assert min_y > 1500.0
+        # The row axis runs downward, so the top edge is the one that lands on a
+        # tile origin. Left closed it pulled in the tile above, on every block.
+        assert max_y < 2000.0
+
+    def test_an_aligned_block_reads_exactly_one_partition(self):
+        """The whole point of cutting on tile boundaries, asserted end to end.
+
+        Measured at 2.0 partitions per block on the 64 km2 cloud before the top
+        edge was made exclusive -- the x axis read one tile and the y axis two.
+        """
+        tile_m, cloud_origin = 500.0, (1000.0, 1500.0)
+        for row in range(4):
+            for col in range(4):
+                bounds = chm_point_cloud._block_bounds(
+                    (1000.0 + col * 500.0, 3500.0 - row * 500.0, 500, 500), 1.0
+                )
+                tx0, tx1 = tile_span(bounds[0], bounds[2], cloud_origin[0], tile_m)
+                ty0, ty1 = tile_span(bounds[1], bounds[3], cloud_origin[1], tile_m)
+                assert (tx1 - tx0 + 1, ty1 - ty0 + 1) == (1, 1)
 
     def test_blocks_are_divided_evenly(self):
         """A greedy split leaves a remainder block narrower than the halo."""

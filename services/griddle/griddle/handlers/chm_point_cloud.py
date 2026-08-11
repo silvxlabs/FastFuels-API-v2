@@ -211,6 +211,13 @@ def _fetch(
         (row0, row1, col0, col1) for row0, row1 in blocks[0] for col0, col1 in blocks[1]
     ]
 
+    # Chunks for every dask pass below, taken from the same division the reads
+    # use. `da.from_array(..., chunks=block_cells)` would lay down whole blocks
+    # and leave `extent % block_cells` over, and `_overlap_depth` caps the halo
+    # by the *smallest* chunk in the array — so a one-cell remainder truncates
+    # the halo for every block, not just its own.
+    block_chunks = tuple(tuple(stop - start for start, stop in axis) for axis in blocks)
+
     with _block_pool(prefix, manifest, BLOCK_FILESYSTEM) as pool:
 
         def over_blocks(kind, classes=None, extra_for=None):
@@ -238,7 +245,7 @@ def _fetch(
             progress("Deriving ground surface...", 15)
             minimum = da.from_array(
                 over_blocks("min", classes=SURFACE_CLASSES),
-                chunks=(block_cells, block_cells),
+                chunks=block_chunks,
             )
             # Each step re-halos from the materialised intermediate, so the
             # depths are per-step rather than one accumulated worst case.
@@ -274,11 +281,11 @@ def _fetch(
         coverage = float(known_ground.mean())
 
         ground_distance_m = _blocked_ground_distance(
-            known_ground, block_cells, resolution
+            known_ground, block_chunks, resolution
         )
 
         progress("Filling ground gaps...", 45)
-        ground = _blocked_fill_gaps(ground, block_cells, fill_cells)
+        ground = _blocked_fill_gaps(ground, block_chunks, fill_cells)
 
         progress("Rasterizing canopy heights...", 55)
         chm = over_blocks(
@@ -286,7 +293,7 @@ def _fetch(
             extra_for=lambda bl: _ground_window(ground, transform, bl, resolution),
         )
 
-    blocked_chm = da.from_array(chm, chunks=(block_cells, block_cells))
+    blocked_chm = da.from_array(chm, chunks=block_chunks)
     chm = np.asarray(
         da.map_overlap(
             _remove_spikes,
@@ -319,7 +326,7 @@ def _fetch(
     return ds, provenance
 
 
-def _blocked_ground_distance(known, block_cells, resolution) -> float:
+def _blocked_ground_distance(known, block_chunks, resolution) -> float:
     """Furthest any cell sits from a ground return, in metres, saturating.
 
     Blocked with a halo as wide as the cap, so a cell whose nearest ground lies
@@ -333,7 +340,7 @@ def _blocked_ground_distance(known, block_cells, resolution) -> float:
     ground read 40 m at a 512-cell block and 38 m at 500.
     """
     cap_cells = GROUND_DISTANCE_CAP_M / resolution
-    blocks = da.from_array(known, chunks=(block_cells, block_cells))
+    blocks = da.from_array(known, chunks=block_chunks)
     distance = da.map_overlap(
         _ground_distance_cells,
         blocks,
@@ -461,7 +468,7 @@ def _ground_window(ground, transform, block_lattice, resolution):
     return np.ascontiguousarray(window), lattice
 
 
-def _blocked_fill_gaps(surface, block_cells: int, max_cells: int) -> np.ndarray:
+def _blocked_fill_gaps(surface, block_chunks, max_cells: int) -> np.ndarray:
     """`_fill_gaps` over blocks, with a halo as wide as its reach.
 
     The only whole-grid pass left in the handler, and the reason it had to go:
@@ -479,7 +486,7 @@ def _blocked_fill_gaps(surface, block_cells: int, max_cells: int) -> np.ndarray:
     breaks as soon as nothing is missing, and gaps are local, so a block with no
     NaN costs one pass instead of `max_cells` of them.
     """
-    blocks = da.from_array(surface, chunks=(block_cells, block_cells))
+    blocks = da.from_array(surface, chunks=block_chunks)
     filled = da.map_overlap(
         _fill_gaps,
         blocks,
@@ -653,9 +660,15 @@ def _block_slices(
 def _overlap_depth(array, required: int) -> int:
     """Halo to ask dask for, capped by what the blocking can supply.
 
-    Only binds when the grid is a single block, where the block already holds
-    every cell any step can reach and the halo is moot. `_compute_block_cells`
-    is what keeps it from binding anywhere it would matter.
+    The cap is taken over the *whole* array, so one narrow chunk shortens the
+    halo everywhere — and a step given too little halo does not fail, it returns
+    values computed without the neighbours it needed. Every caller therefore
+    chunks on `_block_slices`, which divides evenly for exactly this reason;
+    handing `da.from_array` a scalar block size instead leaves
+    ``extent % block`` over, and a one-cell remainder takes the halo to zero.
+
+    With that division the cap binds only on a single-block grid, where the
+    block already holds every cell any step can reach and the halo is moot.
     """
     smallest = min(min(sizes) for sizes in array.chunks)
     return int(max(0, min(required, smallest - 1)))

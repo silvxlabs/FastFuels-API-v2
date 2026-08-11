@@ -1334,8 +1334,10 @@ gcs = [
     { name = "google-cloud-storage" },
 ]
 pointcloud = [
+    { name = "google-cloud-storage" },
     { name = "laspy", extra = ["lazrs"] },
     { name = "numpy" },
+    { name = "pyarrow" },
     { name = "pyproj" },
 ]
 raster = [
@@ -1369,11 +1371,13 @@ requires-dist = [
     { name = "geopandas", marker = "extra == 'threedep'", specifier = ">=1.1.2" },
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.23.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.9.0" },
+    { name = "google-cloud-storage", marker = "extra == 'pointcloud'", specifier = ">=3.9.0" },
     { name = "laspy", extras = ["lazrs"], marker = "extra == 'pointcloud'", specifier = ">=2.7.0" },
     { name = "numpy", marker = "extra == 'pointcloud'", specifier = ">=2.0.0" },
     { name = "numpy", marker = "extra == 'raster'", specifier = ">=2.0.0" },
     { name = "pint", specifier = ">=0.25" },
     { name = "pyarrow", marker = "extra == 'entwine'", specifier = ">=18.0.0" },
+    { name = "pyarrow", marker = "extra == 'pointcloud'", specifier = ">=18.0.0" },
     { name = "pyproj", marker = "extra == 'pointcloud'", specifier = ">=3.6" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },

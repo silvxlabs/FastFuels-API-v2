@@ -426,12 +426,12 @@ def _save_point_cloud_json_template(point_cloud: dict, static_name: str) -> None
 def create_static_point_cloud_fixture(firestore_client, test_owner_id):
     """Factory fixture that creates a static point cloud fixture in GCS.
 
-    Creates a point cloud via the API, polls for completion, copies the LAZ to a
-    static path, saves a JSON template, then cleans up the temporary cloud.
+    Creates a point cloud via the API, polls for completion, copies the dataset
+    to a static path, saves a JSON template, then cleans up the temporary cloud.
 
-    A point cloud is a single ``cloud.laz`` under a ``{bucket}/{id}/`` prefix, so
-    the same directory copy grids and inventories use applies unchanged — the
-    prefix just happens to hold one object.
+    A point cloud is a ``cloud.parquet`` directory under a ``{bucket}/{id}/``
+    prefix, so the same directory copy grids and inventories use applies
+    unchanged.
 
     A 3DEP fetch is slower than a raster job (it streams octree nodes from the
     USGS archive), so the completion poll gets a longer budget than the default.

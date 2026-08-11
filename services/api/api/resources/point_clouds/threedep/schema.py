@@ -138,22 +138,6 @@ class ThreeDepCoverageResponse(BaseModel):
         ),
         examples=[1702335],
     )
-    point_budget: int = Field(
-        ...,
-        description=(
-            "Maximum number of points a single fetch may return. Shrink the "
-            "domain if the estimate exceeds it."
-        ),
-        examples=[200000000],
-    )
-    exceeds_point_budget: bool = Field(
-        ...,
-        description=(
-            "Whether the estimate is over `point_budget`. When true, a create "
-            "request for this domain is rejected, so check this before "
-            "committing to a fetch."
-        ),
-    )
 
     model_config = ConfigDict(
         title="PointCloudThreeDepCoverageResponse",
@@ -175,8 +159,6 @@ class ThreeDepCoverageResponse(BaseModel):
                         }
                     ],
                     "estimated_point_count": 1702335,
-                    "point_budget": 200000000,
-                    "exceeds_point_budget": False,
                 }
             ]
         },

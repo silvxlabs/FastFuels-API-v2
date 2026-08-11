@@ -31,37 +31,37 @@ Objects that don't match this structure are silently ignored.
 | `grids` | `handlers/grid.py` | Issue #215 |
 | `pointclouds` | `handlers/point_cloud.py` | Issue #328 |
 
-## Point Clouds: Why LAZ (not COPC), and Eventual COPC Support
+## Point Clouds: the shared dataset format
 
-The point cloud handler stores uploads as plain **LAZ** (`pointclouds/{id}/cloud.laz`,
-always in the domain CRS), not as Cloud Optimized Point Cloud (COPC). This was a
-deliberate trade, made after benchmarking every available COPC writer (June 2026):
+The point cloud handler stores uploads as a **partitioned Parquet dataset**
+(`pointclouds/{id}/cloud.parquet/`, always in the domain CRS) — the same format
+lakitu writes for 3DEP, defined once in `lib.pointcloud.schema`. A point cloud is
+one resource type, and a reader should not have to ask where it came from.
 
-- **Every complete, correct COPC writer needs the native PDAL stack.** PDAL is
-  conda-forge-only (no pip wheels; removed from Debian in 2022), which would force a
-  conda layer into this service's image, CI, and dev setup. The pure-Rust
-  `copc-converter` was evaluated and is fast, but v0.11.0 silently zeroes all LAS 1.4
-  flag bits (synthetic/key_point/withheld/overlap/scanner_channel/scan_direction/edge)
-  — disqualifying data loss.
-- **COPC octree builds need large seekable scratch.** Measured: untwine's temp dir
-  peaks at ~8× the compressed input. On Cloud Run all local disk is tmpfs — it counts
-  against instance RAM — so a 1 GiB upload would need a ~16 GB instance. The
-  ephemeral-disk volume type that would fix this is a beta feature we chose not to
-  build core architecture around.
-- **LAZ does everything current consumers need.** The handler streams uploads from GCS
-  with laspy (pure pip, `lazrs` Rust codec), reprojects via pyproj when needed, and
-  rewrites through an in-memory buffer — no local disk at all, peak RAM bounded by the
-  upload size cap, and the service keeps the standard `uv sync --frozen` setup.
+This replaced plain LAZ. The reasoning for LAZ over COPC still holds and is why
+COPC was never the answer either: every complete COPC writer needs the native
+PDAL stack (conda-forge only, no pip wheels, removed from Debian in 2022), and
+COPC octree builds need scratch at ~8× the compressed input, which on Cloud Run
+is tmpfs and therefore RAM. Partitioned Parquet gets the spatial chunking and the
+LOD pyramid that motivated COPC, in one streaming pass, with no native stack and
+no scratch: partitions *are* the output.
 
-**Eventual COPC support:** COPC is a strict superset of LAZ (a COPC file *is* valid
-LAZ), so the upgrade is a lossless, in-place `cloud.laz` → COPC batch conversion that
-existing consumers won't notice. When in-browser point cloud streaming lands on the
-FastFuels-Web roadmap, run that conversion with **untwine** (benchmarked: 314M points
-in 2m13s / 1.7 GB RAM, all attributes preserved, well-formed LOD octree) wherever the
-native toolchain legitimately lives — e.g. griddle, which needs PDAL for #329's 3DEP
-EPT fetch anyway — or with `copc-converter` if its flag-byte bug has been fixed
-upstream. Re-evaluate the Cloud Run ephemeral-disk volume then; if it has reached GA
-it provides the scratch space the build needs without the RAM cost.
+**What the change costs.** Two things a LAZ rewrite preserved are gone, because
+a fixed schema has nowhere to put them:
+
+- **extra dimensions** — anything beyond position, intensity, classification and
+  colour
+- **gps_time** — 23% of the stored bytes, and nothing downstream reads it
+
+Scaling is *not* lost: the dataset records its own scale in the manifest, so a
+sub-millimetre terrestrial scan keeps its precision rather than being quantised
+to the canonical millimetre. There is a test for exactly that.
+
+**The server-side copy fast path is also gone.** An upload already in LAZ and
+already in the domain CRS used to be copied without rewriting. Every upload is
+now decoded and re-encoded. The cost is smaller than it sounds — the copy path
+already decoded every point to census it, so what is added is the encode.
+
 
 ## Local Testing
 

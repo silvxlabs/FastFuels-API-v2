@@ -1,15 +1,18 @@
-"""LANDFIRE version registry, shared across api and griddle.
+"""LANDFIRE config: version registry, fuel-model code map, and LFPS contact email.
 
 Single source of truth for which LANDFIRE data-product versions are
 served and which one is the default. `api`'s per-product request schemas
 build their version enums from this, and `griddle`'s fetch handlers pull
 their default `version` argument from it, so the two services can't drift
 apart.
-
-Pure-Python (no GDAL), so the API may import it.
 """
 
 from __future__ import annotations
+
+import os
+
+# Contact email logged for LANDFIRE Product Service
+LANDFIRE_USER_EMAIL = os.getenv("LANDFIRE_USER_EMAIL", "lwiard@newmexicoconsortium.org")
 
 LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
     "fbfm13": {

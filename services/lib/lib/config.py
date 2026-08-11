@@ -70,6 +70,3 @@ LAKITU_SERVICE = os.getenv("LAKITU_SERVICE", f"lakitu-v2-{INFRA_ENV}")
 
 # Support contact surfaced in user-facing error messages.
 SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL", "support.fastfuels@silvxlabs.com")
-
-# Contact email logged for LANDFIRE Product Service
-LANDFIRE_USER_EMAIL = os.getenv("LANDFIRE_USER_EMAIL", "lwiard@newmexicoconsortium.org")

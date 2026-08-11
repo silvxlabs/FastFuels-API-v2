@@ -157,7 +157,7 @@ def stream_records(
         on_node: Optional callback invoked once per completed node.
 
     Yields:
-        ``(plan index, records)``, records being a PDRF-6 structured array or
+        ``(plan index, records)``, records being a `schema.point_dtype` array or
         None, in node completion order.
 
     Raises:

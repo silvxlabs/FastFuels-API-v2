@@ -68,7 +68,7 @@ DELTA_COLUMNS = {
     "Z": "DELTA_BINARY_PACKED",
 }
 
-LOD_LEVELS = 6  # level k holds 1 in 4**(5-k); level 5 is the whole tile
+LOD_LEVELS = 6  # `lod <= k` is 1 in 4**(5-k) of a tile; `lod <= 5` is all of it
 
 
 def point_dtype(has_color: bool) -> np.dtype:
@@ -92,12 +92,12 @@ def cloud_location(bucket: str, point_cloud_id: str) -> tuple[str, str]:
 
 
 def choose_tile_m(extent: float, target: float = 500.0) -> float:
-    """Tile size must divide the extent by a power of two.
+    """Tile edge near `target`, dividing the extent by a power of two.
 
-    Level k's LOD cell is extent/(128 * 2**k), so a tile of extent/2**t spans
-    2**(7 + k - t) cells -- an integer for every level only when t is a whole
-    number. At a fixed 500 m an extent like 5656.8 m (32 km2) gives 11.3 cells
-    per tile, so tiles straddle cells and the pyramid stops being exact.
+    An even division means a whole number of tiles spans the extent, with no
+    partial row at the far edge, and two clouds over the same extent tile
+    identically. The exponent is clamped to 1..7, so the edge stays between
+    extent/128 and half the extent.
     """
     if extent <= 0:
         # A cloud with no horizontal extent: every point at one location, or a

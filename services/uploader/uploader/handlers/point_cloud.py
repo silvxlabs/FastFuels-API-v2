@@ -56,7 +56,7 @@ _CHUNK_POINTS = 2_000_000
 def handle_point_cloud(
     resource_id: str, bucket: str, object_name: str, doc: dict
 ) -> None:
-    """Ingest an uploaded point cloud and store it as LAZ in the domain CRS.
+    """Ingest an uploaded point cloud and store it as Parquet in the domain CRS.
 
     Args:
         resource_id: Point cloud document ID in Firestore.
@@ -236,8 +236,8 @@ def _output_bounds(src_header, transformer) -> tuple:
 
     Transforms all four corners rather than just the minimum, because a
     reprojected rectangle is not a rectangle and its extreme is not necessarily
-    a corner of the source one. Only used to place the tile origin and size the
-    LOD cells, both of which tolerate being slightly generous; the bounds
+    a corner of the source one. Only used to place the tile origin and choose the
+    tile size, both of which tolerate being slightly generous; the bounds
     actually reported come from the points themselves.
     """
     min_x, min_y = src_header.mins[0], src_header.mins[1]

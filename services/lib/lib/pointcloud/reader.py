@@ -17,8 +17,9 @@ from lib.errors import ProcessingError
 from lib.gcs import get_gcsfs_client
 from lib.pointcloud.schema import tile_span
 
-# The only columns any consumer reads. `lod` and `intensity` are never touched,
-# which is a quarter of a tile's bytes.
+# The only columns any consumer reads. What that skips is `intensity`, a fifth
+# of a tile's stored bytes -- 21.6% measured over two real datasets, against
+# 0.05% for `lod`.
 POINT_COLUMNS = ["X", "Y", "Z", "classification"]
 
 # Rows decoded at a time by `iter_points`. Peak memory is linear in this and
@@ -102,11 +103,11 @@ def _lod_row_groups(parquet_file, max_lod: int) -> tuple[list[int], bool]:
     """Row groups holding any point at or below `max_lod`, and whether any straddles.
 
     This is the one predicate the stored layout can actually answer cheaply. The
-    writer emits a row group per LOD level, so `lod` statistics come out
-    single-valued and the selection is a clean prefix -- reading `lod <= 2` of a
-    6.6 M-point tile touches 103,122 rows. Nothing here depends on that holding:
-    a row group straddling the cut is kept and its rows filtered afterwards, and
-    one with no statistics at all is kept for the same reason.
+    writer emits a row group per LOD level that has points, so `lod` statistics
+    come out single-valued and the selection is a clean prefix -- reading
+    `lod <= 2` of a 6.6 M-point tile touches 103,122 rows. Nothing here depends
+    on that holding: a row group straddling the cut is kept and its rows filtered
+    afterwards, and one with no statistics at all is kept for the same reason.
 
     Returns:
         The row-group indices to read, and whether any of them needs its rows

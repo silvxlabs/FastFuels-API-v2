@@ -68,7 +68,7 @@ def test_grid_key_groups_neighbours_together():
 def test_assign_lod_is_a_nested_geometric_ladder():
     lod = assign_lod(4**5 * 100)
     counts = [int((lod <= k).sum()) for k in range(LOD_LEVELS)]
-    assert counts[-1] == lod.size  # the deepest level is the whole tile
+    assert counts[-1] == lod.size  # the deepest cut is the whole tile
     for finer, coarser in zip(counts, counts[1:]):
         assert coarser == finer * 4
 

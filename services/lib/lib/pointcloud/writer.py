@@ -7,14 +7,16 @@ the parts that overlap.
 
 There is no combined ``_metadata`` footer. One was written and nothing ever read
 it: `reader.open_dataset` discovers by listing, and replacing the footer with the
-bytes "GARBAGE" left the dataset opening and counting rows fine. Reinstating it
-would be cheap -- the workers already hold a per-file `FileMetaData` -- but the
-read it saves is one LIST per job, and a tile is one file, so the path already
-says which file a tile is in without consulting a footer.
+bytes "GARBAGE" left the dataset opening and counting rows fine. What it saves is
+one LIST per job, against a `FileMetaData` parse per file on the parent, which is
+this path's ceiling. An index of what a tile holds belongs in ``_manifest.json``,
+which every reader fetches anyway.
 
-Each part is written one row group per LOD level, so a ``lod <= k`` filter prunes
-on row-group statistics. Writing a single row group spanning every level made the
-pyramid correct but useless: pushdown prunes row groups, not rows.
+Each part is written one row group per LOD level *that has points*, so a
+``lod <= k`` filter prunes on row-group statistics. A level with none is skipped,
+so a group's position does not say which level it is and no count may be read off
+it. Writing a single row group spanning every level made the pyramid correct but
+useless: pushdown prunes row groups, not rows.
 
 A tile should be one part file. It is written when the last node that can reach
 it has been routed -- see the ``schedule`` argument to `write_parquet` -- rather
@@ -35,9 +37,9 @@ ideal file count is not the 33-way split the schedule was built for, and derivin
 a schedule from a first pass over the coordinates would cost a whole extra decode
 of the file to buy it back.
 
-The LOD is a stride: level k holds 1 in 4**(L-1-k) of a tile's points, so
-``lod <= k`` is a nested, unbiased subsample and the deepest level is the whole
-tile -- see assign_lod.
+The LOD is a stride: ``lod <= k`` is 1 in 4**(L-1-k) of a tile's points, a
+nested and unbiased subsample, and reading every level gives the tile back whole
+-- see assign_lod.
 
 Coordinates stay as LAS scaled int32s with scale/offset in the file metadata,
 which keeps them small and lossless rather than exploding to float64.
@@ -147,12 +149,13 @@ def clear_prefix(bucket, prefix):
 
 
 def assign_lod(count, levels=LOD_LEVELS):
-    """Assign each point a pyramid level by stride: level k keeps 1 in 4**(L-1-k).
+    """Assign each point a pyramid level by stride: ``lod <= k`` keeps 1 in 4**(L-1-k).
 
-    Levels are nested -- ``lod <= k`` is a 1-in-4**(L-1-k) sample of the tile,
-    and each level is a strict superset of the one above -- so a reader gets a
-    geometric ladder of point counts and the deepest level is the whole tile.
-    There is no residual: every point belongs to a level.
+    The cuts are nested -- each ``lod <= k`` is a strict superset of the one
+    above, and ``lod <= L-1`` is the whole tile -- so a reader gets a geometric
+    ladder of point counts. A level on its own is the difference between two
+    cuts rather than a fixed fraction, and the deepest holds three quarters of
+    the tile. There is no residual: every point belongs to exactly one level.
 
     Deliberately not voxel sampling. An occupancy grid keeps at most one point
     per cell, which equalises density, but measured against this on a real
@@ -238,23 +241,26 @@ def _grid_key(xs, ys):
 
 
 def _encode(records, lod, scales, offsets):
-    """One row group per LOD level, spatially ordered within each.
+    """One row group per LOD level that has points, spatially ordered within each.
+
+    A level with no points writes no row group, so a sparse tile ends up with
+    fewer groups than levels. `lod` is a stored column and its statistics are
+    what a reader selects on; a group's position carries nothing.
 
     The ordering is for compression alone. Row-group statistics are min/max,
     which no permutation changes, so pushdown gets nothing from it; what it buys
     is DELTA_BINARY_PACKED on X/Y/Z, worth 16% of the file on a real dense tile.
 
-    Points are ordered by their cell in a coarse grid over the level's extent.
-    Two things make that the right key. It fits a uint16, which numpy radix-sorts
-    in a single pass instead of falling back to merge sort, and it keeps X and Y
-    coherent together -- sorting on a packed (x, y) key orders by X and leaves Y
-    sawtoothing inside each run. Measured against that packed key on a real tile:
-    45% less CPU for 0.9% more file.
+    Points are ordered by their cell in a coarse grid over the level's extent,
+    which fits a uint16 and so radix-sorts in a single pass rather than falling
+    back to merge sort. Measured against a packed exact (x, y) key on a real
+    tile: 45% less CPU for 0.9% more file. Morton interleaving was tried directly
+    and rejected -- 62% more encode time for the bit-spreading. Finer grids
+    compress better still (512 cells gave 4.9% less file) but need a uint32 key,
+    which hands the radix sort back.
 
-    That is the Z-order benefit without Z-order's cost. Morton interleaving was
-    tried directly and rejected -- 62% more encode time for the bit-spreading.
-    Finer grids compress better still (512 cells gave 4.9% less file) but need a
-    uint32 key, which hands the radix sort back.
+    The key is x-cell major, so it does not treat the two axes alike: measured
+    over a 16 km2 dataset, X came to 2.3% of the stored bytes against Y's 39.2%.
     """
     # Derived from the records rather than fixed, so a cloud with colour and one
     # without each write exactly the columns they have.
@@ -262,7 +268,7 @@ def _encode(records, lod, scales, offsets):
     buf = io.BytesIO()
     writer = None
     try:
-        for level in range(LOD_LEVELS + 1):
+        for level in range(LOD_LEVELS):
             sel = np.flatnonzero(lod == level)
             if sel.size == 0:
                 continue
@@ -448,7 +454,7 @@ def write_parquet(
     """Route records into tiles and write a partitioned Parquet dataset.
 
     Args:
-        records: Iterable of PDRF-6 structured arrays, in any order. With a
+        records: Iterable of `schema.point_dtype` arrays, in any order. With a
             `schedule`, ``(node_index, array)`` pairs instead, so the writer can
             tell which of the scheduled nodes has landed.
         info: Source bounds and scaling -- ``mins``, ``maxs``, ``scales``,

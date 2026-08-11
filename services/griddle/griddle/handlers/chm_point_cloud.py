@@ -57,9 +57,9 @@ from lib.errors import ProcessingError
 from lib.pointcloud.reader import read_manifest
 from lib.pointcloud.schema import cloud_prefix
 
-# Block edge in cells, before the cloud-tile floor in `_compute_block_cells`.
-# Matches griddle's default storage chunk, so at 1 m and coarser the compute
-# blocks and the written chunks are the same size.
+# Target block edge in cells. `_compute_block_cells` rounds it to a whole number
+# of cloud tiles and raises it to twice the halo, so a run's blocks are rarely
+# this size — it sets the scale, which is what a block's points cost to hold.
 DEFAULT_BLOCK_CELLS = 512
 
 # How far `max_ground_distance_m` is measured before it saturates. The number
@@ -477,10 +477,10 @@ def _ground_window(ground, transform, block_lattice, resolution):
 def _blocked_fill_gaps(surface, block_chunks, max_cells: int) -> np.ndarray:
     """`_fill_gaps` over blocks, with a halo as wide as its reach.
 
-    The only whole-grid pass left in the handler, and the reason it had to go:
-    `_fill_gaps` is pure array work with no dask around it, so it ran at exactly
-    1.00 core in every in-region measurement no matter what the container was
-    given. At 64 km2 that was 36-82 s the allocation could not touch.
+    Blocked because `_fill_gaps` is pure array work with no dask around it: run
+    over the whole grid it held exactly 1.00 core in every in-region measurement
+    no matter what the container was given, and at 64 km2 that was 36-82 s the
+    allocation could not touch.
 
     Blocking is exact here. Each iteration extends the filled region by one cell
     and there are `max_cells` of them, so a cell's value depends only on inputs
@@ -577,8 +577,8 @@ def _compute_block_cells(resolution: float, tile_m: float, halo_cells: int) -> i
 
     Two floors decide the size:
 
-    - the default, which matches griddle's storage chunk so that at 1 m and
-      coarser the compute blocks and the written chunks coincide;
+    - `DEFAULT_BLOCK_CELLS`, which sets the scale and so what a block's points
+      cost to hold;
     - twice the widest halo. This one is correctness, not economy: a halo wider
       than a block cannot be supplied.
 
@@ -590,10 +590,9 @@ def _compute_block_cells(resolution: float, tile_m: float, halo_cells: int) -> i
     per tile over a run, against the 2 the two passes actually need.
 
     The halo floor is rounded *up* to a whole tile because it is a correctness
-    bound. The default is rounded to the *nearest* whole tile instead: it only
-    buys matching storage chunks, which `save_zarr` restores on write anyway,
-    and rounding it up would double a block's area — and a block's points are
-    what peak memory tracks.
+    bound. The default is rounded to the *nearest* whole tile instead, because it
+    is only a target and rounding it up would double a block's area — and a
+    block's points are what peak memory tracks.
     """
     tile_cells = tile_m / resolution
     tiles_per_block = max(
@@ -730,9 +729,12 @@ def _pmf_depth_cells(resolution: float) -> int:
 
     `grey_opening(W)` is an erosion followed by a dilation, so an output cell
     depends on inputs within `W - 1`. The filter reapplies that over a ladder of
-    windows and each pass reads the previous one's output, so the radii add:
-    ~62 cells at 1 m, and near 60 m at any resolution since the windows are
-    themselves derived from a distance.
+    windows and each pass reads the previous one's output, so the radii add.
+
+    The ladder is powers of two, so the last window that fits under
+    `PMF_MAX_WINDOW_M` decides, and the depth in metres follows where it
+    truncates rather than tracking the window: 62 cells (62 m) at 1 m, 14 (28 m)
+    at 2 m, 6 (30 m) at 5 m.
     """
     max_window_cells = max(3, round(PMF_MAX_WINDOW_M / resolution))
     depth, exponent = 0, 0

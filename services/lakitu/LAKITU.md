@@ -41,9 +41,11 @@ be placed and given its level together, so nothing spills and nothing is
 assembled whole. Peak memory stopped tracking the point count as a result — a
 16 km² fetch peaks at 1.4 GB and a 64 km² one at 1.5 GB.
 
-Each part is written one row group per LOD level so a `lod <= k` filter prunes
-on statistics; pushdown prunes row groups, not rows. The pyramid is a stride —
-level `k` holds 1 in `4**(5-k)` of a tile — so the levels are nested, exactly
+Each part is written one row group per LOD level *that has points* so a
+`lod <= k` filter prunes on statistics; pushdown prunes row groups, not rows. A
+level with none is skipped, so a sparse tile has fewer groups than levels and a
+group's position never says which level it holds. The pyramid is a stride —
+`lod <= k` is 1 in `4**(5-k)` of a tile — so the cuts are nested, exactly
 4× apart, and unbiased: a preview's class mix matches the full cloud. It was a
 per-tile voxel grid until the grid was found to cost `side**2 * nz` cells per
 live tile, 6.4 GB across a 64 km² domain, and to skew the class mix it sampled.
@@ -53,7 +55,7 @@ runs over arrival order within a flush, so two runs of the same domain put
 1,022,619 and 1,021,204 points in level 0. The totals are exact and the sample
 is unbiased either way; nothing should depend on a preview being byte-identical.
 
-## A tile is one file, and that is scheduled
+## A tile is written when it is finished, not when the buffer fills
 
 Tiles are the partition; part files are how many times a tile was written. Those
 came apart badly. The parent used to flush the largest live tile whenever its

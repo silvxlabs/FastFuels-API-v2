@@ -835,6 +835,9 @@ gcs = [
     { name = "gcsfs" },
     { name = "google-cloud-storage" },
 ]
+lfps = [
+    { name = "requests" },
+]
 pointcloud = [
     { name = "laspy", extra = ["lazrs"] },
     { name = "numpy" },
@@ -885,6 +888,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
     { name = "requests", marker = "extra == 'entwine'", specifier = ">=2.32" },
+    { name = "requests", marker = "extra == 'lfps'", specifier = ">=2.32" },
     { name = "rioxarray", marker = "extra == 'raster'", specifier = ">=0.21.0" },
     { name = "s3fs", marker = "extra == 'threedep'", specifier = ">=2024.2.0" },
     { name = "shapely", marker = "extra == 'entwine'", specifier = ">=2.0" },
@@ -892,7 +896,7 @@ requires-dist = [
     { name = "xarray", marker = "extra == 'zarr'", specifier = ">=2025.1.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1.5" },
 ]
-provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "entwine", "pointcloud"]
+provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "entwine", "pointcloud", "lfps"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]

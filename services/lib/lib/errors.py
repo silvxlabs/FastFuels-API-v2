@@ -25,6 +25,13 @@ class ProcessingError(Exception):
     suggestion: str | None = None
     traceback: str | None = None
 
+    def __reduce__(self):
+        """Rebuild all fields when this error crosses a process boundary."""
+        return (
+            type(self),
+            (self.code, self.message, self.suggestion, self.traceback),
+        )
+
     def to_dict(self) -> dict:
         """Convert to dict for Firestore storage."""
         result = {"code": self.code, "message": self.message}

@@ -15,7 +15,6 @@ Threading the chain anyway cost +41% CPU for ~17% wall; processes gave 30% wall
 for +4% CPU.
 """
 
-import io
 import multiprocessing
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor
@@ -23,7 +22,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import shapely
 
-from lakitu.ept import fetch_nodes
+from lakitu.ept import decode_node, fetch_nodes
 from lib.config import LAKITU_CHAIN_WORKERS, LAKITU_DOWNLOAD_WORKERS
 from lib.pointcloud.schema import point_dtype
 
@@ -76,19 +75,17 @@ def _chain_init(sources, dst_crs_wkt, header_bounds, point_format_id):
         raise
 
 
-def _chain_work(source, payload):
+def _chain_work(source, node, payload):
     """Decode, reproject, clip and normalize one node. Runs in a child process.
 
     Returns a compact `point_dtype` array, or None when the node contributes
     nothing.
     """
-    import laspy
-
     from lib.crs import reproject
     from lib.laz import normalize_record
 
     src = _W["sources"][source]
-    points = laspy.read(io.BytesIO(payload))
+    points = decode_node(node, payload)
     min_x, min_y, max_x, max_y = src["bounds"]
     x, y = reproject(src["transformer"], np.asarray(points.x), np.asarray(points.y))
     z = np.asarray(points.z)
@@ -199,7 +196,9 @@ def stream_records(
                 max_workers=download_workers,
             ):
                 index, source = where[node]
-                inflight.append((index, pool.submit(_chain_work, source, payload)))
+                inflight.append(
+                    (index, pool.submit(_chain_work, source, node, payload))
+                )
                 if len(inflight) >= workers * 2:
                     yield drain()
         while inflight:

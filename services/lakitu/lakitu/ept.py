@@ -469,7 +469,7 @@ def fetch_nodes(
             if isinstance(item, BaseException):
                 raise item
             node, payload = item
-            yield (node, payload) if raw else (node, _decode(node, payload))
+            yield (node, payload) if raw else (node, decode_node(node, payload))
     finally:
         stop.set()
         # Drain so the producer never blocks on a full queue while unwinding:
@@ -483,7 +483,7 @@ def fetch_nodes(
         producer.join(timeout=5)
 
 
-def _decode(node: EptNode, payload: bytes) -> laspy.LasData:
+def decode_node(node: EptNode, payload: bytes) -> laspy.LasData:
     """Decode one node's LAZ bytes.
 
     Decoding belongs to the same error ladder as the download: a truncated or

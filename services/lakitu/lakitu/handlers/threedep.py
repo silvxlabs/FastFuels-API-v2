@@ -233,7 +233,7 @@ def _node_extent(node, transformer) -> tuple:
     return min(px), min(py), max(px), max(py)
 
 
-def plan_nodes(all_nodes: list, transformers: dict, origin: tuple, tile_m: float):
+def plan_nodes(all_nodes: list, transformers: dict, bounds: tuple, tile_m: float):
     """Order every node across every acquisition, and say when each tile is done.
 
     The index walk returns nodes shallowest-first, which at the deep levels --
@@ -264,7 +264,8 @@ def plan_nodes(all_nodes: list, transformers: dict, origin: tuple, tile_m: float
     Args:
         all_nodes: ``(source_index, nodes)`` per acquisition, from the index walk.
         transformers: Per source index, acquisition CRS to domain CRS.
-        origin: ``(min_x, min_y)`` of the tiling, in the domain CRS.
+        bounds: Output bounds ``(min_x, min_y, max_x, max_y)`` in the domain
+            CRS. The minima anchor the tiling and the maxima bound its schedule.
         tile_m: Tile size, matching what the writer partitions on.
 
     Returns:
@@ -272,6 +273,7 @@ def plan_nodes(all_nodes: list, transformers: dict, origin: tuple, tile_m: float
         read them; `schedule` maps each tile to the index in `plan` of the last
         node that can put a point in it, which is when the writer may write it.
     """
+    origin = bounds[:2]
     entries = []
     for source, nodes in all_nodes:
         for node in nodes:
@@ -280,6 +282,13 @@ def plan_nodes(all_nodes: list, transformers: dict, origin: tuple, tile_m: float
 
     def tile_of(v, axis):
         return int((v - origin[axis]) // tile_m)
+
+    max_tile = (tile_of(bounds[2], 0), tile_of(bounds[3], 1))
+
+    def tile_range(low, high, axis):
+        first = max(0, tile_of(low, axis) - 1)
+        last = min(max_tile[axis], tile_of(high, axis) + 1)
+        return range(first, last + 1)
 
     def key(entry):
         _, node, (x0, y0, x1, y1) = entry
@@ -297,10 +306,9 @@ def plan_nodes(all_nodes: list, transformers: dict, origin: tuple, tile_m: float
         # One tile of halo. The extent is the projected bounding box of a
         # reprojected cube, so a point can land marginally outside it; claiming
         # a tile late only delays a write, where claiming one early splits it.
-        for tx in range(tile_of(x0, 0) - 1, tile_of(x1, 0) + 2):
-            for ty in range(tile_of(y0, 1) - 1, tile_of(y1, 1) + 2):
-                if tx >= 0 and ty >= 0:
-                    schedule[(tx, ty)] = index
+        for tx in tile_range(x0, x1, 0):
+            for ty in tile_range(y0, y1, 1):
+                schedule[(tx, ty)] = index
 
     return [(source, node) for source, node, _ in entries], schedule
 
@@ -365,9 +373,7 @@ def _write_points(
                 clip.bounds,
             )
         )
-    plan, schedule = plan_nodes(
-        all_nodes, transformers, (header_bounds[0], header_bounds[1]), tile_m
-    )
+    plan, schedule = plan_nodes(all_nodes, transformers, header_bounds, tile_m)
     if not LAKITU_TILE_SCHEDULE:
         schedule = None
 

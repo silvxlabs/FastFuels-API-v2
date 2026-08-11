@@ -10,7 +10,7 @@ cost this is meant to remove.
 from lakitu.handlers.threedep import plan_nodes
 
 TILE_M = 500.0
-ORIGIN = (0.0, 0.0)
+BOUNDS = (0.0, 0.0, 4000.0, 4000.0)
 
 
 class FakeNode:
@@ -30,7 +30,7 @@ class Identity:
 
 def plan(all_nodes, transformers=None):
     sources = transformers or {index: Identity() for index, _ in all_nodes}
-    return plan_nodes(all_nodes, sources, ORIGIN, TILE_M)
+    return plan_nodes(all_nodes, sources, BOUNDS, TILE_M)
 
 
 def test_nodes_wider_than_a_tile_are_read_before_the_sweep():
@@ -81,6 +81,16 @@ def test_every_tile_a_node_touches_is_scheduled():
     for tx in range(3):
         for ty in range(3):
             assert (tx, ty) in schedule
+
+
+def test_schedule_is_clamped_to_the_output_extent():
+    """A coarse node may cover an acquisition far larger than the domain."""
+    bounds = (0.0, 0.0, 1000.0, 1000.0)
+    coarse = FakeNode(-20_000, -20_000, 20_000, 20_000, 0)
+
+    _, schedule = plan_nodes([(0, [coarse])], {0: Identity()}, bounds, TILE_M)
+
+    assert set(schedule) == {(tx, ty) for tx in range(3) for ty in range(3)}
 
 
 def test_the_last_node_overall_owns_every_tile_it_covers():

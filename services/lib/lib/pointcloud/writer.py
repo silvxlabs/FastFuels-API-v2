@@ -55,6 +55,7 @@ The layout this writes is defined in `lib.pointcloud.schema`, and read back by
 import io
 import json
 import multiprocessing
+import queue
 import threading
 
 import numpy as np
@@ -105,6 +106,7 @@ from lib.pointcloud.summary import PointSummary
 # bytes, since the preview is ~1 M points either way.
 BUFFER_BUDGET = LAKITU_BUFFER_BUDGET_MB << 20
 MAX_TILE_BYTES = 96 << 20  # flush a tile at this size regardless of budget
+_WORKER_POLL_SECONDS = 0.1
 
 
 class GcsSink:
@@ -415,7 +417,20 @@ class _WritePool:
 
     def _collect(self):
         while self._done < self.n:
-            item = self.out_q.get()
+            try:
+                item = self.out_q.get(timeout=_WORKER_POLL_SECONDS)
+            except queue.Empty:
+                failed = next(
+                    (p for p in self.procs if p.exitcode not in (None, 0)), None
+                )
+                if failed is None:
+                    continue
+                if self.error is None:
+                    self.error = RuntimeError(
+                        f"write worker {failed.pid} exited unexpectedly "
+                        f"with code {failed.exitcode}"
+                    )
+                return
             if item is None:
                 self._done += 1
                 continue
@@ -425,17 +440,32 @@ class _WritePool:
                 continue
             self._on_result(item[1], item[3])
 
+    def _put(self, item):
+        while self.error is None:
+            try:
+                self.in_q.put(item, timeout=_WORKER_POLL_SECONDS)
+                return
+            except queue.Full:
+                pass
+        raise self.error
+
     def submit(self, tile, recs, rel):
-        if self.error is not None:
-            raise self.error
-        self.in_q.put((tile, recs, rel))
+        self._put((tile, recs, rel))
 
     def close(self):
-        for _ in range(self.n):
-            self.in_q.put(None)
-        self._collector.join()
-        for p in self.procs:
-            p.join(timeout=30)
+        try:
+            for _ in range(self.n):
+                self._put(None)
+            self._collector.join()
+        finally:
+            if self.error is not None:
+                for p in self.procs:
+                    if p.is_alive():
+                        p.terminate()
+            for p in self.procs:
+                p.join(timeout=30)
+            if self._collector.is_alive():
+                self._collector.join(timeout=2 * _WORKER_POLL_SECONDS)
         if self.error is not None:
             raise self.error
 

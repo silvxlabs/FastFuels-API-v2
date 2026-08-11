@@ -7,6 +7,8 @@ key, and the row-group-per-level layout a reader's pushdown depends on.
 """
 
 import io
+import queue
+import threading
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -19,12 +21,40 @@ from lib.pointcloud.writer import (
     _grid_key,
     _summarize,
     _tile_of,
+    _WritePool,
     assign_lod,
 )
 
 DTYPE = point_dtype(has_color=False)
 SCALES = np.array([0.01, 0.01, 0.01])
 OFFSETS = np.zeros(3)
+
+
+class _DeadProcess:
+    """Process stub that exited before its target could report completion."""
+
+    pid = 123
+    exitcode = -9
+
+    def start(self):
+        pass
+
+    def join(self, timeout=None):
+        pass
+
+    def is_alive(self):
+        return False
+
+    def terminate(self):
+        pass
+
+
+class _DeadProcessContext:
+    def Queue(self, maxsize=0):
+        return queue.Queue(maxsize=maxsize)
+
+    def Process(self, **_kwargs):
+        return _DeadProcess()
 
 
 def records(count, seed=0, span=50_000):
@@ -37,6 +67,25 @@ def records(count, seed=0, span=50_000):
     out["intensity"] = rng.integers(0, 1600, count)
     out["classification"] = rng.choice([1, 2, 5], count)
     return out
+
+
+def test_write_pool_reports_a_worker_that_exits_without_a_sentinel():
+    pool = _WritePool(1, _DeadProcessContext(), (), lambda *_: None, depth=1)
+    errors = []
+
+    def close():
+        try:
+            pool.close()
+        except RuntimeError as error:
+            errors.append(error)
+
+    closer = threading.Thread(target=close, daemon=True)
+    closer.start()
+    closer.join(timeout=1)
+
+    assert not closer.is_alive(), "close waited forever for the missing sentinel"
+    assert len(errors) == 1
+    assert "write worker 123 exited" in str(errors[0])
 
 
 def test_grid_key_stays_inside_uint16():

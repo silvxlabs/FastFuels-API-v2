@@ -583,8 +583,8 @@ def _compute_block_cells(resolution: float, tile_m: float, halo_cells: int) -> i
       than a block cannot be supplied.
 
     A whole number of tiles because a block is only cheap to read if it stops
-    where a partition stops. `read_points` prunes on the partition columns and
-    nothing finer, so a block overlapping a tile by one cell decodes that tile
+    where a partition stops. `iter_points` prunes on the partition columns and
+    nothing finer, so a block overlapping a tile by one cell fetches that tile
     entirely — a block sized like a tile but out of step with it reads four
     where it needs one. Measured at 1 m on a 4 km domain: 4.89 partition reads
     per tile over a run, against the 2 the two passes actually need.

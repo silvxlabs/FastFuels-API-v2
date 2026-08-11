@@ -6,20 +6,29 @@ geopandas, rioxarray and scipy; a worker needs none of them, so importing this
 instead keeps a child's start-up and resident set to numpy plus what the reader
 brings. Everything heavier is imported inside the worker functions.
 
-These run in processes rather than threads because the read is throughput-bound
+These run in processes rather than threads because the read was throughput-bound
 inside one interpreter, not latency-bound. Measured in-region at 8 vCPU with the
 dataset already shared, holding the work fixed and raising dask threads 8 -> 16
 -> 32 moved the ground read 99.4 s -> 102.6 s -> 103.0 s while the time each
 thread spent waiting grew exactly linearly, 760 -> 1,553 -> 3,019 thread-
-seconds, and CPU stayed pinned near 1.6 cores. Total throughput is constant
-however many threads queue up: gcsfs is instance-cached so every block shares
-one asyncio event loop, and pyarrow reaches it through `FSSpecHandler`, which
-re-enters Python and takes the GIL. The implied ~28 MB/s over a 2.76 GB dataset
-is nowhere near a bandwidth ceiling, so the ceiling is the interpreter.
+seconds, and CPU stayed pinned near 1.6 cores. Total throughput was constant
+however many threads queued up: gcsfs is instance-cached so every block shares
+one asyncio event loop, and pyarrow reached it through `FSSpecHandler`, which
+re-enters Python and takes the GIL once per range read. The implied ~28 MB/s
+over a 2.76 GB dataset is nowhere near a bandwidth ceiling, so the ceiling was
+the interpreter.
+
+`iter_points` no longer reads that way -- it fetches each tile's file in one GET
+and decodes from memory -- which removes most of what that measurement was
+measuring. Whether threads would now scale is open and untested; the process
+pool stays until someone measures it in-region rather than because the reasoning
+above still holds.
 
 Blocking does not change the answer. Every pass here is cell-local: a cell's
 value depends only on points inside it, and the reductions are commutative, so
-how the points are grouped cannot matter.
+how the points are grouped cannot matter -- and for the same reason a block can
+be folded a batch at a time rather than read whole, which is what keeps a
+worker's memory off the tile's point count.
 """
 
 import numpy as np
@@ -72,6 +81,9 @@ def worker_init(prefix, manifest, filesystem=None):
 
         _W["dataset"] = open_dataset(prefix, filesystem=filesystem)
         _W["manifest"] = manifest
+        # Kept alongside the dataset because the reader fetches each tile's file
+        # itself rather than through pyarrow, so it needs the same handle.
+        _W["filesystem"] = filesystem
     except Exception as e:
         print(f"chm_blocks worker init failed: {e!r}", flush=True)
         raise
@@ -89,12 +101,14 @@ def run_block(job):
     Returns:
         The block's ``(rows, cols)`` float32 raster.
     """
-    from lib.pointcloud.reader import read_points
+    from lib.pointcloud.reader import iter_points
 
     kind, lattice, resolution, classes, extra = job
 
     def reader(bounds, wanted):
-        return read_points(_W["dataset"], _W["manifest"], bounds, wanted)
+        return iter_points(
+            _W["dataset"], _W["manifest"], bounds, wanted, _W["filesystem"]
+        )
 
     if kind == "min":
         return min_surface_block(reader, lattice, resolution, classes)
@@ -187,8 +201,7 @@ def min_surface_block(reader, lattice, resolution, classes) -> np.ndarray:
     """
     _, _, height, width = lattice
     surface = np.full(height * width, np.inf, dtype=np.float32)
-    x, y, z, _ = reader(block_bounds(lattice, resolution), classes)
-    if x.size:
+    for x, y, z, _ in reader(block_bounds(lattice, resolution), classes):
         index, inside = cell_indices(x, y, lattice, resolution)
         np.minimum.at(surface, index[inside], z[inside].astype(np.float32))
     surface[~np.isfinite(surface)] = np.nan
@@ -206,11 +219,11 @@ def snap_ground_block(reader, provisional, lattice, resolution) -> np.ndarray:
     """
     _, _, height, width = lattice
     ground = np.full(height * width, np.inf, dtype=np.float32)
-    x, y, z, _ = reader(block_bounds(lattice, resolution), SURFACE_CLASSES)
-    if x.size:
+    flat = provisional.reshape(-1)
+    for x, y, z, _ in reader(block_bounds(lattice, resolution), SURFACE_CLASSES):
         index, inside = cell_indices(x, y, lattice, resolution)
         z, index = z[inside], index[inside]
-        near = np.abs(z - provisional.reshape(-1)[index]) <= GROUND_SNAP_TOLERANCE_M
+        near = np.abs(z - flat[index]) <= GROUND_SNAP_TOLERANCE_M
         np.minimum.at(ground, index[near], z[near].astype(np.float32))
     ground[~np.isfinite(ground)] = np.nan
     return ground.reshape(height, width)
@@ -238,8 +251,7 @@ def max_height_block(reader, ground, ground_lattice, lattice, resolution):
     """
     _, _, height, width = lattice
     chm = np.full(height * width, -np.inf, dtype=np.float32)
-    x, y, z, _ = reader(block_bounds(lattice, resolution), SURFACE_CLASSES)
-    if x.size:
+    for x, y, z, _ in reader(block_bounds(lattice, resolution), SURFACE_CLASSES):
         index, inside = cell_indices(x, y, lattice, resolution)
         index, x, y, z = index[inside], x[inside], y[inside], z[inside]
         above = z - sample_bilinear(ground, x, y, ground_lattice, resolution)

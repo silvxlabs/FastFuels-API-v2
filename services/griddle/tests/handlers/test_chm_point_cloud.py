@@ -26,26 +26,32 @@ from lib.pointcloud.schema import tile_span
 CRS = "EPSG:32612"
 
 
-def _chunks(x, y, z, classification):
-    """Build a ``_read_points`` replacement over an in-memory cloud.
+def _chunks(x, y, z, classification, batches: int = 3):
+    """Build an ``iter_points`` replacement over an in-memory cloud.
 
-    Applies the class filter the real reader pushes into Parquet, and ignores
-    the bounds: a block drops what falls outside it by cell index anyway, so
-    returning the whole cloud exercises the same code path a real partition
-    read would.
+    Applies the class filter the real reader applies, and ignores the bounds: a
+    block drops what falls outside it by cell index anyway, so returning the
+    whole cloud exercises the same code path a real partition read would.
+
+    Yields in several batches rather than one, because that is how the real
+    reader arrives and the reductions have to be right across the seams. An
+    empty batch is a real case -- a batch holding none of the wanted classes is
+    skipped -- so the split is by count, not by content.
     """
 
-    def _read(_dataset, _manifest, _bounds, classes):
+    def _iter(_dataset, _manifest, _bounds, classes, _filesystem=None):
         xs = np.asarray(x, dtype=float)
         ys = np.asarray(y, dtype=float)
         zs = np.asarray(z, dtype=float)
         cs = np.asarray(classification, dtype=np.uint8)
         if classes is not None:
             keep = np.isin(cs, list(classes))
-            return xs[keep], ys[keep], zs[keep], cs[keep]
-        return xs, ys, zs, cs
+            xs, ys, zs, cs = xs[keep], ys[keep], zs[keep], cs[keep]
+        for part in np.array_split(np.arange(xs.size), max(1, batches)):
+            if part.size:
+                yield xs[part], ys[part], zs[part], cs[part]
 
-    return _read
+    return _iter
 
 
 # Stands in for the dataset manifest: millimetre scaling anchored at the origin,
@@ -98,7 +104,7 @@ def _run(
         # forkserver child would re-import and see the real reader.
         patch.object(chm_point_cloud, "GRIDDLE_READ_WORKERS", 1),
         patch("lib.pointcloud.reader.open_dataset", return_value=None),
-        patch("lib.pointcloud.reader.read_points", read_points),
+        patch("lib.pointcloud.reader.iter_points", read_points),
     ]
     if block_cells is not None:
         patches.append(
@@ -446,7 +452,7 @@ class TestReadingFromStorage:
         dataset = open_dataset(str(root), filesystem=LocalFileSystem())
 
         x, y, z, classification = read_points(
-            dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), None
+            dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), None, LocalFileSystem()
         )
 
         # The second tile starts at 500 m and is pruned by the partition filter.
@@ -460,7 +466,7 @@ class TestReadingFromStorage:
         dataset = open_dataset(str(root), filesystem=LocalFileSystem())
 
         _, _, z, classification = read_points(
-            dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), (2,)
+            dataset, _MANIFEST, (0.0, 0.0, 100.0, 100.0), (2,), LocalFileSystem()
         )
 
         assert classification.tolist() == [2]
@@ -472,7 +478,11 @@ class TestReadingFromStorage:
         dataset = open_dataset(str(root), filesystem=LocalFileSystem())
 
         x, _, _, _ = read_points(
-            dataset, _MANIFEST, (2000.0, 2000.0, 2100.0, 2100.0), None
+            dataset,
+            _MANIFEST,
+            (2000.0, 2000.0, 2100.0, 2100.0),
+            None,
+            LocalFileSystem(),
         )
 
         assert x.size == 0

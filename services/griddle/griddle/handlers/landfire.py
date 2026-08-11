@@ -16,15 +16,8 @@ from xarray import DataArray
 
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET
+from lib.landfire import LANDFIRE_VERSIONS, NB_CODE_MAP, validate_landfire_version
 from lib.raster import RasterConnection, cog_env
-
-NB_CODE_MAP: dict[str, int] = {
-    "NB1": 91,
-    "NB2": 92,
-    "NB3": 93,
-    "NB8": 98,
-    "NB9": 99,
-}
 
 CATEGORICAL_DEFAULT = "nearest"
 CONTINUOUS_DEFAULT = "bilinear"
@@ -133,7 +126,7 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
 
 def fetch_fbfm13(
     roi: gpd.GeoDataFrame,
-    version: str = "2024",
+    version: str = LANDFIRE_VERSIONS["fbfm13"]["default"],
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
@@ -143,7 +136,7 @@ def fetch_fbfm13(
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        version: LANDFIRE version year (default "2024")
+        version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
         remove_non_burnable: List of non-burnable fuel model names to remove
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.
@@ -157,6 +150,7 @@ def fetch_fbfm13(
         Dataset with a single "fbfm13" variable (int16 categorical codes,
         1-13 plus non-burnable 91/92/93/98/99)
     """
+    validate_landfire_version("fbfm13", version)
     alignment = alignment or {"target": "domain"}
     data = _fetch_landfire_raster(
         roi,
@@ -178,7 +172,7 @@ def fetch_fbfm13(
 
 def fetch_fbfm40(
     roi: gpd.GeoDataFrame,
-    version: str = "2024",
+    version: str = LANDFIRE_VERSIONS["fbfm40"]["default"],
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
@@ -188,7 +182,7 @@ def fetch_fbfm40(
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        version: LANDFIRE version year (default "2024")
+        version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
         remove_non_burnable: List of non-burnable fuel model names to remove
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.
@@ -201,6 +195,7 @@ def fetch_fbfm40(
     Returns:
         Dataset with a single "fbfm" variable (int16 categorical codes)
     """
+    validate_landfire_version("fbfm40", version)
     alignment = alignment or {"target": "domain"}
     data = _fetch_landfire_raster(
         roi,
@@ -222,7 +217,7 @@ def fetch_fbfm40(
 
 def fetch_fccs(
     roi: gpd.GeoDataFrame,
-    version: str = "2023",
+    version: str = LANDFIRE_VERSIONS["fccs"]["default"],
     remove_bare_ground: bool = False,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
@@ -232,7 +227,7 @@ def fetch_fccs(
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        version: LANDFIRE version year (default "2023")
+        version: version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
         remove_bare_ground: If True, removes FCCS fuelbed ID 0 (bare ground).
             Removed cells are replaced by the most frequent neighboring
             non-bare-ground fuelbed via majority filter.
@@ -245,6 +240,7 @@ def fetch_fccs(
     Returns:
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
+    validate_landfire_version("fccs", version)
     alignment = alignment or {"target": "domain"}
     data = _fetch_landfire_raster(
         roi,

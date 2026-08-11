@@ -20,13 +20,13 @@ from api.resources.grids.providers.landfire import (
     check_no_duplicate_non_burnable,
 )
 from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
+from lib.landfire import LANDFIRE_VERSIONS
 
-
-class LandfireFbfm13Version(StrEnum):
-    """Available LANDFIRE FBFM13 data versions."""
-
-    v2023 = "2023"
-    v2024 = "2024"
+# Build the version enum class from LANDFIRE_VERSIONS
+LandfireFbfm13Version = StrEnum(
+    "LandfireFbfm13Version",
+    {f"v{version}": version for version in LANDFIRE_VERSIONS["fbfm13"]["available"]},
+)
 
 
 class LandfireFbfm13Source(LandfireSource):
@@ -50,7 +50,9 @@ class CreateLandfireFbfm13Request(CreateSourceGridRequestBase):
     To convert codes to fuel parameters, use /grids/lookup/fbfm13.
     """
 
-    version: LandfireFbfm13Version = LandfireFbfm13Version.v2024
+    version: LandfireFbfm13Version = LandfireFbfm13Version(
+        LANDFIRE_VERSIONS["fbfm13"]["default"]
+    )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
 
     @field_validator("remove_non_burnable")

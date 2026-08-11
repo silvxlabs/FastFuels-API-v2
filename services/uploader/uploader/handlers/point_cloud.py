@@ -51,6 +51,7 @@ from lib.pointcloud.writer import write_parquet
 
 # ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
 _CHUNK_POINTS = 2_000_000
+_INT32_MAX = np.iinfo(np.int32).max
 
 
 def handle_point_cloud(
@@ -175,12 +176,11 @@ def _store(reader, dst_crs, transformer, resource_id):
     with the synthetic and withheld flags, and only the canonical format
     separates them.
 
-    The canonical header is used for the point *format* only; the source's
-    **scaling is kept**. `build_output_header` warns against exactly this call
-    for a single file, because it imposes millimetre scaling — and a terrestrial
-    scan relying on sub-millimetre precision would have distinct points collapse
-    into one, silently. That does not apply to the coordinates here because the
-    dataset records its own scale in the manifest, so the source's survives.
+    The canonical header is used for the point *format* only. The source's
+    physical precision is kept: X/Y scales are converted when reprojection
+    changes coordinate units, and Z keeps its original scale and offset because
+    elevation is not transformed. The dataset records those values in its
+    manifest, so a reader decodes with whatever this cloud was stored at.
 
     What does not survive: extra dimensions, and gps_time. Both were preserved
     when this wrote LAZ, and neither has anywhere to go in a fixed schema.
@@ -200,10 +200,12 @@ def _store(reader, dst_crs, transformer, resource_id):
     )
     bounds_2d = _output_bounds(src_header, transformer)
     header = build_output_header(dst_crs, bounds_2d, point_format_id=point_format_id)
-    # The canonical header is for the format, not the precision. Keeping the
-    # source scale costs nothing here — the dataset records its own scale in the
-    # manifest, so a reader decodes with whatever this cloud was stored at.
-    header.scales = src_header.scales
+    offsets = np.asarray(header.offsets).copy()
+    offsets[2] = src_header.offsets[2]
+    header.offsets = offsets
+    header.scales = _storage_scales(
+        src_header, dst_crs, transformer, bounds_2d, offsets
+    )
     dtype = point_dtype("red" in header.point_format.dimension_names)
 
     info = {
@@ -229,6 +231,54 @@ def _store(reader, dst_crs, transformer, resource_id):
     bucket, prefix = cloud_location(POINT_CLOUDS_BUCKET, resource_id)
     result = write_parquet(records(), info, bucket, prefix)
     return result["summary"], result["bounds"], result["output_bytes"]
+
+
+def _storage_scales(src_header, dst_crs, transformer, bounds, offsets):
+    """Coordinate scales in stored CRS units, preserving source precision."""
+    scales = np.asarray(src_header.scales, dtype=np.float64).copy()
+    src_crs = _require_crs(src_header)
+
+    if transformer is not None and _horizontal_units(src_crs) != _horizontal_units(
+        dst_crs
+    ):
+        min_x, min_y = src_header.mins[:2]
+        max_x, max_y = src_header.maxs[:2]
+        xs = np.array([min_x, min_x, max_x, max_x, (min_x + max_x) / 2])
+        ys = np.array([min_y, max_y, min_y, max_y, (min_y + max_y) / 2])
+
+        out_x, out_y = transformer.transform(xs, ys)
+        x_step_x, x_step_y = transformer.transform(xs + scales[0], ys)
+        y_step_x, y_step_y = transformer.transform(xs, ys + scales[1])
+
+        # Each output coordinate can depend on both source axes. Their absolute
+        # contributions bound the source quantization error after reprojection.
+        converted_x = np.abs(x_step_x - out_x) + np.abs(y_step_x - out_x)
+        converted_y = np.abs(x_step_y - out_y) + np.abs(y_step_y - out_y)
+        scales[0] = _smallest_positive(converted_x)
+        scales[1] = _smallest_positive(converted_y)
+
+    # The output offsets anchor X/Y near their minima. Raise an unusually fine
+    # scale only when the projected span would otherwise exceed signed int32.
+    for axis, (low, high) in enumerate(
+        ((bounds[0], bounds[2]), (bounds[1], bounds[3]))
+    ):
+        required = max(abs(low - offsets[axis]), abs(high - offsets[axis])) / _INT32_MAX
+        scales[axis] = max(scales[axis], np.nextafter(required, np.inf))
+
+    return scales
+
+
+def _horizontal_units(crs) -> tuple[float, ...]:
+    """Conversion factors identifying the CRS's two horizontal axis units."""
+    return tuple(float(axis.unit_conversion_factor) for axis in crs.axis_info[:2])
+
+
+def _smallest_positive(values) -> float:
+    usable = np.asarray(values)
+    usable = usable[np.isfinite(usable) & (usable > 0)]
+    if not usable.size:
+        raise ValueError("coordinate transform collapsed a source scale increment")
+    return float(usable.min())
 
 
 def _output_bounds(src_header, transformer) -> tuple:

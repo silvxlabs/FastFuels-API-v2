@@ -142,7 +142,15 @@ class TestStore:
 
     def test_reprojects_to_the_domain_crs(self, tmp_path):
         path = tmp_path / "cloud.laz"
-        make_test_las(path, n=5, epsg=4326, x0=-113.5, y0=46.8, span=0.01)
+        make_test_las(
+            path,
+            n=5,
+            epsg=4326,
+            x0=-113.5,
+            y0=46.8,
+            span=0.01,
+            scale=1e-7,
+        )
 
         src = pyproj.CRS.from_epsg(4326)
         dst = pyproj.CRS.from_epsg(32612)
@@ -153,6 +161,54 @@ class TestStore:
         # Somewhere in UTM 12N, not degrees.
         assert 200_000 < got["bounds"][0] < 800_000
         assert 5_000_000 < got["bounds"][1] < 5_400_000
+        # The source precision is converted from degrees to metres rather than
+        # treating the same numeric scale as metres and overflowing int32.
+        assert 0.001 < got["info"]["scales"][0] < 0.1
+        assert 0.001 < got["info"]["scales"][1] < 0.1
+
+    def test_converts_feet_scale_to_metres(self, tmp_path):
+        path = tmp_path / "feet.las"
+        make_test_las(
+            path,
+            n=5,
+            epsg=2232,
+            x0=3_000_000.0,
+            y0=1_000_000.0,
+            span=100.0,
+            scale=0.01,
+        )
+
+        src = pyproj.CRS.from_epsg(2232)
+        dst = pyproj.CRS.from_epsg(26913)
+        transformer = Transformer.from_crs(src, dst, always_xy=True)
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(reader, dst, transformer)
+
+        assert got["info"]["scales"][0] == pytest.approx(0.003048, rel=0.05)
+        assert got["info"]["scales"][1] == pytest.approx(0.003048, rel=0.05)
+
+    def test_same_unit_reprojection_keeps_source_scale(self, tmp_path):
+        path = tmp_path / "metres.las"
+        make_test_las(path, n=5, epsg=32613, span=100.0, scale=1e-5)
+
+        src = pyproj.CRS.from_epsg(32613)
+        dst = pyproj.CRS.from_epsg(32612)
+        transformer = Transformer.from_crs(src, dst, always_xy=True)
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(reader, dst, transformer)
+
+        assert got["info"]["scales"][:2] == pytest.approx([1e-5, 1e-5])
+
+    def test_preserves_untransformed_elevation_scaling(self, tmp_path):
+        path = tmp_path / "elevation.las"
+        make_test_las(path, n=5, z0=100_000.0, z_span=1.0, scale=1e-5)
+
+        with _open_cloud(str(path)) as reader:
+            source_z_offset = reader.header.offsets[2]
+            got = _store_capturing(reader, pyproj.CRS.from_epsg(32612), None)
+
+        assert got["info"]["scales"][2] == pytest.approx(1e-5)
+        assert got["info"]["offsets"][2] == pytest.approx(source_z_offset)
 
     def test_output_bounds_use_every_corner(self):
         """A reprojected rectangle is not a rectangle."""

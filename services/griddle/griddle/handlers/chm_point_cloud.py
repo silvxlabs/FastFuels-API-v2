@@ -672,21 +672,15 @@ def _block_slices(
     return list(zip(edges[:-1], edges[1:], strict=True))
 
 
-def _overlap_depth(array, required: int) -> int:
-    """Halo to ask dask for, capped by what the blocking can supply.
+def _overlap_depth(array, required: int) -> tuple[int, ...]:
+    """Halo per axis, capped by the smallest chunk that axis can supply.
 
-    The cap is taken over the *whole* array, so one narrow chunk shortens the
-    halo everywhere — and a step given too little halo does not fail, it returns
-    values computed without the neighbours it needed. Every caller therefore
-    chunks on `_block_slices`, which divides evenly for exactly this reason;
-    handing `da.from_array` a scalar block size instead leaves
-    ``extent % block`` over, and a one-cell remainder takes the halo to zero.
-
-    With that division the cap binds only on a single-block grid, where the
-    block already holds every cell any step can reach and the halo is moot.
+    `_block_slices` divides each axis evenly, so the cap normally binds only
+    when the whole axis is narrower than the requested halo. That axis has no
+    internal boundary and needs no larger halo, but it must not shorten the
+    context supplied across block boundaries on another, longer axis.
     """
-    smallest = min(min(sizes) for sizes in array.chunks)
-    return int(max(0, min(required, smallest - 1)))
+    return tuple(int(max(0, min(required, min(sizes) - 1))) for sizes in array.chunks)
 
 
 def _pmf(surface: np.ndarray, resolution: float) -> np.ndarray:

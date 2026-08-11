@@ -696,6 +696,16 @@ class TestFillGapsIsBlockInvariant:
         finite = ~np.isnan(expected)
         np.testing.assert_allclose(expected[finite], actual[finite], rtol=1e-6)
 
+    def test_a_narrow_axis_does_not_shorten_the_other_axis_halo(self):
+        surface = np.full((10, 1000), np.nan, dtype=np.float32)
+        surface[:, 490] = 7.0
+        chunks = ((10,), (500, 500))
+
+        expected = chm_point_cloud._fill_gaps(surface, 30)
+        actual = chm_point_cloud._blocked_fill_gaps(surface, chunks, 30)
+
+        np.testing.assert_array_equal(actual, expected)
+
     def test_same_answer_at_every_block_size(self):
         surface = self._surface(seed=3)
         answers = [

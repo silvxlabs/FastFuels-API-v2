@@ -194,16 +194,22 @@ def _fetch(
     )
     tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
     block_cells = _compute_block_cells(resolution, tile_m, halo_cells)
+    # A block only has to be wide enough to feed the widest halo; anything more
+    # is a perimeter block merged past a tile boundary, reading a second tile to
+    # use part of it. See `_block_slices`.
+    min_block_cells = halo_cells + 1
     blocks = (
         _block_slices(
             height,
             block_cells,
             _tile_cuts(height, transform.f, transform.e, tile_origin[1], tile_m),
+            min_block_cells,
         ),
         _block_slices(
             width,
             block_cells,
             _tile_cuts(width, transform.c, transform.a, tile_origin[0], tile_m),
+            min_block_cells,
         ),
     )
 
@@ -631,24 +637,34 @@ def _tile_cuts(
 
 
 def _block_slices(
-    extent: int, block: int, cuts: list[int] | None = None
+    extent: int, block: int, cuts: list[int] | None = None, min_block: int | None = None
 ) -> list[tuple[int, int]]:
     """Half-open (start, stop) pairs tiling `extent`.
 
     Cuts on cloud tile boundaries where there are any, so a block reads as few
-    partitions as it can. A boundary closer than `block` to the previous cut, or
-    to the end, is skipped rather than emitted — every block therefore comes out
-    at least `block` wide, which is what keeps it able to feed the halo the
+    partitions as it can. A boundary closer than `min_block` to the previous cut,
+    or to the end, is skipped rather than emitted, and the short piece merges
+    into its neighbour — so no block comes out too narrow to feed the halo the
     overlapped steps need.
+
+    `min_block` is that halo floor and nothing else; it defaults to `block` only
+    so a caller with no halo to protect keeps the old shape. Passing `block`
+    when the halo is far smaller is expensive rather than safe: the short piece
+    merges into a neighbour that then grows past a tile boundary, and since the
+    lattice has no reason to start on one, that neighbour is a perimeter block
+    straddling two tiles per axis to use part of the second. It reads the whole
+    of both, so the widest block is also the most wasteful, and peak memory
+    follows the widest block.
 
     Falls back to an even division when the extent holds no usable boundary.
     Even rather than greedy: a greedy split leaves a remainder block that can be
     a single cell wide, and a block narrower than the halo silently under-feeds
     those steps.
     """
+    min_block = block if min_block is None else min_block
     edges = [0]
     for cut in cuts or ():
-        if cut - edges[-1] >= block and extent - cut >= block:
+        if cut - edges[-1] >= min_block and extent - cut >= min_block:
             edges.append(cut)
     if len(edges) == 1:
         count = max(1, math.ceil(extent / block))

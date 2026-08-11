@@ -582,14 +582,36 @@ class TestBlockingIsInvisible:
         # Lattice starting 120 m east of the cloud's own origin, 1 m cells.
         cuts = chm_point_cloud._tile_cuts(2000, 1120.0, 1.0, 1000.0, 500.0)
         assert cuts == [380, 880, 1380, 1880]
-        # 380 is skipped because a 380-cell leading block could not feed the
-        # halo, and 1880 because it would leave a 120-cell tail. Both merge
-        # into their neighbour, which keeps every edge on a tile boundary.
+        # With no halo floor given, the floor is `block` itself: 380 is skipped
+        # because it is under 500, and 1880 because it would leave a 120-cell
+        # tail. Both merge into their neighbour, which keeps every edge on a
+        # tile boundary.
         assert chm_point_cloud._block_slices(2000, 500, cuts) == [
             (0, 880),
             (880, 1380),
             (1380, 2000),
         ]
+
+    def test_a_halo_floor_keeps_the_perimeter_cuts(self):
+        """Merging a short piece costs a whole extra tile on that block.
+
+        The merged neighbour grows past a tile boundary, and because the lattice
+        does not start on one it is a perimeter block that then straddles two
+        tiles per axis to use part of the second. Floored at the halo instead,
+        every cut survives and no block reads a tile it barely touches.
+        """
+        cuts = chm_point_cloud._tile_cuts(2000, 1120.0, 1.0, 1000.0, 500.0)
+        slices = chm_point_cloud._block_slices(2000, 500, cuts, 61)
+        assert slices == [(0, 380), (380, 880), (880, 1380), (1380, 1880), (1880, 2000)]
+        # Every block still clears the floor, so `_overlap_depth` stays unbound.
+        assert min(stop - start for start, stop in slices) >= 61
+
+    def test_the_halo_floor_still_refuses_a_block_that_cannot_feed_it(self):
+        """The floor is a correctness bound, not a preference."""
+        cuts = chm_point_cloud._tile_cuts(2000, 1120.0, 1.0, 1000.0, 500.0)
+        # A halo of 400 cells needs 401, which 380 and the 120-cell tail fail.
+        slices = chm_point_cloud._block_slices(2000, 500, cuts, 401)
+        assert min(stop - start for start, stop in slices) >= 401
 
     def test_tile_cuts_run_ascending_on_the_row_axis(self):
         """Rows count downward while northings count up; the cuts still sort."""

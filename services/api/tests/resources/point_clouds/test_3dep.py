@@ -91,8 +91,6 @@ class TestCoverageEndpoint:
         assert data["available"] is True
         assert data["coverage_fraction"] == pytest.approx(1.0, abs=1e-3)
         assert data["estimated_point_count"] > 0
-        assert data["exceeds_point_budget"] is False
-        assert data["point_budget"] > 0
 
         names = [d["name"] for d in data["datasets"]]
         assert BONDURANT_DATASET in names

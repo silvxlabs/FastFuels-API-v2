@@ -1,24 +1,29 @@
 """
 Unit tests for uploader/handlers/point_cloud.py
 
-Exercises the pure helpers (_open_cloud, _require_crs, _census, _rewrite) on
+Exercises the pure helpers (_open_cloud, _require_crs, _output_bounds, _store) on
 local files — no GCS or Firestore. Test files are synthesized with laspy so
 every assertion is against known-by-construction ground truth.
 """
+
+from unittest.mock import patch
 
 import laspy
 import numpy as np
 import pyproj
 import pytest
 from pyproj import Transformer
+from uploader.handlers import point_cloud
 from uploader.handlers.point_cloud import (
-    _census,
     _open_cloud,
+    _output_bounds,
     _require_crs,
-    _rewrite,
+    _store,
 )
 
 from lib.errors import ProcessingError
+from lib.pointcloud.summary import PointSummary
+from lib.pointcloud.writer import _summarize
 from tests.pointcloud_helpers import make_test_las
 
 
@@ -78,88 +83,157 @@ class TestRequireCrs:
         assert not crs.is_compound
 
 
-class TestCensus:
-    def test_counts_and_classes(self, tmp_path):
+def _store_capturing(reader, dst_crs, transformer, tmp_path=None):
+    """Run `_store` with the writer stubbed, returning what it was handed.
+
+    The writer is not re-tested here — it has its own coverage, and it runs its
+    workers under forkserver, which re-imports the module in each child and so
+    cannot see a patch made in the parent. What this pins is the uploader's own
+    contribution: the records it produces and the scaling it chose.
+
+    The stub still reduces those records the way the real writer does, because
+    the reported summary is derived from them and several cases below assert on
+    it. Stubbing that out too would let a record-level regression pass.
+    """
+    captured = {}
+
+    def fake_write_parquet(records, info, bucket, prefix):
+        captured["info"] = info
+        captured["prefix"] = prefix
+        captured["records"] = list(records)
+        summary = PointSummary(info["scales"], info["offsets"])
+        for record in captured["records"]:
+            summary.fold(*_summarize(record))
+        return {
+            "points": summary.count,
+            "tiles": 0,
+            "files": 0,
+            "output_bytes": 1234,
+            "summary": summary.summary(),
+            "bounds": summary.bounds(),
+        }
+
+    with patch.object(point_cloud, "write_parquet", fake_write_parquet):
+        summary, bounds, size_bytes = _store(reader, dst_crs, transformer, "pc-1")
+
+    captured["summary"] = summary
+    captured["bounds"] = bounds
+    captured["size_bytes"] = size_bytes
+    captured["columns"] = (
+        captured["records"][0].dtype.names if captured["records"] else ()
+    )
+    return captured
+
+
+class TestStore:
+    """One path now: every upload is decoded and written as a dataset."""
+
+    def test_counts_points_and_classes(self, tmp_path):
         path = tmp_path / "cloud.laz"
-        truth = make_test_las(str(path), n=100, classes=(1, 2, 5))
-        with laspy.open(str(path)) as reader:
-            stats = _census(reader)
-        assert stats["rewritten"] is False
-        assert stats["point_count"] == 100
-        assert stats["point_classes"] == [1, 2, 5]
-        assert stats["density"] == pytest.approx(100 / truth["xy_area"], rel=1e-6)
+        make_test_las(path, n=7)
 
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(reader, pyproj.CRS.from_epsg(32612), None)
 
-class TestRewrite:
-    def test_recompresses_las_without_transform(self, tmp_path):
-        path = tmp_path / "cloud.las"
-        truth = make_test_las(str(path), n=80, classes=(2, 5))
-        with laspy.open(str(path)) as reader:
-            assert not reader.header.are_points_compressed
-            buf, stats, bounds = _rewrite(reader, pyproj.CRS.from_epsg(32612), None)
+        assert got["summary"]["point_count"] == 7
+        assert sum(r.size for r in got["records"]) == 7
+        assert got["size_bytes"] == 1234
+        assert got["prefix"] == "pc-1/cloud.parquet"
 
-        out = laspy.read(buf)
-        assert out.header.are_points_compressed
-        assert out.header.point_count == 80
-        assert out.header.parse_crs().to_epsg() == 32612
-        np.testing.assert_allclose(np.asarray(out.x), truth["x"], atol=0.011)
-        np.testing.assert_allclose(np.asarray(out.z), truth["z"], atol=0.011)
-        assert stats["rewritten"] is True
-        assert stats["point_count"] == 80
-        assert stats["point_classes"] == [2, 5]
-        assert bounds[2] == pytest.approx(truth["min_z"], abs=0.011)
-        assert bounds[5] == pytest.approx(truth["max_z"], abs=0.011)
-
-    def test_reprojects_to_target_crs(self, tmp_path):
+    def test_reprojects_to_the_domain_crs(self, tmp_path):
         path = tmp_path / "cloud.laz"
-        truth = make_test_las(str(path), n=120, epsg=32613, classes=(1, 2))
+        make_test_las(
+            path,
+            n=5,
+            epsg=4326,
+            x0=-113.5,
+            y0=46.8,
+            span=0.01,
+            scale=1e-7,
+        )
+
+        src = pyproj.CRS.from_epsg(4326)
+        dst = pyproj.CRS.from_epsg(32612)
+        transformer = Transformer.from_crs(src, dst, always_xy=True)
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(reader, dst, transformer)
+
+        # Somewhere in UTM 12N, not degrees.
+        assert 200_000 < got["bounds"][0] < 800_000
+        assert 5_000_000 < got["bounds"][1] < 5_400_000
+        # The source precision is converted from degrees to metres rather than
+        # treating the same numeric scale as metres and overflowing int32.
+        assert 0.001 < got["info"]["scales"][0] < 0.1
+        assert 0.001 < got["info"]["scales"][1] < 0.1
+
+    def test_converts_feet_scale_to_metres(self, tmp_path):
+        path = tmp_path / "feet.las"
+        make_test_las(
+            path,
+            n=5,
+            epsg=2232,
+            x0=3_000_000.0,
+            y0=1_000_000.0,
+            span=100.0,
+            scale=0.01,
+        )
+
+        src = pyproj.CRS.from_epsg(2232)
+        dst = pyproj.CRS.from_epsg(26913)
+        transformer = Transformer.from_crs(src, dst, always_xy=True)
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(reader, dst, transformer)
+
+        assert got["info"]["scales"][0] == pytest.approx(0.003048, rel=0.05)
+        assert got["info"]["scales"][1] == pytest.approx(0.003048, rel=0.05)
+
+    def test_same_unit_reprojection_keeps_source_scale(self, tmp_path):
+        path = tmp_path / "metres.las"
+        make_test_las(path, n=5, epsg=32613, span=100.0, scale=1e-5)
 
         src = pyproj.CRS.from_epsg(32613)
         dst = pyproj.CRS.from_epsg(32612)
         transformer = Transformer.from_crs(src, dst, always_xy=True)
-        expected_x, expected_y = transformer.transform(truth["x"], truth["y"])
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(reader, dst, transformer)
 
-        with laspy.open(str(path)) as reader:
-            buf, stats, bounds = _rewrite(reader, dst, transformer)
+        assert got["info"]["scales"][:2] == pytest.approx([1e-5, 1e-5])
 
-        out = laspy.read(buf)
-        assert out.header.parse_crs().to_epsg() == 32612
-        # Max error is half the coordinate scale quantum (0.01 m).
-        np.testing.assert_allclose(np.asarray(out.x), expected_x, atol=0.011)
-        np.testing.assert_allclose(np.asarray(out.y), expected_y, atol=0.011)
-        # Elevations pass through untouched.
-        np.testing.assert_allclose(np.asarray(out.z), truth["z"], atol=0.011)
-        assert stats["point_count"] == 120
-        assert stats["point_classes"] == [1, 2]
-        assert bounds[0] == pytest.approx(expected_x.min(), abs=0.011)
-        assert bounds[3] == pytest.approx(expected_x.max(), abs=0.011)
+    def test_preserves_untransformed_elevation_scaling(self, tmp_path):
+        path = tmp_path / "elevation.las"
+        make_test_las(path, n=5, z0=100_000.0, z_span=1.0, scale=1e-5)
 
-    def test_chunked_rewrite_matches_single_read(self, tmp_path, monkeypatch):
-        """Multiple chunks produce one coherent LAZ (chunk boundary safety)."""
-        path = tmp_path / "cloud.laz"
-        make_test_las(str(path), n=1000, classes=(1, 2, 5))
-        monkeypatch.setattr("uploader.handlers.point_cloud._CHUNK_POINTS", 64)
-        with laspy.open(str(path)) as reader:
-            buf, stats, _ = _rewrite(reader, pyproj.CRS.from_epsg(32612), None)
+        with _open_cloud(str(path)) as reader:
+            source_z_offset = reader.header.offsets[2]
+            got = _store_capturing(reader, pyproj.CRS.from_epsg(32612), None)
 
-        out = laspy.read(buf)
-        assert out.header.point_count == 1000
-        assert stats["point_count"] == 1000
-        src = laspy.read(str(path))
-        np.testing.assert_allclose(np.asarray(out.x), np.asarray(src.x), atol=0.011)
-        np.testing.assert_array_equal(
-            np.asarray(out.classification), np.asarray(src.classification)
-        )
+        assert got["info"]["scales"][2] == pytest.approx(1e-5)
+        assert got["info"]["offsets"][2] == pytest.approx(source_z_offset)
+
+    def test_output_bounds_use_every_corner(self):
+        """A reprojected rectangle is not a rectangle."""
+
+        class _Header:
+            mins = [0.0, 0.0, 0.0]
+            maxs = [10.0, 10.0, 0.0]
+
+        class _Bowed:
+            def transform(self, xs, ys):
+                # Bows the top edge outward, so the extreme is not a corner of
+                # the source rectangle taken naively.
+                return [x for x in xs], [y + (5.0 if y else 0.0) for y in ys]
+
+        assert _output_bounds(_Header(), None) == (0.0, 0.0, 10.0, 10.0)
+        assert _output_bounds(_Header(), _Bowed()) == (0.0, 0.0, 10.0, 15.0)
 
 
-class TestRewritePreservesTheSourceHeader:
-    """A rewrite must not silently re-encode the file it was handed.
+class TestStoredFormat:
+    """What survives the move to a fixed schema, and what does not.
 
-    The uploader reprojects and recompresses one file; it is not merging
-    sources, so every header property that is not the CRS has to survive. Each
-    of these was a real regression at some point: routing this path through the
-    canonical merge header replaced the scaling, the point format's extra
-    dimensions, and the GPS time encoding, all without any error.
+    Writing LAZ meant the uploader could carry a source file's own header
+    forward. A Parquet dataset has a fixed schema, so some of that is now gone
+    on purpose. These pin which is which, because the difference is data the
+    user loses.
     """
 
     def _source(self, path, *, scales, point_format=3, extra=None):
@@ -189,64 +263,72 @@ class TestRewritePreservesTheSourceHeader:
         return las
 
     def test_sub_millimetre_scale_is_preserved(self, tmp_path):
-        """Re-encoding at a coarser scale collapses distinct points into one."""
+        """Re-encoding at a coarser scale collapses distinct points into one.
+
+        The canonical header imposes millimetre scaling, which is right for
+        merging acquisitions and wrong for one terrestrial scan. The dataset
+        stores its own scale, so the source's is kept and the points stay apart.
+        """
         path = tmp_path / "fine.las"
         self._source(path, scales=1e-5)
 
         with _open_cloud(str(path)) as reader:
-            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
-
-        out = laspy.read(buf)
-        assert out.header.scales[0] == pytest.approx(1e-5)
-        assert len(set(np.asarray(out.x).tolist())) == 5
-
-    def test_scale_survives_a_reprojection(self, tmp_path):
-        """The reproject path builds the header too, so it needs the same check."""
-        path = tmp_path / "fine_reproject.las"
-        self._source(path, scales=1e-5)
-        transformer = Transformer.from_crs("EPSG:32612", "EPSG:32612", always_xy=True)
-
-        with _open_cloud(str(path)) as reader:
-            buf, _, _ = _rewrite(
-                reader, pyproj.CRS.from_user_input("EPSG:32612"), transformer
+            got = _store_capturing(
+                reader, pyproj.CRS.from_user_input("EPSG:32612"), None
             )
 
-        out = laspy.read(buf)
-        assert out.header.scales[0] == pytest.approx(1e-5)
-        assert len(set(np.asarray(out.x).tolist())) == 5
+        assert got["info"]["scales"][0] == pytest.approx(1e-5)
+        # Five points 10 um apart survive as five distinct stored positions.
+        assert len(set(got["records"][0]["X"].tolist())) == 5
 
-    def test_extra_dimensions_are_preserved(self, tmp_path):
-        """Scanner exports carry amplitude or reflectance as extra bytes."""
-        path = tmp_path / "extra.las"
-        source = self._source(path, scales=0.001, extra="Amplitude")
-
-        with _open_cloud(str(path)) as reader:
-            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
-
-        out = laspy.read(buf)
-        assert "Amplitude" in out.header.point_format.extra_dimension_names
-        assert np.array_equal(
-            np.asarray(out["Amplitude"]), np.asarray(source["Amplitude"])
-        )
-
-    def test_point_format_and_colour_are_preserved(self, tmp_path):
+    def test_colour_is_preserved(self, tmp_path):
         path = tmp_path / "rgb.las"
         self._source(path, scales=0.001, point_format=3)
 
         with _open_cloud(str(path)) as reader:
-            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
+            got = _store_capturing(
+                reader, pyproj.CRS.from_user_input("EPSG:32612"), None
+            )
 
-        assert laspy.read(buf).header.point_format.id == 3
+        assert {"red", "green", "blue"} <= set(got["columns"])
 
-    def test_gps_time_encoding_is_preserved(self, tmp_path):
-        """A fresh header would claim Week Time and misdate every point."""
+    def test_classification_is_uniform_across_source_formats(self, tmp_path):
+        """Formats 0-5 pack classification in with the flags; 6+ separate them.
+
+        Normalising through the canonical point format is what makes a reader
+        able to filter on ASPRS class without knowing the source format.
+        """
+        path = tmp_path / "legacy.las"
+        self._source(path, scales=0.001, point_format=3)
+
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(
+                reader, pyproj.CRS.from_user_input("EPSG:32612"), None
+            )
+
+        assert "classification" in got["columns"]
+        assert set(got["summary"]["point_classes"]) <= set(range(256))
+
+    def test_extra_dimensions_are_dropped(self, tmp_path):
+        """Documented loss: the schema is fixed and has nowhere to put them."""
+        path = tmp_path / "extra.las"
+        self._source(path, scales=0.001, extra="Amplitude")
+
+        with _open_cloud(str(path)) as reader:
+            got = _store_capturing(
+                reader, pyproj.CRS.from_user_input("EPSG:32612"), None
+            )
+
+        assert "Amplitude" not in got["columns"]
+
+    def test_gps_time_is_dropped(self, tmp_path):
+        """Documented loss: 23% of the file, and nothing downstream reads it."""
         path = tmp_path / "gps.las"
         self._source(path, scales=0.001)
 
         with _open_cloud(str(path)) as reader:
-            buf, _, _ = _rewrite(reader, pyproj.CRS.from_user_input("EPSG:32612"), None)
+            got = _store_capturing(
+                reader, pyproj.CRS.from_user_input("EPSG:32612"), None
+            )
 
-        out = laspy.read(buf)
-        assert out.header.global_encoding.gps_time_type == (
-            laspy.header.GpsTimeType.STANDARD
-        )
+        assert "gps_time" not in got["columns"]

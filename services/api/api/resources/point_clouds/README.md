@@ -96,7 +96,7 @@ API).
   format-agnostic.
 - The **concrete object layout under `{id}/` and the file format are owned by the ingest workers**
   (#328/#329). This resource deliberately commits to no specific format (e.g. COPC vs. plain LAZ) —
-  that decision belongs to whoever writes the bytes. The #328 upload worker stores `{id}/cloud.laz`
+  that decision belongs to whoever writes the bytes. The upload worker stores `{id}/cloud.parquet/`
   (plain LAZ, domain CRS); see the uploader service README for why LAZ-not-COPC and the planned
   lossless LAZ → COPC upgrade path.
 

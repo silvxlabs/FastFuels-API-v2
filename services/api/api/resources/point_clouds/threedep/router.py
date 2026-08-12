@@ -33,7 +33,6 @@ from api.tasks import create_http_task_async
 from lib.config import LAKITU_QUEUE, LAKITU_SERVICE, POINT_CLOUDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.entwine import (
-    MAX_POINTS,
     DatasetNotFoundError,
     DatasetOutsideDomainError,
     EptCatalogError,
@@ -43,12 +42,6 @@ from lib.entwine import (
 )
 
 router = APIRouter()
-
-# The catalog's point counts are spread over an acquisition's whole published
-# extent, including water and other gaps that hold no points, so an estimate
-# derived from them runs low. The budget check pads for that; the worker
-# re-checks against the exact per-node counts before reading anything.
-POINT_ESTIMATE_SAFETY_FACTOR = 1.5
 
 
 async def _resolve_coverage(domain: dict, pinned: list[str] | None) -> EptSelection:
@@ -150,9 +143,8 @@ async def create_3dep_point_cloud(
 
     ## Error Responses
 
-    - **422**: No 3DEP lidar covers this domain, a pinned acquisition is
-      unknown or does not overlap the domain, or the fetch would exceed the
-      point budget.
+    - **422**: No 3DEP lidar covers this domain, or a pinned acquisition is
+      unknown or does not overlap the domain.
     - **429**: A quota was exceeded.
     - **503**: The USGS 3DEP catalog is temporarily unreachable.
     """
@@ -171,17 +163,6 @@ async def create_3dep_point_cloud(
             detail=(
                 "No USGS 3DEP lidar is available for this domain. Check "
                 "coverage with GET /domains/{domain_id}/pointclouds/3dep/coverage."
-            ),
-        )
-
-    estimate = selection.estimated_point_count
-    if estimate * POINT_ESTIMATE_SAFETY_FACTOR > MAX_POINTS:
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"This domain would return roughly {estimate:,} points, which "
-                f"exceeds the {MAX_POINTS:,} point limit for a single fetch. "
-                "Use a smaller domain."
             ),
         )
 
@@ -247,10 +228,9 @@ async def check_3dep_point_cloud_coverage(domain: VerifiedDomain):
     ## Response
 
     Reports whether any lidar is available, the fraction of the domain covered,
-    the surveys that would be read with what each contributes, and the
-    estimated point count against the per-fetch budget. `datasets[].name`
-    values can be passed as `datasets` when creating the point cloud to pin the
-    fetch.
+    the surveys that would be read with what each contributes, and roughly how
+    many points a fetch would return. `datasets[].name` values can be passed as
+    `datasets` when creating the point cloud to pin the fetch.
 
     ## Error Responses
 
@@ -273,6 +253,4 @@ async def check_3dep_point_cloud_coverage(domain: VerifiedDomain):
             for d in selection.datasets
         ],
         estimated_point_count=estimate,
-        point_budget=MAX_POINTS,
-        exceeds_point_budget=estimate * POINT_ESTIMATE_SAFETY_FACTOR > MAX_POINTS,
     )

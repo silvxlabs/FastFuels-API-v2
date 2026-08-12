@@ -21,6 +21,7 @@ def make_test_las(
     span: float = 1000.0,
     z0: float = 1800.0,
     z_span: float = 100.0,
+    scale: float = 0.01,
     with_srs: bool = True,
 ) -> dict:
     """Write a tiny LAS/LAZ at ``path`` with a known CRS and classification set.
@@ -41,7 +42,7 @@ def make_test_las(
 
     header = laspy.LasHeader(version="1.4", point_format=6)
     header.offsets = [x0, y0, z0]
-    header.scales = [0.01, 0.01, 0.01]
+    header.scales = [scale, scale, scale]
     if with_srs:
         header.add_crs(pyproj.CRS.from_epsg(epsg))
 

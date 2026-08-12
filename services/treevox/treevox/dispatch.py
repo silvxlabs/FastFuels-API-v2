@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from treevox.errors import ProcessingError
-from treevox.handlers import voxelize
+from treevox.handlers import leaflux, voxelize
 
 
 def dispatch_handler(
@@ -23,6 +23,8 @@ def dispatch_handler(
     match key:
         case ("voxelize", "inventory", "tree"):
             return voxelize.voxelize_inventory(grid, domain_gdf, progress)
+        case ("irradiance", "grid", "solar"):
+            return leaflux.run_leaflux(grid, domain_gdf, progress)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",

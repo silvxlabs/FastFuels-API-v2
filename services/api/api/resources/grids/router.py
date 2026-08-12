@@ -54,6 +54,7 @@ from api.resources.grids.schema import (
     SparseGridData,
     UpdateGridRequestBody,
 )
+from api.resources.grids.solar.router import router as solar_router
 from api.resources.grids.topography.router import router as topography_router
 from api.resources.grids.uniform.router import router as uniform_router
 from api.resources.grids.upload.router import router as upload_router
@@ -871,5 +872,6 @@ router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
 router.include_router(rasterize_router, prefix="/rasterize", tags=["Grids - Rasterize"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(voxelize_router, prefix="/voxelize")
+router.include_router(solar_router, prefix="/solar")
 router.include_router(uniform_router, prefix="/uniform", tags=["Grids - Uniform"])
 router.include_router(upload_router, prefix="/upload", tags=["Grids - Upload"])

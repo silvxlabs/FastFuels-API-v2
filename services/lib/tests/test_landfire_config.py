@@ -1,10 +1,10 @@
-"""Tests for lib.landfire version registry and fuel-model constants."""
+"""Tests for lib.landfire,config version registry and fuel-model constants."""
 
 from __future__ import annotations
 
 import pytest
 
-from lib.landfire import (
+from lib.landfire.config import (
     LANDFIRE_VERSIONS,
     NB_CODE_MAP,
     UnknownLandfireVersionError,

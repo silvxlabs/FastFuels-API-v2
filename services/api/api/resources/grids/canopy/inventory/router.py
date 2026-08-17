@@ -284,7 +284,7 @@ async def create_inventory_canopy_grid(
         # window is an unsmoothed profile — and dropping them would resurrect
         # the defaults when the stored source is re-parsed.
         "source": source.model_dump(mode="json"),
-        # Treevox-backed grids do not support modifications — always empty.
+        # Inventory-derived grids do not support modifications — always empty.
         "modifications": [],
         "bands": [b.model_dump() for b in bands],
         "georeference": None,

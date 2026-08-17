@@ -678,7 +678,7 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
     from all calculations.
 
     Does not extend CreateGridRequestBase: like DUET and the 3D voxel
-    grids, treevox-backed grids do not support modifications — apply
+    grids, inventory-derived grids do not support modifications — apply
     treatments and modifications to the inventory before deriving canopy
     metrics.
     """

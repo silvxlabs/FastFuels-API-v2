@@ -150,7 +150,7 @@ def clear_prefix(bucket, prefix):
         delete_directory(path)
 
 
-def assign_lod(count, levels=LOD_LEVELS):
+def assign_lod(count, levels=LOD_LEVELS, offset=0):
     """Assign each point a pyramid level by stride: ``lod <= k`` keeps 1 in 4**(L-1-k).
 
     The cuts are nested -- each ``lod <= k`` is a strict superset of the one
@@ -176,15 +176,22 @@ def assign_lod(count, levels=LOD_LEVELS):
     The order this strides is the order points arrived, which is not spatially
     sorted. That is the pessimistic case and it was measured that way.
 
+    The stride runs over the tile, not the part file. A tile is written in as
+    many parts as the buffer forced, so a part starting at `offset` continues
+    the tile's indices from there: concatenating the parts' labels is the same
+    as assigning the whole tile once, and where the writer happened to flush
+    cannot change what a `lod <= k` read gets back.
+
     Args:
         count: Number of points to assign.
         levels: Number of pyramid levels; level ``levels - 1`` holds everything.
+        offset: This part's first point's position within its tile.
 
     Returns:
         uint8 array of levels, one per point.
     """
     lod = np.full(count, levels - 1, dtype=np.uint8)
-    index = np.arange(count)
+    index = offset + np.arange(count)
     # Coarse last so it wins: a point taken by level k must not be re-taken by a
     # finer level, which is what makes the levels nested.
     for k in range(levels - 2, -1, -1):
@@ -359,8 +366,8 @@ def _write_worker(in_q, out_q, init_args):
     so nothing is owned and every worker draws from one queue. That matters once
     points arrive in spatial order: consecutive flushes are then neighbouring
     tiles, which under a hash pinning would land on the same worker and block the
-    parent on one queue while the rest idled. Part numbers come from the parent,
-    so they stay in sequence whoever writes them.
+    parent on one queue while the rest idled. Part numbers and the LOD offset
+    come from the parent, so both stay in sequence whoever writes them.
     """
     try:
         _worker_init(*init_args)
@@ -369,9 +376,11 @@ def _write_worker(in_q, out_q, init_args):
             item = in_q.get()
             if item is None:
                 break
-            tile, recs, rel = item
+            tile, recs, rel, lod_offset = item
             try:
-                data = _encode(recs, assign_lod(len(recs)), scales, offsets)
+                data = _encode(
+                    recs, assign_lod(len(recs), offset=lod_offset), scales, offsets
+                )
                 _W["sink"].put(rel, data)
                 out_q.put(("ok", len(data), rel, _summarize(recs)))
             except BaseException as e:
@@ -449,8 +458,8 @@ class _WritePool:
                 pass
         raise self.error
 
-    def submit(self, tile, recs, rel):
-        self._put((tile, recs, rel))
+    def submit(self, tile, recs, rel, lod_offset):
+        self._put((tile, recs, rel, lod_offset))
 
     def close(self):
         try:
@@ -526,7 +535,7 @@ def write_parquet(
     # leave a mix of its own parts and its predecessor's behind.
     clear_prefix(bucket, prefix)
 
-    buffers, sizes, counts, nparts = {}, {}, {}, {}
+    buffers, sizes, counts, nparts, flushed = {}, {}, {}, {}, {}
     buffered = 0
     lock = threading.Lock()
     stats = {"written_bytes": 0, "files": 0}
@@ -557,9 +566,16 @@ def write_parquet(
         seq = nparts.get(tile, 0)
         nparts[tile] = seq + 1
         rel = f"tile_x={tile[0]}/tile_y={tile[1]}/part-{seq:05d}.parquet"
+        recs = np.concatenate(parts)
+        # Where this part starts within its tile. The pyramid is a property of
+        # the tile, so the stride has to carry across the parts a flush split it
+        # into; see assign_lod. One scalar, and the parent does no per-point work
+        # for it.
+        lod_offset = flushed.get(tile, 0)
+        flushed[tile] = lod_offset + recs.size
         # Blocking here is the parent waiting on this tile's owner, which is the
         # intended backpressure.
-        pool.submit(tile, np.concatenate(parts), rel)
+        pool.submit(tile, recs, rel, lod_offset)
 
     # Tiles owed to each node index, and how far the arrival stream is complete.
     # Nodes come back in download-completion order, not the order they were

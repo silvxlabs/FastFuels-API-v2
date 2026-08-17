@@ -14,6 +14,7 @@ import numpy as np
 import pyarrow.parquet as pq
 import pytest
 
+from lib.pointcloud import writer as writer_module
 from lib.pointcloud.schema import LOD_LEVELS, point_dtype, tile_span
 from lib.pointcloud.summary import PointSummary
 from lib.pointcloud.writer import (
@@ -23,6 +24,7 @@ from lib.pointcloud.writer import (
     _tile_of,
     _WritePool,
     assign_lod,
+    write_parquet,
 )
 
 DTYPE = point_dtype(has_color=False)
@@ -122,8 +124,47 @@ def test_assign_lod_is_a_nested_geometric_ladder():
         assert coarser == finer * 4
 
 
+def test_assign_lod_continues_across_parts():
+    """A part is a flush boundary, not a tile: the stride must not restart at it."""
+    whole = assign_lod(4**3)
+    parts = np.concatenate(
+        [
+            assign_lod(hi - lo, offset=lo)
+            for lo, hi in ((0, 1), (1, 5), (5, 33), (33, 4**3))
+        ]
+    )
+    assert list(parts) == list(whole)
+
+
+def test_assign_lod_of_a_sparse_tile_is_unchanged():
+    """Four points keep exclusive labels [0, 5] and their cumulative ladder."""
+    lod = assign_lod(4)
+    assert list(lod) == [0, LOD_LEVELS - 1, LOD_LEVELS - 1, LOD_LEVELS - 1]
+    assert [int((lod <= k).sum()) for k in range(LOD_LEVELS)] == [1, 1, 1, 1, 1, 4]
+
+
 def read_back(data):
     return pq.ParquetFile(io.BytesIO(data)).read().to_pandas()
+
+
+def test_multipart_and_single_part_encodings_share_cumulative_lod_counts():
+    """What a `lod <= k` read gets back must not depend on how the tile was split."""
+    r = records(5_000)
+    splits = ((0, 7), (7, 1_003), (1_003, 1_004), (1_004, 5_000))
+
+    single = read_back(_encode(r, assign_lod(len(r)), SCALES, OFFSETS))["lod"]
+    multipart = np.concatenate(
+        [
+            read_back(
+                _encode(r[lo:hi], assign_lod(hi - lo, offset=lo), SCALES, OFFSETS)
+            )["lod"].to_numpy()
+            for lo, hi in splits
+        ]
+    )
+
+    assert len(multipart) == len(single)
+    for k in range(LOD_LEVELS):
+        assert int((multipart <= k).sum()) == int((single.to_numpy() <= k).sum())
 
 
 def test_encode_preserves_every_point():
@@ -256,6 +297,81 @@ def test_an_orphan_part_is_read_back_as_points(tmp_path):
     # A shorter re-run would overwrite part-00000 and never touch part-00001.
     pq.write_table(table, part.parent / "part-00001.parquet")
     assert rows() == 20, "orphan silently doubled the cloud"
+
+
+# One 500 m tile at the origin, millimetre-free 0.01 m scaling, so `records`
+# with a 1,000-count span lands inside tile (0, 0).
+INFO = {
+    "mins": [0.0, 0.0, 0.0],
+    "maxs": [500.0, 500.0, 100.0],
+    "scales": [0.01, 0.01, 0.01],
+    "offsets": [0.0, 0.0, 0.0],
+}
+
+
+def parts_written(monkeypatch, chunks, **kwargs):
+    """Run the parent write path with the worker pool and GCS stubbed out.
+
+    Returns what the parent handed each worker: ``(tile, records, path, offset)``
+    per flush, in submission order.
+    """
+    submitted = []
+
+    class Pool:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def submit(self, tile, recs, rel, offset):
+            submitted.append((tile, recs, rel, offset))
+
+        def close(self):
+            pass
+
+    class Sink:
+        bytes_written = 0
+
+        def __init__(self, *_args):
+            pass
+
+        def put(self, *_args):
+            pass
+
+    monkeypatch.setattr(writer_module, "_WritePool", Pool)
+    monkeypatch.setattr(writer_module, "GcsSink", Sink)
+    monkeypatch.setattr(writer_module, "clear_prefix", lambda *_args: None)
+    write_parquet(chunks, INFO, "bucket", "prefix", tile_m=TILE_M, **kwargs)
+    return submitted
+
+
+def test_a_tile_flushed_in_several_parts_is_assigned_as_one(monkeypatch):
+    """A buffer eviction must not change what the tile's pyramid holds."""
+    monkeypatch.setattr(writer_module, "MAX_TILE_BYTES", 1)
+    chunks = [records(9, seed=seed, span=1_000) for seed in range(3)]
+
+    parts = parts_written(monkeypatch, chunks)
+
+    assert len(parts) == 3, "the tile has to actually flush more than once"
+    assert [offset for *_, offset in parts] == [0, 9, 18]
+    labels = np.concatenate(
+        [assign_lod(len(recs), offset=offset) for _, recs, _, offset in parts]
+    )
+    assert list(labels) == list(assign_lod(27))
+
+
+def test_each_tile_counts_its_own_lod_offsets(monkeypatch):
+    """The offset is a position within a tile, not within the job."""
+    monkeypatch.setattr(writer_module, "MAX_TILE_BYTES", 1)
+    chunk = records(8, span=1_000)
+    chunk["X"][4:] += 60_000  # the second half sits a tile east
+
+    parts = parts_written(monkeypatch, [chunk, chunk.copy()])
+
+    by_tile = {}
+    for tile, recs, _, offset in parts:
+        by_tile.setdefault(tile, []).append((len(recs), offset))
+    assert set(by_tile) == {(0, 0), (1, 0)}
+    for entries in by_tile.values():
+        assert entries == [(4, 0), (4, 4)]
 
 
 def test_distinct_tiles_never_share_a_packed_id():

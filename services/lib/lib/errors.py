@@ -9,6 +9,18 @@ class CancelledException(Exception):
     pass
 
 
+class ProcessingDeferred(Exception):
+    """Raised when a handler has already persisted its own continuation.
+
+    Used by multi-step handlers (e.g. an LFPS job that outlives a single
+    Cloud Task invocation): the handler writes its state to Firestore and
+    enqueues a follow-up task itself, then raises this so the caller stops
+    without marking the resource complete or failed.
+    """
+
+    pass
+
+
 @dataclass
 class ProcessingError(Exception):
     """Structured error with user-friendly message.

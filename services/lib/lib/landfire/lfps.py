@@ -29,7 +29,7 @@ import requests
 from shapely.geometry.base import BaseGeometry
 
 from lib.config import RASTERS_BUCKET
-from lib.landfire.config import LANDFIRE_USER_EMAIL
+from lib.landfire.config import LANDFIRE_USER_EMAIL, SEASON_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +43,13 @@ _REQUEST_TIMEOUT = 60
 # so caching for an hour costs nothing in staleness
 LFPS_PRODUCTS_TTL_SECONDS = float(os.getenv("LFPS_PRODUCTS_TTL_SECONDS", 3600))
 
-# Trailing season+year suffix on seasonal fuels layers, e.g. "_SP26" in
-# LF2025_FBFM40_SP26. The year is the season's own year, one ahead of the
-# base layer's `version` year -- not something this field needs to capture.
-_SEASON_PATTERN = re.compile(r"_(SP|SU|ES|FA)\d{2}$")
+# Matches the trailing season+year suffix on a Seasonal Fuels layer name,
+# e.g. "_SP26" in "LF2025_FBFM40_SP26" -- `_parse_season` below uses this
+# to pull just the season code ("SP") out of `LfpsProduct.layer_name` when
+# building the product catalog. The two digits are the season's own year,
+# one ahead of the base layer's `version` year -- not something this
+# pattern needs to capture.
+_SEASON_PATTERN = re.compile(rf"_({'|'.join(SEASON_CODES)})\d{{2}}$")
 
 _products: list[LfpsProduct] | None = None
 _products_fetched_on: datetime | None = None

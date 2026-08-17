@@ -22,7 +22,7 @@ from griddle.storage import delete_zarr, load_zarr, save_zarr
 from griddle.summarize import summarize_dataset
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
-from lib.errors import CancelledException, ProcessingError
+from lib.errors import CancelledException, ProcessingDeferred, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from lib.gcs import storage_size
 from lib.grids import compute_chunks_doc
@@ -394,6 +394,14 @@ def process_grid_request(request: Request):
         # Grid was deleted during processing - clean up
         logger.info("Cancelled during processing", extra=ids)
         delete_zarr(grid_id)
+        return "OK", 200
+
+    except ProcessingDeferred as e:
+        # A handler already persisted its own continuation (state written
+        # to Firestore, follow-up Cloud Task enqueued) and wants this
+        # invocation to stop here. Status stays "running" -- the follow-up
+        # task picks up where this one left off.
+        logger.info(f"Deferred: {e}", extra=ids)
         return "OK", 200
 
     except ProcessingError as e:

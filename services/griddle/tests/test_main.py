@@ -374,3 +374,35 @@ class TestProcessGridRequest:
         last_call = mock_update_status.call_args_list[-1]
         assert last_call[0][1] == "failed"
         assert last_call[1]["error"]["code"] == "SOURCE_NOT_FOUND"
+
+    @patch("griddle.main._load_domain")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.load_grid")
+    def test_deferred_returns_200_without_completing(
+        self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
+    ):
+        """ProcessingDeferred returns 200 without marking the grid complete or
+        failed -- a handler already persisted its own continuation and
+        re-enqueued a follow-up task, so status stays "running"."""
+        from lib.errors import ProcessingDeferred
+
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": {"name": "landfire", "product": "fbfm40", "season": "SP"},
+            "domain_id": "test-domain-id",
+            "bands": [{"key": "fbfm", "type": "categorical"}],
+        }
+        mock_load_domain.return_value = MagicMock()
+        mock_dispatch.side_effect = ProcessingDeferred("LFPS job submitted")
+
+        request = MockRequest(json_data={"id": "test-grid-id"})
+
+        response, status_code = process_grid_request(request)
+
+        assert status_code == 200
+        # Only the initial "running" transition happened -- no "completed"
+        # or "failed" follow-up, unlike the ProcessingError/FileNotFoundError
+        # cases above.
+        assert mock_update_status.call_count == 1
+        assert mock_update_status.call_args_list[-1][0][1] == "running"

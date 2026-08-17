@@ -15,6 +15,7 @@ from griddle.handlers import (
     chm_point_cloud,
     compose,
     landfire,
+    landfire_lfps,
     layerset,
     lookup,
     pim,
@@ -99,7 +100,7 @@ def dispatch_handler(
 
     match source_name:
         case "landfire":
-            return handle_landfire(domain_gdf, source, progress_callback)
+            return handle_landfire(grid, domain_gdf, source, progress_callback)
         case "layerset":
             return handle_layerset(grid, domain_gdf, source, progress_callback)
         case "lookup":
@@ -125,6 +126,7 @@ def dispatch_handler(
 
 
 def handle_landfire(
+    grid: dict,
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
@@ -150,6 +152,10 @@ def handle_landfire(
             )
         case "fbfm40":
             version = source.get("version", LANDFIRE_VERSIONS["fbfm40"]["default"])
+            if source.get("season"):
+                return landfire_lfps.process_lfps_fbfm40(
+                    grid, domain_gdf, source, target_grid_doc, progress
+                )
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
             return landfire.fetch_fbfm40(

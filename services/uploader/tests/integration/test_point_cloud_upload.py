@@ -3,7 +3,7 @@ Integration tests for uploader/handlers/point_cloud.py
 
 Runs the full handle_point_cloud pipeline against real GCP resources: seeds a
 domain + point cloud doc, uploads a synthesized LAS/LAZ to UPLOADS_BUCKET,
-calls the handler directly, and asserts the stored cloud.laz, the completed
+calls the handler directly, and asserts the stored dataset, the completed
 document, and cleanup. Covers the three ingest paths: passthrough copy (LAZ in
 the domain CRS), recompression (LAS upload), and reprojection (LAZ in a
 different CRS).
@@ -14,7 +14,6 @@ from datetime import datetime
 from uuid import uuid4
 
 import gcsfs
-import laspy
 import pytest
 from pyproj import CRS, Transformer
 from uploader.handlers.point_cloud import handle_point_cloud
@@ -27,7 +26,9 @@ from lib.config import (
 )
 from lib.errors import ProcessingError
 from lib.firestore import delete_document, get_document, set_document
-from lib.gcs import delete_directory, delete_file, exists, get_gcsfs_client
+from lib.gcs import delete_directory, delete_file, exists
+from lib.pointcloud.reader import open_dataset, read_manifest
+from lib.pointcloud.schema import cloud_prefix
 from lib.testing import SHARED_TEST_DOMAINS_DIR, load_json
 from tests.integration.staging import staged_object_name
 from tests.pointcloud_helpers import make_test_las
@@ -95,10 +96,11 @@ def _cleanup_gcsfs_sessions():
     _gcsfs.GCSFileSystem.clear_instance_cache()
 
 
-def _read_stored_header(pc_id: str) -> laspy.LasHeader:
-    with get_gcsfs_client().open(f"{POINT_CLOUDS_BUCKET}/{pc_id}/cloud.laz", "rb") as f:
-        with laspy.open(f) as reader:
-            return reader.header
+def _read_stored(pc_id: str):
+    """Read back the stored dataset the way griddle does."""
+    prefix = cloud_prefix(POINT_CLOUDS_BUCKET, pc_id)
+    manifest = read_manifest(prefix)
+    return open_dataset(prefix).to_table(), manifest
 
 
 class TestPointCloudUpload:
@@ -120,7 +122,7 @@ class TestPointCloudUpload:
             _, snap = get_document(POINT_CLOUDS_COLLECTION, pc_id)
             result = snap.to_dict()
             assert result["status"] == "completed"
-            # The stored cloud.laz footprint is recorded on completion (#342).
+            # The stored dataset's footprint is recorded on completion (#342).
             assert result["size_bytes"] > 0
             assert result["georeference"]["crs"] == DOMAIN_CRS
             assert len(result["georeference"]["bounds"]) == 6
@@ -129,7 +131,7 @@ class TestPointCloudUpload:
             assert result["summary"]["density"] == pytest.approx(
                 100 / truth["xy_area"], rel=1e-6
             )
-            assert exists(f"gs://{POINT_CLOUDS_BUCKET}/{pc_id}/cloud.laz")
+            assert exists(f"gs://{cloud_prefix(POINT_CLOUDS_BUCKET, pc_id)}")
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
         finally:
             _cleanup(pc_id, domain_id, object_name)
@@ -155,9 +157,8 @@ class TestPointCloudUpload:
             assert result["summary"]["point_count"] == 80
             assert result["summary"]["point_classes"] == [2, 5]
 
-            header = _read_stored_header(pc_id)
-            assert header.are_points_compressed
-            assert header.point_count == 80
+            table, _ = _read_stored(pc_id)
+            assert table.num_rows == 80
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
         finally:
             _cleanup(pc_id, domain_id, object_name)
@@ -203,9 +204,16 @@ class TestPointCloudUpload:
                 60 / expected_area, rel=1e-4
             )
 
-            header = _read_stored_header(pc_id)
-            assert header.parse_crs().to_epsg() == 32612
-            assert header.point_count == 60
+            # The dataset carries no CRS of its own; the resource georeferences
+            # it, and that is asserted above. What it does carry is the
+            # reprojected coordinates.
+            table, manifest = _read_stored(pc_id)
+            assert table.num_rows == 60
+            stored_x = (
+                table.column("X").to_numpy() * manifest["scales"][0]
+                + manifest["offsets"][0]
+            )
+            assert stored_x.min() == pytest.approx(expected_x.min(), abs=0.011)
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
         finally:
             _cleanup(pc_id, domain_id, object_name)
@@ -228,6 +236,6 @@ class TestPointCloudUpload:
             assert exc.value.code == "MISSING_CRS"
             # Staged upload is cleaned up even on failure; nothing stored.
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
-            assert not exists(f"gs://{POINT_CLOUDS_BUCKET}/{pc_id}/cloud.laz")
+            assert not exists(f"gs://{cloud_prefix(POINT_CLOUDS_BUCKET, pc_id)}")
         finally:
             _cleanup(pc_id, domain_id, object_name)

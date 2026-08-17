@@ -59,7 +59,10 @@ class PointCloudGeoreference(BaseModel):
         description=(
             "Coordinate reference system the points are stored in, as an "
             "authority code (e.g. `EPSG:32613`). This is always the domain's "
-            "CRS: uploads in a different CRS are reprojected during ingestion."
+            "CRS: uploads in a different CRS are reprojected during ingestion. "
+            "Only horizontal coordinates are transformed — elevations are "
+            "stored exactly as the source provided them and are never "
+            "converted between reference surfaces."
         ),
         examples=["EPSG:32613", "EPSG:5070"],
     )
@@ -233,7 +236,13 @@ class PointCloud(BaseModel):
                     "created_on": "2026-06-01T17:42:10Z",
                     "modified_on": "2026-06-01T17:48:55Z",
                     "checksum": "c0ffee00c0ffee00c0ffee00c0ffee00",
-                    "source": {"name": "3dep"},
+                    "source": {
+                        "name": "3dep",
+                        "datasets": ["WY_Southwest_1_2020"],
+                        "requested_datasets": None,
+                        "coverage_fraction": 1.0,
+                        "catalog_fetched_on": "2026-06-01T17:42:10Z",
+                    },
                     "georeference": {
                         "crs": "EPSG:32612",
                         "bounds": [

@@ -16,15 +16,8 @@ from xarray import DataArray
 
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET
+from lib.landfire import LANDFIRE_VERSIONS, NB_CODE_MAP, validate_landfire_version
 from lib.raster import RasterConnection, cog_env
-
-NB_CODE_MAP: dict[str, int] = {
-    "NB1": 91,
-    "NB2": 92,
-    "NB3": 93,
-    "NB8": 98,
-    "NB9": 99,
-}
 
 CATEGORICAL_DEFAULT = "nearest"
 CONTINUOUS_DEFAULT = "bilinear"
@@ -43,10 +36,13 @@ LANDFIRE_CANOPY_SCALE_FACTORS: dict[str, float] = {
     "cc": 1.0,
 }
 
-# LANDFIRE canopy rasters carry two coexisting nodata sentinels: 32767 is
-# declared in the TIFF nodata tag; -9999 also appears in pixel data without
-# being declared anywhere.
-LANDFIRE_CANOPY_EXTRA_NODATA: int = -9999
+# LANDFIRE rasters can carry an undeclared -9999 sentinel that the TIFF
+# nodata tag doesn't account for. Before 2024, the declared value was
+# simply wrong and -9999 was the real sentinel throughout. From 2024 on,
+# the declared value is correct but -9999 still shows up alongside it.
+# Either way, both are unified onto the declared value at fetch time so
+# downstream code can trust rio.nodata.
+LANDFIRE_EXTRA_NODATA: int = -9999
 
 
 def _fetch_landfire_raster(
@@ -99,7 +95,16 @@ def _fetch_landfire_raster(
             else None,
             **dest,
         )
-    return data.squeeze("band", drop=True)
+        data = data.squeeze("band", drop=True)
+
+        # If no nodata is declared, fall back to -9999.
+        if data.rio.nodata is None:
+            data = data.rio.write_nodata(LANDFIRE_EXTRA_NODATA)
+        # Replace -9999 with the declared nodata value.
+        declared = data.rio.nodata
+        data = data.where(data != LANDFIRE_EXTRA_NODATA, declared)
+
+        return data
 
 
 def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
@@ -119,9 +124,55 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
     return ds
 
 
+def fetch_fbfm13(
+    roi: gpd.GeoDataFrame,
+    version: str = LANDFIRE_VERSIONS["fbfm13"]["default"],
+    remove_non_burnable: list[str] | None = None,
+    extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
+) -> xr.Dataset:
+    """Fetch LANDFIRE FBFM13 fuel model codes.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest
+        version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
+        remove_non_burnable: List of non-burnable fuel model names to remove
+            (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
+            most frequent neighboring burnable fuel model via majority filter.
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+
+    Returns:
+        Dataset with a single "fbfm13" variable (int16 categorical codes,
+        1-13 plus non-burnable 91/92/93/98/99)
+    """
+    validate_landfire_version("fbfm13", version)
+    alignment = alignment or {"target": "domain"}
+    data = _fetch_landfire_raster(
+        roi,
+        "FBFM13",
+        version,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+        is_categorical=True,
+    )
+
+    if remove_non_burnable:
+        non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
+        filtered = _remove_non_burnable_blocks(data.values, non_burnable_keys)
+        data = data.copy(data=filtered)
+
+    return _to_dataset({"fbfm13": data})
+
+
 def fetch_fbfm40(
     roi: gpd.GeoDataFrame,
-    version: str = "2024",
+    version: str = LANDFIRE_VERSIONS["fbfm40"]["default"],
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
@@ -131,7 +182,7 @@ def fetch_fbfm40(
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        version: LANDFIRE version year (default "2024")
+        version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
         remove_non_burnable: List of non-burnable fuel model names to remove
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.
@@ -144,6 +195,7 @@ def fetch_fbfm40(
     Returns:
         Dataset with a single "fbfm" variable (int16 categorical codes)
     """
+    validate_landfire_version("fbfm40", version)
     alignment = alignment or {"target": "domain"}
     data = _fetch_landfire_raster(
         roi,
@@ -165,7 +217,7 @@ def fetch_fbfm40(
 
 def fetch_fccs(
     roi: gpd.GeoDataFrame,
-    version: str = "2023",
+    version: str = LANDFIRE_VERSIONS["fccs"]["default"],
     remove_bare_ground: bool = False,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
@@ -175,7 +227,7 @@ def fetch_fccs(
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        version: LANDFIRE version year (default "2023")
+        version: version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
         remove_bare_ground: If True, removes FCCS fuelbed ID 0 (bare ground).
             Removed cells are replaced by the most frequent neighboring
             non-bare-ground fuelbed via majority filter.
@@ -188,6 +240,7 @@ def fetch_fccs(
     Returns:
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
+    validate_landfire_version("fccs", version)
     alignment = alignment or {"target": "domain"}
     data = _fetch_landfire_raster(
         roi,
@@ -214,7 +267,7 @@ def _remove_non_burnable_blocks(grid: ndarray, non_burnable_keys: list[int]) -> 
     filter is applied iteratively until no targeted codes remain.
 
     Args:
-        grid: 2D array of LANDFIRE (FBFM40 or FCCS) fuel model codes
+        grid: 2D array of LANDFIRE (FBFM or FCCS) fuel model codes
         non_burnable_keys: Numeric codes to replace (e.g., [91, 93, 99])
 
     Returns:
@@ -365,19 +418,16 @@ def fetch_canopy_landfire(
 
 
 def _scale_canopy_band(data: DataArray, scale: float) -> DataArray:
-    """Mask LANDFIRE canopy nodata sentinels and decode to physical units.
+    """Mask nodata and decode a LANDFIRE canopy band to physical units.
 
-    LANDFIRE distributes canopy products as int16 with two coexisting nodata
-    sentinels: 32767 (declared in the TIFF nodata tag) and -9999 (present in
-    pixel data without being declared anywhere). Naively dividing would
-    inject ``sentinel / scale`` into the valid value range, so we mask both
-    before any arithmetic.
+    Assumes `data` has already gone through `_fetch_landfire_raster`, so
+    its declared nodata is trustworthy and any undeclared -9999 sentinel
+    has already been folded into it. Masks that value, then divides by
+    `scale` to convert from the int16 storage representation into
+    physical units (m for chm/cbh, kg/m**3 for cbd, % for cc).
     """
     declared_nodata = data.rio.nodata
-    sentinel_mask = data == LANDFIRE_CANOPY_EXTRA_NODATA
-    if declared_nodata is not None:
-        sentinel_mask = sentinel_mask | (data == declared_nodata)
-    out = data.astype("float32").where(~sentinel_mask)
+    out = data.astype("float32").where(data != declared_nodata)
     if scale != 1.0:
         out = out / scale
     return out.rio.write_nodata(np.nan, encoded=True)

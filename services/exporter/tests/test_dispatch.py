@@ -91,8 +91,12 @@ class TestDispatchHandler:
                 "surface_fuel_load": {"grid_id": "y", "band": "b"},
                 "surface_fuel_depth": {"grid_id": "y", "band": "b"},
                 "surface_moisture": {"grid_id": "z", "band": "b"},
-                "resolved": {
-                    "fire_grid": {"nx": 1, "ny": 1, "nz": 1, "z_resolution": 1.0}
+                "georeference": {
+                    "crs": "EPSG:32611",
+                    "transform": [2.0, 0.0, 0.0, 0.0, -2.0, 0.0],
+                    "shape": [1, 1, 1],
+                    "z_resolution": 1.0,
+                    "z_origin": 0.0,
                 },
             },
         }

@@ -1,5 +1,5 @@
 """
-Example request bodies for FBFM40 lookup endpoints.
+Example request bodies for the FBFM40 lookup endpoint.
 
 These examples are used in:
 1. OpenAPI/Swagger documentation - Users see these as example payloads

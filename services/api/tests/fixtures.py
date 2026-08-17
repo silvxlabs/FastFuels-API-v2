@@ -25,9 +25,8 @@ def make_domain_data(
 ) -> dict:
     """Factory function to create domain data as stored in Firestore.
 
-    Produces the two-feature format: a "domain" feature (working extent /
-    bounding box) and an "input" feature (the original user polygon). For a
-    rectangular input, both features have the same geometry.
+    Produces the single-feature format: a "domain" feature holding the
+    working extent (bounding box).
     """
     polygon_coords = [
         [500000.0, 5200000.0],
@@ -50,14 +49,6 @@ def make_domain_data(
             {
                 "type": "Feature",
                 "properties": {"name": "domain"},
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": json.dumps([polygon_coords]),
-                },
-            },
-            {
-                "type": "Feature",
-                "properties": {"name": "input"},
                 "geometry": {
                     "type": "Polygon",
                     "coordinates": json.dumps([polygon_coords]),

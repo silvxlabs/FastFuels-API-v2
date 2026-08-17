@@ -1,0 +1,46 @@
+{
+  "description": "",
+  "error": null,
+  "georeference": {
+    "bounds": [
+      294094.992,
+      5198981.67,
+      1026.3600000000001,
+      294784.075,
+      5199749.485,
+      1274.19
+    ],
+    "crs": "EPSG:32612"
+  },
+  "name": "static-test-blackfoot-3dep",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "catalog_fetched_on": "2026-08-03T00:17:37.962005+00:00",
+    "coverage_fraction": 1.0,
+    "datasets": [
+      "MT_Statewide_P3_4_B21"
+    ],
+    "name": "3dep",
+    "requested_datasets": [
+      "MT_Statewide_P3_4_B21"
+    ]
+  },
+  "status": "completed",
+  "summary": {
+    "density": 19.838483899989324,
+    "point_classes": [
+      1,
+      2,
+      7,
+      9,
+      18,
+      20
+    ],
+    "point_count": 10496309
+  },
+  "tags": [],
+  "type": "als"
+}

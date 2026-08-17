@@ -1,0 +1,39 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "chm",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "Point cloud canopy height for integration test",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-chm-point-cloud",
+  "progress": null,
+  "source": {
+    "alignment": {
+      "method": null,
+      "resolution": 1.0,
+      "target": "domain"
+    },
+    "description": "Canopy height model rasterized from a point cloud",
+    "extent_buffer_cells": 0,
+    "name": "canopy",
+    "product": "point_cloud",
+    "source_point_cloud_checksum": null,
+    "source_point_cloud_id": "REPLACED_BY_FIXTURE"
+  },
+  "status": "pending",
+  "tags": []
+}

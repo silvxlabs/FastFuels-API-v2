@@ -5,9 +5,16 @@ Provides file upload, download, delete, and existence checking.
 """
 
 import functools
+import io
 import json
 
 import gcsfs
+
+# Slice size for streaming an in-memory buffer to GCS. Must be at least the
+# gcsfs write block size (5 MiB) so every slice triggers a flush, and a whole
+# multiple of the 256 KiB GCS resumable-upload block so no partial block is
+# carried over between flushes.
+_UPLOAD_SLICE_BYTES = 64 * 2**20
 
 
 @functools.cache
@@ -109,6 +116,34 @@ def storage_size(gcs_path: str) -> int:
     client = get_gcsfs_client()
     client.invalidate_cache(normalized)
     return client.du(normalized, total=True)
+
+
+def upload_buffer(gcs_path: str, buffer: io.BytesIO) -> None:
+    """Upload an in-memory buffer to GCS without copying it in full.
+
+    Writes in bounded slices rather than one ``write(buffer.getbuffer())``.
+    fsspec's ``AbstractBufferedFile.write`` appends to its own buffer and only
+    flushes *after* the write, once that buffer reaches the block size — so a
+    single write of the whole payload stages a second complete copy in memory
+    before a byte is uploaded, doubling peak usage. Slicing flushes each block
+    as it is written, holding one slice instead of the whole file.
+
+    That matters here because the callers are the point cloud writers, whose
+    output is assembled in memory (LAZ writers need a seekable target) and can
+    reach the gigabyte range at the point budget.
+
+    Args:
+        gcs_path: Full GCS path (gs://bucket/path/file or bucket/path/file).
+        buffer: Buffer to upload. Read from position 0 regardless of where it
+            is currently positioned; the position is not restored.
+    """
+    normalized = _normalize_path(gcs_path)
+    # The view is released before returning: while it is exported the buffer
+    # cannot be resized or closed, so leaking one pins the whole allocation.
+    with buffer.getbuffer() as view:
+        with get_gcsfs_client().open(normalized, "wb") as out:
+            for start in range(0, len(view), _UPLOAD_SLICE_BYTES):
+                out.write(view[start : start + _UPLOAD_SLICE_BYTES])
 
 
 def exists(gcs_path: str) -> bool:

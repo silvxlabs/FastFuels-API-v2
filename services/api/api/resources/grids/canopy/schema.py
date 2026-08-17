@@ -166,6 +166,98 @@ class CreateNaipChmRequest(CreateSourceGridRequestBase):
     """
 
 
+class PointCloudGroundSource(StrEnum):
+    """Where the ground surface under the canopy came from."""
+
+    classification = "classification"
+    derived = "derived"
+
+
+class PointCloudGround(BaseModel):
+    """How ground was established, and how well the data constrained it.
+
+    Written by the worker. Canopy height is height *above ground*, so a CHM is
+    only as good as the ground surface under it — and where a cloud carries no
+    ground classification that surface is inferred. These fields are what make a
+    weakly-constrained result visible instead of silently confident.
+    """
+
+    ground_source: PointCloudGroundSource = Field(
+        description=(
+            "`classification` when the point cloud's own ASPRS class 2 returns "
+            "were used, `derived` when no ground classification was present and "
+            "the surface was inferred from the data."
+        )
+    )
+    ground_coverage: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of cells containing at least one ground return. Canopy "
+            "heights over cells far from any ground return rest on an "
+            "interpolated surface."
+        ),
+    )
+    max_ground_distance_m: float = Field(
+        ge=0.0,
+        description=(
+            "Distance from the cell furthest from any ground return to the "
+            "nearest one, in meters. Large values indicate a wide area — a "
+            "building footprint or closed canopy — where the ground surface is "
+            "inferred rather than measured."
+        ),
+    )
+
+
+class PointCloudChmSource(CanopySource):
+    """Source for a canopy height model rasterized from a point cloud.
+
+    Produces a continuous canopy height raster by taking the greatest height
+    above ground of any return in each cell.
+    """
+
+    product: Literal["point_cloud"] = "point_cloud"
+    description: Literal["Canopy height model rasterized from a point cloud"] = (
+        "Canopy height model rasterized from a point cloud"
+    )
+    source_point_cloud_id: str = Field(
+        description="The point cloud this canopy height model was rasterized from."
+    )
+    source_point_cloud_checksum: str | None = Field(
+        default=None,
+        description=(
+            "The source point cloud's `checksum` at the time this grid was "
+            "created from it. Compare it against the point cloud's current "
+            "`checksum` to tell whether the source has changed since."
+        ),
+    )
+
+    ground: PointCloudGround | None = Field(
+        default=None,
+        description=(
+            "How the ground surface beneath the canopy was established, and "
+            "how well the point cloud constrained it. Recorded when the grid "
+            "finishes processing; `null` before then."
+        ),
+    )
+
+
+class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
+    """Request to create a canopy height model grid from a point cloud.
+
+    Returns a grid with a single continuous band:
+    - chm: Canopy height in meters
+
+    The point cloud must be airborne (`type: als`) and `completed`. Cell size
+    comes from `alignment.resolution`, defaulting to 1 m — unlike the
+    raster-backed canopy sources there is no source pixel size to inherit.
+    """
+
+    source_point_cloud_id: str = Field(
+        description="ID of the point cloud to rasterize. Must be an ALS cloud in this domain."
+    )
+
+
 class LandfireCanopyVersion(StrEnum):
     """Available LANDFIRE canopy data versions."""
 

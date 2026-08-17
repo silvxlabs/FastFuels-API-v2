@@ -12,6 +12,7 @@ import xarray as xr
 
 from griddle.handlers import (
     chm,
+    chm_point_cloud,
     compose,
     landfire,
     layerset,
@@ -21,9 +22,10 @@ from griddle.handlers import (
     threedep,
     uniform,
 )
-from lib.config import GRIDS_COLLECTION
+from lib.config import GRIDS_COLLECTION, POINT_CLOUDS_COLLECTION
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.landfire import LANDFIRE_VERSIONS
 
 META_CHM_ATTRIBUTION = {
     "1": {
@@ -134,8 +136,20 @@ def handle_landfire(
     target_grid_doc = _load_target_grid_doc(alignment)
 
     match product:
+        case "fbfm13":
+            version = source.get("version", LANDFIRE_VERSIONS["fbfm13"]["default"])
+            progress(f"Fetching LANDFIRE {product} v{version}...", 10)
+            remove_non_burnable = source.get("remove_non_burnable")
+            return landfire.fetch_fbfm13(
+                domain_gdf,
+                version,
+                remove_non_burnable=remove_non_burnable,
+                extent_buffer_cells=extent_buffer_cells,
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
+            )
         case "fbfm40":
-            version = source.get("version", "2024")
+            version = source.get("version", LANDFIRE_VERSIONS["fbfm40"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
             return landfire.fetch_fbfm40(
@@ -147,7 +161,7 @@ def handle_landfire(
                 target_grid_doc=target_grid_doc,
             )
         case "fccs":
-            version = source.get("version", "2023")
+            version = source.get("version", LANDFIRE_VERSIONS["fccs"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_bare_ground = source.get("remove_bare_ground", False)
             return landfire.fetch_fccs(
@@ -174,7 +188,7 @@ def handle_landfire(
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown LANDFIRE product: {product}",
-                suggestion="Supported products: fbfm40, fccs, topography",
+                suggestion="Supported products: fbfm13, fbfm40, fccs, topography",
             )
 
 
@@ -266,8 +280,20 @@ def handle_lookup(
     progress(f"Looking up {table} fuel parameters...", 10)
 
     match table:
+        case "fbfm13":
+            return lookup.fbfm13_lookup(
+                source_grid_id=source["source_grid_id"],
+                bands=grid["bands"],
+                progress=progress,
+            )
         case "fbfm40":
             return lookup.fbfm40_lookup(
+                source_grid_id=source["source_grid_id"],
+                bands=grid["bands"],
+                progress=progress,
+            )
+        case "fccs":
+            return lookup.fccs_lookup(
                 source_grid_id=source["source_grid_id"],
                 bands=grid["bands"],
                 progress=progress,
@@ -276,7 +302,7 @@ def handle_lookup(
             raise ProcessingError(
                 code="UNKNOWN_TABLE",
                 message=f"Unknown lookup table: {table}",
-                suggestion="Supported tables: fbfm40",
+                suggestion="Supported tables: fbfm13, fbfm40, fccs",
             )
 
 
@@ -351,6 +377,27 @@ def handle_uniform(
     )
 
 
+def _load_point_cloud_doc(point_cloud_id: str) -> dict:
+    """Load the source point cloud document.
+
+    The API validates the cloud when the request comes in, but a job can sit in
+    the queue for a while, so the document is read again here rather than
+    trusting a create-time snapshot.
+    """
+    try:
+        _, snapshot = get_document(POINT_CLOUDS_COLLECTION, point_cloud_id)
+    except DocumentNotFoundError:
+        raise ProcessingError(
+            code="SOURCE_NOT_FOUND",
+            message=f"Point cloud '{point_cloud_id}' not found.",
+            suggestion=(
+                "The point cloud may have been deleted after this grid was "
+                "created. Create the grid again from a point cloud that exists."
+            ),
+        )
+    return snapshot.to_dict()
+
+
 def handle_canopy(
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
@@ -407,11 +454,29 @@ def handle_canopy(
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
             )
+        case "point_cloud":
+            point_cloud_id = source["source_point_cloud_id"]
+            point_cloud = _load_point_cloud_doc(point_cloud_id)
+            summary = point_cloud.get("summary") or {}
+            dataset, ground = chm_point_cloud.fetch_point_cloud_chm(
+                roi=domain_gdf,
+                point_cloud_id=point_cloud_id,
+                point_classes=summary.get("point_classes") or [],
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
+                progress=progress,
+                extent_buffer_cells=extent_buffer_cells,
+            )
+            # How ground was obtained, and how well constrained it was. Without
+            # this a derived-ground CHM over a large building looks like a
+            # confident answer instead of an unconstrained one.
+            source["ground"] = ground
+            return dataset
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown canopy product: {product}",
-                suggestion="Supported products: meta, naip, landfire",
+                suggestion="Supported products: meta, naip, landfire, point_cloud",
             )
 
 

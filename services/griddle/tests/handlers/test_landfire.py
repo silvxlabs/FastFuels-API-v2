@@ -12,9 +12,11 @@ import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.landfire import (
+    LANDFIRE_EXTRA_NODATA,
     _fetch_landfire_raster,
     _most_frequent,
     _remove_non_burnable_blocks,
+    fetch_fbfm13,
     fetch_fbfm40,
     fetch_fccs,
     fetch_topography,
@@ -66,6 +68,160 @@ def roi(test_domain) -> gpd.GeoDataFrame:
 
     crs = domain["crs"]["properties"]["name"]
     return gpd.GeoDataFrame.from_features(domain["features"], crs=crs)
+
+
+class TestFetchLandfireRasterNodataConsolidation:
+    """Unit tests for the -9999 / declared-nodata consolidation in
+    _fetch_landfire_raster."""
+
+    def _make_raster(self, values, roi, nodata=None):
+        """Build a (band, y, x) DataArray mimicking extract_window's output."""
+        data = xr.DataArray(
+            values[np.newaxis, :, :].astype(np.int16),
+            dims=("band", "y", "x"),
+            coords={
+                "band": [1],
+                "y": np.arange(values.shape[0], dtype=np.float64),
+                "x": np.arange(values.shape[1], dtype=np.float64),
+            },
+        ).rio.write_crs(roi.crs)
+        if nodata is not None:
+            data = data.rio.write_nodata(nodata)
+        return data
+
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_both_sentinels_present_collapse_onto_declared(self, mock_raster_cls, roi):
+        """-9999 cells become `declared`; declared cells and real data untouched."""
+        values = np.array([[101, -9999], [32767, 102]])
+        raw = self._make_raster(values, roi, nodata=32767)
+        mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
+        mock_raster.extract_window.return_value = raw
+        mock_raster_cls.return_value = mock_raster
+
+        result = _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
+
+        np.testing.assert_array_equal(result.values, [[101, 32767], [32767, 102]])
+        assert result.rio.nodata == 32767
+
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_only_extra_sentinel_present_declared_never_occurs(
+        self, mock_raster_cls, roi
+    ):
+        """Pre-2024 case: declared value never appears in the data, but -9999
+        cells still get remapped onto it."""
+        values = np.array([[101, -9999], [102, -9999]])
+        raw = self._make_raster(values, roi, nodata=32767)
+        mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
+        mock_raster.extract_window.return_value = raw
+        mock_raster_cls.return_value = mock_raster
+
+        result = _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2020",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
+
+        np.testing.assert_array_equal(result.values, [[101, 32767], [102, 32767]])
+        assert result.rio.nodata == 32767
+
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_no_declared_nodata_falls_back_to_extra_sentinel(
+        self, mock_raster_cls, roi
+    ):
+        """No nodata tag at all: -9999 stays -9999, and rio.nodata is set to it."""
+        values = np.array([[101, -9999], [102, 103]])
+        raw = self._make_raster(values, roi, nodata=None)
+        mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
+        mock_raster.extract_window.return_value = raw
+        mock_raster_cls.return_value = mock_raster
+
+        result = _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2020",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
+
+        np.testing.assert_array_equal(result.values, values)
+        assert result.rio.nodata == LANDFIRE_EXTRA_NODATA
+
+    @patch("griddle.handlers.landfire.RasterConnection")
+    def test_direction_only_extra_sentinel_cells_change(self, mock_raster_cls, roi):
+        """It's -9999 that gets overwritten with `declared` — never the reverse."""
+        values = np.array([[-9999, 55], [55, -9999]])
+        raw = self._make_raster(values, roi, nodata=55)
+        mock_raster = MagicMock()
+        mock_raster.raster_x_resolution = 30.0
+        mock_raster.extract_window.return_value = raw
+        mock_raster_cls.return_value = mock_raster
+
+        result = _fetch_landfire_raster(
+            roi,
+            "FBFM40",
+            "2024",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+        )
+
+        # every cell should now read 55 — the -9999 cells were the ones that
+        # moved, not the cells that were already 55
+        np.testing.assert_array_equal(result.values, [[55, 55], [55, 55]])
+
+
+class TestFetchFbfm13:
+    """Integration tests for fetch_fbfm13."""
+
+    def test_returns_dataset(self, roi):
+        """fetch_fbfm13 returns a Dataset."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert isinstance(result, xr.Dataset)
+
+    def test_has_fbfm13_variable(self, roi):
+        """Dataset contains an 'fbfm13' variable."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert "fbfm13" in result.data_vars
+
+    def test_fbfm13_shape(self, test_domain, roi):
+        """The fbfm13 variable has the expected spatial shape."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert result["fbfm13"].shape == test_domain.expected_shape
+
+    def test_fbfm13_dtype(self, roi):
+        """The fbfm13 variable is int16 (categorical codes)."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert result["fbfm13"].dtype == "int16"
+
+    def test_crs_preserved(self, roi):
+        """CRS is preserved via rioxarray."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        assert result.rio.crs == roi.crs
+
+    def test_fbfm13_values_in_valid_set(self, roi):
+        """FBFM13 codes are limited to the Anderson 13 models plus non-burnable."""
+        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        values = result["fbfm13"].values
+        valid_codes = set(range(1, 14)) | {91, 92, 93, 98, 99}
+        assert set(np.unique(values)).issubset(valid_codes)
 
 
 class TestFetchFbfm40:
@@ -452,23 +608,6 @@ class TestScaleCanopyBand:
         raw = _make_canopy_raster(np.array([[0, 45, 95, 32767]]))
         out = _scale_canopy_band(raw, 1.0)
         np.testing.assert_array_equal(out.values, [[0.0, 45.0, 95.0, np.nan]])
-
-    def test_masks_both_declared_and_extra_sentinel(self):
-        """Both 32767 (declared) AND -9999 (undeclared, in pixel data) become NaN."""
-        from griddle.handlers.landfire import _scale_canopy_band
-
-        raw = _make_canopy_raster(np.array([[0, -9999, 10, 32767, 30]]))
-        out = _scale_canopy_band(raw, 10.0)
-        np.testing.assert_array_equal(out.values, [[0.0, np.nan, 1.0, np.nan, 3.0]])
-
-    def test_handles_array_with_no_declared_nodata(self):
-        """If the source raster has no rio.nodata, only -9999 is masked."""
-        from griddle.handlers.landfire import _scale_canopy_band
-
-        raw = _make_canopy_raster(np.array([[0, -9999, 32767]]), nodata=None)
-        out = _scale_canopy_band(raw, 10.0)
-        # 32767 has no special meaning without a declared sentinel
-        np.testing.assert_allclose(out.values, [[0.0, np.nan, 3276.7]], rtol=1e-3)
 
 
 class TestFetchCanopyLandfire:

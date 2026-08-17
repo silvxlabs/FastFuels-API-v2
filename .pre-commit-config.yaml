@@ -8,7 +8,12 @@ repos:
         exclude: services/api/api/data/conus_4326.geojson
       - id: check-merge-conflict
       - id: end-of-file-fixer
+        # treevox/data holds vendored DUET artifacts (the binary and the species
+        # table its Fortran reads). They must stay byte-identical to the copies
+        # in gs://silvx-fastfuels-executables, so nothing may reformat them.
+        exclude: ^services/treevox/treevox/data/
       - id: trailing-whitespace
+        exclude: ^services/treevox/treevox/data/
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit

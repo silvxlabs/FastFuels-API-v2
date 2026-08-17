@@ -115,6 +115,45 @@ def test_create_blue_mtn_chm_inventory(
 
 
 @pytest.mark.dependency()
+def test_create_blue_mtn_landfire_fbfm13(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create LANDFIRE FBFM13 fixture at 2 m, Domain-anchored.
+
+    Exercises the inline `alignment.target="domain", resolution=2` path on
+    the LANDFIRE FBFM13 handler -- no separate resample step.
+    """
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/fbfm13/landfire",
+        body={
+            "alignment": {"target": "domain", "resolution": 2, "method": "nearest"},
+        },
+        static_name="static-test-blue-mtn-landfire-fbfm13",
+    )
+
+
+@pytest.mark.dependency(depends=["test_create_blue_mtn_landfire_fbfm13"])
+def test_create_blue_mtn_lookup_fbfm13(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create FBFM13 lookup grid at 2 m with the three surface roles
+    QUIC-Fire needs (fuel_load.1hr, fuel_depth, savr.1hr)."""
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/lookup/fbfm13",
+        body={
+            "source_grid_id": "static-test-blue-mtn-landfire-fbfm13",
+            "bands": ["fuel_load.1hr", "fuel_depth", "savr.1hr"],
+        },
+        static_name="static-test-blue-mtn-lookup-fbfm13",
+        dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm13"]},
+    )
+
+
+@pytest.mark.dependency()
 def test_create_blue_mtn_landfire_fbfm40(
     create_static_fixture, client, blue_mountain_domain
 ):
@@ -150,6 +189,50 @@ def test_create_blue_mtn_lookup_fbfm40(
         },
         static_name="static-test-blue-mtn-lookup-fbfm40",
         dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm40"]},
+    )
+
+
+@pytest.mark.dependency()
+def test_create_blue_mtn_landfire_fccs(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create LANDFIRE FCCS fixture at 2 m, Domain-anchored.
+
+    Exercises the inline `alignment.target="domain", resolution=2` path on
+    the LANDFIRE FCCS handler — no separate resample step.
+    """
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/fccs/landfire",
+        body={
+            "alignment": {"target": "domain", "resolution": 2, "method": "nearest"},
+        },
+        static_name="static-test-blue-mtn-landfire-fccs",
+    )
+
+
+@pytest.mark.dependency(depends=["test_create_blue_mtn_landfire_fccs"])
+def test_create_blue_mtn_lookup_fccs(
+    create_static_fixture, client, blue_mountain_domain
+):
+    """Create FCCS lookup grid at 2 m with a representative band subset
+    (dead 1hr fuel load, duff depth, live herbaceous fuel load).
+
+    FCCS has no fuel_depth/savr equivalent to the FBFM13/FBFM40 QUIC-Fire
+    role set -- FOFEM only provides fuel loads plus duff_depth -- so this
+    fixture exercises a representative cross-section instead.
+    """
+    create_static_fixture(
+        client=client,
+        domain_id=blue_mountain_domain["id"],
+        endpoint="/grids/lookup/fccs",
+        body={
+            "source_grid_id": "static-test-blue-mtn-landfire-fccs",
+            "bands": ["fuel_load.1hr", "duff_depth", "fuel_load.live_herb"],
+        },
+        static_name="static-test-blue-mtn-lookup-fccs",
+        dependencies={"grids": ["static-test-blue-mtn-landfire-fccs"]},
     )
 
 
@@ -224,3 +307,100 @@ def test_create_blue_mtn_osm_water(
         body={"name": "static-test-blue-mtn-osm-water"},
         static_name="static-test-blue-mtn-osm-water",
     )
+
+
+@pytest.mark.dependency()
+def test_create_blackfoot_3dep_point_cloud(
+    create_static_point_cloud_fixture, client, blackfoot_domain
+):
+    """Create a static 3DEP point cloud fixture on the Blackfoot domain.
+
+    Blackfoot rather than Blue Mountain: Blue Mountain has no 3DEP lidar at all
+    (it is this PR's zero-coverage negative test), while Blackfoot is fully
+    covered by a single acquisition — one acquisition means no seam, so the
+    fixture is deterministic. It is also already the domain behind
+    ``static-test-blackfoot-chm``, which is what #330 will build from this
+    cloud.
+
+    This is the only fixture that exercises the API -> Cloud Tasks -> lakitu
+    path, so it doubles as the end-to-end check that the worker is reachable
+    and wired up.
+
+    The acquisition is pinned rather than auto-selected. The catalog is live and
+    USGS publishes new surveys, so an unpinned fetch could silently regenerate
+    this fixture from different lidar on a later run.
+    """
+    completed = create_static_point_cloud_fixture(
+        client=client,
+        domain_id=blackfoot_domain["id"],
+        endpoint="/pointclouds/3dep",
+        body={
+            "name": "static-test-blackfoot-3dep",
+            "datasets": ["MT_Statewide_P3_4_B21"],
+        },
+        static_name="static-test-blackfoot-3dep",
+    )
+
+    # Guard the properties #330 depends on, so a regenerated fixture that is
+    # subtly wrong fails here rather than in a downstream CHM test.
+    assert completed["type"] == "als"
+    assert completed["source"]["datasets"] == ["MT_Statewide_P3_4_B21"]
+    assert completed["source"]["coverage_fraction"] == 1.0
+    assert completed["georeference"]["crs"] == "EPSG:32612"
+    # Ground and unclassified: a CHM needs both a surface and returns above it.
+    assert {1, 2} <= set(completed["summary"]["point_classes"])
+    assert completed["summary"]["point_count"] > 1_000_000
+
+
+@pytest.mark.dependency(depends=["test_create_blackfoot_3dep_point_cloud"])
+def test_create_blackfoot_point_cloud_chm(
+    create_static_fixture, client, blackfoot_domain
+):
+    """Build a CHM grid from the static 3DEP cloud (#330).
+
+    The first half of #330's acceptance criterion: point cloud -> CHM grid. The
+    cloud carries ASPRS ground classification, so ground is read rather than
+    inferred, and `source.ground` records that.
+    """
+    completed = create_static_fixture(
+        client=client,
+        domain_id=blackfoot_domain["id"],
+        endpoint="/grids/canopy/point_cloud",
+        body={"source_point_cloud_id": "static-test-blackfoot-3dep"},
+        static_name="static-test-blackfoot-point-cloud-chm",
+        dependencies={"pointclouds": ["static-test-blackfoot-3dep"]},
+    )
+
+    # The band the downstream tree detection validates on.
+    band = completed["bands"][0]
+    assert band["key"] == "chm"
+    assert band["unit"] == "m"
+    # Ground came from the classification, and was well constrained.
+    ground = completed["source"]["ground"]
+    assert ground["ground_source"] == "classification"
+    assert ground["ground_coverage"] > 0.5
+    # Conifer forest, not terrain: a ground-normalization failure would put the
+    # maximum in the hundreds, since this cloud spans 1026-1274 m elevation.
+    assert 20.0 < band["summary"]["max"] < 60.0
+
+
+@pytest.mark.dependency(depends=["test_create_blackfoot_point_cloud_chm"])
+def test_create_blackfoot_point_cloud_chm_inventory(
+    create_static_inventory_fixture, client, blackfoot_domain
+):
+    """Detect trees in the point-cloud CHM (#330).
+
+    The second half of the acceptance criterion: the grid built from a point
+    cloud is interchangeable with the Meta/NAIP/LANDFIRE CHM sources, so the
+    existing individual-tree-detection endpoint consumes it unchanged.
+    """
+    completed = create_static_inventory_fixture(
+        client=client,
+        domain_id=blackfoot_domain["id"],
+        endpoint="/inventories/tree/chm",
+        body={"source_chm_grid_id": "static-test-blackfoot-point-cloud-chm"},
+        static_name="static-test-blackfoot-point-cloud-chm-inventory",
+        dependencies={"grids": ["static-test-blackfoot-point-cloud-chm"]},
+    )
+
+    assert {"x", "y", "height"} <= {c["key"] for c in completed["columns"]}

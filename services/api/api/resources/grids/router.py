@@ -27,6 +27,7 @@ from api.dependencies import VerifiedDomain
 from api.resources.grids.cache import get_grid_array
 from api.resources.grids.canopy.router import router as canopy_router
 from api.resources.grids.compose.router import router as compose_router
+from api.resources.grids.duet.router import router as duet_router
 from api.resources.grids.duplicate.router import router as duplicate_router
 from api.resources.grids.exports.landscape.router import (
     router as landscape_export_router,
@@ -35,6 +36,7 @@ from api.resources.grids.exports.quicfire.router import (
     router as quicfire_export_router,
 )
 from api.resources.grids.exports.router import router as grid_exports_router
+from api.resources.grids.fbfm13.router import router as fbfm13_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.fccs.router import router as fccs_router
 from api.resources.grids.lookup.router import router as lookup_router
@@ -860,6 +862,7 @@ router.include_router(
     prefix="/exports/quicfire",
     tags=["Grids - Exports"],
 )
+router.include_router(fbfm13_router, prefix="/fbfm13", tags=["Grids - FBFM13"])
 router.include_router(fbfm40_router, prefix="/fbfm40", tags=["Grids - FBFM40"])
 router.include_router(fccs_router, prefix="/fccs", tags=["Grids - FCCS"])
 router.include_router(
@@ -868,7 +871,8 @@ router.include_router(
 router.include_router(pim_router, prefix="/pim", tags=["Grids - PIM"])
 router.include_router(canopy_router, prefix="/canopy", tags=["Grids - Canopy"])
 router.include_router(compose_router, prefix="/compose", tags=["Grids - Compose"])
-router.include_router(lookup_router, prefix="/lookup", tags=["Grids - Lookup"])
+router.include_router(duet_router, prefix="/duet", tags=["Grids - DUET"])
+router.include_router(lookup_router, prefix="/lookup")
 router.include_router(rasterize_router, prefix="/rasterize", tags=["Grids - Rasterize"])
 router.include_router(resample_router, prefix="/resample", tags=["Grids - Resample"])
 router.include_router(voxelize_router, prefix="/voxelize")

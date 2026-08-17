@@ -1,0 +1,183 @@
+"""
+Integration tests for the point-cloud CHM handler.
+
+Runs the real handler against a real 3DEP cloud read from GCS, through the
+whole griddle job — Firestore document, zarr write, band summaries and all.
+The static cloud is `static-test-blackfoot-3dep`: 10,496,309 points over the
+`blackfoot.json` domain, carrying ASPRS ground classification.
+
+It is stored twice. `cloud.parquet` is what this reads, and `cloud.laz` beside
+it is the source it was written from — kept because `tests/local/
+test_chm_vs_pdal.py` reads the LAZ directly, and because it is how the dataset
+is rebuilt if the layout changes again: open the LAZ with laspy and hand the
+reader to the uploader's `_store`, which is the path that wrote it. Doing that
+reproduced the point count, classes, density and bounds this fixture's Firestore
+document already recorded, so the document needed no edit.
+"""
+
+import numpy as np
+import pytest
+
+pytestmark = pytest.mark.integration
+
+DOMAIN = "blackfoot.json"
+GRID = "chm_point_cloud.json"
+POINT_CLOUD = "static-test-blackfoot-3dep"
+
+
+def _assert_valid_chm(ds):
+    """The output contract every CHM consumer relies on."""
+    assert "chm" in ds.data_vars
+    assert ds["chm"].dims == ("y", "x")
+    assert ds["chm"].dtype == np.float32
+    assert ds.rio.crs is not None
+    # Continuous grids carry NaN nodata, not a sentinel — standgen's ITD
+    # neutralizes NaN and would be a no-op against an integer sentinel.
+    assert np.isnan(ds["chm"].rio.nodata)
+    values = ds["chm"].values
+    assert np.isfinite(values).any(), "CHM is entirely nodata"
+    assert np.nanmin(values) >= 0.0
+    # The exporter contract: a completed grid must be writable as a raster.
+    ds["chm"].rio.to_raster("/tmp/test_chm_point_cloud.tif")
+
+
+class TestPointCloudChm:
+    """Building a CHM from a stored point cloud, end to end."""
+
+    def test_produces_a_valid_chm(self, griddle_runner):
+        result = griddle_runner(DOMAIN, GRID, point_cloud=POINT_CLOUD)
+
+        _assert_valid_chm(result.ds)
+
+    def test_canopy_heights_are_plausible_for_a_conifer_forest(self, griddle_runner):
+        """Guards against a ground-normalization failure.
+
+        If ground were mis-derived the band would track terrain elevation —
+        this cloud spans 1026-1274 m, so heights would land in the hundreds
+        rather than the tens.
+        """
+        result = griddle_runner(DOMAIN, GRID, point_cloud=POINT_CLOUD)
+
+        values = result.ds["chm"].values
+        assert 20.0 < np.nanmax(values) < 60.0
+        assert 1.0 < np.nanmean(values) < 15.0
+
+    def test_records_how_ground_was_obtained(self, griddle_runner):
+        """This cloud carries class 2, so ground is read, not inferred."""
+        from lib.config import GRIDS_COLLECTION
+        from lib.firestore.documents import get_document
+
+        result = griddle_runner(DOMAIN, GRID, point_cloud=POINT_CLOUD)
+
+        _, snapshot = get_document(GRIDS_COLLECTION, result.grid_id)
+        ground = snapshot.to_dict()["source"]["ground"]
+        assert ground["ground_source"] == "classification"
+        assert ground["ground_coverage"] > 0.5
+        assert ground["max_ground_distance_m"] >= 0.0
+
+    def test_grid_covers_the_domain_at_the_requested_resolution(self, griddle_runner):
+        result = griddle_runner(DOMAIN, GRID, point_cloud=POINT_CLOUD)
+
+        transform = result.ds.rio.transform()
+        assert transform.a == pytest.approx(1.0)
+        assert abs(transform.e) == pytest.approx(1.0)
+
+    def test_coarser_resolution_produces_a_smaller_grid(self, griddle_runner):
+        """`alignment.resolution` drives the lattice, so 5 m is ~1/25 the cells."""
+        fine = griddle_runner(DOMAIN, GRID, point_cloud=POINT_CLOUD)
+        coarse = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides={
+                "alignment": {"target": "domain", "resolution": 5.0, "method": None}
+            },
+        )
+
+        assert coarse.ds.rio.transform().a == pytest.approx(5.0)
+        assert coarse.ds["chm"].size < fine.ds["chm"].size / 20
+
+
+def _align_to(grid_id, resolution=None):
+    return {
+        "alignment": {
+            "target": "grid",
+            "grid_id": grid_id,
+            "resolution": resolution,
+            "method": None,
+        }
+    }
+
+
+class TestGridAlignment:
+    """Aligning a CHM to an existing grid, against a real target lattice.
+
+    The target is a 5 m CHM built by the same pipeline, so its georeference is
+    one griddle actually wrote rather than a hand-authored fixture. Each
+    ``griddle_runner`` call stands up its own domain document from the same
+    fixture, so the target grid's lattice covers the same extent as the domain
+    the aligned run is built over.
+    """
+
+    def test_omitted_resolution_matches_the_target_lattice_exactly(
+        self, griddle_runner
+    ):
+        """Origin, cell size and shape all come from the target.
+
+        This is what makes the two grids composable without resampling. Note
+        the target is 5 m: an aligned run that fell back to the 1 m default
+        would fail on cell size alone.
+        """
+        target = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides={
+                "alignment": {"target": "domain", "resolution": 5.0, "method": None}
+            },
+        )
+
+        aligned = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides=_align_to(target.grid_id),
+        )
+
+        _assert_valid_chm(aligned.ds)
+        assert tuple(aligned.ds.rio.transform())[:6] == pytest.approx(
+            tuple(target.ds.rio.transform())[:6]
+        )
+        assert aligned.ds["chm"].shape == target.ds["chm"].shape
+
+    def test_explicit_resolution_keeps_the_target_origin(self, griddle_runner):
+        """The other mode: the target's anchor and extent, a finer cell size.
+
+        1 m cells nest exactly 5x5 inside the 5 m target's, so the two still
+        line up — the property that makes a fine CHM usable alongside a grid
+        whose lattice was chosen by a coarser product.
+        """
+        target = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides={
+                "alignment": {"target": "domain", "resolution": 5.0, "method": None}
+            },
+        )
+
+        aligned = griddle_runner(
+            DOMAIN,
+            GRID,
+            point_cloud=POINT_CLOUD,
+            source_overrides=_align_to(target.grid_id, resolution=1.0),
+        )
+
+        target_transform = target.ds.rio.transform()
+        transform = aligned.ds.rio.transform()
+        assert transform.a == pytest.approx(1.0)
+        assert (transform.c, transform.f) == pytest.approx(
+            (target_transform.c, target_transform.f)
+        )
+        height, width = target.ds["chm"].shape
+        assert aligned.ds["chm"].shape == (height * 5, width * 5)

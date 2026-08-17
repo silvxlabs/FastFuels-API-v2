@@ -1,0 +1,32 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "fbfm13",
+      "type": "categorical",
+      "unit": null
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-landfire-fbfm13",
+  "progress": null,
+  "source": {
+    "description": "LANDFIRE FBFM13 fuel model codes (Anderson 13 classification)",
+    "name": "landfire",
+    "product": "fbfm13",
+    "version": "2024"
+  },
+  "status": "pending",
+  "tags": []
+}

@@ -1,0 +1,101 @@
+{
+  "bands": [
+    {
+      "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels.",
+      "index": 0,
+      "key": "fuel_load.1hr",
+      "name": "1-hour Fuel Load",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 0.12329313158988953,
+        "mean": 0.03765759756272155,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 0.0254375559402294,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "kg/m**2"
+    },
+    {
+      "description": "Vertical depth of the duff layer.",
+      "index": 1,
+      "key": "duff_depth",
+      "name": "Duff Layer Depth",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 0.05079999938607216,
+        "mean": 0.02110654278818132,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 0.01517391491596757,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "description": "Oven-dry mass per unit area of live herbaceous fuels.",
+      "index": 2,
+      "key": "fuel_load.live_herb",
+      "name": "Live Herbaceous Fuel Load",
+      "nodata": null,
+      "summary": {
+        "count": 289068,
+        "max": 0.450580358505249,
+        "mean": 0.03283506630409275,
+        "min": 0.0,
+        "nodata_count": 0,
+        "std": 0.04436418786624096,
+        "type": "continuous"
+      },
+      "type": "continuous",
+      "unit": "kg/m**2"
+    }
+  ],
+  "chunks": {
+    "count": 2,
+    "count_by_axis": {
+      "x": 2,
+      "y": 1
+    },
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": {
+    "crs": "EPSG:32611",
+    "shape": [
+      442,
+      654
+    ],
+    "transform": [
+      2.0,
+      0.0,
+      720226.0,
+      0.0,
+      -2.0,
+      5190646.0
+    ]
+  },
+  "modifications": [],
+  "name": "",
+  "progress": {
+    "message": "Complete",
+    "percent": 100
+  },
+  "source": {
+    "name": "lookup",
+    "source_band": "fccs",
+    "source_grid_checksum": null,
+    "source_grid_id": "static-test-blue-mtn-landfire-fccs",
+    "table": "fccs"
+  },
+  "status": "completed",
+  "tags": []
+}

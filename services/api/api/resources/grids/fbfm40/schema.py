@@ -13,37 +13,19 @@ from typing import Literal
 
 from pydantic import field_validator
 
-from api.resources.grids.providers.landfire import LandfireSource
+from api.resources.grids.providers.landfire import (
+    LandfireSource,
+    NonBurnableFuelModel,
+    check_no_duplicate_non_burnable,
+)
 from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
+from lib.landfire import LANDFIRE_VERSIONS
 
-
-class LandfireFbfm40Version(StrEnum):
-    """Available LANDFIRE FBFM40 data versions."""
-
-    v2019 = "2019"
-    v2020 = "2020"
-    v2022 = "2022"
-    v2023 = "2023"
-    v2024 = "2024"
-
-
-class NonBurnableFuelModel(StrEnum):
-    """Non-burnable Scott-Burgan 40 fuel model codes."""
-
-    NB1 = "NB1"  # Urban/developed (91)
-    NB2 = "NB2"  # Snow/ice (92)
-    NB3 = "NB3"  # Agriculture (93)
-    NB8 = "NB8"  # Water (98)
-    NB9 = "NB9"  # Bare ground (99)
-
-
-NB_CODE_MAP: dict[str, int] = {
-    "NB1": 91,
-    "NB2": 92,
-    "NB3": 93,
-    "NB8": 98,
-    "NB9": 99,
-}
+# Build the version enum class from LANDFIRE_VERSIONS
+LandfireFbfm40Version = StrEnum(
+    "LandfireFbfm40Version",
+    {f"v{version}": version for version in LANDFIRE_VERSIONS["fbfm40"]["available"]},
+)
 
 
 class LandfireFbfm40Source(LandfireSource):
@@ -67,15 +49,15 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
     To convert codes to fuel parameters, use /grids/lookup/fbfm40.
     """
 
-    version: LandfireFbfm40Version = LandfireFbfm40Version.v2024
+    version: LandfireFbfm40Version = LandfireFbfm40Version(
+        LANDFIRE_VERSIONS["fbfm40"]["default"]
+    )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
 
     @field_validator("remove_non_burnable")
     @classmethod
     def check_no_duplicates(cls, v):
-        if v is not None and len(v) != len(set(v)):
-            raise ValueError("Duplicate non-burnable fuel model codes are not allowed")
-        return v
+        return check_no_duplicate_non_burnable(v)
 
 
 FBFM40_BAND = Band(

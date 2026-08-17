@@ -1,5 +1,5 @@
 """
-Integration tests for api/v2/resources/grids/lookup/router.py
+Integration tests for api/v2/resources/grids/lookup/fbfm40/router.py
 
 Tests the FBFM40 lookup endpoint (POST /domains/{domain_id}/grids/lookup/fbfm40).
 These tests make real HTTP requests to the API and interact with Firestore.
@@ -12,113 +12,61 @@ The lookup endpoint requires a source grid that:
 """
 
 import pytest
-from api.resources.grids.lookup.examples import ALL_FBFM40_LOOKUP_EXAMPLE_VALUES
+from api.resources.grids.lookup.fbfm40.examples import (
+    ALL_FBFM40_LOOKUP_EXAMPLE_VALUES,
+)
 
-from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
-from tests.fixtures import make_domain_data, make_grid_data
+from lib.config import GRIDS_COLLECTION
+from tests.resources.grids.lookup.conftest import (
+    _make_cross_domain_lookup_grid,
+    _make_landfire_grid_data,
+    _persist_and_cleanup,
+)
 
 
 @pytest.fixture(scope="session")
 def complete_fbfm40_grid(firestore_client, domain_for_testing):
-    """A complete LANDFIRE FBFM40 grid for use as a lookup source.
-
-    This grid has status "completed", an "fbfm" band, and a georeference —
-    the minimum requirements for a valid lookup source grid.
-    """
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
+    """A complete LANDFIRE FBFM40 grid for use as a lookup source."""
+    grid_data = _make_landfire_grid_data(
+        domain_for_testing["id"],
+        product="fbfm40",
+        version="2022",
+        band_key="fbfm",
+        description="LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
         name="FBFM40 source for lookup tests",
         status="completed",
-        source={
-            "name": "landfire",
-            "product": "fbfm40",
-            "version": "2022",
-            "description": "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
-        },
-        bands=[
-            {"key": "fbfm", "type": "categorical", "unit": None, "index": 0},
-        ],
     )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
+    yield from _persist_and_cleanup(firestore_client, GRIDS_COLLECTION, grid_data)
 
 
 @pytest.fixture(scope="session")
 def pending_fbfm40_grid(firestore_client, domain_for_testing):
     """An FBFM40 grid with status "pending" (not yet complete)."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
+    grid_data = _make_landfire_grid_data(
+        domain_for_testing["id"],
+        product="fbfm40",
+        version="2022",
+        band_key="fbfm",
+        description="LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
         name="Pending FBFM40 grid",
         status="pending",
-        bands=[
-            {"key": "fbfm", "type": "categorical", "unit": None, "index": 0},
-        ],
         georeference=None,
     )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def grid_without_fbfm_band(firestore_client, domain_for_testing):
-    """A complete grid that does not have an "fbfm" band."""
-    grid_data = make_grid_data(
-        domain_id=domain_for_testing["id"],
-        name="3DEP elevation grid",
-        status="completed",
-        source={"name": "3dep", "resolution": "10m", "version": "2023"},
-        bands=[
-            {"key": "elevation", "type": "continuous", "unit": "m", "index": 0},
-        ],
-    )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
-
-
-@pytest.fixture(scope="session")
-def second_domain_for_lookup(firestore_client):
-    """A second domain owned by test-owner, used for cross-domain tests."""
-    domain_data = make_domain_data(name="Second Domain for Lookup Tests")
-    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
-        domain_data["id"]
-    )
-    doc_ref.set(domain_data)
-    yield domain_data
-    doc_ref.delete()
+    yield from _persist_and_cleanup(firestore_client, GRIDS_COLLECTION, grid_data)
 
 
 @pytest.fixture(scope="session")
 def grid_in_different_domain(firestore_client, second_domain_for_lookup):
-    """A complete FBFM40 grid in a different domain than domain_for_testing.
-
-    Same owner (test-owner) but in second_domain_for_lookup. Used to test
-    cross-domain protection: a lookup in domain A should reject a source
-    grid that belongs to domain B.
-    """
-    grid_data = make_grid_data(
-        domain_id=second_domain_for_lookup["id"],
+    """A complete FBFM40 grid in a different domain than domain_for_testing."""
+    yield from _make_cross_domain_lookup_grid(
+        firestore_client,
+        second_domain_for_lookup,
+        product="fbfm40",
+        version="2022",
+        band_key="fbfm",
+        description="LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
         name="FBFM40 grid in second domain",
-        status="completed",
-        source={
-            "name": "landfire",
-            "product": "fbfm40",
-            "version": "2022",
-            "description": "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)",
-        },
-        bands=[
-            {"key": "fbfm", "type": "categorical", "unit": None, "index": 0},
-        ],
     )
-    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
-    doc_ref.set(grid_data)
-    yield grid_data
-    doc_ref.delete()
 
 
 class TestCreateFbfm40Lookup:
@@ -258,7 +206,7 @@ class TestCreateFbfm40Lookup:
     def test_source_grid_not_complete_returns_422(
         self, client, domain_for_testing, pending_fbfm40_grid
     ):
-        """Source grid with status != 'complete' returns 422."""
+        """Source grid with status != 'completed' returns 422."""
         request_body = {
             "source_grid_id": pending_fbfm40_grid["id"],
             "bands": ["fuel_load.1hr"],

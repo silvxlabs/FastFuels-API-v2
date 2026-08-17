@@ -1,0 +1,44 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "fuel_load.litter",
+      "type": "continuous",
+      "unit": "kg/m**2"
+    },
+    {
+      "index": 1,
+      "key": "fuel_load.duff",
+      "type": "continuous",
+      "unit": "kg/m**2"
+    },
+    {
+      "index": 2,
+      "key": "duff_depth",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-lookup-fccs",
+  "progress": null,
+  "source": {
+    "name": "lookup",
+    "source_band": "fccs",
+    "source_grid_id": "PLACEHOLDER",
+    "table": "fccs"
+  },
+  "status": "pending",
+  "tags": []
+}

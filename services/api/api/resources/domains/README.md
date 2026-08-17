@@ -29,7 +29,7 @@ Create a new domain from GeoJSON geometry.
 - Must be within CONUS (validated against the original input polygon)
 - Optional `pad_to_resolution` (meters) snaps the working extent to a grid for cross-resolution alignment
 - Optional `style` object for map rendering (auxiliary metadata; see [Style](#style) below)
-- Returns **201 Created** with the full domain resource (two features + bbox + optional fields)
+- Returns **201 Created** with the full domain resource (the "domain" feature + bbox + optional fields)
 
 ### GET /v2/domains
 
@@ -104,42 +104,31 @@ Permanently delete a domain.
 - With `force=true`: cascade-deletes all child grids via Firestore batch delete, then deletes the domain
 - Deletion is permanent and cannot be undone
 
-## Two-Feature Structure
+## Feature Structure
 
-Every domain stores **two named features** in its FeatureCollection:
+Every domain stores **one named feature** in its FeatureCollection:
 
-1. **`name: "domain"`** — A polygon covering the working extent. This is the
-   bounding box of the user's input, optionally snapped to `pad_to_resolution`.
-   It is the authoritative spatial extent used by griddle, standgen, and the
-   exporter. Every grid, inventory, and export derived from this domain shares
-   this extent.
+**`name: "domain"`** — A polygon covering the working extent. This is the
+bounding box of the user's input, optionally snapped to `pad_to_resolution`.
+It is the authoritative spatial extent used by griddle, standgen, and the
+exporter. Every grid, inventory, and export derived from this domain shares
+this extent.
 
-2. **`name: "input"`** — The user's original projected geometry, preserved for
-   visualization, reference, and any future operations that need the actual
-   shape (e.g., polygon clipping). One or more features depending on whether
-   the input was a single polygon or multiple.
+The submitted geometry itself is **not stored** — it is validated (CONUS,
+area) at create time and then discarded. Domains originally stored the
+projected input geometry as additional features tagged `name: "input"`, but
+nothing consumed them, and many-vertex uploads bloated the Firestore document
+(coordinates are JSON-stringified; documents cap at 1 MiB).
 
 The standard GeoJSON `bbox` field is also populated and equals the bounds of
-the "domain" feature. Downstream consumers can read either the field or
-filter features by `properties.name`.
-
-### Why two features?
-
-This makes the domain self-documenting at the data level. A reader inspecting
-the JSON sees both the working extent and the input polygon as first-class
-GeoJSON features that any viewer can render. There is no custom field whose
-meaning must be looked up in documentation.
-
-The "domain" feature's geometry always contains the "input" feature's geometry
-by construction, so `gdf.total_bounds` of the parsed FeatureCollection equals
-the working extent — downstream handlers that already use `total_bounds` get
-the correct answer without modification.
+the "domain" feature, so `gdf.total_bounds` of the parsed FeatureCollection
+equals the working extent.
 
 ## Style
 
 Domains carry an optional `style` object describing how a client should render them on a map. The field lives at the
 top of the `Domain` resource (not on individual features), since the only consumer — the webapp — applies one style per
-domain rather than picking different colors for the working-extent and input features.
+domain.
 
 ### Sub-fields
 
@@ -164,9 +153,8 @@ prefer).
 ### Why no per-feature endpoint?
 
 v1 exposed `PATCH /v1/domains/{id}/features/{feature_name}/style`, letting clients style the `domain` and `input`
-features separately. We deliberately did not port this shape: the webapp tracks one color per domain, and the
-`domain`/`input` split is a server-side modeling artifact (working extent vs. original polygon) that doesn't show up in
-the user's mental model. Putting the style on the resource root keeps the API surface flat and matches how clients
+features separately. We deliberately did not port this shape: the webapp tracks one color per domain, and v2 domains
+store a single "domain" feature anyway. Putting the style on the resource root keeps the API surface flat and matches how clients
 actually use it. If a future UI needs per-feature styling, it can be added as an additive change without breaking this
 design.
 
@@ -354,6 +342,6 @@ See `tests/README.md` for the complete testing protocol.
 | CRUD operations | Create, Get, Delete                                        | **Create, Get, Update, Delete, List**                            |
 | List endpoint   | None                                                       | **Paginated with sorting**                                       |
 | DB operations   | Inline in router                                           | **Shared documents.py module**                                   |
-| Stored features | "domain" (padded bbox) + "input" (original polygon)        | **Same: "domain" + "input"** (explicit `properties.name`)        |
+| Stored features | "domain" (padded bbox) + "input" (original polygon)        | **"domain" only** (explicit `properties.name`)                   |
 | Working extent  | `domain.horizontalResolution` mandatory; bbox padded to it | **Optional `pad_to_resolution`**; resolution moved to grids      |
 | bbox field      | Not populated                                              | **Populated** (standard GeoJSON, equals "domain" feature bounds) |

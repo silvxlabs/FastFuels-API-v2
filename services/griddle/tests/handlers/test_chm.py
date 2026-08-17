@@ -4,6 +4,7 @@ Tests for CHM handler.
 
 import io
 import os
+import ssl
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
@@ -12,8 +13,15 @@ import pandas as pd
 import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
-from griddle.handlers.chm import _query_tile_index, fetch_meta_chm, fetch_naip_chm
+from griddle.handlers.chm import (
+    _certificate_expired,
+    _query_tile_index,
+    fetch_meta_chm,
+    fetch_naip_chm,
+)
+from rasterio._err import CPLE_HttpResponseError
 from rasterio.crs import CRS
+from rasterio.errors import RasterioIOError
 from rasterio.transform import from_bounds, from_origin
 from shapely.geometry import box
 
@@ -730,3 +738,124 @@ class TestFetchNaipChm:
         right = values[:, width // 2 :]
         assert np.allclose(left, 10.0), f"left half lost tile A: {np.unique(left)}"
         assert np.allclose(right, 20.0), f"right half lost tile B: {np.unique(right)}"
+
+
+class TestCertificateExpired:
+    """Tests for the TLS probe backing the expired-certificate fallback."""
+
+    def test_non_https_url_is_never_probed(self):
+        """Meta's s3:// tiles have no TLS handshake to inspect."""
+        assert _certificate_expired("s3://bucket/tile.tif") is False
+
+    @patch("griddle.handlers.chm.ssl.create_default_context")
+    @patch("griddle.handlers.chm.socket.create_connection")
+    def test_healthy_host_returns_false(self, mock_connect, mock_context):
+        """A host whose certificate verifies is not a fallback candidate."""
+        assert _certificate_expired("https://host/tile.tif") is False
+
+    @patch("griddle.handlers.chm.socket.create_connection")
+    def test_expired_certificate_returns_true(self, mock_connect):
+        """OpenSSL verify code 10 (CERT_HAS_EXPIRED) is the one case we work around."""
+        error = ssl.SSLCertVerificationError("certificate has expired")
+        error.verify_code = 10
+        mock_connect.side_effect = error
+
+        assert _certificate_expired("https://host/tile.tif") is True
+
+    @patch("griddle.handlers.chm.socket.create_connection")
+    def test_self_signed_certificate_returns_false(self, mock_connect):
+        """A forged cert must not unlock the bypass.
+
+        Verify code 18 is DEPTH_ZERO_SELF_SIGNED_CERT — what an on-path
+        attacker gets without a CA-issued certificate for the host.
+        """
+        error = ssl.SSLCertVerificationError("self-signed certificate")
+        error.verify_code = 18
+        mock_connect.side_effect = error
+
+        assert _certificate_expired("https://host/tile.tif") is False
+
+    @patch("griddle.handlers.chm.socket.create_connection")
+    def test_unreachable_host_returns_false(self, mock_connect):
+        """A host that is simply down is an outage, not a certificate problem."""
+        mock_connect.side_effect = OSError("connection refused")
+
+        assert _certificate_expired("https://host/tile.tif") is False
+
+
+class TestExpiredCertificateFallback:
+    """Tests for retrying tile reads when the host's certificate has lapsed."""
+
+    @patch("griddle.handlers.chm.cog_env")
+    @patch("griddle.handlers.chm._certificate_expired", return_value=True)
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_expired_cert_retries_with_verification_disabled(
+        self, mock_query, mock_raster_cls, mock_expired, mock_cog_env
+    ):
+        """The retry re-reads the tiles with GDAL_HTTP_UNSAFESSL enabled."""
+        raw_values = np.array([[1050]], dtype=np.uint16)
+        mock_raster_cls.side_effect = [
+            RasterioIOError("CURL error: SSL certificate ... has expired (10)"),
+            _make_mock_raster(raw_values),
+        ]
+        mock_query.return_value = _make_naip_query_result()
+
+        ds, _ = fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+
+        assert isinstance(ds, xr.Dataset)
+        # First attempt verifies; only the retry disables verification.
+        first, second = mock_cog_env.call_args_list
+        assert "GDAL_HTTP_UNSAFESSL" not in first.kwargs
+        assert second.kwargs["GDAL_HTTP_UNSAFESSL"] == "YES"
+
+    @patch("griddle.handlers.chm.cog_env")
+    @patch("griddle.handlers.chm._certificate_expired", return_value=True)
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_read_error_from_cpl_also_triggers_retry(
+        self, mock_query, mock_raster_cls, mock_expired, mock_cog_env
+    ):
+        """Reads raise the raw CPLE error, which shares no base with RasterioIOError."""
+        raw_values = np.array([[1050]], dtype=np.uint16)
+        mock_raster_cls.side_effect = [
+            CPLE_HttpResponseError(1, 11, "Read failed. See previous exception."),
+            _make_mock_raster(raw_values),
+        ]
+        mock_query.return_value = _make_naip_query_result()
+
+        ds, _ = fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+
+        assert isinstance(ds, xr.Dataset)
+        assert mock_cog_env.call_args_list[1].kwargs["GDAL_HTTP_UNSAFESSL"] == "YES"
+
+    @patch("griddle.handlers.chm._certificate_expired", return_value=False)
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_valid_cert_does_not_retry(self, mock_query, mock_raster_cls, mock_expired):
+        """A read failure unrelated to expiry is reported, never retried unsafely."""
+        mock_raster_cls.side_effect = RasterioIOError("HTTP response code: 503")
+        mock_query.return_value = _make_naip_query_result()
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+
+        assert exc_info.value.code == "TILE_SOURCE_UNAVAILABLE"
+        assert mock_raster_cls.call_count == 1
+
+    @patch("griddle.handlers.chm._certificate_expired", return_value=True)
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_failed_retry_reports_source_unavailable(
+        self, mock_query, mock_raster_cls, mock_expired
+    ):
+        """If the retry also fails, the user gets a retryable error, not a crash."""
+        mock_raster_cls.side_effect = RasterioIOError("CURL error: connection reset")
+        mock_query.return_value = _make_naip_query_result()
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+
+        assert exc_info.value.code == "TILE_SOURCE_UNAVAILABLE"
+        assert exc_info.value.suggestion
+        assert mock_raster_cls.call_count == 2

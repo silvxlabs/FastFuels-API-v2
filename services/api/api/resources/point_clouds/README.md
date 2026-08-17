@@ -84,7 +84,7 @@ See `schema.py` for the authoritative definition. Notable fields:
 
 Follows the #304 pattern: `checksum` is an opaque `uuid4().hex` assigned at creation (not a hash),
 changed whenever content is rebuilt, and **unaffected by metadata-only PATCH**. Derivatives capture
-the value they were built from — e.g. the CHM grid in #330 stores `source_pointcloud_checksum` —
+the value they were built from — e.g. the CHM grid in #330 stores `source_point_cloud_checksum` —
 and staleness detection is user-space (compare stored vs. current; no stale flag/warn/block in the
 API).
 
@@ -96,7 +96,7 @@ API).
   format-agnostic.
 - The **concrete object layout under `{id}/` and the file format are owned by the ingest workers**
   (#328/#329). This resource deliberately commits to no specific format (e.g. COPC vs. plain LAZ) —
-  that decision belongs to whoever writes the bytes. The #328 upload worker stores `{id}/cloud.laz`
+  that decision belongs to whoever writes the bytes. The upload worker stores `{id}/cloud.parquet/`
   (plain LAZ, domain CRS); see the uploader service README for why LAZ-not-COPC and the planned
   lossless LAZ → COPC upgrade path.
 

@@ -19,6 +19,7 @@ from griddle.dispatch import (
 )
 
 from lib.errors import ProcessingError
+from lib.firestore import DocumentNotFoundError
 
 
 class TestHandleLandfire:
@@ -36,6 +37,56 @@ class TestHandleLandfire:
 
         assert exc_info.value.code == "UNKNOWN_PRODUCT"
         assert "unknown_product" in exc_info.value.message
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    def test_routes_fbfm13_to_handler(self, mock_fetch):
+        """handle_landfire routes fbfm13 product to fetch_fbfm13."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        source = {"product": "fbfm13", "version": "2023"}
+
+        result = handle_landfire(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            "2023",
+            remove_non_burnable=None,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+        assert result == mock_result
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    def test_fbfm13_default_version(self, mock_fetch):
+        """handle_landfire uses 2024 as default version for fbfm13."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        source = {"product": "fbfm13"}  # No version specified
+
+        handle_landfire(mock_gdf, source, progress)
+
+        _, call_kwargs = mock_fetch.call_args
+        assert call_kwargs == {} or mock_fetch.call_args[0][1] == "2024"
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    def test_fbfm13_calls_progress_callback(self, mock_fetch):
+        """handle_landfire reports progress."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        source = {"product": "fbfm13", "version": "2023"}
+
+        handle_landfire(mock_gdf, source, progress)
+
+        progress.assert_called_once()
+        call_args = progress.call_args[0]
+        assert "LANDFIRE" in call_args[0]
+        assert "fbfm13" in call_args[0]
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
     def test_routes_fbfm40_to_handler(self, mock_fetch):
@@ -449,6 +500,30 @@ class TestHandlePim:
 class TestHandleLookup:
     """Tests for handle_lookup function."""
 
+    @patch("griddle.dispatch.lookup.fbfm13_lookup")
+    def test_routes_fbfm13_table(self, mock_fbfm13_lookup):
+        """handle_lookup routes fbfm13 table to fbfm13_lookup."""
+        mock_result = MagicMock()
+        mock_fbfm13_lookup.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {
+            "bands": [{"key": "fuel_load.1hr"}, {"key": "fuel_depth"}],
+        }
+        source = {
+            "table": "fbfm13",
+            "source_grid_id": "test-source-grid-id",
+        }
+
+        result = handle_lookup(grid, source, progress)
+
+        mock_fbfm13_lookup.assert_called_once_with(
+            source_grid_id="test-source-grid-id",
+            bands=grid["bands"],
+            progress=progress,
+        )
+        assert result == mock_result
+
     @patch("griddle.dispatch.lookup.fbfm40_lookup")
     def test_routes_fbfm40_table(self, mock_fbfm40_lookup):
         """handle_lookup routes fbfm40 table to fbfm40_lookup."""
@@ -467,6 +542,30 @@ class TestHandleLookup:
         result = handle_lookup(grid, source, progress)
 
         mock_fbfm40_lookup.assert_called_once_with(
+            source_grid_id="test-source-grid-id",
+            bands=grid["bands"],
+            progress=progress,
+        )
+        assert result == mock_result
+
+    @patch("griddle.dispatch.lookup.fccs_lookup")
+    def test_routes_fccs_table(self, mock_fccs_lookup):
+        """handle_lookup routes fccs table to fccs_lookup."""
+        mock_result = MagicMock()
+        mock_fccs_lookup.return_value = mock_result
+        progress = MagicMock()
+
+        grid = {
+            "bands": [{"key": "fuel_load.litter"}, {"key": "duff_depth"}],
+        }
+        source = {
+            "table": "fccs",
+            "source_grid_id": "test-source-grid-id",
+        }
+
+        result = handle_lookup(grid, source, progress)
+
+        mock_fccs_lookup.assert_called_once_with(
             source_grid_id="test-source-grid-id",
             bands=grid["bands"],
             progress=progress,
@@ -1094,3 +1193,121 @@ class TestHandle3dep:
         call_args = progress.call_args_list[0][0]
         assert "3DEP" in call_args[0]
         assert "topography" in call_args[0]
+
+
+class TestHandleCanopyPointCloud:
+    """handle_canopy routing for the point-cloud CHM product."""
+
+    def _source(self, **overrides):
+        # The API always writes a resolved resolution — a point cloud has no
+        # native cell size for a null to defer to — so every stored source has
+        # one and the worker never defaults.
+        source = {
+            "product": "point_cloud",
+            "source_point_cloud_id": "pc-1",
+            "alignment": {"target": "domain", "resolution": 1.0},
+        }
+        source.update(overrides)
+        return source
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    def test_reads_point_classes_from_the_cloud_document(self, mock_load, mock_fetch):
+        """The ground path is chosen from the cloud's own class census."""
+        mock_load.return_value = {"summary": {"point_classes": [1, 2, 7]}}
+        mock_fetch.return_value = (MagicMock(), {"ground_source": "classification"})
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+
+        handle_canopy(mock_gdf, self._source(), MagicMock())
+
+        assert mock_fetch.call_args.kwargs["point_classes"] == [1, 2, 7]
+        assert mock_fetch.call_args.kwargs["point_cloud_id"] == "pc-1"
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    def test_records_ground_provenance_on_the_source(self, mock_load, mock_fetch):
+        """Provenance is written back so main.py persists it on the grid."""
+        mock_load.return_value = {"summary": {"point_classes": [1]}}
+        ground = {"ground_source": "derived", "ground_coverage": 0.4}
+        mock_fetch.return_value = (MagicMock(), ground)
+        source = self._source()
+
+        handle_canopy(MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+
+        assert source["ground"] == ground
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    def test_threads_the_stored_alignment_to_the_handler(self, mock_load, mock_fetch):
+        mock_load.return_value = {"summary": {"point_classes": [2]}}
+        mock_fetch.return_value = (MagicMock(), {})
+        alignment = {"target": "domain", "resolution": 5.0}
+
+        handle_canopy(
+            MagicMock(spec=gpd.GeoDataFrame),
+            self._source(alignment=alignment),
+            MagicMock(),
+        )
+
+        assert mock_fetch.call_args.kwargs["alignment"] == alignment
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    @patch("griddle.dispatch._load_target_grid_doc")
+    def test_threads_the_target_grid_document_to_the_handler(
+        self, mock_target, mock_load, mock_fetch
+    ):
+        """`target='grid'` needs the target's lattice, which only the document
+        carries — dropping it is what made grid alignment silently a no-op."""
+        target_doc = {"georeference": {"crs": "EPSG:32612"}}
+        mock_target.return_value = target_doc
+        mock_load.return_value = {"summary": {"point_classes": [2]}}
+        mock_fetch.return_value = (MagicMock(), {})
+        alignment = {"target": "grid", "grid_id": "g-1", "resolution": None}
+
+        handle_canopy(
+            MagicMock(spec=gpd.GeoDataFrame),
+            self._source(alignment=alignment),
+            MagicMock(),
+        )
+
+        assert mock_fetch.call_args.kwargs["target_grid_doc"] is target_doc
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    def test_threads_the_extent_buffer_to_the_handler(self, mock_load, mock_fetch):
+        mock_load.return_value = {"summary": {"point_classes": [2]}}
+        mock_fetch.return_value = (MagicMock(), {})
+
+        handle_canopy(
+            MagicMock(spec=gpd.GeoDataFrame),
+            self._source(extent_buffer_cells=3),
+            MagicMock(),
+        )
+
+        assert mock_fetch.call_args.kwargs["extent_buffer_cells"] == 3
+
+    @patch("griddle.dispatch.chm_point_cloud.fetch_point_cloud_chm")
+    @patch("griddle.dispatch._load_point_cloud_doc")
+    def test_missing_summary_falls_back_to_no_known_classes(
+        self, mock_load, mock_fetch
+    ):
+        """A cloud with no summary yields the derived-ground path, not a crash."""
+        mock_load.return_value = {}
+        mock_fetch.return_value = (MagicMock(), {})
+
+        handle_canopy(MagicMock(spec=gpd.GeoDataFrame), self._source(), MagicMock())
+
+        assert mock_fetch.call_args.kwargs["point_classes"] == []
+
+    def test_deleted_point_cloud_raises_source_not_found(self):
+        """A cloud deleted between enqueue and execution is a clean failure."""
+        with patch("griddle.dispatch.get_document") as mock_get:
+            mock_get.side_effect = DocumentNotFoundError("pointclouds-v2", "pc-1")
+
+            with pytest.raises(ProcessingError) as excinfo:
+                handle_canopy(
+                    MagicMock(spec=gpd.GeoDataFrame), self._source(), MagicMock()
+                )
+
+        assert excinfo.value.code == "SOURCE_NOT_FOUND"

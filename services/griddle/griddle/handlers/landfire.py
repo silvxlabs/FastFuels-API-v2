@@ -47,8 +47,7 @@ LANDFIRE_EXTRA_NODATA: int = -9999
 
 def _fetch_landfire_raster(
     roi: gpd.GeoDataFrame,
-    product: str,
-    version: str,
+    url: str,
     extent_buffer_cells: int,
     alignment: dict,
     target_grid_doc: dict | None,
@@ -58,8 +57,6 @@ def _fetch_landfire_raster(
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        product: Product name as it appears in the GCS filename
-        version: LANDFIRE version year
         extent_buffer_cells: Result-grid cells of buffer around the ROI
         alignment: Alignment specification dict (see ``GridAlignmentSpecification``).
             Threaded into the single ``rio.reproject`` performed by
@@ -73,7 +70,6 @@ def _fetch_landfire_raster(
     Returns:
         DataArray with dims (y, x)
     """
-    url = f"gs://{RASTERS_BUCKET}/LF{version}_{product}_CONUS.tif"
     with cog_env():
         raster = RasterConnection(url, connection_type="rioxarray", cache=True)
         method_name = alignment.get("method") or (
@@ -97,14 +93,20 @@ def _fetch_landfire_raster(
         )
         data = data.squeeze("band", drop=True)
 
-        # If no nodata is declared, fall back to -9999.
-        if data.rio.nodata is None:
-            data = data.rio.write_nodata(LANDFIRE_EXTRA_NODATA)
-        # Replace -9999 with the declared nodata value.
-        declared = data.rio.nodata
-        data = data.where(data != LANDFIRE_EXTRA_NODATA, declared)
+        return _consolidate_landfire_nodata(data)
 
-        return data
+
+def _consolidate_landfire_nodata(data: DataArray) -> DataArray:
+    """Fold LANDFIRE's undeclared -9999 sentinel onto the declared nodata value.
+
+    Shared by every LANDFIRE-derived fetch path -- staged COGs and
+    on-demand LFPS output alike -- so neither can drift from this rule.
+    """
+    if data.rio.nodata is None:
+        data = data.rio.write_nodata(LANDFIRE_EXTRA_NODATA)
+    declared = data.rio.nodata
+
+    return data.where(data != LANDFIRE_EXTRA_NODATA, declared)
 
 
 def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
@@ -152,10 +154,10 @@ def fetch_fbfm13(
     """
     validate_landfire_version("fbfm13", version)
     alignment = alignment or {"target": "domain"}
+    url = f"gs://{RASTERS_BUCKET}/LF{version}_FBFM13_CONUS.tif"
     data = _fetch_landfire_raster(
         roi,
-        "FBFM13",
-        version,
+        url,
         extent_buffer_cells,
         alignment,
         target_grid_doc,
@@ -177,12 +179,14 @@ def fetch_fbfm40(
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
+    url: str | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM40 fuel model codes.
 
     Args:
         roi: GeoDataFrame defining the region of interest
-        version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
+        version: LANDFIRE version year (default from LANDFIRE_VERSIONS).
+                 Unused when `url` is given.
         remove_non_burnable: List of non-burnable fuel model names to remove
             (e.g., ["NB1", "NB3", "NB9"]). Removed codes are replaced by the
             most frequent neighboring burnable fuel model via majority filter.
@@ -191,16 +195,20 @@ def fetch_fbfm40(
             ``{"target": "domain"}`` when omitted.
         target_grid_doc: Loaded grid document used when
             ``alignment["target"] == "grid"``.
+        url: Already-resolved raster location, overriding the default
+             staged-COG path. Used by `lfps.py` to fetch an on-demand
+             variant (e.g. seasonal) that isn't pre-staged there.
 
     Returns:
         Dataset with a single "fbfm" variable (int16 categorical codes)
     """
-    validate_landfire_version("fbfm40", version)
     alignment = alignment or {"target": "domain"}
+    if url is None:
+        validate_landfire_version("fbfm40", version)
+        url = f"gs://{RASTERS_BUCKET}/LF{version}_FBFM40_CONUS.tif"
     data = _fetch_landfire_raster(
         roi,
-        "FBFM40",
-        version,
+        url,
         extent_buffer_cells,
         alignment,
         target_grid_doc,
@@ -242,10 +250,10 @@ def fetch_fccs(
     """
     validate_landfire_version("fccs", version)
     alignment = alignment or {"target": "domain"}
+    url = f"gs://{RASTERS_BUCKET}/LF{version}_FCCS_CONUS.tif"
     data = _fetch_landfire_raster(
         roi,
-        "FCCS",
-        version,
+        url,
         extent_buffer_cells,
         alignment,
         target_grid_doc,
@@ -357,10 +365,10 @@ def fetch_topography(
     for i, band in enumerate(bands):
         pct = 10 + int(70 * i / len(bands))
         progress(f"Fetching LANDFIRE {band}...", pct)
+        url = f"gs://{RASTERS_BUCKET}/LF{version}_{band}_CONUS.tif"
         variables[band] = _fetch_landfire_raster(
             roi,
-            band,
-            version,
+            url,
             extent_buffer_cells,
             alignment,
             target_grid_doc,
@@ -403,10 +411,10 @@ def fetch_canopy_landfire(
         pct = 10 + int(70 * i / len(bands))
         progress(f"Fetching LANDFIRE canopy {band}...", pct)
         product_code = LANDFIRE_CANOPY_PRODUCT_MAP[band]
+        url = f"gs://{RASTERS_BUCKET}/LF{version}_{product_code}_CONUS.tif"
         raw = _fetch_landfire_raster(
             roi,
-            product_code,
-            version,
+            url,
             extent_buffer_cells,
             alignment,
             target_grid_doc,

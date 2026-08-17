@@ -101,8 +101,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -127,8 +126,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2020",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -152,8 +150,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2020",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -175,8 +172,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -242,8 +238,7 @@ class TestFetchFbfm40:
 
         _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -270,8 +265,7 @@ class TestFetchFbfm40:
 
         _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=buffer,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -628,8 +622,9 @@ class TestFetchCanopyLandfire:
             progress=MagicMock(),
         )
 
-        product_codes = [call.args[1] for call in mock_fetch.call_args_list]
-        assert product_codes == ["CH", "CBD", "CBH", "CC"]
+        urls = [call.args[1] for call in mock_fetch.call_args_list]
+        for code, url in zip(["CH", "CBD", "CBH", "CC"], urls):
+            assert code in url
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
     def test_returns_dataset_with_requested_bands_in_order(self, mock_fetch, roi):
@@ -661,14 +656,14 @@ class TestFetchCanopyLandfire:
             progress=MagicMock(),
         )
         assert list(result.data_vars) == ["chm"]
-        assert mock_fetch.call_args_list[0].args[1] == "CH"
+        assert "CH" in mock_fetch.call_args_list[0].args[1]
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
     def test_applies_per_band_scale_factors(self, mock_fetch, roi):
         """End-to-end: chm/10, cbd/100, cbh/10, cc/1 all applied correctly."""
         from griddle.handlers.landfire import fetch_canopy_landfire
 
-        def fake_fetch(roi_, product, *_a, **_kw):
+        def fake_fetch(roi_, url, *_a, **_kw):
             # Return a 1x3 raster with values 0, "100" (in the source encoding), nodata
             return _make_canopy_raster(np.array([[0, 100, 32767]]))
 
@@ -700,11 +695,11 @@ class TestFetchCanopyLandfire:
             extent_buffer_cells=7,
             alignment=alignment,
         )
-        # _fetch_landfire_raster(roi, product, version, extent_buffer_cells,
-        #                       alignment, target_grid_doc, is_categorical=...)
+        # _fetch_landfire_raster(roi, url, extent_buffer_cells, alignment,
+        #                       target_grid_doc, is_categorical=...)
         call = mock_fetch.call_args_list[0]
-        assert call.args[3] == 7
-        assert call.args[4] == alignment
+        assert call.args[2] == 7
+        assert call.args[3] == alignment
         assert call.kwargs["is_categorical"] is False
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
@@ -720,7 +715,7 @@ class TestFetchCanopyLandfire:
             bands=["chm"],
             progress=MagicMock(),
         )
-        assert mock_fetch.call_args_list[0].args[4] == {"target": "domain"}
+        assert mock_fetch.call_args_list[0].args[3] == {"target": "domain"}
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
     def test_progress_callback_invoked_per_band(self, mock_fetch, roi):

@@ -1051,7 +1051,9 @@ source = { virtual = "." }
 dependencies = [
     { name = "fastfuels-core" },
     { name = "functions-framework" },
-    { name = "lib", extra = ["firestore", "gcs", "pointcloud", "raster", "threedep", "zarr"] },
+    { name = "google-cloud-run" },
+    { name = "google-cloud-tasks" },
+    { name = "lib", extra = ["firestore", "gcs", "landfire", "pointcloud", "raster", "threedep", "zarr"] },
     { name = "pint" },
     { name = "pyarrow" },
     { name = "scipy" },
@@ -1059,8 +1061,6 @@ dependencies = [
 
 [package.optional-dependencies]
 test = [
-    { name = "google-cloud-run" },
-    { name = "google-cloud-tasks" },
     { name = "pytest" },
     { name = "pytest-xdist" },
 ]
@@ -1072,9 +1072,9 @@ viz = [
 requires-dist = [
     { name = "fastfuels-core" },
     { name = "functions-framework", specifier = ">=3.10.0" },
-    { name = "google-cloud-run", marker = "extra == 'test'", specifier = ">=0.10.0" },
-    { name = "google-cloud-tasks", marker = "extra == 'test'", specifier = ">=2.16.0" },
-    { name = "lib", extras = ["firestore", "gcs", "zarr", "raster", "threedep", "pointcloud"], editable = "../lib" },
+    { name = "google-cloud-run", specifier = ">=0.10.0" },
+    { name = "google-cloud-tasks", specifier = ">=2.16.0" },
+    { name = "lib", extras = ["firestore", "gcs", "zarr", "raster", "threedep", "pointcloud", "landfire"], editable = "../lib" },
     { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.10" },
     { name = "pint", specifier = ">=0.24" },
     { name = "pyarrow", specifier = ">=18.0.0" },
@@ -1333,6 +1333,13 @@ gcs = [
     { name = "gcsfs" },
     { name = "google-cloud-storage" },
 ]
+landfire = [
+    { name = "gcsfs" },
+    { name = "geopandas" },
+    { name = "pyarrow" },
+    { name = "requests" },
+    { name = "shapely" },
+]
 pointcloud = [
     { name = "google-cloud-storage" },
     { name = "laspy", extra = ["lazrs"] },
@@ -1365,8 +1372,10 @@ requires-dist = [
     { name = "dask", marker = "extra == 'zarr'", specifier = ">=2024.0.0" },
     { name = "gcsfs", marker = "extra == 'entwine'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.2.0" },
+    { name = "gcsfs", marker = "extra == 'landfire'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.2.0" },
     { name = "geopandas", marker = "extra == 'entwine'", specifier = ">=1.1.2" },
+    { name = "geopandas", marker = "extra == 'landfire'", specifier = ">=1.1.2" },
     { name = "geopandas", marker = "extra == 'raster'", specifier = ">=1.1.2" },
     { name = "geopandas", marker = "extra == 'threedep'", specifier = ">=1.1.2" },
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.23.0" },
@@ -1377,19 +1386,22 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'raster'", specifier = ">=2.0.0" },
     { name = "pint", specifier = ">=0.25" },
     { name = "pyarrow", marker = "extra == 'entwine'", specifier = ">=18.0.0" },
+    { name = "pyarrow", marker = "extra == 'landfire'", specifier = ">=18.0.0" },
     { name = "pyarrow", marker = "extra == 'pointcloud'", specifier = ">=18.0.0" },
     { name = "pyproj", marker = "extra == 'pointcloud'", specifier = ">=3.6" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
     { name = "requests", marker = "extra == 'entwine'", specifier = ">=2.32" },
+    { name = "requests", marker = "extra == 'landfire'", specifier = ">=2.32" },
     { name = "rioxarray", marker = "extra == 'raster'", specifier = ">=0.21.0" },
     { name = "s3fs", marker = "extra == 'threedep'", specifier = ">=2024.2.0" },
     { name = "shapely", marker = "extra == 'entwine'", specifier = ">=2.0" },
+    { name = "shapely", marker = "extra == 'landfire'", specifier = ">=2.0" },
     { name = "xarray", marker = "extra == 'raster'", specifier = ">=2025.1.0" },
     { name = "xarray", marker = "extra == 'zarr'", specifier = ">=2025.1.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1.5" },
 ]
-provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "entwine", "pointcloud"]
+provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "entwine", "pointcloud", "landfire"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]

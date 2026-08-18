@@ -427,24 +427,31 @@ class TestReadingFromStorage:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        for tile_x, xs in ((0, [1.0, 2.0, 3.0]), (1, [501.0, 502.0])):
-            directory = root / f"tile_x={tile_x}" / "tile_y=0"
-            directory.mkdir(parents=True)
-            count = len(xs)
-            table = pa.table(
-                {
-                    "lod": pa.array([0] * count, pa.uint8()),
-                    "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
-                    "Y": pa.array([1000] * count, pa.int32()),
-                    "Z": pa.array(
-                        [round(v * 1000) for v in ([10.0, 20.0, 30.0][:count])],
-                        pa.int32(),
-                    ),
-                    "intensity": pa.array([0] * count, pa.uint16()),
-                    "classification": pa.array(([2, 5, 5][:count]), pa.uint8()),
-                }
-            )
-            pq.write_table(table, directory / "part-00000.parquet")
+        table = pa.table(
+            {
+                "tile_x": pa.array([0, 0, 0, 1, 1], pa.int32()),
+                "tile_y": pa.array([0] * 5, pa.int32()),
+                "lod": pa.array([0] * 5, pa.uint8()),
+                "X": pa.array([1000, 2000, 3000, 501000, 502000], pa.int32()),
+                "Y": pa.array([1000] * 5, pa.int32()),
+                "Z": pa.array([10000, 20000, 30000, 10000, 20000], pa.int32()),
+                "intensity": pa.array([0] * 5, pa.uint16()),
+                "classification": pa.array([2, 5, 5, 2, 5], pa.uint8()),
+            }
+        )
+        metadata = []
+        pq.write_to_dataset(
+            table,
+            root,
+            partition_cols=["tile_x", "tile_y"],
+            basename_template="part-{i}.parquet",
+            metadata_collector=metadata,
+        )
+        pq.write_metadata(
+            metadata[0].schema.to_arrow_schema(),
+            root / "_metadata",
+            metadata_collector=metadata,
+        )
 
     def test_reads_only_the_partitions_a_block_overlaps(self, tmp_path):
         root = tmp_path / "cloud.parquet"
@@ -775,32 +782,44 @@ def _pool_dataset(root, tile_m=4.0):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
+    tile_xs, tile_ys, xs, ys, zs, cs = [], [], [], [], [], []
     for tile_x in (0, 1):
         for tile_y in (0, 1):
-            xs, ys, zs, cs = [], [], [], []
             for col in range(4):
                 for row in range(4):
                     x = tile_x * tile_m + col + 0.5
                     y = tile_y * tile_m + row + 0.5
+                    tile_xs += [tile_x, tile_x]
+                    tile_ys += [tile_y, tile_y]
                     xs += [x, x]
                     ys += [y, y]
                     zs += [10.0, 25.0]
                     cs += [2, 5]
-            directory = root / f"tile_x={tile_x}" / f"tile_y={tile_y}"
-            directory.mkdir(parents=True)
-            pq.write_table(
-                pa.table(
-                    {
-                        "lod": pa.array([0] * len(xs), pa.uint8()),
-                        "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
-                        "Y": pa.array([round(v * 1000) for v in ys], pa.int32()),
-                        "Z": pa.array([round(v * 1000) for v in zs], pa.int32()),
-                        "intensity": pa.array([0] * len(xs), pa.uint16()),
-                        "classification": pa.array(cs, pa.uint8()),
-                    }
-                ),
-                directory / "part-00000.parquet",
-            )
+    table = pa.table(
+        {
+            "tile_x": pa.array(tile_xs, pa.int32()),
+            "tile_y": pa.array(tile_ys, pa.int32()),
+            "lod": pa.array([0] * len(xs), pa.uint8()),
+            "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
+            "Y": pa.array([round(v * 1000) for v in ys], pa.int32()),
+            "Z": pa.array([round(v * 1000) for v in zs], pa.int32()),
+            "intensity": pa.array([0] * len(xs), pa.uint16()),
+            "classification": pa.array(cs, pa.uint8()),
+        }
+    )
+    metadata = []
+    pq.write_to_dataset(
+        table,
+        root,
+        partition_cols=["tile_x", "tile_y"],
+        basename_template="part-{i}.parquet",
+        metadata_collector=metadata,
+    )
+    pq.write_metadata(
+        metadata[0].schema.to_arrow_schema(),
+        root / "_metadata",
+        metadata_collector=metadata,
+    )
     return {
         "tile_m": tile_m,
         "mins": [0.0, 0.0, 0.0],

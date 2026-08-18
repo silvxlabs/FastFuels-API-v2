@@ -7,6 +7,7 @@ key, and the row-group-per-level layout a reader's pushdown depends on.
 """
 
 import io
+import json
 import queue
 import threading
 
@@ -309,20 +310,40 @@ INFO = {
 }
 
 
-def parts_written(monkeypatch, chunks, **kwargs):
+def write_with_stubs(monkeypatch, chunks, **kwargs):
     """Run the parent write path with the worker pool and GCS stubbed out.
 
-    Returns what the parent handed each worker: ``(tile, records, path, offset)``
-    per flush, in submission order.
+    Returns the worker submissions, written objects, and writer result.
     """
     submitted = []
+    objects = {}
 
     class Pool:
         def __init__(self, *_args, **_kwargs):
-            pass
+            self.on_result = _args[3]
 
         def submit(self, tile, recs, rel, offset):
             submitted.append((tile, recs, rel, offset))
+            lod = assign_lod(len(recs), offset=offset)
+            metadata = []
+            data = _encode(
+                recs,
+                lod,
+                SCALES,
+                OFFSETS,
+                metadata_collector=metadata,
+            )
+            objects[rel] = data
+            footer = metadata[0]
+            footer.set_file_path(rel)
+            footer_bytes = io.BytesIO()
+            footer.write_metadata_file(footer_bytes)
+            self.on_result(
+                len(data),
+                rel,
+                footer_bytes.getvalue(),
+                _summarize(recs),
+            )
 
         def close(self):
             pass
@@ -333,13 +354,20 @@ def parts_written(monkeypatch, chunks, **kwargs):
         def __init__(self, *_args):
             pass
 
-        def put(self, *_args):
-            pass
+        def put(self, name, data):
+            objects[name] = data
+            self.bytes_written += len(data)
 
     monkeypatch.setattr(writer_module, "_WritePool", Pool)
     monkeypatch.setattr(writer_module, "GcsSink", Sink)
     monkeypatch.setattr(writer_module, "clear_prefix", lambda *_args: None)
-    write_parquet(chunks, INFO, "bucket", "prefix", tile_m=TILE_M, **kwargs)
+    result = write_parquet(chunks, INFO, "bucket", "prefix", tile_m=TILE_M, **kwargs)
+    return submitted, objects, result
+
+
+def parts_written(monkeypatch, chunks, **kwargs):
+    """Return what the parent handed each worker, in submission order."""
+    submitted, _, _ = write_with_stubs(monkeypatch, chunks, **kwargs)
     return submitted
 
 
@@ -372,6 +400,43 @@ def test_each_tile_counts_its_own_lod_offsets(monkeypatch):
     assert set(by_tile) == {(0, 0), (1, 0)}
     for entries in by_tile.values():
         assert entries == [(4, 0), (4, 4)]
+
+
+def test_writer_publishes_deterministic_global_metadata_before_manifest(monkeypatch):
+    monkeypatch.setattr(writer_module, "MAX_TILE_BYTES", 1)
+    chunk = records(8, span=1_000)
+    chunk["X"][:4] -= 60_000  # tile -2; the other four remain in tile 0
+
+    submitted, objects, result = write_with_stubs(monkeypatch, [chunk, chunk.copy()])
+    manifest = json.loads(objects["_manifest.json"])
+
+    assert len(submitted) == 4
+    assert result["tiles"] == 2
+    assert manifest["tiles"] == 2
+    assert manifest["points"] == 16
+    assert "columns" not in manifest
+    assert list(objects)[-2:] == ["_metadata", "_manifest.json"]
+
+    metadata = pq.read_metadata(io.BytesIO(objects["_metadata"]))
+    assert metadata.num_rows == 16
+    paths = [
+        metadata.row_group(index).column(0).file_path
+        for index in range(metadata.num_row_groups)
+    ]
+    assert paths == sorted(paths)
+    assert {path.split("/")[0] for path in paths} == {"tile_x=-2", "tile_x=0"}
+
+
+def test_global_metadata_preserves_sparse_lod_gaps(monkeypatch):
+    _, objects, _ = write_with_stubs(monkeypatch, [records(4, span=1_000)])
+    metadata = pq.read_metadata(io.BytesIO(objects["_metadata"]))
+    lod_column = metadata.schema.names.index("lod")
+    counts = np.zeros(LOD_LEVELS, dtype=np.int64)
+    for index in range(metadata.num_row_groups):
+        row_group = metadata.row_group(index)
+        lod = row_group.column(lod_column).statistics.min
+        counts[lod] += row_group.num_rows
+    assert np.cumsum(counts).tolist() == [1, 1, 1, 1, 1, 4]
 
 
 def test_distinct_tiles_never_share_a_packed_id():

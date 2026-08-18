@@ -17,8 +17,9 @@
     "message": "Complete",
     "percent": 100
   },
+  "size_bytes": 67713389,
   "source": {
-    "catalog_fetched_on": "2026-08-03T00:17:37.962005+00:00",
+    "catalog_fetched_on": "2026-08-18T20:10:07.199465+00:00",
     "coverage_fraction": 1.0,
     "datasets": [
       "MT_Statewide_P3_4_B21"

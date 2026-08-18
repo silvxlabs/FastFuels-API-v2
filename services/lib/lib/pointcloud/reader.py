@@ -1,12 +1,15 @@
 """Reading a stored point cloud back.
 
-Deliberately narrow: open the dataset, read its manifest, and pull the points
-overlapping a box. Anything about what the caller does with those points -- the
-lattice they land on, how they are blocked, what is computed from them -- stays
-with the caller, because that is not a property of the format.
+Deliberately narrow: open the standard Parquet index, read the small application
+manifest, and pull selected points. Anything about what the caller does with
+those points -- the lattice they land on, how they are blocked, what is computed
+from them -- stays with the caller, because that is not a property of the format.
 """
 
 import json
+import math
+import re
+from dataclasses import dataclass
 
 import numpy as np
 import pyarrow as pa
@@ -15,7 +18,7 @@ import pyarrow.parquet as pq
 
 from lib.errors import ProcessingError
 from lib.gcs import get_gcsfs_client
-from lib.pointcloud.schema import tile_span
+from lib.pointcloud.schema import LOD_LEVELS, point_dtype, tile_span
 
 # The only columns any consumer reads. What that skips is `intensity`, a fifth
 # of a tile's stored bytes -- 21.6% measured over two real datasets, against
@@ -29,49 +32,238 @@ POINT_COLUMNS = ["X", "Y", "Z", "classification"]
 BATCH_ROWS = 1 << 20
 
 
-def read_manifest(prefix: str) -> dict:
+def _unreadable(prefix: str, detail: str) -> ProcessingError:
+    return ProcessingError(
+        code="POINT_CLOUD_UNREADABLE",
+        message="This point cloud's stored data could not be read.",
+        suggestion="Recreate the point cloud, then retry.",
+        traceback=f"{prefix}: {detail}",
+    )
+
+
+def _integer(value, name: str, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(
+            f"{name} must be an integer greater than or equal to {minimum}"
+        )
+    return value
+
+
+def _vector(manifest: dict, name: str, *, positive: bool = False) -> list[float]:
+    value = manifest[name]
+    if not isinstance(value, list) or len(value) != 3:
+        raise ValueError(f"{name} must contain exactly three numbers")
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+        raise ValueError(f"{name} must contain exactly three numbers")
+    result = [float(v) for v in value]
+    if not all(math.isfinite(v) for v in result):
+        raise ValueError(f"{name} must contain only finite numbers")
+    if positive and not all(v > 0 for v in result):
+        raise ValueError(f"{name} must contain only positive numbers")
+    return result
+
+
+def _validate_manifest(manifest: dict) -> dict:
+    """Validate the application metadata Parquet does not carry."""
+    if not isinstance(manifest, dict):
+        raise ValueError("the manifest root must be an object")
+    if "manifest_version" in manifest:
+        raise ValueError("manifest_version is not part of the point-cloud format")
+
+    required = {
+        "tile_m",
+        "tiles",
+        "points",
+        "lod_levels",
+        "scales",
+        "offsets",
+        "mins",
+        "maxs",
+    }
+    missing = sorted(required - manifest.keys())
+    if missing:
+        raise ValueError(f"missing required fields: {', '.join(missing)}")
+
+    tile_m = manifest["tile_m"]
+    if (
+        isinstance(tile_m, bool)
+        or not isinstance(tile_m, (int, float))
+        or not math.isfinite(tile_m)
+        or tile_m <= 0
+    ):
+        raise ValueError("tile_m must be a positive finite number")
+
+    _integer(manifest["points"], "points")
+    _integer(manifest["tiles"], "tiles")
+    if _integer(manifest["lod_levels"], "lod_levels", 1) != LOD_LEVELS:
+        raise ValueError(f"lod_levels must equal {LOD_LEVELS}")
+
+    _vector(manifest, "scales", positive=True)
+    _vector(manifest, "offsets")
+    mins = _vector(manifest, "mins")
+    maxs = _vector(manifest, "maxs")
+    if any(low > high for low, high in zip(mins, maxs, strict=True)):
+        raise ValueError("mins must not exceed maxs")
+
+    return manifest
+
+
+def read_manifest(prefix: str, filesystem=None) -> dict:
     """Read the dataset manifest, which carries its tiling and coordinate scaling.
 
     Args:
         prefix: Dataset prefix, e.g. ``<bucket>/<id>/cloud.parquet``.
 
     Returns:
-        The manifest: ``tile_m``, ``mins``, ``maxs``, ``scales``, ``offsets``,
-        and the point and tile counts.
+        The manifest: tiling, coordinate scaling, bounds, and total counts.
 
     Raises:
-        ProcessingError: POINT_CLOUD_UNREADABLE if the cloud has no manifest,
-            which means it was never written or predates this format.
+        ProcessingError: POINT_CLOUD_UNREADABLE if the cloud has no valid
+            manifest in the current format.
     """
+    fs = get_gcsfs_client() if filesystem is None else filesystem
     try:
-        with get_gcsfs_client().open(f"{prefix}/_manifest.json", "rb") as stream:
-            return json.load(stream)
-    except FileNotFoundError as e:
-        raise ProcessingError(
-            code="POINT_CLOUD_UNREADABLE",
-            message="This point cloud's stored data could not be read.",
-            suggestion="Recreate the point cloud, then retry.",
-            traceback=f"{prefix}/_manifest.json: {e}",
-        ) from e
+        with _open_stream(fs, f"{prefix}/_manifest.json") as stream:
+            return _validate_manifest(json.load(stream))
+    except (
+        FileNotFoundError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as e:
+        raise _unreadable(prefix, str(e)) from e
 
 
 def open_dataset(prefix: str, filesystem=None) -> pa_ds.Dataset:
-    """Open the partitioned dataset.
-
-    Discovers by listing. ``_manifest.json`` is skipped by pyarrow's default
-    underscore-prefix exclusion.
+    """Open the partitioned dataset from its standard global Parquet metadata.
 
     Args:
         prefix: Dataset prefix.
         filesystem: Override for the filesystem, for reading a local copy.
             Defaults to GCS.
     """
-    return pa_ds.dataset(
-        prefix,
+    return pa_ds.parquet_dataset(
+        f"{prefix}/_metadata",
         filesystem=get_gcsfs_client() if filesystem is None else filesystem,
-        format="parquet",
         partitioning="hive",
     )
+
+
+@dataclass(frozen=True)
+class PointCloudStorage:
+    """One validated, indexed point cloud ready for repeated reads."""
+
+    prefix: str
+    manifest: dict
+    dataset: pa_ds.Dataset
+    columns: tuple[dict, ...]
+    tiles: tuple[dict, ...]
+
+
+_PART_PATH = re.compile(r"(?:^|/)tile_x=(-?\d+)/tile_y=(-?\d+)/part-(\d{5})\.parquet$")
+
+
+def _stored_columns(dataset: pa_ds.Dataset) -> tuple[dict, ...]:
+    """Public point fields and wire dtypes, derived from the Parquet schema."""
+    internal = {"lod", "tile_x", "tile_y"}
+    columns = tuple(
+        {
+            "name": field.name,
+            "dtype": np.dtype(field.type.to_pandas_dtype()).name,
+        }
+        for field in dataset.schema
+        if field.name not in internal
+    )
+    layouts = {
+        tuple(
+            (name, np.dtype(dtype).name)
+            for name, (dtype, _) in point_dtype(has_color).fields.items()
+        )
+        for has_color in (False, True)
+    }
+    if tuple((column["name"], column["dtype"]) for column in columns) not in layouts:
+        raise ValueError("Parquet columns do not match a supported point-cloud layout")
+    if dataset.schema.field("lod").type != pa.uint8():
+        raise ValueError("Parquet lod must be uint8")
+    return columns
+
+
+def _tile_catalogue(dataset: pa_ds.Dataset, manifest: dict) -> tuple[dict, ...]:
+    """Derive occupied tiles and exact cumulative LOD counts from `_metadata`."""
+    counts = {}
+    parts = {}
+    for fragment in sorted(dataset.get_fragments(), key=lambda item: item.path):
+        match = _PART_PATH.search(fragment.path)
+        if match is None:
+            raise ValueError(f"invalid Parquet part path {fragment.path!r}")
+        tile = (int(match.group(1)), int(match.group(2)))
+        sequence = int(match.group(3))
+        if sequence in parts.setdefault(tile, set()):
+            raise ValueError(f"duplicate Parquet part {fragment.path!r}")
+        parts[tile].add(sequence)
+        lod_counts = counts.setdefault(tile, np.zeros(LOD_LEVELS, dtype=np.int64))
+        for row_group in fragment.row_groups:
+            statistics = row_group.statistics or {}
+            lod_statistics = statistics.get("lod")
+            if lod_statistics is None or lod_statistics.get(
+                "min"
+            ) != lod_statistics.get("max"):
+                raise ValueError(
+                    f"{fragment.path} row groups must have one exact lod value"
+                )
+            lod = lod_statistics["min"]
+            if isinstance(lod, bool) or not isinstance(lod, int):
+                raise ValueError(f"{fragment.path} has a non-integer lod statistic")
+            if not 0 <= lod < LOD_LEVELS:
+                raise ValueError(f"{fragment.path} has lod {lod} outside the format")
+            lod_counts[lod] += row_group.num_rows
+
+    tiles = []
+    for (tile_x, tile_y), lod_counts in sorted(counts.items()):
+        expected_parts = set(range(len(parts[(tile_x, tile_y)])))
+        if parts[(tile_x, tile_y)] != expected_parts:
+            raise ValueError(f"tile {(tile_x, tile_y)} has non-contiguous part numbers")
+        points_by_lod = np.cumsum(lod_counts)
+        tiles.append(
+            {
+                "tile_x": tile_x,
+                "tile_y": tile_y,
+                "points": int(points_by_lod[-1]),
+                "points_by_lod": [int(value) for value in points_by_lod],
+            }
+        )
+
+    if len(tiles) != manifest["tiles"]:
+        raise ValueError(
+            f"Parquet has {len(tiles)} tiles but the manifest declares "
+            f"{manifest['tiles']}"
+        )
+    total = sum(tile["points"] for tile in tiles)
+    if total != manifest["points"]:
+        raise ValueError(
+            f"Parquet has {total} points but the manifest declares {manifest['points']}"
+        )
+    return tuple(tiles)
+
+
+def open_point_cloud(prefix: str, filesystem=None) -> PointCloudStorage:
+    """Open and validate the manifest, global Parquet index, and tile catalogue."""
+    fs = get_gcsfs_client() if filesystem is None else filesystem
+    try:
+        manifest = read_manifest(prefix, fs)
+        dataset = open_dataset(prefix, fs)
+        return PointCloudStorage(
+            prefix=prefix,
+            manifest=manifest,
+            dataset=dataset,
+            columns=_stored_columns(dataset),
+            tiles=_tile_catalogue(dataset, manifest),
+        )
+    except ProcessingError:
+        raise
+    except Exception as error:
+        raise _unreadable(prefix, str(error)) from error
 
 
 def _open_stream(filesystem, path: str):
@@ -128,6 +320,71 @@ def _lod_row_groups(parquet_file, max_lod: int) -> tuple[list[int], bool]:
             keep.append(index)
             straddles = straddles or statistics.max > max_lod
     return keep, straddles
+
+
+def find_tile(tiles: tuple[dict, ...], tile_x: int, tile_y: int) -> dict | None:
+    """Return one sorted catalogue entry for a tile coordinate."""
+    for tile in tiles:
+        key = (tile["tile_x"], tile["tile_y"])
+        if key == (tile_x, tile_y):
+            return tile
+        if key > (tile_x, tile_y):
+            break
+    return None
+
+
+def read_tile(
+    storage: PointCloudStorage,
+    tile_x: int,
+    tile_y: int,
+    columns: list[str] | tuple[str, ...],
+    classes=None,
+    max_lod: int | None = None,
+) -> pa.Table:
+    """Read one projected tile through the indexed Arrow Dataset scanner.
+
+    Partition, LOD, and classification filters are pushed into Parquet before
+    the selected columns are materialized. Opening `storage.dataset` consumed
+    `_metadata`, so this performs no dataset listing or per-part footer reads.
+
+    Args:
+        storage: A point cloud from :func:`open_point_cloud`.
+        tile_x: Hive tile x coordinate.
+        tile_y: Hive tile y coordinate.
+        columns: Stored columns to return, in response order.
+        classes: Optional ASPRS classification values to keep.
+        max_lod: Keep cumulative levels 0 through this level. ``None`` reads
+            every point.
+    Returns:
+        An Arrow table with the requested columns in response order.
+
+    Raises:
+        ValueError: The requested columns or LOD are invalid.
+        ProcessingError: The indexed Parquet data is missing or unreadable.
+    """
+    columns = list(columns)
+    available = {column["name"] for column in storage.columns}
+    if len(columns) != len(set(columns)):
+        raise ValueError("columns must not contain duplicates")
+    unknown = [name for name in columns if name not in available]
+    if unknown:
+        raise ValueError(f"unknown point-cloud columns: {', '.join(unknown)}")
+    levels = storage.manifest["lod_levels"]
+    if max_lod is not None and not 0 <= max_lod < levels:
+        raise ValueError(f"max_lod must be between 0 and {levels - 1}")
+
+    selection = (pa_ds.field("tile_x") == tile_x) & (pa_ds.field("tile_y") == tile_y)
+    if max_lod is not None:
+        selection = selection & (pa_ds.field("lod") <= max_lod)
+    if classes is not None:
+        selection = selection & pa_ds.field("classification").isin(list(classes))
+
+    try:
+        return storage.dataset.to_table(columns=columns, filter=selection)
+    except ProcessingError:
+        raise
+    except Exception as error:
+        raise _unreadable(storage.prefix, str(error)) from error
 
 
 def iter_points(

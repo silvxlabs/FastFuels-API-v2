@@ -315,3 +315,257 @@ class ListPointCloudsResponse(PaginatedResponse):
     """Paginated response for listing point clouds."""
 
     point_clouds: list[PointCloud]
+
+
+class PointCloudTileMetadata(BaseModel):
+    """Location and cumulative LOD costs for one occupied point-cloud tile."""
+
+    tile_x: int = Field(
+        ...,
+        description=(
+            "Horizontal tile index. Pass this value as `tile_x` to a point-cloud "
+            "data endpoint. Negative indices are valid for boundary points that "
+            "fall just west of the tiling origin."
+        ),
+        examples=[0],
+    )
+    tile_y: int = Field(
+        ...,
+        description=(
+            "Vertical tile index. Pass this value as `tile_y` to a point-cloud "
+            "data endpoint. Negative indices are valid."
+        ),
+        examples=[1],
+    )
+    bounds: tuple[float, float, float, float] = Field(
+        ...,
+        description=(
+            "Horizontal tile bounds as `[min_x, min_y, max_x, max_y]` in the "
+            "metadata response's `crs`. A boundary tile can extend beyond the "
+            "point cloud's overall bounds."
+        ),
+        examples=[[294094.99, 5199365.58, 294478.90, 5199749.49]],
+    )
+    points_by_lod: list[int] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Cumulative point counts by LOD. Element `k` is the exact number "
+            "of rows returned by `lod=k` before optional classification "
+            "filtering. Counts never decrease; the final value is the complete "
+            "tile. Repeated values are valid for sparse tiles."
+        ),
+        examples=[[2898, 11592, 46368, 185472, 741887, 2967547]],
+    )
+
+
+class PointCloudDataMetadata(BaseModel):
+    """Public tile index used to discover and budget point-data requests."""
+
+    tile_m: float = Field(
+        ...,
+        gt=0,
+        description="Tile width and height in the horizontal units of `crs`.",
+        examples=[383.90732487570494],
+    )
+    lod_levels: int = Field(
+        ...,
+        ge=1,
+        description=(
+            "Number of cumulative levels of detail. Valid `lod` query values "
+            "are `0` through `lod_levels - 1`; omitting `lod` reads the final, "
+            "complete level."
+        ),
+        examples=[6],
+    )
+    crs: str = Field(
+        ...,
+        description=(
+            "Coordinate reference system for decoded X/Y coordinates and all "
+            "reported horizontal bounds."
+        ),
+        examples=["EPSG:32612"],
+    )
+    bounds: tuple[float, float, float, float] = Field(
+        ...,
+        description=(
+            "Overall horizontal point extent as "
+            "`[min_x, min_y, max_x, max_y]` in `crs`."
+        ),
+        examples=[[294094.992, 5198981.67, 294784.075, 5199749.485]],
+    )
+    scales: tuple[float, float, float] = Field(
+        ...,
+        description=(
+            "Coordinate scale factors in X/Y/Z order. Decode axis `i` with "
+            "`stored_integer * scales[i] + offsets[i]`."
+        ),
+        examples=[[0.001, 0.001, 0.001]],
+    )
+    offsets: tuple[float, float, float] = Field(
+        ...,
+        description=(
+            "Coordinate offsets in X/Y/Z order. Decode axis `i` with "
+            "`stored_integer * scales[i] + offsets[i]`."
+        ),
+        examples=[[294094.0, 5198981.0, 0.0]],
+    )
+    columns: dict[str, str] = Field(
+        ...,
+        description=(
+            "Public stored column names mapped to NumPy-compatible dtypes. "
+            "Use these names in the comma-separated `columns` query parameter. "
+            "X/Y/Z remain scaled integers on the wire."
+        ),
+        examples=[
+            {
+                "X": "int32",
+                "Y": "int32",
+                "Z": "int32",
+                "intensity": "uint16",
+                "classification": "uint8",
+            }
+        ],
+    )
+    tiles: list[PointCloudTileMetadata] = Field(
+        ...,
+        description=(
+            "Occupied tiles sorted by `(tile_x, tile_y)`. Empty positions are "
+            "omitted; only listed tile coordinates are valid data requests."
+        ),
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "tile_m": 383.90732487570494,
+                    "lod_levels": 6,
+                    "crs": "EPSG:32612",
+                    "bounds": [
+                        294094.992,
+                        5198981.67,
+                        294784.075,
+                        5199749.485,
+                    ],
+                    "scales": [0.001, 0.001, 0.001],
+                    "offsets": [294094.0, 5198981.0, 0.0],
+                    "columns": {
+                        "X": "int32",
+                        "Y": "int32",
+                        "Z": "int32",
+                        "intensity": "uint16",
+                        "classification": "uint8",
+                    },
+                    "tiles": [
+                        {
+                            "tile_x": 0,
+                            "tile_y": 1,
+                            "bounds": [
+                                294094.992,
+                                5199365.577,
+                                294478.900,
+                                5199749.485,
+                            ],
+                            "points_by_lod": [
+                                2898,
+                                11592,
+                                46368,
+                                185472,
+                                741887,
+                                2967547,
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+
+class PointCloudTileDataResponse(BaseModel):
+    """Columnar JSON values for one point-cloud tile selection."""
+
+    tile_x: int = Field(..., description="Requested horizontal tile index.")
+    tile_y: int = Field(..., description="Requested vertical tile index.")
+    bounds: tuple[float, float, float, float] = Field(
+        ...,
+        description=(
+            "Horizontal tile bounds as `[min_x, min_y, max_x, max_y]` in the "
+            "point cloud's CRS."
+        ),
+    )
+    lod: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Inclusive LOD ceiling used for this response. The response "
+            "contains stored levels `0` through this value."
+        ),
+    )
+    classes: list[int] | None = Field(
+        ...,
+        description=(
+            "Sorted ASPRS classes retained by the request, or null when no "
+            "classification filter was applied."
+        ),
+    )
+    scales: tuple[float, float, float] = Field(
+        ...,
+        description=(
+            "Coordinate scales in X/Y/Z order. Decode coordinate axis `i` with "
+            "`stored_integer * scales[i] + offsets[i]`."
+        ),
+    )
+    offsets: tuple[float, float, float] = Field(
+        ...,
+        description="Coordinate offsets in X/Y/Z order.",
+    )
+    columns: dict[str, str] = Field(
+        ...,
+        description=(
+            "Returned column names mapped to their NumPy-compatible dtypes. "
+            "Only requested columns are present."
+        ),
+    )
+    data: dict[str, list[int]] = Field(
+        ...,
+        description=(
+            "Columnar point values. Every array has equal length, and values "
+            "at the same array index describe the same point. X/Y/Z values are "
+            "stored integers decoded with `scales` and `offsets`."
+        ),
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "tile_x": -1,
+                    "tile_y": 0,
+                    "bounds": [
+                        293711.08485993545,
+                        5198981.669894749,
+                        294094.99218481116,
+                        5199365.577219625,
+                    ],
+                    "lod": 5,
+                    "classes": [1, 2],
+                    "scales": [0.001, 0.001, 0.001],
+                    "offsets": [294094.0, 5198981.0, 0.0],
+                    "columns": {
+                        "X": "int32",
+                        "Y": "int32",
+                        "Z": "int32",
+                        "classification": "uint8",
+                    },
+                    "data": {
+                        "X": [992, 992],
+                        "Y": [346497, 64586],
+                        "Z": [1077190, 1051360],
+                        "classification": [1, 2],
+                    },
+                }
+            ]
+        }
+    )

@@ -9,6 +9,7 @@ independently remembering the same column names.
 The dataset is Hive-partitioned::
 
     <id>/cloud.parquet/tile_x=<i>/tile_y=<j>/part-*.parquet
+    <id>/cloud.parquet/_metadata       Parquet files, row groups, statistics
     <id>/cloud.parquet/_manifest.json   tiling and coordinate scaling
 
 Coordinates are stored as LAS scaled int32s, with the scale and offset in

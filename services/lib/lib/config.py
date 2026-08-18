@@ -68,6 +68,12 @@ TREEVOX_SERVICE = os.getenv("TREEVOX_SERVICE", f"treevox-v2-{INFRA_ENV}")
 UPLOADER_SERVICE = os.getenv("UPLOADER_SERVICE", f"uploader-v2-{INFRA_ENV}")
 LAKITU_SERVICE = os.getenv("LAKITU_SERVICE", f"lakitu-v2-{INFRA_ENV}")
 
+# Arrow sizes its scanner pool from the host CPU count, which Cloud Run exposes
+# rather than the container's vCPU quota (5 reported in the 2-vCPU API
+# container). Keep one tile scan inside the allocated cores; concurrent HTTP
+# requests already provide the outer parallelism.
+POINT_CLOUD_READ_THREADS = int(os.getenv("POINT_CLOUD_READ_THREADS", 2))
+
 # Point-cloud write concurrency. These track the Cloud Run vCPU allocation
 # rather than taste: worker counts are sharply peaked at the core count, and
 # oversubscribing measured 2.4x the CPU for byte-identical output.

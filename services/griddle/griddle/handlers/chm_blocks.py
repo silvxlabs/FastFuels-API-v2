@@ -45,9 +45,17 @@ import numpy as np
 SURFACE_CLASSES = (0, 1, 2, 3, 4, 5)
 GROUND_CLASS = 2
 
-# Heights outside this range are not canopy. Matches the v1 sanity filter.
-MIN_CANOPY_HEIGHT_M = 0.0
+# Heights above this are not canopy. Matches the v1 sanity filter.
 MAX_CANOPY_HEIGHT_M = 100.0
+
+# The floor heights are clamped to, rather than filtered against: an unbiased
+# ground has returns on both sides of it, so a return below it is ground.
+MIN_CANOPY_HEIGHT_M = 0.0
+
+# How far below the ground estimate a return may sit and still be one. Within
+# this it is the estimate's own scatter and reads as zero height; deeper is a
+# blunder, and dropping it keeps it from making a bare cell out of nothing.
+GROUND_TOLERANCE_M = 0.5
 
 # A point within this distance of the provisional surface is taken to be a
 # ground return. Used to re-derive the ground from real measurements rather
@@ -110,6 +118,8 @@ def run_block(job):
             _W["dataset"], _W["manifest"], bounds, wanted, _W["filesystem"]
         )
 
+    if kind == "mean":
+        return mean_surface_block(reader, lattice, resolution, classes)
     if kind == "min":
         return min_surface_block(reader, lattice, resolution, classes)
     if kind == "snap":
@@ -191,8 +201,35 @@ def sample_bilinear(surface, x, y, lattice, resolution) -> np.ndarray:
     )
 
 
+def mean_surface_block(reader, lattice, resolution, classes) -> np.ndarray:
+    """Mean z per cell over the given classes, NaN where no point falls.
+
+    The mean, not the minimum: a minimum is an extreme-value statistic, so it
+    sits further below the surface the more returns a cell holds, and every
+    height measured above it rises to match (issue #503). A mean is unbiased at
+    any count.
+
+    Cell-local, and a sum and a count are both commutative, so a block needs no
+    halo and the answer cannot depend on how the points were grouped.
+    """
+    _, _, height, width = lattice
+    size = height * width
+    total, count = np.zeros(size), np.zeros(size)
+    for x, y, z, _ in reader(block_bounds(lattice, resolution), classes):
+        index, inside = cell_indices(x, y, lattice, resolution)
+        total += np.bincount(index[inside], z[inside], size)
+        count += np.bincount(index[inside], minlength=size)
+    # 0/0 is the NaN an empty cell wants; nothing else divides by zero.
+    with np.errstate(invalid="ignore"):
+        return (total / count).reshape(height, width).astype(np.float32)
+
+
 def min_surface_block(reader, lattice, resolution, classes) -> np.ndarray:
     """Lowest z per cell over the given classes, NaN where no point falls.
+
+    The input `_pmf` opens, which is defined on a minimum surface (Zhang et al.
+    2003). Not a ground estimate -- `mean_surface_block` says why a minimum is
+    the wrong statistic for one.
 
     Cell-local: a cell's minimum depends only on points inside it, so a block
     needs no halo and blocked output is identical to rasterising the cloud whole.
@@ -214,19 +251,23 @@ def snap_ground_block(reader, provisional, lattice, resolution) -> np.ndarray:
     The opened surface has been eroded and dilated, so reading it directly runs
     about 0.1 m low; taking the real returns that sit near it does not.
 
+    The accepted returns are averaged for the reason `mean_surface_block` gives.
+
     `provisional` is this block's slice of the filtered surface, so the lookup
     is block-local -- a point's snap test reads its own cell and no other.
     """
     _, _, height, width = lattice
-    ground = np.full(height * width, np.inf, dtype=np.float32)
+    size = height * width
+    total, count = np.zeros(size), np.zeros(size)
     flat = provisional.reshape(-1)
     for x, y, z, _ in reader(block_bounds(lattice, resolution), SURFACE_CLASSES):
         index, inside = cell_indices(x, y, lattice, resolution)
         z, index = z[inside], index[inside]
         near = np.abs(z - flat[index]) <= GROUND_SNAP_TOLERANCE_M
-        np.minimum.at(ground, index[near], z[near].astype(np.float32))
-    ground[~np.isfinite(ground)] = np.nan
-    return ground.reshape(height, width)
+        total += np.bincount(index[near], z[near], size)
+        count += np.bincount(index[near], minlength=size)
+    with np.errstate(invalid="ignore"):
+        return (total / count).reshape(height, width).astype(np.float32)
 
 
 def max_height_block(reader, ground, ground_lattice, lattice, resolution):
@@ -248,6 +289,12 @@ def max_height_block(reader, ground, ground_lattice, lattice, resolution):
     The in-bounds mask is applied before sampling, not after. Points outside the
     block are discarded either way, and not sampling them is what keeps the slice
     to one cell of halo rather than the tile's full overhang.
+
+    Heights are clamped up to zero rather than filtered against it. Ground is an
+    unbiased estimate, so returns sit on both sides of it, and dropping the ones
+    below cost a measured 0.9% of cells on a real cloud -- cells that are bare
+    ground, not cells with nothing in them. `GROUND_TOLERANCE_M` bounds how far
+    below the clamp reaches.
     """
     _, _, height, width = lattice
     chm = np.full(height * width, -np.inf, dtype=np.float32)
@@ -256,10 +303,14 @@ def max_height_block(reader, ground, ground_lattice, lattice, resolution):
         index, x, y, z = index[inside], x[inside], y[inside], z[inside]
         above = z - sample_bilinear(ground, x, y, ground_lattice, resolution)
         usable = (
-            (above >= MIN_CANOPY_HEIGHT_M)
+            (above >= -GROUND_TOLERANCE_M)
             & (above < MAX_CANOPY_HEIGHT_M)
             & np.isfinite(above)
         )
-        np.maximum.at(chm, index[usable], above[usable].astype(np.float32))
+        np.maximum.at(
+            chm,
+            index[usable],
+            np.maximum(above[usable], MIN_CANOPY_HEIGHT_M).astype(np.float32),
+        )
     chm[~np.isfinite(chm)] = np.nan
     return chm.reshape(height, width)

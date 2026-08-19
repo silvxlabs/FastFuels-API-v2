@@ -319,6 +319,162 @@ class TestGroundGapFill:
         assert np.isnan(filled[0, 5:]).all()
 
 
+# Vertical spread of a lidar ground return about the terrain it measures, in
+# metres. Ranging noise, beam footprint and the low vegetation a vendor calls
+# ground all land in here; the value is the order an airborne survey achieves.
+# It is what decides how far a per-cell extreme sits below the true surface.
+GROUND_NOISE_M = 0.10
+
+# The two densities issue #503 measured, in returns per square metre: a sparse
+# 3DEP acquisition and a dense one, 38x apart. At 1 m cells these are also
+# returns per cell.
+SPARSE_DENSITY = 0.65
+DENSE_DENSITY = 25.0
+
+# Height of the canopy return above the true surface. Any figure clear of the
+# noise works; the cell's correct CHM value is exactly this.
+CANOPY_HEIGHT_M = 10.0
+
+# Wide enough that the statistics are not the sample size talking: 1,600 cells,
+# and 40,000 ground returns at the dense end.
+STATISTICAL_DOMAIN_M = 40
+
+
+def _flat(x, y):
+    return np.full(np.shape(x), 100.0)
+
+
+def _slope(x, y):
+    """A 20% grade, steep enough that a cell spans 0.2 m of relief."""
+    return 100.0 + 0.2 * np.asarray(x) - 0.1 * np.asarray(y)
+
+
+def _ridge(x, y):
+    """10 m of relief over the domain, curved at a scale a window can smooth."""
+    return 100.0 + 5.0 * np.cos(np.pi * np.asarray(x) / 20.0)
+
+
+def _noisy_cloud(surface, density, seed, size=STATISTICAL_DOMAIN_M):
+    """Ground returns scattered over `surface`, plus a canopy return per cell.
+
+    Ground is sampled uniformly across the domain at `density` returns per
+    square metre and displaced by Gaussian noise, so the returns in any cell are
+    an unbiased sample of the terrain under it however many of them there are.
+
+    The canopy return sits at the cell centre exactly `CANOPY_HEIGHT_M` above
+    the true surface. Bilinear sampling at a cell centre reads that cell and no
+    other, so the cell's CHM is that height minus the ground estimate's error
+    there — which is what makes the error readable off the output band.
+    """
+    rng = np.random.default_rng(seed)
+    count = int(round(density * size * size))
+    x = rng.uniform(0.0, float(size), count)
+    y = rng.uniform(0.0, float(size), count)
+    z = surface(x, y) + rng.normal(0.0, GROUND_NOISE_M, count)
+
+    centres = np.arange(size) + 0.5
+    cx, cy = (axis.ravel() for axis in np.meshgrid(centres, centres))
+    return (
+        np.concatenate([x, cx]),
+        np.concatenate([y, cy]),
+        np.concatenate([z, surface(cx, cy) + CANOPY_HEIGHT_M]),
+        np.concatenate([np.full(count, 2), np.full(cx.size, 5)]),
+    )
+
+
+def _height_error(surface, density, seed=0, size=STATISTICAL_DOMAIN_M):
+    """Per-cell CHM error against the height every cell is known to have."""
+    dataset, _ = _run(
+        _chunks(*_noisy_cloud(surface, density, seed, size)),
+        [2, 5],
+        roi=_roi(size=float(size)),
+    )
+    error = dataset["chm"].values.astype(np.float64) - CANOPY_HEIGHT_M
+    return error[np.isfinite(error)]
+
+
+# A systematic offset smaller than half the ranging noise is not something the
+# returns can be said to disagree with. Above it, the number is the estimator.
+BIAS_TOLERANCE_M = 0.05
+
+# What the same terrain may read differently at 38x the density. The point of
+# the test is that this is not a tolerance the data forces: the returns are an
+# unbiased sample of the same surface at both, so a consistent estimator drives
+# this to zero and only the sample size keeps it off it.
+DENSITY_DRIFT_TOLERANCE_M = 0.03
+
+
+class TestHeightsDoNotDependOnPointDensity:
+    """The same terrain, sampled twice as densely, is still the same terrain.
+
+    Every test here puts one canopy return at each cell centre, exactly
+    `CANOPY_HEIGHT_M` above a surface known in closed form, so a cell's correct
+    value is that height and the output band reads back the ground estimator's
+    error directly.
+
+    A per-cell minimum cannot hold this. The minimum of n samples falls as n
+    rises — about 1.96 standard deviations below the mean at 25 returns against
+    0 at one — so a denser cloud puts the ground further under the terrain and
+    every height above it further over the truth. That is an estimator problem,
+    not an arithmetic one: the minimum is computed correctly and is the wrong
+    statistic. Issue #503 measured it on real clouds against PDAL, +0.13 m at
+    0.65 pts/m2 against +0.24 m at 25 pts/m2, with PDAL triangulating the return
+    positions instead.
+
+    The bias tests and the drift test say the same thing two ways on purpose:
+    the drift is what a user sees when they re-fly the same stand, and the bias
+    is what makes the sparse case wrong too, only less.
+    """
+
+    def test_sparse_cloud_reads_the_true_height(self):
+        assert abs(np.mean(_height_error(_flat, SPARSE_DENSITY))) < BIAS_TOLERANCE_M
+
+    def test_dense_cloud_reads_the_true_height(self):
+        assert abs(np.mean(_height_error(_flat, DENSE_DENSITY))) < BIAS_TOLERANCE_M
+
+    def test_the_two_densities_read_the_same_height(self):
+        """The headline of #503: the error scales with density."""
+        sparse = np.mean(_height_error(_flat, SPARSE_DENSITY))
+        dense = np.mean(_height_error(_flat, DENSE_DENSITY))
+
+        assert abs(dense - sparse) < DENSITY_DRIFT_TOLERANCE_M
+
+    def test_a_slope_reads_the_true_height(self):
+        """Ground under a slope is still ground, and the same at both densities.
+
+        A cell on a 20% grade spans 0.2 m of relief, so its lowest return is
+        also its most downhill one — a second way for an extreme to sit below
+        the cell rather than on it.
+        """
+        sparse = np.mean(_height_error(_slope, SPARSE_DENSITY))
+        dense = np.mean(_height_error(_slope, DENSE_DENSITY))
+
+        assert abs(dense) < BIAS_TOLERANCE_M
+        assert abs(dense - sparse) < DENSITY_DRIFT_TOLERANCE_M
+
+
+class TestGroundStillFollowsTheTerrain:
+    """Fidelity, held separately from bias so a fix cannot trade one for the other.
+
+    Every assertion here is on the spread of the error rather than its mean. A
+    constant offset moves the mean and leaves the spread alone, so these say
+    only whether the estimate tracks the terrain cell by cell — which is what
+    an estimator that removed the bias by widening a window until it flattened
+    the ground would lose.
+    """
+
+    def test_a_slope_is_followed_cell_by_cell(self):
+        assert np.std(_height_error(_slope, DENSE_DENSITY)) < 0.10
+
+    def test_a_ridge_is_not_smoothed_away(self):
+        """10 m of relief over 40 m, curved rather than planar, so a window
+        wide enough to average the noise away starts cutting the crest."""
+        error = _height_error(_ridge, DENSE_DENSITY)
+
+        assert np.std(error) < 0.10
+        assert np.max(np.abs(error - np.mean(error))) < 0.50
+
+
 class TestDatasetContract:
     """What downstream consumers of a CHM grid rely on."""
 

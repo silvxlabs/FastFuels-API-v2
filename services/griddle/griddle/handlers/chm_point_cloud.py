@@ -245,7 +245,7 @@ def _fetch(
 
         if GROUND_CLASS in point_classes:
             progress("Reading ground returns...", 15)
-            ground = over_blocks("min", classes=(GROUND_CLASS,))
+            ground = over_blocks("mean", classes=(GROUND_CLASS,))
             ground_source = "classification"
         else:
             progress("Deriving ground surface...", 15)

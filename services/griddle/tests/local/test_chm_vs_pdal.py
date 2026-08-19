@@ -7,10 +7,10 @@ them honest: it runs the same cloud through both and reports the difference.
 
 Three comparisons, each on a real 3DEP cloud:
 
-- **ground, classified** — our minimum surface over ASPRS class 2 against
-  ``filters.range`` plus ``writers.gdal`` with ``output_type=min``. Both are a
-  per-cell minimum over the same returns, so agreement should be near exact and
-  any difference is our gap filling.
+- **ground, classified** — our ground surface over ASPRS class 2 against the
+  same returns selected by ``filters.range``. Both are a per-cell mean over the
+  same returns, so agreement should be near exact and any difference is our gap
+  filling.
 - **ground, derived** — our progressive morphological filter against
   ``filters.pmf`` at the same parameters. This is the comparison the handler's
   docstring claims and never checked.
@@ -431,18 +431,34 @@ def _pdal_points(stages, workdir, name, extra_dims=""):
 
 
 def _rasterise(dataset, x, y, values, how):
-    """Put values on our lattice with our own cell assignment and reduction."""
+    """Put values on our lattice with our own cell assignment and reduction.
+
+    `how` is ``"mean"`` for a ground surface and `np.maximum` for a canopy top —
+    the statistic the handler applies to that quantity. Reducing PDAL's points
+    the same way we reduce ours is what keeps the comparison about the algorithm
+    rather than about the choice of statistic.
+    """
     transform = dataset.rio.transform()
     height, width = dataset["chm"].shape
     lattice = (transform.c, transform.f, height, width)
-    fill = np.inf if how is np.minimum else -np.inf
-    raster = np.full(height * width, fill, dtype=np.float32)
+    size = height * width
     index, inside = chm_blocks.cell_indices(
         np.asarray(x), np.asarray(y), lattice, RESOLUTION
     )
-    how.at(raster, index[inside], np.asarray(values)[inside].astype(np.float32))
-    raster[~np.isfinite(raster)] = np.nan
-    return raster.reshape(height, width)
+    index = index[inside]
+    values = np.asarray(values)[inside].astype(np.float64)
+
+    if how == "mean":
+        with np.errstate(invalid="ignore"):
+            raster = np.bincount(index, values, size) / np.bincount(
+                index, minlength=size
+            )
+    else:
+        fill = np.inf if how is np.minimum else -np.inf
+        raster = np.full(size, fill, dtype=np.float64)
+        how.at(raster, index, values)
+        raster[~np.isfinite(raster)] = np.nan
+    return raster.reshape(height, width).astype(np.float32)
 
 
 def _pmf_stage():
@@ -510,12 +526,12 @@ class TestGroundSurface:
     def test_classified_ground_matches_pdal(
         self, cloud_dataset, sample_laz, output_dir, tmp_path
     ):
-        """Same returns, same reduction — so this one has to be exact.
+        """Same returns, same reduction — so this one has to be near exact.
 
-        Nothing algorithmic differs here: both take the lowest class-2 return in
-        each cell. What it checks is the path around that — the Parquet reader,
-        the millimetre coordinate decoding and the cell assignment — against a
-        cloud PDAL read straight from the LAZ.
+        Nothing algorithmic differs here: both take the mean of the class-2
+        returns in each cell. What it checks is the path around that — the
+        Parquet reader, the millimetre coordinate decoding and the cell
+        assignment — against a cloud PDAL read straight from the LAZ.
         """
         dataset, provenance, ground = _run_ours(cloud_dataset, point_classes=[2])
         assert provenance["ground_source"] == "classification"
@@ -528,7 +544,7 @@ class TestGroundSurface:
             tmp_path,
             "ground_classified",
         )
-        theirs = _rasterise(dataset, points.x, points.y, points.z, np.minimum)
+        theirs = _rasterise(dataset, points.x, points.y, points.z, "mean")
 
         stats = _compare("ground_classified", ground, theirs, output_dir, dataset)
         # Ours is gap-filled and PDAL's is not, so ours covers more.
@@ -565,12 +581,18 @@ class TestGroundSurface:
             "ground_pmf",
         )
         print(f"\n  pdal pmf kept {len(points.x):,} ground returns")
-        theirs = _rasterise(dataset, points.x, points.y, points.z, np.minimum)
+        theirs = _rasterise(dataset, points.x, points.y, points.z, "mean")
 
         stats = _compare("ground_derived", ground, theirs, output_dir, dataset)
         # Measured 0.00 / 0.04 / 0.285 / 98.3%; these sit just above that, so a
         # real drift in the filter shows up rather than hiding under slack.
-        assert stats["median_abs"] == 0.0
+        #
+        # The median is a bound rather than an equality, which it could be while
+        # both sides took a per-cell minimum: the two pick their ground returns
+        # differently — our snap against `filters.pmf`'s classification — and a
+        # mean over sets that differ by one return is close, not identical. It
+        # measured 0.009 m.
+        assert stats["median_abs"] < 0.02
         assert stats["p95_abs"] < 0.06
         assert stats["rmse"] < 0.35
         assert stats["within_10cm"] > 0.98

@@ -466,6 +466,10 @@ def handle_canopy(
                 target_grid_doc=target_grid_doc,
                 progress=progress,
                 extent_buffer_cells=extent_buffer_cells,
+                # Absent on grids created before the control existed, which
+                # were built with the filter on at its defaults. An explicit
+                # null is the user turning it off.
+                spike_filter=source.get("spike_filter", {}),
             )
             # How ground was obtained, and how well constrained it was. Without
             # this a derived-ground CHM over a large building looks like a

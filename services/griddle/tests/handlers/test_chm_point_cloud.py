@@ -69,16 +69,28 @@ def _roi(size: float = 4.0) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(geometry=[box(0.0, 0.0, size, size)], crs=CRS)
 
 
-def _flat_ground(size: int = 4, elevation: float = 10.0):
-    """One ground return at the centre of every cell of a `size`x`size` grid."""
+def _flat_ground(size: int = 4, elevation: float = 10.0, resolution: float = 1.0):
+    """One ground return at the centre of every cell of a `size`x`size` grid.
+
+    `resolution` is the cell size the grid will be rasterised at, so a fixture
+    stays one return per cell at any resolution.
+    """
     xs, ys, zs, classes = [], [], [], []
     for row in range(size):
         for col in range(size):
-            xs.append(col + 0.5)
-            ys.append(size - row - 0.5)
+            xs.append((col + 0.5) * resolution)
+            ys.append((size - row - 0.5) * resolution)
             zs.append(elevation)
             classes.append(2)
     return xs, ys, zs, classes
+
+
+# What the API stores on `source.spike_filter` for a request that asked for
+# nothing, so a test that says nothing about it runs the shipped behaviour.
+_DEFAULT_SPIKE_FILTER = {
+    "min_canopy_footprint_m": chm_point_cloud.MIN_CANOPY_FOOTPRINT_M,
+    "min_prominence_m": chm_point_cloud.SPIKE_THRESHOLD_M,
+}
 
 
 def _target_grid(transform, shape, crs=CRS):
@@ -95,6 +107,7 @@ def _run(
     target_grid_doc=None,
     extent_buffer_cells=0,
     block_cells=None,
+    spike_filter=_DEFAULT_SPIKE_FILTER,
 ):
     # Storage and the dataset handle are stubbed so the algorithm runs without
     # GCS. `block_cells` forces a blocking; left alone the handler picks one.
@@ -123,6 +136,7 @@ def _run(
             target_grid_doc=target_grid_doc,
             progress=lambda message, percent=None: None,
             extent_buffer_cells=extent_buffer_cells,
+            spike_filter=spike_filter,
         )
 
 
@@ -223,6 +237,150 @@ class TestOutlierHandling:
         ds, _ = _run(_chunks(x, y, z, c), [2, 5])
 
         assert ds["chm"].values[0, :3] == pytest.approx(14.0)
+
+    @pytest.mark.parametrize("resolution", [1.0, 2.0])
+    def test_spike_is_removed_wherever_a_cell_is_narrower_than_a_crown(
+        self, resolution
+    ):
+        """The rule holds while a cell cannot hold a crown, not just at 1 m."""
+        x, y, z, c = _flat_ground(resolution=resolution)
+        x = [*x, resolution / 2]
+        y = [*y, 4 * resolution - resolution / 2]
+        z, c = [*z, 10.0 + 40.0], [*c, 1]
+
+        ds, _ = _run(
+            _chunks(x, y, z, c),
+            [1, 2],
+            resolution=resolution,
+            roi=_roi(size=4 * resolution),
+        )
+
+        assert np.isnan(ds["chm"].values[0, 0])
+
+    def test_the_filter_can_be_turned_off(self):
+        """`spike_filter: null` keeps every return, spurious ones included."""
+        x, y, z, c = _flat_ground()
+        x, y, z, c = [*x, 0.5], [*y, 3.5], [*z, 10.0 + 40.0], [*c, 1]
+
+        ds, _ = _run(_chunks(x, y, z, c), [1, 2], spike_filter=None)
+
+        assert ds["chm"].values[0, 0] == pytest.approx(40.0)
+
+    def test_footprint_reaches_coarse_cells_when_asked(self):
+        """The metre-sized footprint is the knob for the coarse case.
+
+        The default declines to judge a 30 m cell because one holds a stand. A
+        user who knows their cloud carries noise and their stands do not look
+        like this can say so.
+        """
+        x, y, z, c = _flat_ground(resolution=30.0)
+        x, y, z, c = [*x, 15.0], [*y, 105.0], [*z, 10.0 + 35.0], [*c, 5]
+
+        ds, _ = _run(
+            _chunks(x, y, z, c),
+            [2, 5],
+            resolution=30.0,
+            roi=_roi(size=120.0),
+            spike_filter={"min_canopy_footprint_m": 60.0, "min_prominence_m": 25.0},
+        )
+
+        assert np.isnan(ds["chm"].values[0, 0])
+
+    def test_prominence_can_be_lowered_to_catch_shorter_spikes(self):
+        """A 15 m lone return survives the default and not a 10 m prominence."""
+        x, y, z, c = _flat_ground()
+        x, y, z, c = [*x, 0.5], [*y, 3.5], [*z, 10.0 + 15.0], [*c, 1]
+
+        kept, _ = _run(_chunks(x, y, z, c), [1, 2])
+        dropped, _ = _run(
+            _chunks(x, y, z, c),
+            [1, 2],
+            spike_filter={"min_canopy_footprint_m": 3.0, "min_prominence_m": 10.0},
+        )
+
+        assert kept["chm"].values[0, 0] == pytest.approx(15.0)
+        assert np.isnan(dropped["chm"].values[0, 0])
+
+    @pytest.mark.parametrize("resolution", [5.0, 10.0, 30.0])
+    def test_isolated_stand_survives_where_a_cell_is_wider_than_a_crown(
+        self, resolution
+    ):
+        """One tall cell in a bare surround is a stand once cells are coarse.
+
+        The same raster shape means different things at different cell sizes:
+        at 1 m it needs a crown narrower than a metre to arise, which is what
+        makes it noise, while at 30 m it is 900 m2 of canopy in bare
+        surroundings -- a shelterbelt, a grove, a riparian stringer. Height
+        alone cannot separate the two, so the rule stops applying rather than
+        deleting the stand (#485).
+        """
+        x, y, z, c = _flat_ground(resolution=resolution)
+        x = [*x, resolution / 2]
+        y = [*y, 4 * resolution - resolution / 2]
+        z, c = [*z, 10.0 + 35.0], [*c, 5]
+
+        ds, _ = _run(
+            _chunks(x, y, z, c),
+            [2, 5],
+            resolution=resolution,
+            roi=_roi(size=4 * resolution),
+        )
+
+        assert ds["chm"].values[0, 0] == pytest.approx(35.0)
+
+
+class TestSpikeFootprint:
+    """The spike rule is sized in metres, like the fill and the PMF windows."""
+
+    @pytest.mark.parametrize(
+        "resolution,expected",
+        [(0.5, 7), (1.0, 3), (2.0, 3), (3.0, 0), (5.0, 0), (10.0, 0), (30.0, 0)],
+    )
+    def test_window_spans_the_narrowest_real_crown(self, resolution, expected):
+        """A window covering `MIN_CANOPY_FOOTPRINT_M`, or none at all.
+
+        Zero means a single cell is already wider than any crown that could
+        produce the feature, so isolation carries no information and the rule
+        does not run.
+        """
+        footprint = chm_point_cloud.MIN_CANOPY_FOOTPRINT_M
+
+        assert chm_point_cloud._spike_window_cells(footprint, resolution) == expected
+
+    def test_a_wider_window_judges_isolation_over_the_same_distance(self):
+        """Finer cells widen the window rather than shrinking what it sees.
+
+        At 0.5 m cells the window is 7, so a cell is only isolated if nothing
+        within 1.5 m of it is tall -- the same physical reach a 3-cell window
+        has at 1 m. A canopy return two cells away would be outside a 3-cell
+        window and is inside this one.
+        """
+        chm = np.zeros((7, 7), dtype=np.float32)
+        chm[3, 3] = 40.0
+        window = chm_point_cloud._spike_window_cells(
+            chm_point_cloud.MIN_CANOPY_FOOTPRINT_M, 0.5
+        )
+
+        alone = chm_point_cloud._remove_spikes(
+            chm, threshold=chm_point_cloud.SPIKE_THRESHOLD_M, window=window
+        )
+        with_canopy = chm.copy()
+        with_canopy[3, 5] = 20.0
+        accompanied = chm_point_cloud._remove_spikes(
+            with_canopy, threshold=chm_point_cloud.SPIKE_THRESHOLD_M, window=window
+        )
+
+        assert np.isnan(alone[3, 3])
+        assert accompanied[3, 3] == pytest.approx(40.0)
+
+    def test_no_window_leaves_the_raster_untouched(self):
+        chm = np.array([[0.0, 0.0, 0.0], [0.0, 40.0, 0.0], [0.0, 0.0, 0.0]])
+
+        despiked = chm_point_cloud._remove_spikes(
+            chm, threshold=chm_point_cloud.SPIKE_THRESHOLD_M, window=0
+        )
+
+        assert despiked == pytest.approx(chm)
 
 
 class TestGroundSource:

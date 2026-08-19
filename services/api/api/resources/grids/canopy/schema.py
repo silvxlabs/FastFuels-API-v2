@@ -209,6 +209,41 @@ class PointCloudGround(BaseModel):
     )
 
 
+class ChmSpikeFilter(BaseModel):
+    """Removal of lone spurious returns from a point-cloud canopy height model.
+
+    A cell takes the tallest return that falls in it, so one bad return — a
+    bird, haze, a multiple-time-around artifact — becomes the cell's height
+    unless the cloud classified it as noise. Many do not.
+
+    Such a return leaves a shape real canopy cannot: a single cell towering
+    over everything around it. Both fields are the two halves of that shape, in
+    meters, so they mean the same thing at any `alignment.resolution`.
+    """
+
+    min_canopy_footprint_m: float = Field(
+        default=3.0,
+        gt=0,
+        description=(
+            "Narrowest ground footprint real canopy can occupy, in meters. A "
+            "cell is judged against everything within this distance, and only "
+            "a cell narrower than it can be rejected — so the filter does not "
+            "run at all once `alignment.resolution` reaches this value, where "
+            "one cell holds a stand rather than a crown."
+        ),
+    )
+    min_prominence_m: float = Field(
+        default=25.0,
+        gt=0,
+        description=(
+            "How far above every neighbour a cell must rise to be rejected, in "
+            "meters. Measured noise returns stood 40-80 m above their "
+            "surroundings; a real crown's peak is within a few meters of the "
+            "cells beside it."
+        ),
+    )
+
+
 class PointCloudChmSource(CanopySource):
     """Source for a canopy height model rasterized from a point cloud.
 
@@ -240,6 +275,13 @@ class PointCloudChmSource(CanopySource):
             "finishes processing; `null` before then."
         ),
     )
+    spike_filter: ChmSpikeFilter | None = Field(
+        default=None,
+        description=(
+            "Spurious-return removal this grid was built with, resolved from "
+            "the request. `null` means the grid was built without it."
+        ),
+    )
 
 
 class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
@@ -255,6 +297,14 @@ class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
 
     source_point_cloud_id: str = Field(
         description="ID of the point cloud to rasterize. Must be an ALS cloud in this domain."
+    )
+    spike_filter: ChmSpikeFilter | None = Field(
+        default_factory=ChmSpikeFilter,
+        description=(
+            "Removal of lone spurious returns. Omit for the defaults; send "
+            "`null` to keep every return, leaving unclassified noise in the "
+            "grid."
+        ),
     )
 
 

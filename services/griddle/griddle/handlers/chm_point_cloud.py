@@ -84,18 +84,33 @@ PMF_SLOPE = 1.0
 PMF_INITIAL_DISTANCE_M = 0.15
 PMF_MAX_DISTANCE_M = 2.5
 
-# A cell whose height exceeds *every* neighbour by more than this is a lone
-# spurious return rather than a treetop. Applied to the finished raster so the
+# Default `spike_filter.min_prominence_m`. A cell whose height exceeds *every*
+# neighbour by more than this is a lone spurious return rather than a treetop. Applied to the finished raster so the
 # band stays a true maximum.
 #
 # The threshold sits deliberately high. Measured noise returns stood 40-80 m
 # above their surroundings, while a real crown spans several cells so its peak
 # is within a few metres of its neighbours. Setting it near canopy scale would
 # delete isolated trees, which are real fuel — a lone 15 m tree in a meadow is
-# a one-cell spike by any tighter rule. The residual risk is a single-cell tree
-# more than this much taller than everything around it, which needs a crown
-# narrower than one cell to arise.
+# a one-cell spike by any tighter rule.
 SPIKE_THRESHOLD_M = 25.0
+
+# Default `spike_filter.min_canopy_footprint_m`: the narrowest ground footprint
+# canopy can occupy, and so how far around a cell the rule above looks for it. This is what makes that rule a statement
+# about shape rather than height: a cell towering over everything within a
+# crown's width of it has no crown that could have produced it, which is the
+# only thing separating a spike from a treetop — a real treetop is a local
+# maximum too, and height statistics alone cannot tell the two apart (#428).
+#
+# In metres, converted to cells at run time, for the reason `_pmf` gives about
+# its windows. "A real crown spans several cells" is a claim about the cell,
+# not the crown, and it fails as cells grow: at 30 m the identical raster shape
+# is 900 m2 of canopy in bare surroundings — a shelterbelt, a grove, a riparian
+# stringer — and deleting it loses real fuel (#485). Where one cell already
+# spans this footprint the rule has nothing left to decide on and does not run;
+# a spurious return there has to be dropped in the point domain, before the
+# cell maximum (#502), because no raster rule can see past the maximum.
+MIN_CANOPY_FOOTPRINT_M = 3.0
 
 # What the shared alignment resolver falls back to when `target="domain"` names
 # no resolution. The API resolves that default at create time and stores it, so
@@ -118,6 +133,7 @@ def fetch_point_cloud_chm(
     progress: Callable[[str, int | None], None],
     target_grid_doc: dict | None = None,
     extent_buffer_cells: int = 0,
+    spike_filter: dict | None = None,
 ) -> tuple[xr.Dataset, dict]:
     """Build a canopy height model from a stored point cloud.
 
@@ -144,6 +160,8 @@ def fetch_point_cloud_chm(
         target_grid_doc: Grid document named by ``alignment.grid_id``, required
             when ``alignment.target`` is ``"grid"``.
         extent_buffer_cells: Output cells of buffer around the extent.
+        spike_filter: Persisted ``source.spike_filter``, deciding how lone
+            spurious returns are removed. ``None`` keeps every return.
 
     Returns:
         Tuple of (Dataset with the ``chm`` variable, provenance dict recording
@@ -162,6 +180,7 @@ def fetch_point_cloud_chm(
             progress,
             target_grid_doc,
             extent_buffer_cells,
+            spike_filter,
         )
 
 
@@ -173,6 +192,7 @@ def _fetch(
     progress: Callable[[str, int | None], None],
     target_grid_doc: dict | None,
     extent_buffer_cells: int,
+    spike_filter: dict | None,
 ) -> tuple[xr.Dataset, dict]:
     """Body of `fetch_point_cloud_chm`, under a pinned dask thread pool."""
     transform, (height, width) = _resolve_lattice(
@@ -184,12 +204,20 @@ def _fetch(
     prefix = cloud_prefix(POINT_CLOUDS_BUCKET, point_cloud_id)
     manifest = read_manifest(prefix)
     fill_cells = _fill_cells(resolution)
+    footprint_m = (spike_filter or {}).get(
+        "min_canopy_footprint_m", MIN_CANOPY_FOOTPRINT_M
+    )
+    prominence_m = (spike_filter or {}).get("min_prominence_m", SPIKE_THRESHOLD_M)
+    spike_window = (
+        0 if spike_filter is None else _spike_window_cells(footprint_m, resolution)
+    )
     # The widest halo any step needs, which is what the blocking has to be able
     # to feed. PMF only runs for a cloud with no ground class, so a classified
     # cloud is not charged for its much wider reach.
     halo_cells = max(
         fill_cells,
         int(np.ceil(GROUND_DISTANCE_CAP_M / resolution)),
+        spike_window // 2,
         0 if GROUND_CLASS in point_classes else _pmf_depth_cells(resolution),
     )
     tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
@@ -299,17 +327,19 @@ def _fetch(
             extra_for=lambda bl: _ground_window(ground, transform, bl, resolution),
         )
 
-    blocked_chm = da.from_array(chm, chunks=block_chunks)
-    chm = np.asarray(
-        da.map_overlap(
-            _remove_spikes,
-            blocked_chm,
-            depth=_overlap_depth(blocked_chm, 1),
-            boundary="none",
-            dtype=np.float32,
-            threshold=SPIKE_THRESHOLD_M,
-        ).compute()
-    )
+    if spike_window:
+        blocked_chm = da.from_array(chm, chunks=block_chunks)
+        chm = np.asarray(
+            da.map_overlap(
+                _remove_spikes,
+                blocked_chm,
+                depth=_overlap_depth(blocked_chm, spike_window // 2),
+                boundary="none",
+                dtype=np.float32,
+                threshold=prominence_m,
+                window=spike_window,
+            ).compute()
+        )
 
     if not np.isfinite(chm).any():
         raise ProcessingError(
@@ -774,14 +804,45 @@ def _fill_gaps(surface: np.ndarray, max_cells: int) -> np.ndarray:
     return filled
 
 
-def _remove_spikes(chm: np.ndarray, threshold: float) -> np.ndarray:
-    """Drop cells that tower over every neighbour by more than `threshold`.
+def _spike_window_cells(footprint_m: float, resolution: float) -> int:
+    """`footprint_m` as an odd window of cells, or zero.
+
+    Zero where a single cell already spans that footprint: the rule asks
+    whether a feature is narrower than a crown, and at that cell size nothing
+    is, so it has no question left to answer. `_remove_spikes` returns its
+    input unchanged for a zero window and the caller skips the pass.
+
+    Rounded to odd so the window centres on the cell it judges, and floored at
+    3 so it always reaches past that cell.
+    """
+    if resolution >= footprint_m:
+        return 0
+    cells = max(3, round(footprint_m / resolution))
+    return cells + 1 if cells % 2 == 0 else cells
+
+
+def _remove_spikes(chm: np.ndarray, threshold: float, window: int) -> np.ndarray:
+    """Drop cells towering over every neighbour within `window` by `threshold`.
+
+    `window` spans `MIN_CANOPY_FOOTPRINT_M`, so the comparison is against every
+    cell a crown tall enough to explain the height would have reached into. A
+    zero window means a cell is already that wide and the raster cannot tell a
+    spike from a stand, so nothing is removed.
+
+    A rejected cell becomes nodata rather than a neighbour-derived height. It
+    is not known to hold canopy — its only tall return was spurious and the
+    raster cannot say what, if anything, is under it — so filling one in would
+    manufacture fuel the returns do not support. The cost that argued for
+    filling, NaN suppressing local maxima in the ITD window (#430), is paid at
+    the consumer: `standgen.handlers.chm` fills nodata with 0 before detection.
 
     The footprint excludes its own centre so the comparison is against the
     neighbours alone, and `cval=-inf` keeps the frame from wrapping around.
     """
-    footprint = np.ones((3, 3), dtype=bool)
-    footprint[1, 1] = False
+    if window < 3:
+        return chm
+    footprint = np.ones((window, window), dtype=bool)
+    footprint[window // 2, window // 2] = False
     filled = np.where(np.isnan(chm), -np.inf, chm)
     neighbour_max = maximum_filter(
         filled, footprint=footprint, mode="constant", cval=-np.inf

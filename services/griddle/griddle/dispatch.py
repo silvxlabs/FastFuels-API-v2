@@ -152,6 +152,7 @@ def handle_landfire(
             version = source.get("version", LANDFIRE_VERSIONS["fbfm40"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
+            season = source.get("season")
             return landfire.fetch_fbfm40(
                 domain_gdf,
                 version,
@@ -159,6 +160,8 @@ def handle_landfire(
                 extent_buffer_cells=extent_buffer_cells,
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
+                season=season,
+                progress=progress,
             )
         case "fccs":
             version = source.get("version", LANDFIRE_VERSIONS["fccs"]["default"])

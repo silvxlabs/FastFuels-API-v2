@@ -366,6 +366,42 @@ class TestResponseModels:
         assert r.data.indices == [0, 1, 2, 3, 4, 5]
         assert r.data.values == [1, 2, 3, 4, 5, 6]
 
+    def test_dense_data_response_model_accepts_null_values(self):
+        # Nodata cells are null: NaN has no JSON representation (issue #487).
+        r = GridDataResponse(
+            shape=[1, 3],
+            order="C",
+            metadata=GridDataChunkMetadata(
+                index=0,
+                shape=(1, 3),
+                offset=(0, 0),
+                transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+            ),
+            data={"format": "dense", "values": [1.5, None, 3.5]},
+        )
+        assert isinstance(r.data, DenseGridData)
+        assert r.data.values == [1.5, None, 3.5]
+
+    def test_sparse_data_response_model_accepts_null_values(self):
+        r = GridDataResponse(
+            shape=[1, 3],
+            order="C",
+            metadata=GridDataChunkMetadata(
+                index=0,
+                shape=(1, 3),
+                offset=(0, 0),
+                transform=(30.0, 0.0, 500000.0, 0.0, -30.0, 5200000.0),
+            ),
+            data={
+                "format": "sparse",
+                "fill_value": None,
+                "indices": [0, 1, 2],
+                "values": [1.5, None, 3.5],
+            },
+        )
+        assert isinstance(r.data, SparseGridData)
+        assert r.data.values == [1.5, None, 3.5]
+
     def test_array_format_enum(self):
         assert GridDataArrayFormat.dense == "dense"
         assert GridDataArrayFormat.sparse == "sparse"

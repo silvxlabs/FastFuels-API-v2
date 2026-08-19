@@ -20,10 +20,12 @@ from api.resources.grids.canopy.inventory.schema import (
     CanopyCbdLoadOverDepth,
     CanopyCbdRunningMean,
     CanopyCcCrownUnion,
+    CanopyCrownWidthEquations,
     CanopyFuelcalcCrownClassAdjustment,
     CanopyHorizontalDistribution,
     CanopyNoCrownClassAdjustment,
     CanopyProfileThreshold,
+    CanopyRunningMeanEdge,
     CanopySpeciesInclusion,
     CanopyVerticalDistribution,
     CreateInventoryCanopyRequest,
@@ -614,3 +616,15 @@ class TestOpenApiExamples:
         )
         assert req.horizontal_distribution is CanopyHorizontalDistribution.stem
         assert req.cc.method == "crown_overlap"
+        assert req.max_crown_radius_source.equations is (
+            CanopyCrownWidthEquations.crookston_stage
+        )
+        # FuelCalc reduces CBD and locates both threshold heights over
+        # the same 5 ft ground-clamped running mean. Omitting either the
+        # window or its edge convention moves a reported height by a
+        # layer, so parity needs all four settings, not just the window.
+        assert req.cbd.window == pytest.approx(1.524)
+        assert req.cbd.edge is CanopyRunningMeanEdge.ground_clamped
+        for band in (req.cbh, req.chm):
+            assert band.smoothing_window == pytest.approx(1.524)
+            assert band.smoothing_edge is CanopyRunningMeanEdge.ground_clamped

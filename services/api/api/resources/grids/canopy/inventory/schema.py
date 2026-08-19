@@ -43,9 +43,8 @@ from api.resources.grids.canopy.schema import (
 from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 from api.resources.grids.voxelize.inventory.tree.schema import (
-    AllometryMaxCrownRadiusSource,
     BiomassUnit,
-    MaxCrownRadiusSource,
+    InventoryColumnMaxCrownRadiusSource,
 )
 
 # Cell size applied when the request's domain-target alignment omits
@@ -111,6 +110,52 @@ class CanopyBiomassEquations(StrEnum):
     nsvb = "nsvb"
     jenkins = "jenkins"
     brown_1978 = "brown_1978"
+
+
+class CanopyCrownWidthEquations(StrEnum):
+    """Allometric equation families for a tree's maximum crown radius.
+
+    ``purves`` (Purves et al. 2007) is the national default and the one
+    the tree voxelization endpoint uses; it varies with height and
+    crown ratio as well as diameter. ``crookston_stage`` (Crookston &
+    Stage 1999, RMRS-GTR-24, reached through FVS) is the crown width
+    behind FuelCalc's canopy cover — diameter alone above breast
+    height, with regionally fitted coefficients — and is offered for
+    compatibility studies.
+    """
+
+    purves = "purves"
+    crookston_stage = "crookston_stage"
+
+
+class CanopyAllometryMaxCrownRadiusSource(BaseModel):
+    """Compute each tree's maximum crown radius from allometric equations.
+
+    Supersets the voxelize allometry source with an `equations` choice,
+    because canopy cover and crown biomass are separate axes here: which
+    allometry supplies the radius is independent of how a cover method
+    treats crowns that overlap, so a run can vary either without
+    confounding the other.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["allometry"] = "allometry"
+    equations: CanopyCrownWidthEquations = Field(
+        default=CanopyCrownWidthEquations.purves,
+        description=(
+            "Allometric equation family for maximum crown radius. "
+            "`purves` is the national default, consistent with the tree "
+            "voxelization endpoint. `crookston_stage` reproduces the "
+            "crown widths FuelCalc uses for canopy cover."
+        ),
+    )
+
+
+CanopyMaxCrownRadiusSource = Annotated[
+    CanopyAllometryMaxCrownRadiusSource | InventoryColumnMaxCrownRadiusSource,
+    Field(discriminator="type"),
+]
 
 
 class AllometryCanopyBiomassSource(BaseModel):
@@ -328,6 +373,31 @@ class CanopyHorizontalDistribution(StrEnum):
     stem = "stem"
 
 
+class CanopyRunningMeanEdge(StrEnum):
+    """What a running mean takes to lie past the ends of the profile.
+
+    The three answers in use agree everywhere except the lowest and
+    highest few layers, which is exactly where the threshold heights are
+    read, so the choice can move a reported `cbh` or `chm` by a layer
+    and shift `cbd` in a canopy that reaches the ground.
+
+    `fixed_depth` divides by the window depth at every height, padding
+    with zeros at both ends, so a slab of fuel reports the same bulk
+    density wherever it sits — the reading Reinhardt et al. (2006)
+    define. `ground_clamped` shortens the window where it would run
+    below the ground and divides by what it actually covered, while
+    still dividing by the full depth above the canopy; this is
+    FuelCalc's, and it concentrates density against the ground while
+    letting it fall away above the crowns. `truncated` divides by
+    whatever the window covered at either end, which is FFE-FVS's and
+    inflates the topmost layers.
+    """
+
+    fixed_depth = "fixed_depth"
+    ground_clamped = "ground_clamped"
+    truncated = "truncated"
+
+
 class CanopyCbdDepth(StrEnum):
     """Depth definitions for the load-over-depth CBD method.
 
@@ -366,9 +436,19 @@ class CanopyCbdRunningMean(BaseModel):
     window: Annotated[float, Field(gt=0.0, le=15.0)] | None = Field(
         default=3.0,
         description=(
-            "Running-mean window depth in meters, converted internally to an "
-            "odd number of layers. `null` disables smoothing, making CBD the "
-            "maximum single-layer value."
+            "Running-mean window depth in meters, rounded internally to a "
+            "whole number of profile layers. `null` disables smoothing, "
+            "making CBD the maximum single-layer value."
+        ),
+    )
+    edge: CanopyRunningMeanEdge = Field(
+        default=CanopyRunningMeanEdge.ground_clamped,
+        description=(
+            "What the mean takes to lie past the ends of the profile. "
+            "Ignored when `window` is `null`. `fixed_depth` is the reading "
+            "that pairs with the 3.0 m Reinhardt et al. (2006) window; "
+            "`ground_clamped` is FuelCalc's and is what its 1.524 m window "
+            "reproduces."
         ),
     )
 
@@ -405,9 +485,10 @@ class CanopyProfileThreshold(BaseModel):
     threshold is ``min(relative_threshold_fraction * CBD_max, threshold)``
     — FuelCalc's rule, in which the relative branch engages whenever the
     cell's maximum profile density is below threshold / fraction (0.12
-    kg/m**3 at the defaults). `CBD_max` is the raw single-layer maximum of
-    the profile (FuelCalc Appendix D's reading), independent of the `cbd`
-    band's smoothing window.
+    kg/m**3 at the defaults). `CBD_max` is the maximum of the profile
+    this method scans, so `smoothing_window` changes it; it is
+    independent of the `cbd` band's own window, which is a separate
+    setting.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -437,10 +518,21 @@ class CanopyProfileThreshold(BaseModel):
         default=None,
         description=(
             "Running-mean window in meters applied to the profile before "
-            "locating threshold crossings. Default `null` reads raw "
-            "layers, matching FuelCalc 1.7. FFE-FVS crosses a 0.9144 m "
-            "(3 ft) running mean; the original FuelCalc method (RMRS-P-41) "
-            "crosses its full 4.572 m (15 ft) CBD smoothing window."
+            "locating threshold crossings. `null` reads raw layers. "
+            "FuelCalc 1.7 crosses a 1.524 m (5 ft) running mean, the same "
+            "window it reduces CBD over; FFE-FVS crosses 0.9144 m (3 ft); "
+            "the original FuelCalc method (RMRS-P-41) crosses its full "
+            "4.572 m (15 ft) window."
+        ),
+    )
+    smoothing_edge: CanopyRunningMeanEdge = Field(
+        default=CanopyRunningMeanEdge.ground_clamped,
+        description=(
+            "What the smoothing mean takes to lie past the ends of the "
+            "profile. Ignored when `smoothing_window` is `null`. "
+            "`truncated` is FFE-FVS's and reports `chm` a layer higher on "
+            "the same profile, because dividing the topmost window by a "
+            "short denominator carries it over the threshold."
         ),
     )
 
@@ -609,12 +701,14 @@ class InventoryCanopySourceBase(BaseModel):
             "its crown projects onto (default), or wholly to the stem cell."
         ),
     )
-    max_crown_radius_source: MaxCrownRadiusSource = Field(
-        default_factory=AllometryMaxCrownRadiusSource,
+    max_crown_radius_source: CanopyMaxCrownRadiusSource = Field(
+        default_factory=CanopyAllometryMaxCrownRadiusSource,
         description=(
             "Source of each tree's maximum crown radius, used by "
             "`crown_projected` attribution and the geometric canopy cover "
-            "methods. Defaults to the allometric value; use "
+            "methods. Defaults to the `purves` allometry; set "
+            '`{"type": "allometry", "equations": "crookston_stage"}` for '
+            "the crown widths FuelCalc uses, or "
             '`{"type": "inventory_column", "column": ...}` to read a '
             "per-tree radius in meters (e.g. derived from LiDAR)."
         ),

@@ -56,7 +56,22 @@ EXAMPLE_INVENTORY_CANOPY_FUELCALC_COMPARISON = {
         "missing_crown_class": "other_none",
     },
     "horizontal_distribution": "stem",
-    "cbd": {"method": "maximum_running_mean", "window": 1.524},
+    "max_crown_radius_source": {"type": "allometry", "equations": "crookston_stage"},
+    "cbd": {
+        "method": "maximum_running_mean",
+        "window": 1.524,
+        "edge": "ground_clamped",
+    },
+    "cbh": {
+        "method": "bulk_density_threshold",
+        "smoothing_window": 1.524,
+        "smoothing_edge": "ground_clamped",
+    },
+    "chm": {
+        "method": "bulk_density_threshold",
+        "smoothing_window": 1.524,
+        "smoothing_edge": "ground_clamped",
+    },
     "cc": {"method": "crown_overlap"},
 }
 

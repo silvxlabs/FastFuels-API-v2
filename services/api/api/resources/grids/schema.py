@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
@@ -347,17 +347,52 @@ class GridDataChunkMetadata(BaseModel):
     z_origin: float | None = None
     z_resolution: float | None = None
 
+    @model_serializer(mode="wrap")
+    def _drop_z_fields_for_2d(self, handler) -> dict[str, Any]:
+        """Omit `z_origin` / `z_resolution` for a 2D chunk, which has no z axis.
+
+        The data routes used to get this from `response_model_exclude_none=True`,
+        but that drops *every* null in the response — including a sparse read's
+        null `fill_value`, which a client needs to see to tell a null fill from
+        a field the API failed to send (issue #487). Carrying the rule here
+        keeps it to the two fields it was meant for.
+        """
+        data = handler(self)
+        if self.z_origin is None:
+            data.pop("z_origin", None)
+        if self.z_resolution is None:
+            data.pop("z_resolution", None)
+        return data
+
 
 class DenseGridData(BaseModel):
     format: Literal["dense"]
-    values: list[float | int]
+    values: list[float | int | None] = Field(
+        description=(
+            "Flat list of every cell in the chunk. `null` marks a cell with no "
+            "data — a float band stores those as NaN, which JSON cannot "
+            "represent."
+        )
+    )
 
 
 class SparseGridData(BaseModel):
     format: Literal["sparse"]
-    fill_value: float | int | None
+    fill_value: float | int | None = Field(
+        description=(
+            "The band's fill value; cells holding it are omitted from "
+            "`indices`. `null` when the fill is nodata (a float band's NaN) or "
+            "the band declares none."
+        )
+    )
     indices: list[int]
-    values: list[float | int]
+    values: list[float | int | None] = Field(
+        description=(
+            "Values of the cells named by `indices`. `null` marks a cell with "
+            "no data, which only arises when the band declares no fill value "
+            "and so every cell is listed."
+        )
+    )
 
 
 class GridDataResponse(BaseModel):

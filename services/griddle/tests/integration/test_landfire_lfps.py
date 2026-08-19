@@ -11,6 +11,7 @@ import json
 import geopandas as gpd
 import pytest
 from griddle.handlers import landfire
+
 from lib.landfire import list_products
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 

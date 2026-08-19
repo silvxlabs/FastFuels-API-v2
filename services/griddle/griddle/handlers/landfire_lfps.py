@@ -24,7 +24,13 @@ from shapely.geometry import box
 
 from lib.alignment import resolve_alignment_destination
 from lib.errors import ProcessingError
-from lib.landfire import SEASON_CODES, LfpsJobFailedError, download, poll_status, submit_job
+from lib.landfire import (
+    SEASON_CODES,
+    LfpsJobFailedError,
+    download,
+    poll_status,
+    submit_job,
+)
 
 # Policy knobs for the LFPS submit/poll loop -- specific to this module's
 # orchestration, not the LFPS client itself.
@@ -84,7 +90,7 @@ def _lfps_layer_name(product: str, version: str, season: str | None = None) -> s
     if product != "FBFM40":
         raise ProcessingError(
             code="SEASONAL_NOT_SUPPORTED",
-            message = f"LANDFIRE Seasonal Fuels only publishes FBFM40, not {product!r}.",
+            message=f"LANDFIRE Seasonal Fuels only publishes FBFM40, not {product!r}.",
         )
     if season not in SEASON_CODES:
         raise ProcessingError(

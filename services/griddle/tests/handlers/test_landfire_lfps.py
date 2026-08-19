@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import pytest
-
 from griddle.handlers.landfire_lfps import _lfps_layer_name, fetch_lfps
+
 from lib.errors import ProcessingError
 from lib.landfire import LfpsJob, LfpsJobFailedError
 from lib.testing import SHARED_TEST_DOMAINS_DIR
@@ -101,7 +101,9 @@ class TestFetchLfps:
         mock_poll.side_effect = [
             LfpsJob(job_id="job-1", status="Executing"),
             LfpsJob(job_id="job-1", status="Executing"),
-            LfpsJob(job_id="job-1", status="Succeeded", output_file="https://x/job-1.zip"),
+            LfpsJob(
+                job_id="job-1", status="Succeeded", output_file="https://x/job-1.zip"
+            ),
         ]
         mock_download.return_value = _make_zip("result.tif")
 

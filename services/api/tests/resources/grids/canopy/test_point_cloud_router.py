@@ -102,6 +102,68 @@ class TestCreatePointCloudChm:
         assert response.status_code == 201, response.text
 
 
+class TestSpikeFilter:
+    """Removal of lone spurious returns, and turning it off."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/canopy/point_cloud"
+
+    def test_defaults_are_resolved_and_persisted(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        """Stored resolved, like `alignment.resolution`, so the grid is a record."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"source_point_cloud_id": als_point_cloud["id"]},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["source"]["spike_filter"] == {
+            "min_canopy_footprint_m": 3.0,
+            "min_prominence_m": 25.0,
+        }
+
+    def test_null_turns_it_off(self, client, domain_for_testing, als_point_cloud):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "spike_filter": None,
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["source"]["spike_filter"] is None
+
+    def test_values_are_persisted(self, client, domain_for_testing, als_point_cloud):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "spike_filter": {"min_canopy_footprint_m": 30.0},
+            },
+        )
+
+        assert response.status_code == 201
+        assert response.json()["source"]["spike_filter"] == {
+            "min_canopy_footprint_m": 30.0,
+            "min_prominence_m": 25.0,
+        }
+
+    def test_non_positive_distance_returns_422(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "spike_filter": {"min_prominence_m": 0},
+            },
+        )
+
+        assert response.status_code == 422
+
+
 class TestSourcePointCloudValidation:
     """Rejections that keep a doomed request from becoming a failed grid."""
 

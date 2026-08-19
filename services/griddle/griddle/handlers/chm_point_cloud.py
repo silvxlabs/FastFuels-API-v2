@@ -84,8 +84,8 @@ PMF_SLOPE = 1.0
 PMF_INITIAL_DISTANCE_M = 0.15
 PMF_MAX_DISTANCE_M = 2.5
 
-# A cell whose height exceeds *every* neighbour by more than this is a lone
-# spurious return rather than a treetop. Applied to the finished raster so the
+# Default `spike_filter.min_prominence_m`. A cell whose height exceeds *every*
+# neighbour by more than this is a lone spurious return rather than a treetop. Applied to the finished raster so the
 # band stays a true maximum.
 #
 # The threshold sits deliberately high. Measured noise returns stood 40-80 m
@@ -95,8 +95,8 @@ PMF_MAX_DISTANCE_M = 2.5
 # a one-cell spike by any tighter rule.
 SPIKE_THRESHOLD_M = 25.0
 
-# The narrowest ground footprint canopy can occupy, and so how far around a
-# cell the rule above looks for it. This is what makes that rule a statement
+# Default `spike_filter.min_canopy_footprint_m`: the narrowest ground footprint
+# canopy can occupy, and so how far around a cell the rule above looks for it. This is what makes that rule a statement
 # about shape rather than height: a cell towering over everything within a
 # crown's width of it has no crown that could have produced it, which is the
 # only thing separating a spike from a treetop — a real treetop is a local
@@ -133,6 +133,7 @@ def fetch_point_cloud_chm(
     progress: Callable[[str, int | None], None],
     target_grid_doc: dict | None = None,
     extent_buffer_cells: int = 0,
+    spike_filter: dict | None = None,
 ) -> tuple[xr.Dataset, dict]:
     """Build a canopy height model from a stored point cloud.
 
@@ -159,6 +160,8 @@ def fetch_point_cloud_chm(
         target_grid_doc: Grid document named by ``alignment.grid_id``, required
             when ``alignment.target`` is ``"grid"``.
         extent_buffer_cells: Output cells of buffer around the extent.
+        spike_filter: Persisted ``source.spike_filter``, deciding how lone
+            spurious returns are removed. ``None`` keeps every return.
 
     Returns:
         Tuple of (Dataset with the ``chm`` variable, provenance dict recording
@@ -177,6 +180,7 @@ def fetch_point_cloud_chm(
             progress,
             target_grid_doc,
             extent_buffer_cells,
+            spike_filter,
         )
 
 
@@ -188,6 +192,7 @@ def _fetch(
     progress: Callable[[str, int | None], None],
     target_grid_doc: dict | None,
     extent_buffer_cells: int,
+    spike_filter: dict | None,
 ) -> tuple[xr.Dataset, dict]:
     """Body of `fetch_point_cloud_chm`, under a pinned dask thread pool."""
     transform, (height, width) = _resolve_lattice(
@@ -199,7 +204,13 @@ def _fetch(
     prefix = cloud_prefix(POINT_CLOUDS_BUCKET, point_cloud_id)
     manifest = read_manifest(prefix)
     fill_cells = _fill_cells(resolution)
-    spike_window = _spike_window_cells(resolution)
+    footprint_m = (spike_filter or {}).get(
+        "min_canopy_footprint_m", MIN_CANOPY_FOOTPRINT_M
+    )
+    prominence_m = (spike_filter or {}).get("min_prominence_m", SPIKE_THRESHOLD_M)
+    spike_window = (
+        0 if spike_filter is None else _spike_window_cells(footprint_m, resolution)
+    )
     # The widest halo any step needs, which is what the blocking has to be able
     # to feed. PMF only runs for a cloud with no ground class, so a classified
     # cloud is not charged for its much wider reach.
@@ -325,7 +336,7 @@ def _fetch(
                 depth=_overlap_depth(blocked_chm, spike_window // 2),
                 boundary="none",
                 dtype=np.float32,
-                threshold=SPIKE_THRESHOLD_M,
+                threshold=prominence_m,
                 window=spike_window,
             ).compute()
         )
@@ -793,8 +804,8 @@ def _fill_gaps(surface: np.ndarray, max_cells: int) -> np.ndarray:
     return filled
 
 
-def _spike_window_cells(resolution: float) -> int:
-    """`MIN_CANOPY_FOOTPRINT_M` as an odd window of cells, or zero.
+def _spike_window_cells(footprint_m: float, resolution: float) -> int:
+    """`footprint_m` as an odd window of cells, or zero.
 
     Zero where a single cell already spans that footprint: the rule asks
     whether a feature is narrower than a crown, and at that cell size nothing
@@ -804,9 +815,9 @@ def _spike_window_cells(resolution: float) -> int:
     Rounded to odd so the window centres on the cell it judges, and floored at
     3 so it always reaches past that cell.
     """
-    if resolution >= MIN_CANOPY_FOOTPRINT_M:
+    if resolution >= footprint_m:
         return 0
-    cells = max(3, round(MIN_CANOPY_FOOTPRINT_M / resolution))
+    cells = max(3, round(footprint_m / resolution))
     return cells + 1 if cells % 2 == 0 else cells
 
 

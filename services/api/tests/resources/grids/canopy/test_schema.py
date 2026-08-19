@@ -9,10 +9,13 @@ These are pure unit tests with no external dependencies.
 import pytest
 from api.resources.grids.canopy.schema import (
     Attribution,
+    ChmSpikeFilter,
     CreateMetaChmRequest,
     CreateNaipChmRequest,
+    CreatePointCloudChmRequest,
     MetaChmSource,
     NaipChmSource,
+    PointCloudChmSource,
     build_chm_bands,
 )
 from api.resources.grids.providers.canopy import CanopySource
@@ -308,3 +311,79 @@ class TestCreateNaipChmRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateNaipChmRequest(extent_buffer_cells=11)
+
+
+class TestChmSpikeFilter:
+    """Removing lone spurious returns from a point-cloud CHM."""
+
+    def test_defaults_are_the_measured_ones(self):
+        """A request that says nothing gets the shipped behaviour."""
+        spike_filter = ChmSpikeFilter()
+
+        assert spike_filter.min_canopy_footprint_m == 3.0
+        assert spike_filter.min_prominence_m == 25.0
+
+    def test_values_are_accepted(self):
+        spike_filter = ChmSpikeFilter(
+            min_canopy_footprint_m=30.0, min_prominence_m=40.0
+        )
+
+        assert spike_filter.min_canopy_footprint_m == 30.0
+        assert spike_filter.min_prominence_m == 40.0
+
+    @pytest.mark.parametrize("field", ["min_canopy_footprint_m", "min_prominence_m"])
+    @pytest.mark.parametrize("value", [0.0, -1.0])
+    def test_non_positive_distances_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            ChmSpikeFilter(**{field: value})
+
+
+class TestCreatePointCloudChmRequest:
+    """The point-cloud CHM create request."""
+
+    def test_minimal_valid_request(self):
+        request = CreatePointCloudChmRequest(source_point_cloud_id="cloud-1")
+
+        assert request.source_point_cloud_id == "cloud-1"
+
+    def test_spike_filter_is_on_by_default(self):
+        request = CreatePointCloudChmRequest(source_point_cloud_id="cloud-1")
+
+        assert request.spike_filter == ChmSpikeFilter()
+
+    def test_null_spike_filter_turns_it_off(self):
+        """The way to opt out, rather than a "none" sentinel inside the object."""
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1", spike_filter=None
+        )
+
+        assert request.spike_filter is None
+
+    def test_spike_filter_can_be_set(self):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1",
+            spike_filter={"min_canopy_footprint_m": 30.0},
+        )
+
+        assert request.spike_filter.min_canopy_footprint_m == 30.0
+        assert request.spike_filter.min_prominence_m == 25.0
+
+
+class TestPointCloudChmSource:
+    """What a stored point-cloud CHM grid records about how it was built."""
+
+    def test_spike_filter_is_recorded(self):
+        """Resolved, like `alignment.resolution`, so the grid is reproducible."""
+        source = PointCloudChmSource(
+            source_point_cloud_id="cloud-1", spike_filter=ChmSpikeFilter()
+        )
+
+        assert source.model_dump()["spike_filter"] == {
+            "min_canopy_footprint_m": 3.0,
+            "min_prominence_m": 25.0,
+        }
+
+    def test_spike_filter_records_being_off(self):
+        source = PointCloudChmSource(source_point_cloud_id="cloud-1", spike_filter=None)
+
+        assert source.model_dump()["spike_filter"] is None

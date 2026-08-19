@@ -85,6 +85,14 @@ def _flat_ground(size: int = 4, elevation: float = 10.0, resolution: float = 1.0
     return xs, ys, zs, classes
 
 
+# What the API stores on `source.spike_filter` for a request that asked for
+# nothing, so a test that says nothing about it runs the shipped behaviour.
+_DEFAULT_SPIKE_FILTER = {
+    "min_canopy_footprint_m": chm_point_cloud.MIN_CANOPY_FOOTPRINT_M,
+    "min_prominence_m": chm_point_cloud.SPIKE_THRESHOLD_M,
+}
+
+
 def _target_grid(transform, shape, crs=CRS):
     """A stored grid document standing in as an alignment target."""
     return {"georeference": {"crs": crs, "transform": list(transform), "shape": shape}}
@@ -99,6 +107,7 @@ def _run(
     target_grid_doc=None,
     extent_buffer_cells=0,
     block_cells=None,
+    spike_filter=_DEFAULT_SPIKE_FILTER,
 ):
     # Storage and the dataset handle are stubbed so the algorithm runs without
     # GCS. `block_cells` forces a blocking; left alone the handler picks one.
@@ -127,6 +136,7 @@ def _run(
             target_grid_doc=target_grid_doc,
             progress=lambda message, percent=None: None,
             extent_buffer_cells=extent_buffer_cells,
+            spike_filter=spike_filter,
         )
 
 
@@ -247,6 +257,50 @@ class TestOutlierHandling:
 
         assert np.isnan(ds["chm"].values[0, 0])
 
+    def test_the_filter_can_be_turned_off(self):
+        """`spike_filter: null` keeps every return, spurious ones included."""
+        x, y, z, c = _flat_ground()
+        x, y, z, c = [*x, 0.5], [*y, 3.5], [*z, 10.0 + 40.0], [*c, 1]
+
+        ds, _ = _run(_chunks(x, y, z, c), [1, 2], spike_filter=None)
+
+        assert ds["chm"].values[0, 0] == pytest.approx(40.0)
+
+    def test_footprint_reaches_coarse_cells_when_asked(self):
+        """The metre-sized footprint is the knob for the coarse case.
+
+        The default declines to judge a 30 m cell because one holds a stand. A
+        user who knows their cloud carries noise and their stands do not look
+        like this can say so.
+        """
+        x, y, z, c = _flat_ground(resolution=30.0)
+        x, y, z, c = [*x, 15.0], [*y, 105.0], [*z, 10.0 + 35.0], [*c, 5]
+
+        ds, _ = _run(
+            _chunks(x, y, z, c),
+            [2, 5],
+            resolution=30.0,
+            roi=_roi(size=120.0),
+            spike_filter={"min_canopy_footprint_m": 60.0, "min_prominence_m": 25.0},
+        )
+
+        assert np.isnan(ds["chm"].values[0, 0])
+
+    def test_prominence_can_be_lowered_to_catch_shorter_spikes(self):
+        """A 15 m lone return survives the default and not a 10 m prominence."""
+        x, y, z, c = _flat_ground()
+        x, y, z, c = [*x, 0.5], [*y, 3.5], [*z, 10.0 + 15.0], [*c, 1]
+
+        kept, _ = _run(_chunks(x, y, z, c), [1, 2])
+        dropped, _ = _run(
+            _chunks(x, y, z, c),
+            [1, 2],
+            spike_filter={"min_canopy_footprint_m": 3.0, "min_prominence_m": 10.0},
+        )
+
+        assert kept["chm"].values[0, 0] == pytest.approx(15.0)
+        assert np.isnan(dropped["chm"].values[0, 0])
+
     @pytest.mark.parametrize("resolution", [5.0, 10.0, 30.0])
     def test_isolated_stand_survives_where_a_cell_is_wider_than_a_crown(
         self, resolution
@@ -289,7 +343,9 @@ class TestSpikeFootprint:
         produce the feature, so isolation carries no information and the rule
         does not run.
         """
-        assert chm_point_cloud._spike_window_cells(resolution) == expected
+        footprint = chm_point_cloud.MIN_CANOPY_FOOTPRINT_M
+
+        assert chm_point_cloud._spike_window_cells(footprint, resolution) == expected
 
     def test_a_wider_window_judges_isolation_over_the_same_distance(self):
         """Finer cells widen the window rather than shrinking what it sees.
@@ -301,7 +357,9 @@ class TestSpikeFootprint:
         """
         chm = np.zeros((7, 7), dtype=np.float32)
         chm[3, 3] = 40.0
-        window = chm_point_cloud._spike_window_cells(0.5)
+        window = chm_point_cloud._spike_window_cells(
+            chm_point_cloud.MIN_CANOPY_FOOTPRINT_M, 0.5
+        )
 
         alone = chm_point_cloud._remove_spikes(
             chm, threshold=chm_point_cloud.SPIKE_THRESHOLD_M, window=window

@@ -254,6 +254,16 @@ EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID_AT_1M = {
     },
 }
 
+EXAMPLE_POINT_CLOUD_CHM_NO_SPIKE_FILTER = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "spike_filter": None,
+}
+
+EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "spike_filter": {"min_canopy_footprint_m": 5.0, "min_prominence_m": 15.0},
+}
+
 CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
     "minimal": {
         "value": EXAMPLE_POINT_CLOUD_CHM_MINIMAL,
@@ -321,9 +331,38 @@ CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
             "heights on the cells of a 30 m LANDFIRE grid."
         ),
     },
+    "spike_filter": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER,
+        "summary": "Tune the removal of spurious returns",
+        "description": (
+            "A cell holds the tallest return that falls in it, so one bad "
+            "return — a bird, haze — becomes the height of that cell unless "
+            "the cloud classified it as noise, and many clouds do not. Such a "
+            "return leaves a shape real canopy cannot: a single cell towering "
+            "over everything around it.\n\n"
+            "`min_canopy_footprint_m` is the narrowest ground footprint real "
+            "canopy can occupy. A cell is judged against everything within "
+            "that distance, and only a cell narrower than it can be rejected — "
+            "so the filter does not run once `alignment.resolution` reaches "
+            "this value, where one cell holds a stand rather than a crown. "
+            "`min_prominence_m` is how far above every neighbour a cell must "
+            "rise. Both are in meters and default to 3 and 25."
+        ),
+    },
+    "no_spike_filter": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_NO_SPIKE_FILTER,
+        "summary": "Keep every return",
+        "description": (
+            "`null` turns the filter off, so nothing is removed from the "
+            "finished grid. Use it when the cloud's noise is already "
+            "classified, or when you would rather inspect the raw heights."
+        ),
+    },
 }
 
 POINT_CLOUD_CHM_EXAMPLE_VALUES = [
+    ("spike_filter", EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER),
+    ("no_spike_filter", EXAMPLE_POINT_CLOUD_CHM_NO_SPIKE_FILTER),
     ("minimal", EXAMPLE_POINT_CLOUD_CHM_MINIMAL),
     ("named", EXAMPLE_POINT_CLOUD_CHM_NAMED),
     ("resolution_5m", EXAMPLE_POINT_CLOUD_CHM_5M),

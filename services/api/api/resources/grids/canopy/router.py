@@ -370,6 +370,12 @@ async def create_point_cloud_chm(
       the new cell size. The target grid must be in this domain's CRS.
       `target: "native"` is not supported — a point cloud has no pixel anchor
       to preserve.
+    - **spike_filter**: (optional) Removal of lone spurious returns. A cell
+      takes the tallest return in it, so one bad return — a bird, haze — sets
+      the cell unless the cloud classified it as noise, and many clouds do not.
+      Such a return leaves a shape real canopy cannot: a single cell towering
+      over everything around it. Both fields are in meters, so they mean the
+      same thing at any resolution. Send `null` to keep every return.
     - **name**, **description**, **tags**: (optional) Metadata.
 
     ## Response
@@ -437,6 +443,7 @@ async def create_point_cloud_chm(
         source_point_cloud_checksum=point_cloud.get("checksum"),
         extent_buffer_cells=body.extent_buffer_cells,
         alignment=alignment,
+        spike_filter=body.spike_filter,
     )
     bands = build_chm_bands()
 

@@ -29,6 +29,10 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
     },
 }
 
+# LANDFIRE's Seasonal Fuels product publishes four windows across the
+# year: early spring (ES), spring (SP), summer (SU), and fall (FA).
+SEASON_CODES: tuple[str, ...] = ("SP", "SU", "ES", "FA")
+
 
 class UnknownLandfireVersionError(ValueError):
     """Raised when a requested LANDFIRE version isn't available for a product."""

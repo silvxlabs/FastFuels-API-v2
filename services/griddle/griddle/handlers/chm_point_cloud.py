@@ -54,7 +54,7 @@ from lib.config import (
 )
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
-from lib.pointcloud.reader import read_manifest
+from lib.pointcloud.reader import open_point_cloud, read_manifest
 from lib.pointcloud.schema import cloud_prefix
 
 # Target block edge in cells. `_compute_block_cells` rounds it to a whole number
@@ -62,17 +62,18 @@ from lib.pointcloud.schema import cloud_prefix
 # this size — it sets the scale, which is what a block's points cost to hold.
 DEFAULT_BLOCK_CELLS = 512
 
-# Returns one block of a percentile pass may hold. A percentile cannot be
-# folded a batch at a time, so a block of it costs its *points* -- measured at
-# 24 bytes each, a cell index and a height plus the sort that reduces them --
-# where every other pass costs its cells. That inverts with resolution: the
-# 512-cell block above spans 0.26 km2 at 1 m and 26 km2 at 10 m, so sizing a
-# retaining pass by cells would put a hundred times the returns in a block for
-# the same grid.
+# Returns one block of a percentile pass may hold. A percentile cannot be folded
+# a batch at a time, so a block of it costs its *points* -- ~24 bytes each, a
+# cell index and a height plus the sort that reduces them -- where every other
+# pass costs its cells. A block is one cloud tile, so this is compared against a
+# tile's *actual* point count (`_tile_blocks`), not one predicted from the
+# cloud-wide average: density is uneven -- overlapping flight lines, an urban
+# strip -- so an average hides the dense tile that is the one that OOMs.
 #
 # 8 M returns is ~190 MB in a worker, and GRIDDLE_READ_WORKERS of them at once.
-# A 500 m cloud tile only exceeds it above 32 returns/m2, so in practice this
-# leaves the blocks exactly one tile each -- see `_retaining_block_cells`.
+# A 500 m tile stays under it below 32 returns/m2, so all but the densest tiles
+# are one block; only a tile over this is split, spatially, into enough even
+# pieces to bring each under it.
 RETAINED_POINTS_PER_BLOCK = 8_000_000
 
 # How far `max_ground_distance_m` is measured before it saturates. The number
@@ -350,7 +351,12 @@ def _fetch(
                 *_ground_window(ground, transform, bl, resolution),
                 statistic,
             ),
-            over=_retaining_tiles((height, width), transform, manifest, resolution)
+            over=_tile_blocks(
+                (height, width),
+                transform,
+                manifest,
+                _tile_point_counts(prefix, manifest, BLOCK_FILESYSTEM),
+            )
             if statistic[0] == "percentile"
             else None,
         )
@@ -698,68 +704,95 @@ def _resolve_aggregation(aggregation: dict | None) -> tuple[str, float | None]:
     )
 
 
-def _retaining_block_cells(
-    resolution: float, tile_m: float, points_per_tile: float
-) -> int:
-    """Block edge in cells for a pass that holds its points instead of folding.
+def _tile_point_counts(prefix: str, manifest: dict, filesystem=None) -> dict:
+    """``(tile_x, tile_y) -> point count`` for every occupied tile.
 
-    One cloud tile, which is both the fewest bytes a block can read -- a block
-    overlapping a tile at all fetches the whole of it -- and, at any resolution,
-    the fewest returns a block can be asked to hold while still reading whole
-    tiles. Merging tiles the way `_compute_block_cells` does would cost points
-    and buy nothing: the same tiles are fetched either way, in the same number,
-    only spread over more tasks.
-
-    Below a tile only where one tile's returns are over budget. That costs real
-    time -- a tile split four ways is fetched four times -- so it is the dense-
-    cloud fallback and not the normal case.
+    Read from the dataset's own row-group statistics, so the count is the tile's
+    real size rather than the cloud-wide average. Only the retaining passes need
+    it -- a max or a mean folds and never holds a tile -- so it is read only for
+    those, and it reads `_metadata` (one object) rather than any point data.
     """
-    tile_cells = max(1, int(round(tile_m / resolution)))
-    if points_per_tile <= RETAINED_POINTS_PER_BLOCK:
-        return tile_cells
-    shrink = math.sqrt(RETAINED_POINTS_PER_BLOCK / points_per_tile)
-    return max(1, int(tile_cells * shrink))
+    storage = open_point_cloud(prefix, filesystem)
+    return {(tile["tile_x"], tile["tile_y"]): tile["points"] for tile in storage.tiles}
 
 
-def _retaining_tiles(
-    shape: tuple[int, int], transform: Affine, manifest: dict, resolution: float
+def _tile_blocks(
+    shape: tuple[int, int],
+    transform: Affine,
+    manifest: dict,
+    tile_points: dict | None = None,
 ) -> list[tuple[int, int, int, int]]:
-    """Blocks for the height pass when the statistic retains its returns.
+    """Blocks for a retaining (percentile/median) pass: one per cloud tile.
 
-    Cut on the cloud's tiles where a block is a whole tile, for the reason
-    `_block_slices` gives. A block smaller than a tile has no tile boundary to
-    land on, so those divide evenly instead.
+    The height pass is exact for any partition of the lattice -- each cell is
+    owned by one block and a block reads its cells' whole world bounds -- so the
+    division's only job is to bound a worker's memory. A cloud tile is a read
+    unit that is already bounded, so a block that is one tile holds one tile's
+    returns: a real quantity, not one predicted from an average that a lumpy
+    cloud makes wrong.
 
-    No halo floor: the height pass is cell-local, and the one cell of ground a
-    point can interpolate across travels with the block in `_ground_window`.
+    Cut on the cloud's tile boundaries and stop. `tile_points` maps
+    ``(tile_x, tile_y) -> point count`` for the tiles the domain touches; a tile
+    over `RETAINED_POINTS_PER_BLOCK` is split, spatially and evenly, into enough
+    pieces to bring each under it (a cell's returns stay together in one piece,
+    so the split is exact). A tile absent from the map -- or the whole map None,
+    when counts were not read -- is taken as under budget and left whole.
     """
     height, width = shape
     tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
-    points_per_tile = manifest["points"] / max(1, manifest["tiles"])
-    block = _retaining_block_cells(resolution, tile_m, points_per_tile)
-    # Against the rounded tile edge, not the exact ratio: `tile_m` comes off the
-    # cloud's bounding box, so `tile_m / resolution` is rarely whole, and
-    # comparing the rounded block to it would call a one-tile block sub-tile and
-    # divide evenly -- straddling every block across two tiles.
-    tile_cells = max(1, int(round(tile_m / resolution)))
-    whole_tiles = block >= tile_cells
-    rows = _block_slices(
-        height,
-        block,
-        _tile_cuts(height, transform.f, transform.e, tile_origin[1], tile_m)
-        if whole_tiles
-        else None,
-        1,
-    )
-    cols = _block_slices(
-        width,
-        block,
-        _tile_cuts(width, transform.c, transform.a, tile_origin[0], tile_m)
-        if whole_tiles
-        else None,
-        1,
-    )
-    return [(row0, row1, col0, col1) for row0, row1 in rows for col0, col1 in cols]
+    rows = _tile_segments(height, transform.f, transform.e, tile_origin[1], tile_m)
+    cols = _tile_segments(width, transform.c, transform.a, tile_origin[0], tile_m)
+    blocks = []
+    for r0, r1, ty in rows:
+        for c0, c1, tx in cols:
+            points = (tile_points or {}).get((tx, ty), 0)
+            pieces = _split_factor(points)
+            for row0, row1 in _even(r0, r1, pieces):
+                for col0, col1 in _even(c0, c1, pieces):
+                    blocks.append((row0, row1, col0, col1))
+    return blocks
+
+
+def _tile_segments(
+    count: int, anchor: float, step: float, tile_origin: float, tile_m: float
+) -> list[tuple[int, int, int]]:
+    """``(start, stop, tile_index)`` for each tile's span of one axis.
+
+    The cut points are `_tile_cuts`; the tile index of a span is the tile its
+    cells fall in, taken from the span's midpoint so the sign of `step` (the row
+    axis runs downward) is handled without a special case.
+    """
+    edges = [0, *_tile_cuts(count, anchor, step, tile_origin, tile_m), count]
+    segments = []
+    for start, stop in zip(edges[:-1], edges[1:], strict=True):
+        mid_world = anchor + step * (start + stop) / 2
+        tile_index = math.floor((mid_world - tile_origin) / tile_m)
+        segments.append((start, stop, tile_index))
+    return segments
+
+
+def _split_factor(points: int) -> int:
+    """Even pieces per axis to bring a tile of `points` under the budget.
+
+    ``ceil(sqrt(points / budget))`` so the tile splits into a roughly square
+    grid of about ``points / budget`` pieces. One when the tile already fits.
+    """
+    if points <= RETAINED_POINTS_PER_BLOCK:
+        return 1
+    return math.ceil(math.sqrt(points / RETAINED_POINTS_PER_BLOCK))
+
+
+def _even(start: int, stop: int, pieces: int) -> list[tuple[int, int]]:
+    """Split ``[start, stop)`` into `pieces` even half-open spans.
+
+    Even rather than greedy: a greedy split leaves a remainder piece that can be
+    a single cell, and the pieces here are already whole -- no halo to under-feed
+    -- so evenness only keeps them close in size. Never fewer than one span.
+    """
+    pieces = max(1, min(pieces, stop - start))
+    edges = [start + round(k * (stop - start) / pieces) for k in range(pieces)]
+    edges.append(stop)
+    return list(zip(edges[:-1], edges[1:], strict=True))
 
 
 def _tile_cuts(

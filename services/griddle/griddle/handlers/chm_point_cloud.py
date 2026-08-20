@@ -62,6 +62,19 @@ from lib.pointcloud.schema import cloud_prefix
 # this size — it sets the scale, which is what a block's points cost to hold.
 DEFAULT_BLOCK_CELLS = 512
 
+# Returns one block of a percentile pass may hold. A percentile cannot be
+# folded a batch at a time, so a block of it costs its *points* -- measured at
+# 24 bytes each, a cell index and a height plus the sort that reduces them --
+# where every other pass costs its cells. That inverts with resolution: the
+# 512-cell block above spans 0.26 km2 at 1 m and 26 km2 at 10 m, so sizing a
+# retaining pass by cells would put a hundred times the returns in a block for
+# the same grid.
+#
+# 8 M returns is ~190 MB in a worker, and GRIDDLE_READ_WORKERS of them at once.
+# A 500 m cloud tile only exceeds it above 32 returns/m2, so in practice this
+# leaves the blocks exactly one tile each -- see `_retaining_block_cells`.
+RETAINED_POINTS_PER_BLOCK = 8_000_000
+
 # How far `max_ground_distance_m` is measured before it saturates. The number
 # only carries information near the distances the filter can bridge — 30 m of
 # fill, a 33 m widest window — so measuring further costs halo for nothing.
@@ -134,6 +147,7 @@ def fetch_point_cloud_chm(
     target_grid_doc: dict | None = None,
     extent_buffer_cells: int = 0,
     spike_filter: dict | None = None,
+    aggregation: dict | None = None,
 ) -> tuple[xr.Dataset, dict]:
     """Build a canopy height model from a stored point cloud.
 
@@ -162,6 +176,8 @@ def fetch_point_cloud_chm(
         extent_buffer_cells: Output cells of buffer around the extent.
         spike_filter: Persisted ``source.spike_filter``, deciding how lone
             spurious returns are removed. ``None`` keeps every return.
+        aggregation: Persisted ``source.aggregation``, deciding the statistic
+            each cell reduces its returns with. ``None`` takes the maximum.
 
     Returns:
         Tuple of (Dataset with the ``chm`` variable, provenance dict recording
@@ -169,7 +185,8 @@ def fetch_point_cloud_chm(
 
     Raises:
         ProcessingError: If the alignment cannot produce a lattice this handler
-            can rasterize onto, or if the cloud contributes no points to it.
+            can rasterize onto, if the aggregation names no statistic, or if
+            the cloud contributes no points to the lattice.
     """
     with dask.config.set(scheduler="threads", num_workers=GRIDDLE_DASK_WORKERS):
         return _fetch(
@@ -181,6 +198,7 @@ def fetch_point_cloud_chm(
             target_grid_doc,
             extent_buffer_cells,
             spike_filter,
+            aggregation,
         )
 
 
@@ -193,12 +211,14 @@ def _fetch(
     target_grid_doc: dict | None,
     extent_buffer_cells: int,
     spike_filter: dict | None,
+    aggregation: dict | None,
 ) -> tuple[xr.Dataset, dict]:
     """Body of `fetch_point_cloud_chm`, under a pinned dask thread pool."""
     transform, (height, width) = _resolve_lattice(
         roi, alignment, target_grid_doc, extent_buffer_cells
     )
     resolution = transform.a
+    statistic = _resolve_aggregation(aggregation)
 
     progress("Reading point cloud...", 10)
     prefix = cloud_prefix(POINT_CLOUDS_BUCKET, point_cloud_id)
@@ -254,16 +274,18 @@ def _fetch(
 
     with _block_pool(prefix, manifest, BLOCK_FILESYSTEM) as pool:
 
-        def over_blocks(kind, classes=None, extra_for=None):
+        def over_blocks(kind, classes=None, extra_for=None, over=None):
             """Rasterise every block on the pool and assemble the grid.
 
             `extra_for` supplies whatever raster a pass samples, per block, so a
-            task carries its own slice rather than the whole grid.
+            task carries its own slice rather than the whole grid. `over`
+            overrides the division, for a pass whose blocks are sized by
+            something other than the halos.
             """
             return _run_blocks(
                 pool,
                 transform,
-                tiles,
+                tiles if over is None else over,
                 (height, width),
                 kind,
                 resolution,
@@ -323,8 +345,14 @@ def _fetch(
 
         progress("Rasterizing canopy heights...", 55)
         chm = over_blocks(
-            "max",
-            extra_for=lambda bl: _ground_window(ground, transform, bl, resolution),
+            "height",
+            extra_for=lambda bl: (
+                *_ground_window(ground, transform, bl, resolution),
+                statistic,
+            ),
+            over=_retaining_tiles((height, width), transform, manifest, resolution)
+            if statistic[0] == "percentile"
+            else None,
         )
 
     if spike_window:
@@ -631,6 +659,96 @@ def _compute_block_cells(resolution: float, tile_m: float, halo_cells: int) -> i
         round(DEFAULT_BLOCK_CELLS / tile_cells),
     )
     return max(1, int(round(tiles_per_block * tile_cells)))
+
+
+def _resolve_aggregation(aggregation: dict | None) -> tuple[str, float | None]:
+    """Persisted ``source.aggregation`` as the ``(method, percentile)`` a block takes.
+
+    ``median`` folds to the 50th percentile, so a worker carries three code
+    paths rather than four. Absent on grids created before the control existed,
+    which were built with the maximum.
+
+    Raises:
+        ProcessingError: If the stored source names a statistic this handler
+            cannot compute. The API rejects those at create time; this covers a
+            source that reached storage some other way.
+    """
+    aggregation = aggregation or {}
+    method = aggregation.get("method", "max")
+    if method in ("max", "mean"):
+        return method, None
+    if method == "median":
+        return "percentile", 50.0
+    percentile = aggregation.get("percentile")
+    if method == "percentile" and percentile is not None:
+        return "percentile", float(percentile)
+    raise ProcessingError(
+        code="UNSUPPORTED_AGGREGATION",
+        message=f"aggregation '{method}' does not name a statistic cells can take.",
+        suggestion=(
+            "Recreate the grid with aggregation method 'max', 'mean', "
+            "'median', or 'percentile' with a percentile."
+        ),
+    )
+
+
+def _retaining_block_cells(
+    resolution: float, tile_m: float, points_per_tile: float
+) -> int:
+    """Block edge in cells for a pass that holds its points instead of folding.
+
+    One cloud tile, which is both the fewest bytes a block can read -- a block
+    overlapping a tile at all fetches the whole of it -- and, at any resolution,
+    the fewest returns a block can be asked to hold while still reading whole
+    tiles. Merging tiles the way `_compute_block_cells` does would cost points
+    and buy nothing: the same tiles are fetched either way, in the same number,
+    only spread over more tasks.
+
+    Below a tile only where one tile's returns are over budget. That costs real
+    time -- a tile split four ways is fetched four times -- so it is the dense-
+    cloud fallback and not the normal case.
+    """
+    tile_cells = max(1, int(round(tile_m / resolution)))
+    if points_per_tile <= RETAINED_POINTS_PER_BLOCK:
+        return tile_cells
+    shrink = math.sqrt(RETAINED_POINTS_PER_BLOCK / points_per_tile)
+    return max(1, int(tile_cells * shrink))
+
+
+def _retaining_tiles(
+    shape: tuple[int, int], transform: Affine, manifest: dict, resolution: float
+) -> list[tuple[int, int, int, int]]:
+    """Blocks for the height pass when the statistic retains its returns.
+
+    Cut on the cloud's tiles where a block is a whole tile, for the reason
+    `_block_slices` gives. A block smaller than a tile has no tile boundary to
+    land on, so those divide evenly instead.
+
+    No halo floor: the height pass is cell-local, and the one cell of ground a
+    point can interpolate across travels with the block in `_ground_window`.
+    """
+    height, width = shape
+    tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
+    points_per_tile = manifest["points"] / max(1, manifest["tiles"])
+    block = _retaining_block_cells(resolution, tile_m, points_per_tile)
+    whole_tiles = block >= tile_m / resolution
+    rows = _block_slices(
+        height,
+        block,
+        _tile_cuts(height, transform.f, transform.e, tile_origin[1], tile_m)
+        if whole_tiles
+        else None,
+        1,
+    )
+    cols = _block_slices(
+        width,
+        block,
+        _tile_cuts(width, transform.c, transform.a, tile_origin[0], tile_m)
+        if whole_tiles
+        else None,
+        1,
+    )
+    return [(row0, row1, col0, col1) for row0, row1 in rows for col0, col1 in cols]
 
 
 def _tile_cuts(

@@ -264,6 +264,17 @@ EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER = {
     "spike_filter": {"min_canopy_footprint_m": 5.0, "min_prominence_m": 15.0},
 }
 
+EXAMPLE_POINT_CLOUD_CHM_PERCENTILE = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "aggregation": {"method": "percentile", "percentile": 98},
+}
+
+EXAMPLE_POINT_CLOUD_CHM_MEAN_AT_10M = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {"target": "domain", "resolution": 10.0},
+    "aggregation": {"method": "mean"},
+}
+
 CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
     "minimal": {
         "value": EXAMPLE_POINT_CLOUD_CHM_MINIMAL,
@@ -358,9 +369,40 @@ CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
             "classified, or when you would rather inspect the raw heights."
         ),
     },
+    "percentile": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_PERCENTILE,
+        "summary": "Take a high percentile instead of the maximum",
+        "description": (
+            "A cell takes the tallest return that falls in it, so one return "
+            "the cloud failed to classify as noise becomes the height of that "
+            "cell on its own. A high percentile does not have that property: "
+            "at the 98th, a cell's height is one the returns agree on.\n\n"
+            "`percentile` is the rank to take, as a percentage of the cell's "
+            "returns. 100 is the tallest return and 50 the median; between two "
+            "returns the height is interpolated."
+        ),
+    },
+    "mean_at_10m": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_MEAN_AT_10M,
+        "summary": "Average height over 10 m cells",
+        "description": (
+            "Which statistic to take is really a question about cell size. A "
+            "1 m cell sits inside a crown, so its tallest return is that "
+            "crown's top. A 10 m cell holds a stand, and its tallest return is "
+            "the tallest tree in it — which is a fact about one tree, not "
+            "about the stand.\n\n"
+            "Measured on one cloud rasterized twice, the same returns gave a "
+            "mean height of 4.83 m at 1 m cells and 15.48 m at 10 m, and the "
+            "share of cells above 5 m went from 34.6% to 83.1%. `mean` and "
+            "`median` describe the cell rather than its tallest thing, so they "
+            "do not move that way."
+        ),
+    },
 }
 
 POINT_CLOUD_CHM_EXAMPLE_VALUES = [
+    ("percentile", EXAMPLE_POINT_CLOUD_CHM_PERCENTILE),
+    ("mean_at_10m", EXAMPLE_POINT_CLOUD_CHM_MEAN_AT_10M),
     ("spike_filter", EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER),
     ("no_spike_filter", EXAMPLE_POINT_CLOUD_CHM_NO_SPIKE_FILTER),
     ("minimal", EXAMPLE_POINT_CLOUD_CHM_MINIMAL),

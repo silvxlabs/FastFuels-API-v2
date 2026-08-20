@@ -11,9 +11,9 @@ produce any combination of the four.
 """
 
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import (
@@ -244,11 +244,73 @@ class ChmSpikeFilter(BaseModel):
     )
 
 
+class ChmMaxAggregation(BaseModel):
+    """Tallest return in the cell.
+
+    The height of whatever the cell's tallest thing is, which is a crown at a
+    cell narrower than one and a stand's tallest tree at a cell wider than one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["max"] = "max"
+
+
+class ChmMeanAggregation(BaseModel):
+    """Average height of every return in the cell.
+
+    Weighted by how the returns fall, so a cell that is half canopy and half
+    gap reads between the two rather than at the canopy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["mean"] = "mean"
+
+
+class ChmMedianAggregation(BaseModel):
+    """Height half the cell's returns lie below.
+
+    The same statistic as `percentile` at 50, spelled the way it is usually
+    asked for.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["median"] = "median"
+
+
+class ChmPercentileAggregation(BaseModel):
+    """Height a given fraction of the cell's returns lie below."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["percentile"] = "percentile"
+    percentile: float = Field(
+        gt=0,
+        le=100,
+        description=(
+            "Rank to take, as a percentage of the cell's returns. 100 is the "
+            "tallest return and 50 the median. Between two returns the height "
+            "is interpolated linearly."
+        ),
+    )
+
+
+ChmAggregation = Annotated[
+    ChmMaxAggregation
+    | ChmMeanAggregation
+    | ChmMedianAggregation
+    | ChmPercentileAggregation,
+    Field(discriminator="method"),
+]
+
+
 class PointCloudChmSource(CanopySource):
     """Source for a canopy height model rasterized from a point cloud.
 
-    Produces a continuous canopy height raster by taking the greatest height
-    above ground of any return in each cell.
+    Produces a continuous canopy height raster by reducing the heights above
+    ground of the returns in each cell to one value.
     """
 
     product: Literal["point_cloud"] = "point_cloud"
@@ -282,6 +344,13 @@ class PointCloudChmSource(CanopySource):
             "the request. `null` means the grid was built without it."
         ),
     )
+    aggregation: ChmAggregation = Field(
+        default_factory=ChmMaxAggregation,
+        description=(
+            "Statistic this grid's cells reduce their returns with, resolved "
+            "from the request."
+        ),
+    )
 
 
 class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
@@ -304,6 +373,13 @@ class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
             "Removal of lone spurious returns. Omit for the defaults; send "
             "`null` to keep every return, leaving unclassified noise in the "
             "grid."
+        ),
+    )
+    aggregation: ChmAggregation = Field(
+        default_factory=ChmMaxAggregation,
+        description=(
+            "Statistic each cell reduces the heights above ground of its "
+            "returns with. Carries `percentile` only on `method: percentile`."
         ),
     )
 

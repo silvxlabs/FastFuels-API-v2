@@ -164,6 +164,99 @@ class TestSpikeFilter:
         assert response.status_code == 422
 
 
+class TestAggregation:
+    """The statistic the grid's cells reduce their returns with."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/canopy/point_cloud"
+
+    def test_the_default_is_resolved_and_persisted(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        """Stored resolved, like `alignment.resolution`, so the grid is a record."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"source_point_cloud_id": als_point_cloud["id"]},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["source"]["aggregation"] == {"method": "max"}
+
+    @pytest.mark.parametrize("method", ["max", "mean", "median"])
+    def test_a_method_without_a_rank_is_persisted(
+        self, client, domain_for_testing, als_point_cloud, method
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "aggregation": {"method": method},
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["source"]["aggregation"] == {"method": method}
+
+    def test_a_percentile_keeps_its_rank(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "aggregation": {"method": "percentile", "percentile": 98},
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["source"]["aggregation"] == {
+            "method": "percentile",
+            "percentile": 98.0,
+        }
+
+    def test_a_percentile_without_a_rank_returns_422(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "aggregation": {"method": "percentile"},
+            },
+        )
+
+        assert response.status_code == 422
+        assert "percentile" in response.text
+
+    def test_a_rank_outside_the_range_returns_422(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "aggregation": {"method": "percentile", "percentile": 0},
+            },
+        )
+
+        assert response.status_code == 422
+
+    def test_an_unknown_method_returns_422(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        """`p95` is a spelling the vocabulary deliberately does not have."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "aggregation": {"method": "p95"},
+            },
+        )
+
+        assert response.status_code == 422
+        assert "method" in response.text
+
+
 class TestSourcePointCloudValidation:
     """Rejections that keep a doomed request from becoming a failed grid."""
 

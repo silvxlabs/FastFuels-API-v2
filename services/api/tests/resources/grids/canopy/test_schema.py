@@ -9,6 +9,10 @@ These are pure unit tests with no external dependencies.
 import pytest
 from api.resources.grids.canopy.schema import (
     Attribution,
+    ChmMaxAggregation,
+    ChmMeanAggregation,
+    ChmMedianAggregation,
+    ChmPercentileAggregation,
     ChmSpikeFilter,
     CreateMetaChmRequest,
     CreateNaipChmRequest,
@@ -387,3 +391,102 @@ class TestPointCloudChmSource:
         source = PointCloudChmSource(source_point_cloud_id="cloud-1", spike_filter=None)
 
         assert source.model_dump()["spike_filter"] is None
+
+
+class TestChmAggregation:
+    """The statistic a point-cloud CHM cell reduces its returns with."""
+
+    def test_default_is_the_maximum(self):
+        """Omitting it has to reproduce what every existing grid was built with."""
+        request = CreatePointCloudChmRequest(source_point_cloud_id="cloud-1")
+
+        assert request.aggregation == ChmMaxAggregation()
+
+    @pytest.mark.parametrize(
+        "method,model",
+        [
+            ("max", ChmMaxAggregation),
+            ("mean", ChmMeanAggregation),
+            ("median", ChmMedianAggregation),
+        ],
+    )
+    def test_a_method_without_a_rank_carries_no_parameter(self, method, model):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1", aggregation={"method": method}
+        )
+
+        assert isinstance(request.aggregation, model)
+        assert request.aggregation.method == method
+
+    def test_percentile_carries_its_rank(self):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1",
+            aggregation={"method": "percentile", "percentile": 98},
+        )
+
+        assert isinstance(request.aggregation, ChmPercentileAggregation)
+        assert request.aggregation.percentile == 98.0
+
+    def test_percentile_without_a_rank_is_rejected(self):
+        """The discriminator is what makes `percentile` required, and only there."""
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1", aggregation={"method": "percentile"}
+            )
+
+    @pytest.mark.parametrize("percentile", [0.0, -1.0, 100.1, 101.0])
+    def test_a_rank_outside_the_range_is_rejected(self, percentile):
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1",
+                aggregation={"method": "percentile", "percentile": percentile},
+            )
+
+    @pytest.mark.parametrize("percentile", [0.5, 50.0, 95.0, 98.0, 100.0])
+    def test_a_rank_inside_the_range_is_accepted(self, percentile):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1",
+            aggregation={"method": "percentile", "percentile": percentile},
+        )
+
+        assert request.aggregation.percentile == percentile
+
+    def test_a_rank_on_another_method_is_rejected(self):
+        """`percentile` is meaningless on `mean`; accepting it would hide a typo."""
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1",
+                aggregation={"method": "mean", "percentile": 95},
+            )
+
+    def test_an_unknown_method_is_rejected(self):
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1", aggregation={"method": "p95"}
+            )
+
+
+class TestPointCloudChmSourceAggregation:
+    """What a stored point-cloud CHM grid records about its statistic."""
+
+    def test_the_statistic_is_recorded(self):
+        source = PointCloudChmSource(
+            source_point_cloud_id="cloud-1",
+            aggregation=ChmPercentileAggregation(percentile=95),
+        )
+
+        assert source.model_dump()["aggregation"] == {
+            "method": "percentile",
+            "percentile": 95.0,
+        }
+
+    def test_a_grid_that_records_nothing_took_the_maximum(self):
+        """Every grid built before the control existed took the maximum.
+
+        The default is a true statement about those grids rather than a
+        placeholder, so the field is never null and never has to be read as
+        "unknown".
+        """
+        source = PointCloudChmSource(source_point_cloud_id="cloud-1")
+
+        assert source.model_dump()["aggregation"] == {"method": "max"}

@@ -14,6 +14,7 @@ import geopandas as gpd
 import numpy as np
 import pyproj
 import pytest
+from affine import Affine
 from griddle.handlers import chm_blocks, chm_point_cloud
 from pyarrow.fs import LocalFileSystem
 from scipy.ndimage import distance_transform_edt
@@ -61,6 +62,10 @@ _MANIFEST = {
     "mins": [0.0, 0.0, 0.0],
     "scales": [0.001, 0.001, 0.001],
     "offsets": [0.0, 0.0, 0.0],
+    # Read only by the retaining statistics, to size a block by the points it
+    # has to hold. Sparse enough here that one tile is always under the budget.
+    "points": 10_000,
+    "tiles": 1,
 }
 
 
@@ -108,6 +113,7 @@ def _run(
     extent_buffer_cells=0,
     block_cells=None,
     spike_filter=_DEFAULT_SPIKE_FILTER,
+    aggregation=None,
 ):
     # Storage and the dataset handle are stubbed so the algorithm runs without
     # GCS. `block_cells` forces a blocking; left alone the handler picks one.
@@ -137,6 +143,7 @@ def _run(
             progress=lambda message, percent=None: None,
             extent_buffer_cells=extent_buffer_cells,
             spike_filter=spike_filter,
+            aggregation=aggregation,
         )
 
 
@@ -853,6 +860,75 @@ class TestBlockingIsInvisible:
                     classes.append(5)
         return xs, ys, zs, classes
 
+    def test_a_mean_survives_blocking(self):
+        """A sum and a count are folds, so the ordinary blocking covers them."""
+        cloud = self._cloud()
+        roi = _roi(self.SIZE_M)
+        aggregation = {"method": "mean"}
+
+        whole, _ = _run(
+            _chunks(*cloud),
+            [2],
+            resolution=self.RESOLUTION,
+            roi=roi,
+            block_cells=4096,
+            aggregation=aggregation,
+        )
+        blocked, _ = _run(
+            _chunks(*cloud),
+            [2],
+            resolution=self.RESOLUTION,
+            roi=roi,
+            block_cells=self.BLOCK_CELLS,
+            aggregation=aggregation,
+        )
+
+        assert whole["chm"].shape[0] // self.BLOCK_CELLS >= 2
+        assert np.isfinite(whole["chm"].values).any()
+        np.testing.assert_array_equal(whole["chm"].values, blocked["chm"].values)
+
+    @pytest.mark.parametrize(
+        "aggregation",
+        [{"method": "median"}, {"method": "percentile", "percentile": 95}],
+    )
+    def test_a_retaining_statistic_survives_any_division(self, aggregation):
+        """The retaining statistics get their own, finer, height-pass blocking.
+
+        `_compute_block_cells` no longer decides it, so forcing that alone
+        would leave the new division untested. The point budget does, and
+        squeezing it to one return puts every cell in its own block — the most
+        divided the pass can be. That has to agree, cell for cell, with the
+        same cloud read in one block.
+        """
+        cloud = self._cloud()
+        roi = _roi(self.SIZE_M)
+
+        def run(budget, block_cells):
+            with patch.object(chm_point_cloud, "RETAINED_POINTS_PER_BLOCK", budget):
+                # Guard the guard: a budget that failed to divide anything
+                # would make the comparison vacuous.
+                cells = chm_point_cloud._retaining_block_cells(
+                    self.RESOLUTION, 500.0, _MANIFEST["points"]
+                )
+                return cells, _run(
+                    _chunks(*cloud),
+                    [2],
+                    resolution=self.RESOLUTION,
+                    roi=roi,
+                    block_cells=block_cells,
+                    aggregation=aggregation,
+                )
+
+        one_block, (whole, whole_provenance) = run(10**12, 4096)
+        one_cell, (divided, divided_provenance) = run(1, self.BLOCK_CELLS)
+
+        assert one_block >= whole["chm"].shape[0]
+        assert one_cell == 1
+        assert np.isfinite(whole["chm"].values).any()
+
+        np.testing.assert_array_equal(whole["chm"].values, divided["chm"].values)
+        assert whole_provenance == divided_provenance
+
     # [2] takes the classified path, whose only blocked stage is the point
     # pass, so it pins the scatter-reduction. [1] takes the derived path, where
     # the fill and the morphological filter are blocked behind halos, so it is
@@ -1185,3 +1261,277 @@ class TestBlockPool:
         assert np.array_equal(np.isnan(inline), np.isnan(pooled))
         np.testing.assert_array_equal(inline, pooled)
         assert inline_provenance == pooled_provenance
+
+
+class TestAggregation:
+    """The statistic a cell reduces the heights of its returns with.
+
+    One cell of the fixture carries a known stack of returns, so every expected
+    value is arithmetic on a list rather than a recorded output. The ground
+    return itself is in that stack at zero: canopy height is a statistic over
+    everything the cell caught, not over the canopy alone.
+    """
+
+    HEIGHTS = [0.0, 2.0, 4.0, 12.0]
+
+    def _cloud(self, resolution: float = 1.0, size: int = 4):
+        """Flat ground, with `HEIGHTS` stacked over the top-left cell."""
+        xs, ys, zs, classes = _flat_ground(size=size, resolution=resolution)
+        for height in self.HEIGHTS[1:]:
+            xs = [*xs, 0.5 * resolution]
+            ys = [*ys, (size - 0.5) * resolution]
+            zs = [*zs, 10.0 + height]
+            classes = [*classes, 5]
+        return xs, ys, zs, classes
+
+    def _corner(self, aggregation, **kwargs):
+        ds, _ = _run(_chunks(*self._cloud()), [2, 5], aggregation=aggregation, **kwargs)
+        return ds["chm"].values[0, 0]
+
+    def test_the_default_is_the_maximum(self):
+        """A grid created before the control existed took the maximum."""
+        assert self._corner(None) == pytest.approx(12.0)
+        assert self._corner({}) == pytest.approx(12.0)
+
+    def test_max_takes_the_tallest_return(self):
+        assert self._corner({"method": "max"}) == pytest.approx(12.0)
+
+    def test_mean_averages_every_return(self):
+        assert self._corner({"method": "mean"}) == pytest.approx(4.5)
+
+    def test_median_takes_the_middle_return(self):
+        assert self._corner({"method": "median"}) == pytest.approx(3.0)
+
+    @pytest.mark.parametrize("percentile", [1.0, 25.0, 50.0, 95.0, 98.0, 100.0])
+    def test_a_percentile_matches_the_one_numpy_computes(self, percentile):
+        """Linear interpolation between order statistics, numpy's default."""
+        expected = np.percentile(self.HEIGHTS, percentile)
+
+        value = self._corner({"method": "percentile", "percentile": percentile})
+
+        assert value == pytest.approx(expected, rel=1e-6)
+
+    def test_median_is_the_fiftieth_percentile(self):
+        assert self._corner({"method": "median"}) == self._corner(
+            {"method": "percentile", "percentile": 50}
+        )
+
+    def test_the_hundredth_percentile_is_the_maximum(self):
+        assert self._corner({"method": "percentile", "percentile": 100}) == (
+            self._corner({"method": "max"})
+        )
+
+    @pytest.mark.parametrize(
+        "aggregation",
+        [
+            {"method": "max"},
+            {"method": "mean"},
+            {"method": "median"},
+            {"method": "percentile", "percentile": 95},
+        ],
+    )
+    def test_a_cell_with_no_returns_stays_nodata(self, aggregation):
+        """No statistic invents a height where nothing was measured."""
+        ds, _ = _run(
+            _chunks(*self._cloud()),
+            [2, 5],
+            roi=_roi(size=6.0),
+            aggregation=aggregation,
+        )
+
+        # The cloud covers 4 m of the 6 m domain, so the last two columns of
+        # the top row caught nothing.
+        assert np.isnan(ds["chm"].values[0, 4])
+        assert np.isnan(ds["chm"].values[0, 5])
+
+    @pytest.mark.parametrize("resolution", [1.0, 5.0, 10.0, 30.0])
+    @pytest.mark.parametrize(
+        "aggregation",
+        [
+            {"method": "max"},
+            {"method": "mean"},
+            {"method": "median"},
+            {"method": "percentile", "percentile": 95},
+        ],
+    )
+    def test_a_coarser_cell_reduces_over_more_returns(self, resolution, aggregation):
+        """What #488 is about: the statistic is taken over whatever falls in.
+
+        The cloud is fixed — 900 ground returns on a 1 m lattice and one 20 m
+        canopy return in the corner — so a cell 30 m across holds 900 of them
+        and a cell 1 m across holds two. The maximum is blind to that and every
+        other statistic is not.
+        """
+        size = 30
+        xs, ys, zs, classes = _flat_ground(size=size, resolution=1.0)
+        xs, ys, zs = [*xs, 0.5], [*ys, size - 0.5], [*zs, 10.0 + 20.0]
+        classes = [*classes, 5]
+        cell = int(resolution)
+        expected_heights = [0.0] * (cell * cell) + [20.0]
+
+        ds, _ = _run(
+            _chunks(xs, ys, zs, classes),
+            [2, 5],
+            resolution=resolution,
+            roi=_roi(size=float(size)),
+            aggregation=aggregation,
+        )
+
+        method = aggregation["method"]
+        if method == "max":
+            expected = 20.0
+        elif method == "mean":
+            expected = float(np.mean(expected_heights))
+        elif method == "median":
+            expected = float(np.median(expected_heights))
+        else:
+            expected = float(np.percentile(expected_heights, aggregation["percentile"]))
+        assert ds["chm"].values[0, 0] == pytest.approx(expected, abs=1e-5)
+
+    @pytest.mark.parametrize("percentile", [25.0, 50.0, 95.0])
+    def test_every_cell_matches_the_percentile_numpy_computes(self, percentile):
+        """The grouped reduction against numpy, cell by cell, on scattered returns.
+
+        The single-cell cases above fix the definition; this fixes the grouping,
+        which is where a vectorised per-cell rank goes wrong — an off-by-one in
+        the group starts moves a cell's answer to its neighbour's returns.
+        """
+        rng = np.random.default_rng(11)
+        size = 6
+        xs, ys, zs, classes = _flat_ground(size=size)
+        canopy_x = rng.uniform(0.0, float(size), 400)
+        canopy_y = rng.uniform(0.0, float(size), 400)
+        canopy_h = rng.uniform(0.0, 18.0, 400)
+        xs = [*xs, *canopy_x]
+        ys = [*ys, *canopy_y]
+        zs = [*zs, *(10.0 + canopy_h)]
+        classes = [*classes, *([5] * 400)]
+
+        ds, _ = _run(
+            _chunks(xs, ys, zs, classes),
+            [2, 5],
+            roi=_roi(size=float(size)),
+            aggregation={"method": "percentile", "percentile": percentile},
+        )
+
+        # Every cell holds its ground return at zero plus whatever landed in it.
+        cols = np.floor(canopy_x).astype(int)
+        rows = size - 1 - np.floor(canopy_y).astype(int)
+        for row in range(size):
+            for col in range(size):
+                landed = canopy_h[(rows == row) & (cols == col)]
+                expected = np.percentile([0.0, *landed], percentile)
+                assert ds["chm"].values[row, col] == pytest.approx(expected, abs=1e-4)
+
+    def test_an_unknown_method_is_rejected(self):
+        """The API validates this; a malformed stored source must not run."""
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "p95"})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"
+
+    @pytest.mark.parametrize("rank", [0, -50, 120, 150, float("nan")])
+    def test_a_percentile_rank_out_of_range_is_rejected(self, rank):
+        """A stored rank outside ``0 < p <= 100`` reads a neighbour's returns.
+
+        The reducer indexes ``starts + floor((n - 1) * p / 100)``, so a rank
+        over 100 walks past a cell's own returns into the next cell's, and a
+        rank at or below 0 reads the wrong tail. The API rejects these at
+        create time; a source that reached storage another way must not run.
+        """
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "percentile", "percentile": rank})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"
+
+    def test_a_non_numeric_percentile_is_rejected(self):
+        """A `ProcessingError`, not the bare `ValueError` a `float()` would raise."""
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "percentile", "percentile": "high"})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"
+
+
+class TestRetainingBlocks:
+    """Sizing the blocks a percentile is accumulated over.
+
+    Unlike a maximum or a mean, a percentile cannot be folded a batch at a
+    time: every return has to be held until the cell's whole set is known. What
+    it costs is therefore a block's *points*, not its cells, and a block sized
+    for cells covers a hundred times the ground at 10 m that it does at 1 m.
+    """
+
+    def test_a_block_is_one_cloud_tile_when_its_points_fit(self):
+        """One tile per block, which is also the fewest bytes a block can read."""
+        under = chm_point_cloud.RETAINED_POINTS_PER_BLOCK // 2
+
+        assert chm_point_cloud._retaining_block_cells(1.0, 500.0, under) == 500
+        assert chm_point_cloud._retaining_block_cells(10.0, 500.0, under) == 50
+
+    def test_a_tile_over_the_budget_is_split(self):
+        """Four times the budget halves the edge, quartering a block's points."""
+        over = 4 * chm_point_cloud.RETAINED_POINTS_PER_BLOCK
+
+        assert chm_point_cloud._retaining_block_cells(1.0, 500.0, over) == 250
+
+    def test_a_block_is_never_smaller_than_a_cell(self):
+        huge = 10**12
+
+        assert chm_point_cloud._retaining_block_cells(30.0, 500.0, huge) == 1
+
+    def _tiles(self, resolution, tile_m, cells, origin_m=0.0, points=1_000):
+        """`_retaining_tiles` over a `cells`-wide lattice offset `origin_m` from the cloud.
+
+        The lattice never starts on a tile boundary in practice, so the offset
+        is what tells the tile-boundary division apart from an even one: with
+        the origins aligned the two agree and a straddling bug hides.
+        """
+        transform = Affine(resolution, 0, origin_m, 0, -resolution, -origin_m)
+        manifest = {
+            "tile_m": tile_m,
+            "mins": (0.0, 0.0),
+            "points": points,
+            "tiles": 1,
+        }
+        return chm_point_cloud._retaining_tiles(
+            (cells, cells), transform, manifest, resolution
+        )
+
+    @pytest.mark.parametrize(
+        "resolution, tile_m",
+        [(1.0, 515.46), (6.0, 500.0), (7.0, 500.0), (15.0, 500.0), (10.0, 512.0)],
+    )
+    def test_a_block_lands_on_tile_boundaries_at_any_cell_size(
+        self, resolution, tile_m
+    ):
+        """A tile edge that is not a whole number of cells still cuts the blocks.
+
+        `tile_m` comes off the cloud's own bounding box, so it is rarely a
+        multiple of the resolution. Comparing the rounded block edge against the
+        exact ratio would call this the sub-tile case and divide evenly, which
+        straddles every block across two tiles per axis and reads four tile
+        files where one would do.
+        """
+        tile_cells = round(tile_m / resolution)
+        origin_m = 3.5 * tile_m
+        blocks = self._tiles(resolution, tile_m, 3 * tile_cells, origin_m=origin_m)
+
+        # Where the cloud's tiles actually fall on this offset lattice.
+        cuts = chm_point_cloud._tile_cuts(
+            3 * tile_cells, origin_m, resolution, 0.0, tile_m
+        )
+        assert cuts, "test needs interior tile boundaries to be meaningful"
+        starts = {row0 for row0, _, _, _ in blocks}
+        assert set(cuts) <= starts
+
+    def test_a_tile_split_by_the_budget_divides_evenly(self):
+        """Below a tile there is no boundary to land on, so the cuts go."""
+        blocks = self._tiles(
+            1.0,
+            500.0,
+            1000,
+            points=4 * chm_point_cloud.RETAINED_POINTS_PER_BLOCK,
+        )
+
+        starts = sorted({row0 for row0, _, _, _ in blocks})
+        assert starts == [0, 250, 500, 750]

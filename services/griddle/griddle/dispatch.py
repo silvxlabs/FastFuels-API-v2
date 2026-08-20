@@ -470,6 +470,9 @@ def handle_canopy(
                 # were built with the filter on at its defaults. An explicit
                 # null is the user turning it off.
                 spike_filter=source.get("spike_filter", {}),
+                # Absent on grids created before the control existed, which
+                # took the maximum, and that is what an absent one means here.
+                aggregation=source.get("aggregation"),
             )
             # How ground was obtained, and how well constrained it was. Without
             # this a derived-ground CHM over a large building looks like a

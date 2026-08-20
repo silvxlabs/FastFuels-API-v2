@@ -384,12 +384,15 @@ async def create_point_cloud_chm(
       the new cell size. The target grid must be in this domain's CRS.
       `target: "native"` is not supported — a point cloud has no pixel anchor
       to preserve.
-    - **spike_filter**: (optional) Removal of lone spurious returns. A cell
-      takes the tallest return in it, so one bad return — a bird, haze — sets
-      the cell unless the cloud classified it as noise, and many clouds do not.
-      Such a return leaves a shape real canopy cannot: a single cell towering
-      over everything around it. Both fields are in meters, so they mean the
-      same thing at any resolution. Send `null` to keep every return.
+    - **spike_filter**: (optional) Removal of lone spurious returns. Under the
+      default `max` aggregation a cell takes the tallest return in it, so one
+      bad return — a bird, haze — sets the cell unless the cloud classified it
+      as noise, and many clouds do not. Such a return leaves a shape real
+      canopy cannot: a single cell towering over everything around it. Both
+      fields are in meters, so they mean the same thing at any resolution. Send
+      `null` to keep every return. A `mean`, `median`, or `percentile`
+      aggregation already resists a lone return, so the filter matters most
+      with `max`.
     - **aggregation**: (optional) The statistic above, as
       `{"method": "max" | "mean" | "median" | "percentile"}`. `percentile`
       carries the rank it takes, as in

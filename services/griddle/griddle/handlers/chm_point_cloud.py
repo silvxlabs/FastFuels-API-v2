@@ -681,7 +681,13 @@ def _resolve_aggregation(aggregation: dict | None) -> tuple[str, float | None]:
         return "percentile", 50.0
     percentile = aggregation.get("percentile")
     if method == "percentile" and percentile is not None:
-        return "percentile", float(percentile)
+        # The reducer indexes by (n - 1) * p / 100, so a rank outside this range
+        # reads another cell's returns. The API enforces it; this covers a
+        # source that reached storage another way.
+        if isinstance(percentile, bool) or not isinstance(percentile, (int, float)):
+            percentile = float("nan")
+        if 0.0 < percentile <= 100.0:
+            return "percentile", float(percentile)
     raise ProcessingError(
         code="UNSUPPORTED_AGGREGATION",
         message=f"aggregation '{method}' does not name a statistic cells can take.",
@@ -731,7 +737,12 @@ def _retaining_tiles(
     tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
     points_per_tile = manifest["points"] / max(1, manifest["tiles"])
     block = _retaining_block_cells(resolution, tile_m, points_per_tile)
-    whole_tiles = block >= tile_m / resolution
+    # Against the rounded tile edge, not the exact ratio: `tile_m` comes off the
+    # cloud's bounding box, so `tile_m / resolution` is rarely whole, and
+    # comparing the rounded block to it would call a one-tile block sub-tile and
+    # divide evenly -- straddling every block across two tiles.
+    tile_cells = max(1, int(round(tile_m / resolution)))
+    whole_tiles = block >= tile_cells
     rows = _block_slices(
         height,
         block,

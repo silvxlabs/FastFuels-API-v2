@@ -14,6 +14,7 @@ import geopandas as gpd
 import numpy as np
 import pyproj
 import pytest
+from affine import Affine
 from griddle.handlers import chm_blocks, chm_point_cloud
 from pyarrow.fs import LocalFileSystem
 from scipy.ndimage import distance_transform_edt
@@ -1429,6 +1430,27 @@ class TestAggregation:
 
         assert error.value.code == "UNSUPPORTED_AGGREGATION"
 
+    @pytest.mark.parametrize("rank", [0, -50, 120, 150, float("nan")])
+    def test_a_percentile_rank_out_of_range_is_rejected(self, rank):
+        """A stored rank outside ``0 < p <= 100`` reads a neighbour's returns.
+
+        The reducer indexes ``starts + floor((n - 1) * p / 100)``, so a rank
+        over 100 walks past a cell's own returns into the next cell's, and a
+        rank at or below 0 reads the wrong tail. The API rejects these at
+        create time; a source that reached storage another way must not run.
+        """
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "percentile", "percentile": rank})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"
+
+    def test_a_non_numeric_percentile_is_rejected(self):
+        """A `ProcessingError`, not the bare `ValueError` a `float()` would raise."""
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "percentile", "percentile": "high"})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"
+
 
 class TestRetainingBlocks:
     """Sizing the blocks a percentile is accumulated over.
@@ -1456,3 +1478,60 @@ class TestRetainingBlocks:
         huge = 10**12
 
         assert chm_point_cloud._retaining_block_cells(30.0, 500.0, huge) == 1
+
+    def _tiles(self, resolution, tile_m, cells, origin_m=0.0, points=1_000):
+        """`_retaining_tiles` over a `cells`-wide lattice offset `origin_m` from the cloud.
+
+        The lattice never starts on a tile boundary in practice, so the offset
+        is what tells the tile-boundary division apart from an even one: with
+        the origins aligned the two agree and a straddling bug hides.
+        """
+        transform = Affine(resolution, 0, origin_m, 0, -resolution, -origin_m)
+        manifest = {
+            "tile_m": tile_m,
+            "mins": (0.0, 0.0),
+            "points": points,
+            "tiles": 1,
+        }
+        return chm_point_cloud._retaining_tiles(
+            (cells, cells), transform, manifest, resolution
+        )
+
+    @pytest.mark.parametrize(
+        "resolution, tile_m",
+        [(1.0, 515.46), (6.0, 500.0), (7.0, 500.0), (15.0, 500.0), (10.0, 512.0)],
+    )
+    def test_a_block_lands_on_tile_boundaries_at_any_cell_size(
+        self, resolution, tile_m
+    ):
+        """A tile edge that is not a whole number of cells still cuts the blocks.
+
+        `tile_m` comes off the cloud's own bounding box, so it is rarely a
+        multiple of the resolution. Comparing the rounded block edge against the
+        exact ratio would call this the sub-tile case and divide evenly, which
+        straddles every block across two tiles per axis and reads four tile
+        files where one would do.
+        """
+        tile_cells = round(tile_m / resolution)
+        origin_m = 3.5 * tile_m
+        blocks = self._tiles(resolution, tile_m, 3 * tile_cells, origin_m=origin_m)
+
+        # Where the cloud's tiles actually fall on this offset lattice.
+        cuts = chm_point_cloud._tile_cuts(
+            3 * tile_cells, origin_m, resolution, 0.0, tile_m
+        )
+        assert cuts, "test needs interior tile boundaries to be meaningful"
+        starts = {row0 for row0, _, _, _ in blocks}
+        assert set(cuts) <= starts
+
+    def test_a_tile_split_by_the_budget_divides_evenly(self):
+        """Below a tile there is no boundary to land on, so the cuts go."""
+        blocks = self._tiles(
+            1.0,
+            500.0,
+            1000,
+            points=4 * chm_point_cloud.RETAINED_POINTS_PER_BLOCK,
+        )
+
+        starts = sorted({row0 for row0, _, _, _ in blocks})
+        assert starts == [0, 250, 500, 750]

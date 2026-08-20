@@ -212,13 +212,16 @@ class PointCloudGround(BaseModel):
 class ChmSpikeFilter(BaseModel):
     """Removal of lone spurious returns from a point-cloud canopy height model.
 
-    A cell takes the tallest return that falls in it, so one bad return — a
-    bird, haze, a multiple-time-around artifact — becomes the cell's height
-    unless the cloud classified it as noise. Many do not.
+    Under the default `max` aggregation a cell takes the tallest return that
+    falls in it, so one bad return — a bird, haze, a multiple-time-around
+    artifact — becomes the cell's height unless the cloud classified it as
+    noise. Many do not.
 
     Such a return leaves a shape real canopy cannot: a single cell towering
     over everything around it. Both fields are the two halves of that shape, in
-    meters, so they mean the same thing at any `alignment.resolution`.
+    meters, so they mean the same thing at any `alignment.resolution`. A `mean`,
+    `median`, or `percentile` aggregation already resists a lone return, so this
+    filter is aimed at the `max` case.
     """
 
     min_canopy_footprint_m: float = Field(

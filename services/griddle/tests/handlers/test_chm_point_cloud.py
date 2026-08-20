@@ -119,6 +119,10 @@ def _run(
     # GCS. `block_cells` forces a blocking; left alone the handler picks one.
     patches = [
         patch.object(chm_point_cloud, "read_manifest", return_value=_MANIFEST),
+        # The retaining passes read per-tile counts from the dataset; stub it to
+        # "no counts", i.e. every tile under budget -> one block per tile. Tests
+        # that exercise the split override this.
+        patch.object(chm_point_cloud, "_tile_point_counts", return_value={}),
         # One worker so the pass runs here and these patches reach it; a
         # forkserver child would re-import and see the real reader.
         patch.object(chm_point_cloud, "GRIDDLE_READ_WORKERS", 1),
@@ -892,42 +896,81 @@ class TestBlockingIsInvisible:
         [{"method": "median"}, {"method": "percentile", "percentile": 95}],
     )
     def test_a_retaining_statistic_survives_any_division(self, aggregation):
-        """The retaining statistics get their own, finer, height-pass blocking.
-
-        `_compute_block_cells` no longer decides it, so forcing that alone
-        would leave the new division untested. The point budget does, and
-        squeezing it to one return puts every cell in its own block — the most
-        divided the pass can be. That has to agree, cell for cell, with the
-        same cloud read in one block.
+        """A retaining pass blocks by cloud tile, so the tiling is what divides
+        it. Any tiling has to agree, cell for cell, with the whole grid read in
+        one block — a tile per cell (the most divided the pass can be) as much
+        as a single tile over the domain.
         """
         cloud = self._cloud()
         roi = _roi(self.SIZE_M)
 
-        def run(budget, block_cells):
-            with patch.object(chm_point_cloud, "RETAINED_POINTS_PER_BLOCK", budget):
-                # Guard the guard: a budget that failed to divide anything
-                # would make the comparison vacuous.
-                cells = chm_point_cloud._retaining_block_cells(
-                    self.RESOLUTION, 500.0, _MANIFEST["points"]
+        def run(tile_m):
+            manifest = {**_MANIFEST, "tile_m": tile_m}
+            with patch.object(chm_point_cloud, "read_manifest", return_value=manifest):
+                blocks = chm_point_cloud._tile_blocks(
+                    (self._cells(), self._cells()), self._transform(), manifest
                 )
-                return cells, _run(
+                return len(blocks), _run(
                     _chunks(*cloud),
                     [2],
                     resolution=self.RESOLUTION,
                     roi=roi,
-                    block_cells=block_cells,
                     aggregation=aggregation,
                 )
 
-        one_block, (whole, whole_provenance) = run(10**12, 4096)
-        one_cell, (divided, divided_provenance) = run(1, self.BLOCK_CELLS)
+        one, (whole, whole_provenance) = run(10_000.0)
+        many, (divided, divided_provenance) = run(self.RESOLUTION)
 
-        assert one_block >= whole["chm"].shape[0]
-        assert one_cell == 1
+        # Guard the guard: one block vs a block per cell, or the split is a no-op.
+        assert one == 1
+        assert many == self._cells() ** 2
         assert np.isfinite(whole["chm"].values).any()
 
         np.testing.assert_array_equal(whole["chm"].values, divided["chm"].values)
         assert whole_provenance == divided_provenance
+
+    def test_a_tile_over_budget_is_split_and_stays_exact(self):
+        """A tile too dense to hold at once is split spatially, and the split is
+        exact: a cell's returns stay in one piece, so the percentile is the same
+        as the whole tile read at once.
+        """
+        cloud = self._cloud()
+        roi = _roi(self.SIZE_M)
+        aggregation = {"method": "percentile", "percentile": 95}
+
+        whole, whole_provenance = _run(
+            _chunks(*cloud),
+            [2],
+            resolution=self.RESOLUTION,
+            roi=roi,
+            aggregation=aggregation,
+        )
+
+        # The domain sits in tile (0, 0). Call it far over budget so the split
+        # factor is > 1, and check it actually divided.
+        counts = {(0, 0): 100 * chm_point_cloud.RETAINED_POINTS_PER_BLOCK}
+        blocks = chm_point_cloud._tile_blocks(
+            (self._cells(), self._cells()), self._transform(), _MANIFEST, counts
+        )
+        assert len(blocks) > 1
+
+        with patch.object(chm_point_cloud, "_tile_point_counts", return_value=counts):
+            split, split_provenance = _run(
+                _chunks(*cloud),
+                [2],
+                resolution=self.RESOLUTION,
+                roi=roi,
+                aggregation=aggregation,
+            )
+
+        np.testing.assert_array_equal(whole["chm"].values, split["chm"].values)
+        assert whole_provenance == split_provenance
+
+    def _cells(self):
+        return int(self.SIZE_M / self.RESOLUTION)
+
+    def _transform(self):
+        return Affine(self.RESOLUTION, 0, 0.0, 0, -self.RESOLUTION, self.SIZE_M)
 
     # [2] takes the classified path, whose only blocked stage is the point
     # pass, so it pins the scatter-reduction. [1] takes the derived path, where
@@ -1450,88 +1493,3 @@ class TestAggregation:
             self._corner({"method": "percentile", "percentile": "high"})
 
         assert error.value.code == "UNSUPPORTED_AGGREGATION"
-
-
-class TestRetainingBlocks:
-    """Sizing the blocks a percentile is accumulated over.
-
-    Unlike a maximum or a mean, a percentile cannot be folded a batch at a
-    time: every return has to be held until the cell's whole set is known. What
-    it costs is therefore a block's *points*, not its cells, and a block sized
-    for cells covers a hundred times the ground at 10 m that it does at 1 m.
-    """
-
-    def test_a_block_is_one_cloud_tile_when_its_points_fit(self):
-        """One tile per block, which is also the fewest bytes a block can read."""
-        under = chm_point_cloud.RETAINED_POINTS_PER_BLOCK // 2
-
-        assert chm_point_cloud._retaining_block_cells(1.0, 500.0, under) == 500
-        assert chm_point_cloud._retaining_block_cells(10.0, 500.0, under) == 50
-
-    def test_a_tile_over_the_budget_is_split(self):
-        """Four times the budget halves the edge, quartering a block's points."""
-        over = 4 * chm_point_cloud.RETAINED_POINTS_PER_BLOCK
-
-        assert chm_point_cloud._retaining_block_cells(1.0, 500.0, over) == 250
-
-    def test_a_block_is_never_smaller_than_a_cell(self):
-        huge = 10**12
-
-        assert chm_point_cloud._retaining_block_cells(30.0, 500.0, huge) == 1
-
-    def _tiles(self, resolution, tile_m, cells, origin_m=0.0, points=1_000):
-        """`_retaining_tiles` over a `cells`-wide lattice offset `origin_m` from the cloud.
-
-        The lattice never starts on a tile boundary in practice, so the offset
-        is what tells the tile-boundary division apart from an even one: with
-        the origins aligned the two agree and a straddling bug hides.
-        """
-        transform = Affine(resolution, 0, origin_m, 0, -resolution, -origin_m)
-        manifest = {
-            "tile_m": tile_m,
-            "mins": (0.0, 0.0),
-            "points": points,
-            "tiles": 1,
-        }
-        return chm_point_cloud._retaining_tiles(
-            (cells, cells), transform, manifest, resolution
-        )
-
-    @pytest.mark.parametrize(
-        "resolution, tile_m",
-        [(1.0, 515.46), (6.0, 500.0), (7.0, 500.0), (15.0, 500.0), (10.0, 512.0)],
-    )
-    def test_a_block_lands_on_tile_boundaries_at_any_cell_size(
-        self, resolution, tile_m
-    ):
-        """A tile edge that is not a whole number of cells still cuts the blocks.
-
-        `tile_m` comes off the cloud's own bounding box, so it is rarely a
-        multiple of the resolution. Comparing the rounded block edge against the
-        exact ratio would call this the sub-tile case and divide evenly, which
-        straddles every block across two tiles per axis and reads four tile
-        files where one would do.
-        """
-        tile_cells = round(tile_m / resolution)
-        origin_m = 3.5 * tile_m
-        blocks = self._tiles(resolution, tile_m, 3 * tile_cells, origin_m=origin_m)
-
-        # Where the cloud's tiles actually fall on this offset lattice.
-        cuts = chm_point_cloud._tile_cuts(
-            3 * tile_cells, origin_m, resolution, 0.0, tile_m
-        )
-        assert cuts, "test needs interior tile boundaries to be meaningful"
-        starts = {row0 for row0, _, _, _ in blocks}
-        assert set(cuts) <= starts
-
-    def test_a_tile_split_by_the_budget_divides_evenly(self):
-        """Below a tile there is no boundary to land on, so the cuts go."""
-        blocks = self._tiles(
-            1.0,
-            500.0,
-            1000,
-            points=4 * chm_point_cloud.RETAINED_POINTS_PER_BLOCK,
-        )
-
-        starts = sorted({row0 for row0, _, _, _ in blocks})
-        assert starts == [0, 250, 500, 750]

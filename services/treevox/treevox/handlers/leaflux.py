@@ -4,35 +4,33 @@ services/treevox/treevox/handlers/leaflux.py
 LeafLux irradiance handler. Routed to by dispatch on
 (operation="irradiance", input="grid", entity="solar").
 
-Chunks the domain in the original (x, y) frame. Each chunk is read with an
-up-sun halo sized to the canopy height and solar zenith so it casts correct
-shadows into its core; the halo is discarded on write. Sequential by design:
-one chunk in flight at a time to stay within the service memory budget, not to
-parallelize.
+The domain is split into a grid of core tiles. Each tile is read with an up-sun
+halo so shadows fall correctly into its core; leaflux runs on that padded window,
+the halo is trimmed off, and the core region is written straight to the output
+zarr. A spawn Pool computes tiles in parallel and each worker writes its own
+region (disjoint, chunk-aligned -> safe concurrent writes), returning nothing —
+so no tile flows back through the parent and peak memory is WRITE_WORKERS * one
+padded tile, bounded in domain. The source LAD and terrain grids are already
+co-aligned on the domain lattice.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import multiprocessing as mp
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
+import dask.array as da
 import numpy as np
 import rioxarray  # noqa: F401 — registers `.rio` accessor
 import xarray as xr
-from leaflux import (
-    Environment,
-    LeafArea,
-    SolarPosition,
-    Terrain,
-    attenuate_all,
-)
-from rasterio.enums import Resampling
+from leaflux import Environment, LeafArea, SolarPosition, Terrain, attenuate_all
 
 from treevox import storage
-from treevox.errors import ProcessingError
 
 logger = logging.getLogger(__name__)
 
@@ -41,424 +39,374 @@ ELEVATION_KEY = "elevation"
 CANOPY_BAND = "irradiance.canopy.relative"
 SURFACE_BAND = "irradiance.surface.relative"
 
-MAX_ZENITH_DEG = 85.0
-# Memory-bound window side: max (core + 2*halo) cells leaflux processes at once.
-# ~1600 => ~2 GB peak at nz~40, fill~0.15, with terrain. Measure fill on a real
-# stand before trusting this.
-WINDOW_TARGET_CELLS = 1600
-MAX_TERRAIN_NAN_FRACTION = 0.05
+MAX_ZENITH_DEG = 85.0  # past this the sun is treated as down (near-dark)
+WINDOW_TARGET_CELLS = 1600  # core + 2*halo cap; ~2 GB peak at nz~40, fill~0.15
 AIR_FILL = np.float32("nan")
 
+# One tile is computed and written per worker, so peak memory is roughly
+# WRITE_WORKERS * one padded tile (WINDOW_TARGET_CELLS sizes a tile to ~2 GB).
+# Size to the Cloud Run instance memory (~= instance_GB / 2). Default is a single
+# worker: bounded like the original one-tile target, but without the dask
+# processes-scheduler parent-gather that made memory grow with domain area. Raise
+# it on a larger instance to parallelize.
+WRITE_WORKERS = int(os.getenv("LEAFLUX_WRITE_WORKERS", "1"))
 
-@dataclass
+
 class LeafluxResult:
-    gcs_path: str
-    georeference: dict
-    chunk_shape: list[int]
+    def __init__(self, gcs_path: str, georeference: dict, chunk_shape: list[int]):
+        self.gcs_path = gcs_path
+        self.georeference = georeference
+        self.chunk_shape = chunk_shape
 
 
-@dataclass
-class SourceGeometry:
-    x: np.ndarray
-    y: np.ndarray
-    z: np.ndarray
-    hr: float
-    vr: float
-    crs: str
-    z_origin: float
-    transform: list[float]
-
-    @property
-    def shape(self) -> tuple[int, int, int]:
-        return (len(self.z), len(self.y), len(self.x))
-
-
-@dataclass
-class ChunkPlan:
-    nz: int
-    ny: int
-    nx: int
-    hr: float
-    vr: float
-    core: int
-    halo: int
-    locations: list[tuple[int, int]]
-
-
-def _open_source(source_grid_id: str) -> xr.Dataset:
-    path = storage.gcs_path(source_grid_id)
-    return xr.open_zarr(path, consolidated=True, decode_coords="all")  # lazy
-
-
-def _read_geometry(src: xr.Dataset) -> SourceGeometry:
-    return SourceGeometry(
-        x=src.x.values,
-        y=src.y.values,
-        z=src.z.values,
-        hr=float(src.attrs["transform"][0]),
-        vr=float(src.attrs["z_resolution"]),
-        crs=str(src.rio.crs),
-        z_origin=float(src.attrs["z_origin"]),
-        transform=list(src.attrs["transform"]),
+def _open(grid_id: str) -> xr.Dataset:
+    return xr.open_zarr(
+        storage.gcs_path(grid_id), consolidated=True, decode_coords="all"
     )
 
 
-# Creates Leaflux SolarPosition from datetime, lat, and lon
-def _solar_position(source: dict) -> SolarPosition:
+def _sun(source: dict) -> tuple[SolarPosition | None, bool]:
+    """SolarPosition and a night flag; None sun when it is below the horizon."""
     dt = source["date_time"]
     if isinstance(dt, str):
         dt = datetime.fromisoformat(dt)
-    return SolarPosition(dt, source["latitude"], source["longitude"])
+    try:
+        sol = SolarPosition(dt, source["latitude"], source["longitude"])
+        return sol, math.degrees(sol.zenith) > MAX_ZENITH_DEG
+    except ValueError:  # SolarPosition rejects a sun below the horizon
+        return None, True
 
 
-def _plan_chunks(geom: SourceGeometry, zenith_rad: float) -> ChunkPlan:
-    nz, ny, nx = geom.shape
-    halo = int(math.ceil((nz * geom.vr * math.tan(zenith_rad)) / geom.hr))
-    # Symmetric halo: window = core + 2*halo must fit the budget.
-    # TODO: could do directional (up-sun only) halo needs just core + halo -> fewer chunks
-    # Keeping it simple for now
-    core = max(min(WINDOW_TARGET_CELLS - 2 * halo, nx, ny), 1)
-    n_rows = math.ceil(ny / core)
-    n_cols = math.ceil(nx / core)
-    locations = [(r, c) for r in range(n_rows) for c in range(n_cols)]
-    logger.info(
-        f"Irradiance layout: {ny}x{nx} (y, x); core={core}, halo={halo}; "
-        f"{n_rows}x{n_cols} = {len(locations)} chunks"
-    )
-    return ChunkPlan(nz, ny, nx, geom.hr, geom.vr, core, halo, locations)
+# --- Tile geometry ---------------------------------------------------------
 
 
-def _window_slices(
-    loc: tuple[int, int], plan: ChunkPlan
-) -> tuple[slice, slice, slice, slice]:
-    """Return (core_y, core_x, read_y, read_x): output core and the halo-expanded
-    read window, all in global (y, x) indices."""
-    r, c = loc
-    y0, x0 = r * plan.core, c * plan.core
-    y1, x1 = min(y0 + plan.core, plan.ny), min(x0 + plan.core, plan.nx)
-    ry0, rx0 = max(y0 - plan.halo, 0), max(x0 - plan.halo, 0)
-    ry1, rx1 = min(y1 + plan.halo, plan.ny), min(x1 + plan.halo, plan.nx)
-    return slice(y0, y1), slice(x0, x1), slice(ry0, ry1), slice(rx0, rx1)
+@dataclass(frozen=True)
+class _Tile:
+    """One output tile: a core region [r0:r1, c0:c1] plus the padded window
+    [pr0:pr1, pc0:pc1] (core + up-sun halo, clipped to the grid) that is read and
+    fed to leaflux. All indices are global cell indices into the (z, y, x) grid."""
 
+    r0: int
+    r1: int
+    c0: int
+    c1: int
+    pr0: int
+    pr1: int
+    pc0: int
+    pc1: int
 
-# Create a leaflux LeafArea array from the LAD band of the grid
-def _read_leaf_area(src: xr.Dataset, read_y: slice, read_x: slice) -> LeafArea:
-    lad_zyx = src[LEAF_AREA_DENSITY_KEY].isel(y=read_y, x=read_x).values  # Get LAD
-    lad_yxz = np.transpose(
-        np.asarray(lad_zyx, dtype=np.float32), (1, 2, 0)
-    )  # Rearrange
-    la = LeafArea.from_uniformgrid(lad_yxz)
-    occupied, total = len(la.leaf_area), lad_yxz.size
-    logger.info(f"fill: {occupied}/{total} = {occupied / total:.4f}")
-    return la
+    @property
+    def pad_zyx(self) -> tuple:
+        """Index into a (z, y, x) grid for the padded read (all z)."""
+        return (slice(None), slice(self.pr0, self.pr1), slice(self.pc0, self.pc1))
 
+    @property
+    def pad_yx(self) -> tuple:
+        """Index into a (y, x) grid for the padded read (e.g. terrain)."""
+        return (slice(self.pr0, self.pr1), slice(self.pc0, self.pc1))
 
-def _load_dem(
-    terrain_grid_id: str, src: xr.Dataset, z_origin: float, vr: float
-) -> np.ndarray:
-    dem = xr.open_zarr(
-        storage.gcs_path(terrain_grid_id), consolidated=True, decode_coords="all"
-    )
-    target = src[LEAF_AREA_DENSITY_KEY].isel(z=0)
-    logger.info(
-        f"Terrain align: DEM {tuple(dem[ELEVATION_KEY].shape)} {dem.rio.crs} "
-        f"-> source {tuple(target.shape)} {src.rio.crs}"
-    )
-
-    # TODO: Is this ok? Resample DEM bilinearly to get rid of step artifacts from
-    # 10m DEMs
-    aligned = (
-        dem[ELEVATION_KEY]
-        .rio.write_nodata(np.nan)
-        .rio.reproject_match(target, resampling=Resampling.bilinear)
-    )
-    values = np.asarray(aligned.values, dtype=np.float32)
-
-    nan_count = int(np.isnan(values).sum())
-    covered = 1.0 - nan_count / values.size
-    valid = values[~np.isnan(values)]
-    elev_range = f"{valid.min():.1f}/{valid.max():.1f}" if valid.size else "n/a"
-    logger.info(
-        f"Terrain coverage: {covered * 100:.2f}% "
-        f"({nan_count}/{values.size} cells missing); elev min/max {elev_range}"
-    )
-
-    if nan_count / values.size > MAX_TERRAIN_NAN_FRACTION:
-        raise ProcessingError(
-            code="TERRAIN_COVERAGE_INSUFFICIENT",
-            message=(
-                f"Terrain grid covers only {covered * 100:.1f}% of the source "
-                f"domain ({nan_count} of {values.size} cells missing). Recreate "
-                "the DEM over the full domain (optionally with an extent buffer)."
-            ),
+    @property
+    def core_in_pad(self) -> tuple:
+        """Index that trims a padded (z, y, x) result back to the core region."""
+        return (
+            slice(None),
+            slice(self.r0 - self.pr0, self.r0 - self.pr0 + (self.r1 - self.r0)),
+            slice(self.c0 - self.pc0, self.c0 - self.pc0 + (self.c1 - self.c0)),
         )
 
-    if nan_count:
-        logger.info(
-            f"Terrain: filling {nan_count} NaN cells (interpolate_na, nearest)."
-        )
-        values = np.asarray(
-            aligned.rio.interpolate_na(method="nearest").values, dtype=np.float32
-        )
+    def region(self, nz: int) -> dict:
+        """The output-zarr region this tile's core is written to."""
+        return {
+            "z": slice(0, nz),
+            "y": slice(self.r0, self.r1),
+            "x": slice(self.c0, self.c1),
+        }
 
-    # Move DEM to be relative to LAD grid's z_origin
-    values = (values - z_origin) / vr
-    logger.info(
-        f"Terrain re-zeroed to LAD datum: relative cell min/max "
-        f"{np.min(values):.1f}/{np.max(values):.1f}"
+    def origin(self, ny: int) -> tuple[float, float]:
+        """Global leaflux (x, y) origin for the padded window.
+
+        LeafLux floors rotated coordinates onto a 1x1 lattice, so a tile only
+        reproduces a whole-domain run when its lattice is anchored to the global
+        frame. leaflux x = column and y runs south->north (ny - 1 - row), so the
+        padded window's north-west corner (pc0, pr0) with height (pr1 - pr0) maps
+        to origin (pc0, ny - pr1)."""
+        return (float(self.pc0), float(ny - self.pr1))
+
+
+def _tile_at(row: int, col: int, core: int, halo: int, ny: int, nx: int) -> _Tile:
+    r0, r1 = row * core, min(row * core + core, ny)
+    c0, c1 = col * core, min(col * core + core, nx)
+    return _Tile(
+        r0=r0,
+        r1=r1,
+        c0=c0,
+        c1=c1,
+        pr0=max(0, r0 - halo),
+        pr1=min(ny, r1 + halo),
+        pc0=max(0, c0 - halo),
+        pc1=min(nx, c1 + halo),
     )
-    return values  # (ny, nx), north -> south, LAD-relative cell units
 
 
-def _terrain_offsets(
-    xy: np.ndarray, terrain_win: np.ndarray, win_ny: int
-) -> np.ndarray:
-    # terrain height (cell units) beneath each (x, y) canopy point.
-    # y is south->north (LeafArea); terrain_win row is north->south -> flip.
-    xi = np.clip(np.round(xy[:, 0]).astype(int), 0, terrain_win.shape[1] - 1)
-    yi = np.clip(
-        win_ny - 1 - np.round(xy[:, 1]).astype(int), 0, terrain_win.shape[0] - 1
-    )
-    return terrain_win[yi, xi]
-
-
-# Return window of DEM for chunked processing
-# If there is no DEM, a flat plane is substituted
-def _terrain_window(dem: np.ndarray | None, read_y: slice, read_x: slice) -> np.ndarray:
-    win = (read_y.stop - read_y.start, read_x.stop - read_x.start)
-    if dem is None:
-        return np.zeros(win, dtype=np.float32)  # flat plane beneath the canopy
-    return np.asarray(dem[read_y, read_x], dtype=np.float32)
-
-
-def _canopy_core_array(
-    canopy_stack: np.ndarray,
-    plan: ChunkPlan,
-    core_y: slice,
-    core_x: slice,
-    read_y: slice,
-    read_x: slice,
-) -> np.ndarray:
-    # canopy_stack rows: (x, y, z, irr) in window-local coords, y south -> north.
-    win_ny = read_y.stop - read_y.start
-    x = np.round(canopy_stack[:, 0]).astype(int)
-    y = win_ny - 1 - np.round(canopy_stack[:, 1]).astype(int)  # -> north -> south
-    z = np.round(canopy_stack[:, 2]).astype(int)
-    gy = read_y.start + y
-    gx = read_x.start + x
-    keep = (
-        (gy >= core_y.start)
-        & (gy < core_y.stop)
-        & (gx >= core_x.start)
-        & (gx < core_x.stop)
-    )
-    core = np.full(
-        (plan.nz, core_y.stop - core_y.start, core_x.stop - core_x.start),
-        AIR_FILL,
-        dtype=np.float32,
-    )
-    core[z[keep], gy[keep] - core_y.start, gx[keep] - core_x.start] = canopy_stack[
-        keep, 3
+def _plan_tiles(ny: int, nx: int, core: int, halo: int) -> list[_Tile]:
+    """Every core tile covering the (ny, nx) grid; cores are disjoint and their
+    union is the whole grid."""
+    return [
+        _tile_at(row, col, core, halo, ny, nx)
+        for row in range(math.ceil(ny / core))
+        for col in range(math.ceil(nx / core))
     ]
-    return core
 
 
-# TODO: currently, surface irradiance is stored at z=0 in a 3D grid, the rest is nans
-# This could change, but I wanted to stick with the same format as the canopy for now
-def _surface_core_3d(
-    terrain_irr: np.ndarray,
-    plan: ChunkPlan,
-    core_y: slice,
-    core_x: slice,
-    read_y: slice,
-    read_x: slice,
-) -> np.ndarray:
-    # terrain_irr is (win_ny, win_nx), y north -> south (already placed by leaflux).
-    oy = core_y.start - read_y.start
-    ox = core_x.start - read_x.start
-    cny = core_y.stop - core_y.start
-    cnx = core_x.stop - core_x.start
-    surf = terrain_irr[oy : oy + cny, ox : ox + cnx].astype(np.float32)
-    core = np.full((plan.nz, cny, cnx), AIR_FILL, dtype=np.float32)
-    core[0] = surf  # 2D surface stored at z=0
-    return core
+# --- Per-tile irradiance ---------------------------------------------------
+
+
+def _leaf_area(lad: np.ndarray) -> LeafArea:
+    """LeafArea from a (z, y, x) array (from_uniformgrid wants (y, x, z))."""
+    return LeafArea.from_uniformgrid(np.transpose(lad.astype(np.float32), (1, 2, 0)))
+
+
+def _scatter(stack: np.ndarray, shape: tuple[int, int, int]) -> np.ndarray:
+    """Scatter leaflux's (x, y, z, irr) point cloud (y south->north) into a dense
+    (z, y, x) grid; air cells stay AIR_FILL."""
+    _, ny, _ = shape
+    x = np.round(stack[:, 0]).astype(int)
+    y = ny - 1 - np.round(stack[:, 1]).astype(int)  # south->north -> north->south
+    z = np.round(stack[:, 2]).astype(int)
+    grid = np.full(shape, AIR_FILL, dtype=np.float32)
+    grid[z, y, x] = stack[:, 3]
+    return grid
+
+
+def _terrain_lift(leaf_area: LeafArea, terrain: np.ndarray) -> None:
+    """Lift the canopy onto the terrain (cell units) so shadows cast correctly.
+    Leaf y is south->north; terrain rows are north->south."""
+    xy = leaf_area.leaf_area[:, :2]
+    xi = np.clip(np.round(xy[:, 0]).astype(int), 0, terrain.shape[1] - 1)
+    yi = np.clip(
+        terrain.shape[0] - 1 - np.round(xy[:, 1]).astype(int), 0, terrain.shape[0] - 1
+    )
+    leaf_area.leaf_area[:, 2] += terrain[yi, xi]
+
+
+def _canopy_irradiance(lad, origin, sol, extn, voxel, night) -> np.ndarray:
+    """Relative canopy irradiance for a padded (z, y, x) LAD tile, scattered back
+    onto the tile grid. No leaflux run when it is night or the tile is empty
+    (leaflux can't reduce an empty leaf stack)."""
+    if night or not np.any(lad > 0):
+        fill = np.float32(0.0) if night else AIR_FILL  # 0 where canopy at night
+        return np.where(lad > 0, fill, AIR_FILL).astype(np.float32)
+    env = Environment(leaf_area=_leaf_area(lad), voxel_dim=voxel)
+    irr = attenuate_all(env, sol, extn=extn, origin=origin)
+    return _scatter(irr.canopy_irradiance, lad.shape)
+
+
+def _surface_irradiance(lad, terrain, origin, sol, extn, voxel, night) -> np.ndarray:
+    """Relative ground irradiance for a padded tile, placed at z=0 of a (z, y, x)
+    grid (all other cells AIR_FILL). `terrain` is a (y, x) surface in cell units;
+    the canopy is lifted onto it so shadows cast from the right height."""
+    grid = np.full(lad.shape, AIR_FILL, dtype=np.float32)
+    if night:
+        grid[0] = 0.0
+        return grid
+    leaf_area = _leaf_area(lad)
+    _terrain_lift(leaf_area, terrain)
+    env = Environment(leaf_area=leaf_area, terrain=Terrain(terrain), voxel_dim=voxel)
+    irr = attenuate_all(env, sol, extn=extn, origin=origin)
+    grid[0] = irr.terrain_irradiance
+    return grid
+
+
+# --- Per-tile parallel writer ----------------------------------------------
+
+
+@dataclass(frozen=True)
+class _WriteJob:
+    """Everything a worker needs to fill tiles, all picklable (no open datasets —
+    those are opened once per worker in `_open_worker_sources`)."""
+
+    source_grid_id: str
+    dem_id: str | None
+    out_path: str
+    nz: int
+    ny: int
+    nx: int
+    core: int
+    halo: int
+    z_origin: float
+    vr: float
+    voxel: tuple[float, float, float]
+    extn: float
+    sol: SolarPosition | None
+    night: bool
+    want_canopy: bool
+    want_surface: bool
+
+
+# Per-worker source handles, opened once by the Pool initializer (or in-process
+# for the single-worker path) and reused across every tile that worker fills.
+_WORKER: dict = {}
+
+
+def _open_worker_sources(job: _WriteJob) -> None:
+    _WORKER["job"] = job
+    _WORKER["lad_ds"] = _open(job.source_grid_id)
+    _WORKER["dem_ds"] = _open(job.dem_id) if job.dem_id else None
+
+
+def _read_terrain(tile: _Tile, shape: tuple[int, int]) -> np.ndarray:
+    """The tile's padded terrain in cell units, or a flat plane at the LAD datum
+    when there is no terrain grid."""
+    job: _WriteJob = _WORKER["job"]
+    dem_ds = _WORKER["dem_ds"]
+    if dem_ds is None:
+        return np.zeros(shape, dtype=np.float32)
+    elev = dem_ds[ELEVATION_KEY][tile.pad_yx].values.astype(np.float32)
+    return (elev - job.z_origin) / job.vr
+
+
+def _write_tile(tile: _Tile) -> None:
+    job: _WriteJob = _WORKER["job"]
+    lad = _WORKER["lad_ds"][LEAF_AREA_DENSITY_KEY][tile.pad_zyx].values.astype(
+        np.float32
+    )
+    origin = tile.origin(job.ny)
+
+    data: dict = {}
+    if job.want_canopy:
+        canopy = _canopy_irradiance(
+            lad, origin, job.sol, job.extn, job.voxel, job.night
+        )
+        data[CANOPY_BAND] = (("z", "y", "x"), canopy[tile.core_in_pad])
+    if job.want_surface:
+        terrain = _read_terrain(tile, lad.shape[1:])
+        surface = _surface_irradiance(
+            lad, terrain, origin, job.sol, job.extn, job.voxel, job.night
+        )
+        data[SURFACE_BAND] = (("z", "y", "x"), surface[tile.core_in_pad])
+
+    xr.Dataset(data).to_zarr(
+        job.out_path, region=tile.region(job.nz), safe_chunks=False
+    )
+
+
+def _write_tiles(
+    tiles: list[_Tile], job: _WriteJob, progress: Callable[[str, int | None], None]
+) -> None:
+    n = len(tiles)
+    workers = max(1, min(WRITE_WORKERS, n))
+    done = 0
+
+    def _tick() -> None:
+        nonlocal done
+        done += 1
+        progress(f"Computing irradiance ({done}/{n} tiles)...", 25 + int(70 * done / n))
+
+    if workers == 1:
+        _open_worker_sources(job)
+        for tile in tiles:
+            _write_tile(tile)
+            _tick()
+    else:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(
+            workers, initializer=_open_worker_sources, initargs=(job,)
+        ) as pool:
+            for _ in pool.imap_unordered(_write_tile, tiles, chunksize=1):
+                _tick()
+
+
+# --- Orchestration ---------------------------------------------------------
 
 
 def _init_output(
-    out_path: str, geom: SourceGeometry, plan: ChunkPlan, requested: set[str]
+    out_path: str, lad_ds: xr.Dataset, bands: list[str], core: int
 ) -> None:
-    storage.init_store(
-        out_path,
-        x_coords=geom.x,
-        y_coords=geom.y,
-        z_coords=geom.z,
-        hr=geom.hr,
-        vr=geom.vr,
-        crs=geom.crs,
-        z_origin=geom.z_origin,
-        requested_keys=sorted(requested),
-        chunk_shape=(plan.nz, plan.core, plan.core),
-    )
-
-
-def _build_result(
-    out_path: str, geom: SourceGeometry, plan: ChunkPlan
-) -> LeafluxResult:
-    georeference = {
-        "crs": geom.crs,
-        "transform": geom.transform,
-        "shape": list(geom.shape),
-        "z_resolution": geom.vr,
-        "z_origin": geom.z_origin,
-    }
-    return LeafluxResult(out_path, georeference, [plan.nz, plan.core, plan.core])
-
-
-def _process_chunk(
-    loc: tuple[int, int],
-    plan: ChunkPlan,
-    src: xr.Dataset,
-    out_path: str,
-    dem: np.ndarray | None,
-    sol: SolarPosition,
-    extn: float,
-    requested: set[str],
-) -> None:
-    core_y, core_x, read_y, read_x = _window_slices(loc, plan)
-    win_ny = read_y.stop - read_y.start
-
-    leaf_area = _read_leaf_area(src, read_y, read_x)
-    needs_terrain = SURFACE_BAND in requested
-    terrain_win = _terrain_window(dem, read_y, read_x) if needs_terrain else None
-
-    if terrain_win is not None:
-        # Move LAD onto DEM so that they are correctly relative to each other
-        leaf_area.leaf_area[:, 2] += _terrain_offsets(
-            leaf_area.leaf_area[:, :2], terrain_win, win_ny
-        )
-
-    terrain = Terrain(terrain_win) if terrain_win is not None else None
-    env = Environment(
-        leaf_area=leaf_area, terrain=terrain, voxel_dim=(plan.hr, plan.hr, plan.vr)
-    )
-    logger.info(f"voxel dim: {env.voxel_dim}")
-
-    irr = attenuate_all(env, sol, extn=extn)
-
-    # # ***TEMP***
-    # plot_irradiance(
-    #     irr=irr, terrain_coords=terrain, show_solar_vector=True,
-    #     show_sensors=False, show_axes=True, show_canopy=False,
-    # )
-
-    data_vars: dict = {}
-    if CANOPY_BAND in requested:
-        canopy = irr.canopy_irradiance
-        if terrain_win is not None:
-            # Move the LAD back to flat, where it was originally, for consistency in the output
-            canopy = canopy.copy()
-            canopy[:, 2] -= _terrain_offsets(canopy[:, :2], terrain_win, win_ny)
-        data_vars[CANOPY_BAND] = (
-            ("z", "y", "x"),
-            _canopy_core_array(canopy, plan, core_y, core_x, read_y, read_x),
-        )
-    if SURFACE_BAND in requested:
-        data_vars[SURFACE_BAND] = (
-            ("z", "y", "x"),
-            _surface_core_3d(
-                irr.terrain_irradiance, plan, core_y, core_x, read_y, read_x
-            ),
-        )
-    storage.write_union(out_path, xr.Dataset(data_vars), core_y, core_x)
-
-
-def _write_zero_result(
-    src: xr.Dataset,
-    geom: SourceGeometry,
-    out_path: str,
-    requested: set[str],
-) -> LeafluxResult:
-    # Sun at/below the horizon: relative irradiance is 0 wherever it exists.
-    plan = _plan_chunks(geom, 0.0)  # halo 0 — no shadows to cast
-    _init_output(out_path, geom, plan, requested)
-    for loc in plan.locations:
-        core_y, core_x, read_y, read_x = _window_slices(loc, plan)
-        data_vars: dict = {}
-        if CANOPY_BAND in requested:
-            leaf_area = _read_leaf_area(src, read_y, read_x)
-            n = len(leaf_area.leaf_area)
-            zero_stack = np.column_stack(
-                (leaf_area.leaf_area[:, :3], np.zeros(n, dtype=np.float32))
-            )
-            data_vars[CANOPY_BAND] = (
+    """Write the output-zarr skeleton: metadata, coords, CRS and per-band attrs,
+    but no data (compute=False). Chunked at the tile size so each per-tile region
+    write lands in its own chunk (disjoint tiles -> safe concurrent writes). The
+    workers fill the data regions afterwards."""
+    nz, ny, nx = lad_ds.sizes["z"], lad_ds.sizes["y"], lad_ds.sizes["x"]
+    skeleton = xr.Dataset(
+        {
+            b: (
                 ("z", "y", "x"),
-                _canopy_core_array(zero_stack, plan, core_y, core_x, read_y, read_x),
+                da.full((nz, ny, nx), np.nan, chunks=(nz, core, core), dtype="float32"),
             )
-        if SURFACE_BAND in requested:
-            cny, cnx = core_y.stop - core_y.start, core_x.stop - core_x.start
-            core = np.full((plan.nz, cny, cnx), AIR_FILL, dtype=np.float32)
-            core[0] = 0.0
-            data_vars[SURFACE_BAND] = (("z", "y", "x"), core)
-        storage.write_union(out_path, xr.Dataset(data_vars), core_y, core_x)  # Write
-    return _build_result(out_path, geom, plan)
+            for b in bands
+        },
+        coords={"z": lad_ds.z, "y": lad_ds.y, "x": lad_ds.x},
+    ).rio.write_crs(str(lad_ds.rio.crs))
+    for b in bands:
+        skeleton[b].attrs["grid_mapping"] = "spatial_ref"
+    skeleton.attrs["transform"] = list(lad_ds.attrs["transform"])
+    skeleton.attrs["z_origin"] = float(lad_ds.attrs["z_origin"])
+    skeleton.attrs["z_resolution"] = float(lad_ds.attrs["z_resolution"])
+    skeleton.to_zarr(
+        out_path,
+        mode="w",
+        consolidated=True,
+        compute=False,
+        encoding={b: {"fill_value": float("nan")} for b in bands},
+    )
 
 
 def run_leaflux(
     grid: dict,
-    domain_gdf,  # geometry inherited from the source grid; here for parity/future use
+    domain_gdf,  # inherited from the source grid; here for dispatch parity
     progress: Callable[[str, int | None], None],
 ) -> LeafluxResult:
-    grid_id = grid["id"]
     source = grid["source"]
-    requested = {b["key"] for b in grid["bands"]}
+    requested = [b["key"] for b in grid["bands"]]
+    out_path = storage.gcs_path(grid["id"])
 
-    progress("Opening source grid...", 5)
-    src = _open_source(source["source_grid_id"])
-    geom = _read_geometry(src)
-    out_path = storage.gcs_path(grid_id)
+    progress("Opening source grids...", 10)
+    lad_ds = _open(source["source_grid_id"])
+    nz, ny, nx = lad_ds.sizes["z"], lad_ds.sizes["y"], lad_ds.sizes["x"]
+    hr = float(lad_ds.attrs["transform"][0])
+    vr = float(lad_ds.attrs["z_resolution"])
+    z_origin = float(lad_ds.attrs["z_origin"])
 
-    # TODO: confirm this is acceptable
-    # Solar zenith angles greater than 85 degs are rejected, as at this point
-    # irradiance is close to none and I want to avoid halo blow-up
-    # SolarPosition already rejects agles that are below horizon, so this is
-    # a small change to this.
-    try:
-        sol = _solar_position(source)
-        too_low = math.degrees(sol.zenith) > MAX_ZENITH_DEG
-    except ValueError:
-        # SolarPosition rejects sun below the horizon (elevation < 0).
-        too_low = True
+    sol, night = _sun(source)
+    halo = 0 if night else math.ceil((nz * vr * math.tan(sol.zenith)) / hr)
+    core = max(min(WINDOW_TARGET_CELLS - 2 * halo, nx, ny), 1)
+    bands = [b for b in (CANOPY_BAND, SURFACE_BAND) if b in requested]
 
-    # If this is the case, all 0s are written
-    if too_low:
-        progress("Sun below threshold; writing zero irradiance...", 20)
-        return _write_zero_result(src, geom, out_path, requested)
+    progress("Writing irradiance grid...", 20)
+    _init_output(out_path, lad_ds, bands, core)
 
-    # If no DEM is supplied, a flat plane will be substituted per chunk
-    dem = None
-    if SURFACE_BAND in requested and source.get("source_terrain_grid_id"):
-        progress("Loading terrain...", 15)
-        dem = _load_dem(source["source_terrain_grid_id"], src, geom.z_origin, geom.vr)
-
-    plan = _plan_chunks(geom, sol.zenith)
-    progress("Initializing output store...", 20)
-    _init_output(out_path, geom, plan, requested)
-
-    total = len(plan.locations)
-    for i, loc in enumerate(plan.locations):
-        # Processes chunk and writes
-        _process_chunk(
-            loc,
-            plan,
-            src,
-            out_path,
-            dem,
-            sol,
-            source["extinction_coefficient"],
-            requested,
-        )
-        progress(f"Irradiance chunk {i + 1}/{total}...", 20 + int(75 * (i + 1) / total))
+    job = _WriteJob(
+        source_grid_id=source["source_grid_id"],
+        dem_id=source.get("source_terrain_grid_id")
+        if SURFACE_BAND in requested
+        else None,
+        out_path=out_path,
+        nz=nz,
+        ny=ny,
+        nx=nx,
+        core=core,
+        halo=halo,
+        z_origin=z_origin,
+        vr=vr,
+        voxel=(hr, hr, vr),
+        extn=source["extinction_coefficient"],
+        sol=sol,
+        night=night,
+        want_canopy=CANOPY_BAND in requested,
+        want_surface=SURFACE_BAND in requested,
+    )
+    progress("Computing irradiance...", 25)
+    _write_tiles(_plan_tiles(ny, nx, core, halo), job, progress)
 
     progress("Finalizing...", 98)
-    # Return result following convention set by voxelize
-    return _build_result(out_path, geom, plan)
+    return LeafluxResult(
+        out_path,
+        {
+            "crs": str(lad_ds.rio.crs),
+            "transform": list(lad_ds.attrs["transform"]),
+            "shape": [nz, ny, nx],
+            "z_resolution": vr,
+            "z_origin": z_origin,
+        },
+        [nz, core, core],
+    )

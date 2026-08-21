@@ -1,10 +1,9 @@
 """Tabular tree-inventory I/O — parquet read, filtering, ID assignment.
 
 "Inventory" here means the tabular tree data (the parquet): rows of trees with
-`x, y, fia_species_code, fia_status_code, dbh, height, crown_ratio`. The job
-that turns this tabular data into a 3D fuel grid is called *voxelization* and
-lives in `treevox.handlers.voxelize`. Keep the distinction when reading/editing
-either module.
+`x, y, fia_species_code, fia_status_code, dbh, height, crown_ratio`. Shared by
+the worker services that consume an inventory: treevox voxelizes it into a 3D
+fuel grid, griddle derives 2D canopy fuel grids from it.
 
 Memory note: on Cloud Run `/tmp` is RAM-backed tmpfs, so downloading a parquet
 to a local file *before* reading it holds both the compressed bytes and the
@@ -19,8 +18,8 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from lib.config import INVENTORIES_BUCKET
+from lib.errors import ProcessingError
 from lib.gcs import get_gcsfs_client
-from treevox.errors import ProcessingError
 
 REQUIRED_COLUMNS = [
     "x",

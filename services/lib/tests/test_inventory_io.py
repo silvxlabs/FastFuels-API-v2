@@ -1,4 +1,4 @@
-"""Unit tests for treevox.inventory_io — tabular parquet I/O only.
+"""Unit tests for lib.inventory_io — tabular parquet I/O only.
 
 These tests don't hit GCS — they substitute `pd.read_parquet` (on the
 `inventory_io` module) with an in-memory / local stand-in.
@@ -9,9 +9,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from treevox import inventory_io
-from treevox.errors import ProcessingError
-from treevox.inventory_io import (
+
+from lib import inventory_io
+from lib.errors import ProcessingError
+from lib.inventory_io import (
     REQUIRED_COLUMNS,
     assign_tree_ids,
     drop_null_rows,

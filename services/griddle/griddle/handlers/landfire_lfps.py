@@ -20,7 +20,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import geopandas as gpd
-from shapely.geometry import box
+from rasterio.transform import array_bounds
+from rasterio.warp import transform_bounds
 
 from lib.alignment import resolve_alignment_destination
 from lib.errors import ProcessingError
@@ -31,13 +32,16 @@ from lib.landfire import (
     poll_status,
     submit_job,
 )
+from lib.raster import REPROJECTION_GUARD_CELLS
 
 # Policy knobs for the LFPS submit/poll loop -- specific to this module's
 # orchestration, not the LFPS client itself.
 _LFPS_POLL_DELAY_SECONDS = 10
 _LFPS_JOB_TIMEOUT_SECONDS = 1200  # 20 min
 _LFPS_NATIVE_RESOLUTION = 30.0  # meters; all LANDFIRE products share this grid
-_LFPS_AOI_PADDING_METERS = 500  # guard margin beyond the alignment destination
+_LFPS_AOI_PADDING_METERS = (
+    500  # extra safety margin beyond the known reprojection guard
+)
 
 
 def _lfps_aoi_bbox(
@@ -50,9 +54,12 @@ def _lfps_aoi_bbox(
 
     Sized from the same destination lattice the eventual fetch will
     reproject into (via `resolve_alignment_destination`, using LANDFIRE's
-    known 30m native resolution), padded generously so the reprojection
-    guard cells `RasterConnection.extract_window` applies always land
-    inside what LFPS actually delivers.
+    known 30m native resolution). `native` alignment defers its buffer to
+    `RasterConnection.extract_window` instead of baking it into a
+    destination lattice, so `extent_buffer_cells` is applied here
+    directly for that case. Padded by `extract_window`'s exact
+    reprojection guard margin plus extra safety margin, so LFPS always
+    delivers enough for that later clip.
     """
     dest = resolve_alignment_destination(
         alignment,
@@ -62,19 +69,22 @@ def _lfps_aoi_bbox(
         extent_buffer_cells=extent_buffer_cells,
     )
     if "destination_transform" in dest:
-        transform = dest["destination_transform"]
-        h, w = dest["destination_shape"]
-        minx, maxy = transform.c, transform.f
-        maxx, miny = minx + w * transform.a, maxy + h * transform.e
-        bounds_crs = dest["destination_crs"]
+        minx, miny, maxx, maxy = array_bounds(
+            *dest["destination_shape"], dest["destination_transform"]
+        )
+        crs = dest["destination_crs"]
     else:
+        buf = extent_buffer_cells * (
+            alignment.get("resolution") or _LFPS_NATIVE_RESOLUTION
+        )
         minx, miny, maxx, maxy = roi.total_bounds
-        bounds_crs = roi.crs
+        minx, miny, maxx, maxy = minx - buf, miny - buf, maxx + buf, maxy + buf
+        crs = roi.crs
 
-    pad = _LFPS_AOI_PADDING_METERS
-    geom = box(minx - pad, miny - pad, maxx + pad, maxy + pad)
-    bbox_gdf = gpd.GeoDataFrame(geometry=[geom], crs=bounds_crs)
-    w, s, e, n = bbox_gdf.to_crs("EPSG:4326").total_bounds
+    pad = REPROJECTION_GUARD_CELLS * _LFPS_NATIVE_RESOLUTION + _LFPS_AOI_PADDING_METERS
+    w, s, e, n = transform_bounds(
+        crs, "EPSG:4326", minx - pad, miny - pad, maxx + pad, maxy + pad
+    )
     return f"{w:.6f} {s:.6f} {e:.6f} {n:.6f}"
 
 

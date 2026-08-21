@@ -13,10 +13,19 @@ from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import pytest
-from griddle.handlers.landfire_lfps import _lfps_layer_name, fetch_lfps
+from affine import Affine
+from griddle.handlers.landfire_lfps import (
+    _LFPS_AOI_PADDING_METERS,
+    _LFPS_NATIVE_RESOLUTION,
+    _lfps_aoi_bbox,
+    _lfps_layer_name,
+    fetch_lfps,
+)
+from rasterio.warp import transform_bounds
 
 from lib.errors import ProcessingError
 from lib.landfire import LfpsJob, LfpsJobFailedError
+from lib.raster import REPROJECTION_GUARD_CELLS
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 
 
@@ -35,6 +44,87 @@ def _make_zip(*names: str) -> bytes:
         for name in names:
             zf.writestr(name, b"")
     return buf.getvalue()
+
+
+class TestLfpsAoiBbox:
+    """Unit tests for _lfps_aoi_bbox."""
+
+    def test_native_buffer_widens_the_aoi(self, roi):
+        no_buffer = _lfps_aoi_bbox(roi, {"target": "native"}, None, 0)
+        buffered = _lfps_aoi_bbox(roi, {"target": "native"}, None, 10)
+
+        w0, s0, e0, n0 = (float(x) for x in no_buffer.split())
+        w1, s1, e1, n1 = (float(x) for x in buffered.split())
+        assert w1 < w0
+        assert s1 < s0
+        assert e1 > e0
+        assert n1 > n0
+
+    def test_native_explicit_resolution_used_for_buffer(self, roi):
+        result = _lfps_aoi_bbox(roi, {"target": "native", "resolution": 100.0}, None, 5)
+
+        minx, miny, maxx, maxy = roi.total_bounds
+        buf = 5 * 100.0
+        pad = (
+            REPROJECTION_GUARD_CELLS * _LFPS_NATIVE_RESOLUTION
+            + _LFPS_AOI_PADDING_METERS
+        )
+        expected = transform_bounds(
+            roi.crs,
+            "EPSG:4326",
+            minx - buf - pad,
+            miny - buf - pad,
+            maxx + buf + pad,
+            maxy + buf + pad,
+        )
+        actual = tuple(float(x) for x in result.split())
+        assert actual == pytest.approx(expected)
+
+    def test_native_zero_buffer_matches_unbuffered_bounds(self, roi):
+        result = _lfps_aoi_bbox(roi, {"target": "native"}, None, 0)
+
+        minx, miny, maxx, maxy = roi.total_bounds
+        pad = (
+            REPROJECTION_GUARD_CELLS * _LFPS_NATIVE_RESOLUTION
+            + _LFPS_AOI_PADDING_METERS
+        )
+        expected = transform_bounds(
+            roi.crs,
+            "EPSG:4326",
+            minx - pad,
+            miny - pad,
+            maxx + pad,
+            maxy + pad,
+        )
+        actual = tuple(float(x) for x in result.split())
+        assert actual == pytest.approx(expected)
+
+    @patch("griddle.handlers.landfire_lfps.resolve_alignment_destination")
+    def test_domain_grid_uses_lattice_bounds_not_roi(self, mock_resolve, roi):
+        mock_resolve.return_value = {
+            "destination_transform": Affine(30.0, 0.0, 100000.0, 0.0, -30.0, 200300.0),
+            "destination_shape": (10, 10),
+            "destination_crs": "EPSG:32611",
+        }
+
+        result = _lfps_aoi_bbox(roi, {"target": "grid"}, {"id": "some-grid"}, 0)
+
+        w, _, e, _ = (float(x) for x in result.split())
+        roi_w, _, roi_e, _ = roi.to_crs("EPSG:4326").total_bounds
+        assert e < roi_w  # entirely west of the RO
+
+    @patch("griddle.handlers.landfire_lfps.resolve_alignment_destination")
+    def test_domain_grid_buffer_not_applied_twice(self, mock_resolve, roi):
+        mock_resolve.return_value = {
+            "destination_transform": Affine(30.0, 0.0, 100000.0, 0.0, -30.0, 200300.0),
+            "destination_shape": (10, 10),
+            "destination_crs": "EPSG:32611",
+        }
+
+        no_buffer = _lfps_aoi_bbox(roi, {"target": "grid"}, {"id": "some-grid"}, 0)
+        with_buffer = _lfps_aoi_bbox(roi, {"target": "grid"}, {"id": "some-grid"}, 10)
+
+        assert no_buffer == with_buffer
 
 
 class TestLfpsLayerName:

@@ -6,6 +6,7 @@ All handlers return xr.Dataset where each variable name is a band name.
 """
 
 from collections.abc import Callable
+from contextlib import nullcontext
 
 import geopandas as gpd
 import numpy as np
@@ -218,7 +219,7 @@ def fetch_fbfm40(
     alignment = alignment or {"target": "domain"}
     product = "fbfm40"
     if season is not None:
-        with landfire_lfps.fetch_lfps(
+        source = landfire_lfps.fetch_lfps(
             roi,
             product,
             version,
@@ -227,18 +228,13 @@ def fetch_fbfm40(
             extent_buffer_cells,
             progress,
             season,
-        ) as url:
-            data = _fetch_landfire_raster(
-                roi,
-                url,
-                extent_buffer_cells,
-                alignment,
-                target_grid_doc,
-                is_categorical=True,
-            )
+        )
     else:
         validate_landfire_version(product, version)
-        url = _landfire_cog_url(product, version)
+        source = nullcontext(_landfire_cog_url(product, version))
+
+    with source as url:
+        # `url` is the gs:// or local path `_fetch_landfire_raster` opens
         data = _fetch_landfire_raster(
             roi,
             url,

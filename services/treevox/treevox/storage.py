@@ -45,6 +45,8 @@ BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "fuel_moisture.dead": ("float32", 0.0),
     "spcd": ("uint16", 0),
     "tree_id": ("int32", -1),
+    "irradiance.canopy.relative": ("float32", np.nan),
+    "irradiance.surface.relative": ("float32", np.nan),
 }
 
 ADDITIVE_BANDS = frozenset(

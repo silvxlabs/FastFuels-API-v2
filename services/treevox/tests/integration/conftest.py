@@ -277,6 +277,7 @@ def treevox_runner():
             "fuel_moisture.live": {"type": "continuous", "unit": "%"},
             "fuel_moisture.dead": {"type": "continuous", "unit": "%"},
             "savr.foliage": {"type": "continuous", "unit": "1/m"},
+            "leaf_area_density": {"type": "continuous", "unit": "1/m"},
             "spcd": {"type": "categorical", "unit": None},
             "tree_id": {"type": "categorical", "unit": None},
             "volume_fraction": {"type": "continuous", "unit": None},

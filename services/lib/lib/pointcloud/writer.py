@@ -517,8 +517,11 @@ def write_parquet(
             tile is written once its last node has been routed, which is what
             makes a tile one file rather than one per buffer eviction. None
             falls back to evicting the largest tile under budget pressure.
-        workers: Write processes. Must not exceed the vCPU allocation --
-            oversubscribing measured 2.4x the CPU for identical output.
+        workers: Write (encode) processes. Raising this past the core count
+            wastes CPU -- the pool alone measured 2.4x the CPU for identical
+            output -- but the write and chain pools together run more processes
+            than vCPUs by design; sizing them to fit the cores is slower. See
+            `lib.config`.
         depth: Per-worker queue depth, which is the parent's backpressure.
 
     Returns:

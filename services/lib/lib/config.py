@@ -74,10 +74,15 @@ LAKITU_SERVICE = os.getenv("LAKITU_SERVICE", f"lakitu-v2-{INFRA_ENV}")
 # requests already provide the outer parallelism.
 POINT_CLOUD_READ_THREADS = int(os.getenv("POINT_CLOUD_READ_THREADS", 2))
 
-# Point-cloud write concurrency. These track the Cloud Run vCPU allocation
-# rather than taste: worker counts are sharply peaked at the core count, and
-# oversubscribing measured 2.4x the CPU for byte-identical output.
-# os.cpu_count() cannot be used -- it reports host cores, not the quota.
+# Point-cloud decode (chain) and encode (write) concurrency. The two pools run
+# concurrently in a pipeline, so their processes together exceed the vCPU count
+# on purpose: 6 chain + 8 write on an 8-vCPU container is the measured-best
+# balance, not an oversight. Sizing either down to make the total fit the cores
+# is slower -- it starves the pipeline, leaving the parent waiting on decode
+# (chain 4 / write 4 measured slower than the default). Each pool still has its
+# own peak: raising the write pool alone past the core count measured 2.4x the
+# CPU for byte-identical output. os.cpu_count() cannot be used to set these --
+# under Cloud Run it reports host cores, not the quota.
 LAKITU_WRITE_WORKERS = int(os.getenv("LAKITU_WRITE_WORKERS", 8))
 LAKITU_WRITE_QUEUE_DEPTH = int(os.getenv("LAKITU_WRITE_QUEUE_DEPTH", 4))
 LAKITU_CHAIN_WORKERS = int(os.getenv("LAKITU_CHAIN_WORKERS", 6))

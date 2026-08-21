@@ -107,6 +107,8 @@ class TestHandleLandfire:
             extent_buffer_cells=0,
             alignment={"target": "domain"},
             target_grid_doc=None,
+            season=None,
+            progress=progress,
         )
         assert result == mock_result
 
@@ -120,9 +122,7 @@ class TestHandleLandfire:
 
         handle_landfire(mock_gdf, source, progress)
 
-        # Check that fetch_fbfm40 was called with default version
-        _, call_kwargs = mock_fetch.call_args
-        assert call_kwargs == {} or mock_fetch.call_args[0][1] == "2024"
+        assert mock_fetch.call_args[0][1] == "2024"
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
     def test_fbfm40_calls_progress_callback(self, mock_fetch):
@@ -138,6 +138,20 @@ class TestHandleLandfire:
         call_args = progress.call_args[0]
         assert "LANDFIRE" in call_args[0]
         assert "fbfm40" in call_args[0]
+
+    @patch("griddle.dispatch.landfire.fetch_fbfm40")
+    def test_fbfm40_threads_season_and_progress(self, mock_fetch):
+        """A source with a season passes it (and progress) to fetch_fbfm40."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        source = {"product": "fbfm40", "version": "2025", "season": "SP"}
+
+        handle_landfire(mock_gdf, source, progress)
+
+        call_kwargs = mock_fetch.call_args[1]
+        assert call_kwargs["season"] == "SP"
+        assert call_kwargs["progress"] is progress
 
     @patch("griddle.dispatch.landfire.fetch_fccs")
     def test_routes_fccs_to_handler(self, mock_fetch):

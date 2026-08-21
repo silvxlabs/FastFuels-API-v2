@@ -146,7 +146,9 @@ def stream_records(
         dst_crs_wkt: Target CRS as WKT -- the domain's.
         header_bounds: Horizontal bounds for the output header.
         point_format_id: LAS point format every acquisition is normalized to.
-        workers: Chain processes. Must not exceed the vCPU allocation.
+        workers: Chain (decode) processes. The chain and write pools together
+            run more processes than vCPUs by design -- sizing this down to fit
+            the cores starves the pipeline and is slower. See `lib.config`.
         download_workers: Concurrent downloads. A separate knob from `workers`:
             downloads are network-bound, and once the chain moved to processes
             fetch wait hit 54 s of a 167 s job until this was raised.

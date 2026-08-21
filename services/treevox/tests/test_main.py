@@ -2,8 +2,8 @@
 
 Source routing, the voxelization job, inventory I/O, and Firestore helpers are
 covered by their own test modules (test_dispatch.py, handlers/test_voxelize.py,
-test_inventory_io.py). The Cloud Function layer is exercised here by mocking
-`dispatch_handler` and the Firestore helpers.
+and lib's test_inventory_io.py). The Cloud Function layer is exercised here by
+mocking `dispatch_handler` and the Firestore helpers.
 """
 
 from __future__ import annotations

@@ -1,0 +1,90 @@
+{
+  "bands": [
+    {
+      "index": 0,
+      "key": "cbd",
+      "type": "continuous",
+      "unit": "kg/m**3"
+    },
+    {
+      "index": 1,
+      "key": "cbh",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "index": 2,
+      "key": "chm",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "index": 3,
+      "key": "cc",
+      "type": "continuous",
+      "unit": "%"
+    }
+  ],
+  "chunks": {
+    "count": null,
+    "count_by_axis": null,
+    "shape": [
+      512,
+      512
+    ]
+  },
+  "description": "",
+  "error": null,
+  "georeference": null,
+  "modifications": [],
+  "name": "test-canopy-inventory",
+  "progress": null,
+  "source": {
+    "name": "canopy",
+    "product": "inventory",
+    "description": "Canopy fuel metrics computed from a tree inventory",
+    "extent_buffer_cells": 0,
+    "source_inventory_id": "static-test-blue-mtn-pim-inventory",
+    "source_inventory_checksum": null,
+    "alignment": {
+      "target": "domain",
+      "resolution": 30.0,
+      "method": null
+    },
+    "bands": ["cbd", "cbh", "chm", "cc"],
+    "biomass_source": {"type": "allometry", "equations": "nsvb"},
+    "available_fuel": {
+      "foliage_fraction": 1.0,
+      "branchwood": {"size_partition": "none", "fraction": 0.075}
+    },
+    "species_inclusion": "all_species",
+    "crown_class_adjustment": {"method": "none"},
+    "min_tree_height": 0.0,
+    "vertical_distribution": "reinhardt_2006",
+    "layer_depth": 0.3048,
+    "horizontal_distribution": "crown_projected",
+    "max_crown_radius_source": {"type": "allometry", "equations": "purves"},
+    "cbd": {
+      "method": "maximum_running_mean",
+      "window": 3.0,
+      "edge": "ground_clamped"
+    },
+    "cbh": {
+      "method": "bulk_density_threshold",
+      "threshold": 0.012,
+      "relative_threshold_fraction": 0.1,
+      "smoothing_window": null,
+      "smoothing_edge": "ground_clamped"
+    },
+    "chm": {
+      "method": "bulk_density_threshold",
+      "threshold": 0.012,
+      "relative_threshold_fraction": 0.1,
+      "smoothing_window": null,
+      "smoothing_edge": "ground_clamped"
+    },
+    "cc": {"method": "crown_union"}
+  },
+  "status": "pending",
+  "tags": []
+}

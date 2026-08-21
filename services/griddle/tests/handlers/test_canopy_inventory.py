@@ -342,3 +342,76 @@ class TestErrorPaths:
             _run(src, df)
         assert exc.value.code == "CANOPY_FUEL_INPUT_ERROR"
         assert exc.value.suggestion is not None
+
+
+class TestRequiredColumns:
+    """The handler reads and requires non-null only the columns the selected
+    methods consume — the same set the API router validates — so an inventory
+    without dbh / species is not rejected or thinned on a path that ignores them.
+    """
+
+    def _capture(self, source, df):
+        """Run the handler, returning the required_columns passed to the reader
+        and the null-row drop."""
+        captured: dict = {}
+        real_drop = ci.drop_null_rows
+
+        def cap_read(*args, **kwargs):
+            captured["read"] = kwargs.get("required_columns")
+            return df
+
+        def cap_drop(frame, *args, **kwargs):
+            captured["drop"] = kwargs.get("required_columns")
+            return real_drop(frame, *args, **kwargs)
+
+        with (
+            patch.object(ci, "read_inventory", side_effect=cap_read),
+            patch.object(ci, "drop_null_rows", side_effect=cap_drop),
+        ):
+            ci.fetch_canopy_inventory(
+                roi=_roi(),
+                source=source,
+                alignment=source["alignment"],
+                target_grid_doc=None,
+                progress=lambda *a, **k: None,
+            )
+        return captured
+
+    def test_column_fuel_source_requires_neither_dbh_nor_species(self):
+        rng = np.random.default_rng(0)
+        n = 40
+        # A frame with no dbh / fia_species_code, as the trimmed read returns.
+        df = pd.DataFrame(
+            {
+                "x": rng.uniform(10, 110, n),
+                "y": rng.uniform(10, 110, n),
+                "height": rng.uniform(8, 25, n),
+                "crown_ratio": rng.uniform(0.3, 0.6, n),
+                "fia_status_code": np.ones(n, dtype=int),
+                "acf_kg": np.full(n, 6.0),
+                "crad_m": np.full(n, 2.0),
+            }
+        )
+        src = _source(
+            biomass_source={
+                "type": "inventory_column",
+                "column": "acf_kg",
+                "unit": "kg",
+            },
+            vertical_distribution="uniform",
+            species_inclusion="all_species",
+            crown_class_adjustment={"method": "none"},
+            max_crown_radius_source={
+                "type": "inventory_column",
+                "column": "crad_m",
+                "unit": "m",
+            },
+        )
+        captured = self._capture(src, df)
+        assert set(captured["read"]) == {"x", "y", "height", "crown_ratio"}
+        assert set(captured["drop"]) == {"x", "y", "height", "crown_ratio"}
+
+    def test_allometry_source_requires_dbh_and_species(self):
+        captured = self._capture(_source(), _trees())
+        assert {"dbh", "fia_species_code"} <= set(captured["read"])
+        assert {"dbh", "fia_species_code"} <= set(captured["drop"])

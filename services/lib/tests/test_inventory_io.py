@@ -15,6 +15,7 @@ from lib.errors import ProcessingError
 from lib.inventory_io import (
     REQUIRED_COLUMNS,
     assign_tree_ids,
+    canopy_required_columns,
     drop_null_rows,
     read_inventory,
 )
@@ -197,6 +198,39 @@ class TestReadInventory:
         assert exc.value.code == "INVENTORY_MISSING_MORPHOLOGY"
         assert "dbh" in exc.value.message
         assert "allometry" in exc.value.suggestion
+        # The reader is shared by the canopy handler, not just voxelization, so
+        # its guidance must not be voxelization-specific.
+        assert "voxeliz" not in exc.value.message.lower()
+        assert "voxeliz" not in exc.value.suggestion.lower()
+
+    def test_required_columns_trims_projection_and_morphology_check(self, monkeypatch):
+        """A canopy request that reads neither dbh nor species passes a reduced
+        required set: those columns are neither required-in-schema nor projected,
+        while the live-status column is still handled."""
+        present = {"x", "y", "height", "crown_ratio", "acf_kg", "fia_status_code"}
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: present
+        )
+        captured: dict = {}
+
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            return pd.DataFrame({c: [1.0] for c in columns})
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        # dbh / fia_species_code are absent from the schema, but the reduced
+        # required set does not name them, so the read must not raise and must
+        # not project them.
+        read_inventory(
+            "inv",
+            biomass_column="acf_kg",
+            required_columns=["x", "y", "height", "crown_ratio"],
+        )
+        assert "dbh" not in captured["columns"]
+        assert "fia_species_code" not in captured["columns"]
+        assert "acf_kg" in captured["columns"]
+        assert "fia_status_code" in captured["columns"]
 
     def test_missing_inventory_raises_processing_error(self, monkeypatch):
         def raising(path, **kwargs):
@@ -276,6 +310,119 @@ class TestDropNullRows:
         df.loc[0, "dbh"] = None  # drop the first row
         out = drop_null_rows(df)
         assert list(out.index) == [0, 1]
+
+    def test_required_columns_restricts_dropna(self):
+        """When a request does not read dbh / species, a null in them must not
+        drop the tree — its available fuel would be silently omitted."""
+        df = self._df()
+        df.loc[0, "dbh"] = None
+        df.loc[1, "fia_species_code"] = None
+        out = drop_null_rows(df, required_columns=["x", "y", "height", "crown_ratio"])
+        assert len(out) == 3
+
+
+class TestCanopyRequiredColumns:
+    """The morphology columns a canopy source's selected methods actually read —
+    the single authority the API router and the griddle handler share."""
+
+    def _source(self, **overrides):
+        source = {
+            "biomass_source": {"type": "allometry", "equations": "brown_1978"},
+            "vertical_distribution": "reinhardt_2006",
+            "species_inclusion": "fuelcalc_default",
+            "crown_class_adjustment": {"method": "fuelcalc_table"},
+            "max_crown_radius_source": {
+                "type": "allometry",
+                "equations": "crookston_stage",
+            },
+        }
+        source.update(overrides)
+        return source
+
+    def test_allometry_defaults_need_dbh_and_species(self):
+        cols = canopy_required_columns(self._source())
+        assert {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"} <= cols
+
+    def test_column_fuel_uniform_all_species_needs_neither_dbh_nor_species(self):
+        cols = canopy_required_columns(
+            self._source(
+                biomass_source={
+                    "type": "inventory_column",
+                    "column": "acf_kg",
+                    "unit": "kg",
+                },
+                vertical_distribution="uniform",
+                species_inclusion="all_species",
+                crown_class_adjustment={"method": "none"},
+                max_crown_radius_source={
+                    "type": "inventory_column",
+                    "column": "crad_m",
+                    "unit": "m",
+                },
+            )
+        )
+        assert cols == {"x", "y", "height", "crown_ratio"}
+
+    def test_reinhardt_distribution_needs_species_not_dbh(self):
+        cols = canopy_required_columns(
+            self._source(
+                biomass_source={
+                    "type": "inventory_column",
+                    "column": "acf_kg",
+                    "unit": "kg",
+                },
+                vertical_distribution="reinhardt_2006",
+                species_inclusion="all_species",
+                crown_class_adjustment={"method": "none"},
+                max_crown_radius_source={
+                    "type": "inventory_column",
+                    "column": "crad_m",
+                    "unit": "m",
+                },
+            )
+        )
+        assert "fia_species_code" in cols
+        assert "dbh" not in cols
+
+    def test_fuelcalc_species_inclusion_needs_species(self):
+        cols = canopy_required_columns(
+            self._source(
+                biomass_source={
+                    "type": "inventory_column",
+                    "column": "acf_kg",
+                    "unit": "kg",
+                },
+                vertical_distribution="uniform",
+                species_inclusion="fuelcalc_default",
+                crown_class_adjustment={"method": "none"},
+                max_crown_radius_source={
+                    "type": "inventory_column",
+                    "column": "crad_m",
+                    "unit": "m",
+                },
+            )
+        )
+        assert "fia_species_code" in cols
+
+    def test_fuelcalc_table_crown_class_needs_species(self):
+        cols = canopy_required_columns(
+            self._source(
+                biomass_source={
+                    "type": "inventory_column",
+                    "column": "acf_kg",
+                    "unit": "kg",
+                },
+                vertical_distribution="uniform",
+                species_inclusion="all_species",
+                crown_class_adjustment={"method": "fuelcalc_table"},
+                max_crown_radius_source={
+                    "type": "inventory_column",
+                    "column": "crad_m",
+                    "unit": "m",
+                },
+            )
+        )
+        assert "fia_species_code" in cols
 
 
 class TestAssignTreeIds:

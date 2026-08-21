@@ -63,15 +63,24 @@ def read_inventory(
     biomass_column: str | None = None,
     crown_radius_column: str | None = None,
     include_crown_class: bool = False,
+    required_columns: list[str] | None = None,
 ) -> pd.DataFrame:
     """Read a tree-inventory parquet directly from GCS with column projection
     and, when the column is present, a `fia_status_code == 1` predicate pushdown.
 
-    Only `REQUIRED_COLUMNS` (plus `biomass_column` and `crown_radius_column`
+    Only the required columns (plus `biomass_column` and `crown_radius_column`
     if supplied) are decoded; parquet row groups containing only dead trees
     are skipped when statistics permit. This avoids staging the blob on the
     Cloud Run tmpfs, cuts peak memory roughly in half during load, and
     transfers less data over the wire.
+
+    `required_columns` names the morphology columns this consumer actually reads
+    (never `fia_status_code`, which is always handled below). It defaults to the
+    full `REQUIRED_COLUMNS` set — the voxelization contract — so existing callers
+    are unchanged; a consumer that reads fewer (e.g. a canopy request taking fuel
+    and crown radius from columns, needing neither `dbh` nor `fia_species_code`)
+    passes its own set so the read neither requires nor projects columns it will
+    not use. Use `canopy_required_columns` to derive it for a canopy source.
 
     `include_crown_class` projects `CROWN_CLASS_COLUMN` (FIA CCLCD) when the
     inventory carries it, so the caller can find it in the returned frame; it is
@@ -85,9 +94,9 @@ def read_inventory(
     dbh / crown_ratio / species, not the live-dead flag), and an upload may omit
     it. When the file has no `fia_status_code` column, every tree is taken as
     live: the live-tree filter is skipped and the column is set to 1 after the
-    read. The other required columns are still projected unconditionally, so an
-    inventory missing `dbh` / `crown_ratio` / `fia_species_code` (e.g. one that
-    skipped the allometry step) still fails the read on that column.
+    read. A `required_columns` member that the inventory lacks (e.g. a `dbh`
+    absent because the allometry step was skipped) still fails the read early
+    with `INVENTORY_MISSING_MORPHOLOGY`.
     """
     gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
 
@@ -98,31 +107,44 @@ def read_inventory(
     available = _inventory_column_names(inventory_id)
     status_absent = available is not None and "fia_status_code" not in available
 
-    # A readable schema missing tree morphology means the inventory skipped the
-    # allometry step (it has only position + height). Surface an actionable
-    # error instead of the opaque pyarrow "No match for FieldRef.Name(...)" the
-    # projection would otherwise raise mid-read.
+    # The morphology columns this read requires (never fia_status_code, which is
+    # handled separately just below). Default to the full voxelization set.
+    if required_columns is None:
+        morphology = [c for c in REQUIRED_COLUMNS if c != "fia_status_code"]
+    else:
+        morphology = [c for c in required_columns if c != "fia_status_code"]
+
+    # A readable schema missing a required morphology column means the inventory
+    # skipped the step that produces it (e.g. CHM extraction leaves only position
+    # and height). Surface an actionable error instead of the opaque pyarrow
+    # "No match for FieldRef.Name(...)" the projection would otherwise raise
+    # mid-read.
     if available is not None:
-        missing = [
-            c for c in REQUIRED_COLUMNS if c != "fia_status_code" and c not in available
-        ]
+        missing = [c for c in morphology if c not in available]
         if missing:
             raise ProcessingError(
                 code="INVENTORY_MISSING_MORPHOLOGY",
                 message=(
                     f"Inventory {inventory_id} is missing column(s) {missing} "
-                    f"required for voxelization."
+                    f"required by the requested operation."
                 ),
                 suggestion=(
                     "Impute tree morphology (dbh, crown ratio, species) via the "
                     "allometry endpoint (POST /inventories/tree/allometry/gdam), "
-                    "then voxelize the resulting inventory."
+                    "or supply the column(s) in the source inventory."
                 ),
             )
 
-    columns = [
-        c for c in REQUIRED_COLUMNS if c != "fia_status_code" or not status_absent
-    ]
+    if required_columns is None:
+        # Preserve the canonical REQUIRED_COLUMNS projection order (status in
+        # place), dropping status only when the inventory lacks it.
+        columns = [
+            c for c in REQUIRED_COLUMNS if c != "fia_status_code" or not status_absent
+        ]
+    else:
+        columns = list(morphology)
+        if not status_absent:
+            columns.append("fia_status_code")
     for optional in (biomass_column, crown_radius_column):
         if optional and optional not in columns:
             columns.append(optional)
@@ -168,6 +190,7 @@ def drop_null_rows(
     df: pd.DataFrame,
     biomass_column: str | None = None,
     crown_radius_column: str | None = None,
+    required_columns: list[str] | None = None,
 ) -> pd.DataFrame:
     """Drop rows with nulls in any required column (plus `biomass_column` and
     `crown_radius_column` when set).
@@ -176,12 +199,47 @@ def drop_null_rows(
     `fia_status_code == 1` pushdown lives in `read_inventory`), but can't
     drop individual rows missing `dbh` / `height` / `crown_ratio`. That's
     this function's job.
+
+    `required_columns` must match the set the paired `read_inventory` call used
+    (defaults to `REQUIRED_COLUMNS`). Dropping on a column the request does not
+    read would silently discard trees — and their canopy fuel — over a value
+    that never enters the computation.
     """
-    required = list(REQUIRED_COLUMNS)
+    required = list(
+        required_columns if required_columns is not None else REQUIRED_COLUMNS
+    )
     for optional in (biomass_column, crown_radius_column):
         if optional and optional not in required:
             required.append(optional)
     return df.dropna(subset=required).reset_index(drop=True)
+
+
+def canopy_required_columns(source: dict) -> set[str]:
+    """Morphology columns an inventory-canopy source's methods read from the tree
+    inventory.
+
+    Position (`x`, `y`) and the crown interval (`height`, `crown_ratio`) are
+    always read; `dbh` and `fia_species_code` only by the methods that consume
+    them — allometric crown biomass, the Reinhardt vertical distribution, the
+    FuelCalc hardwood exclusion, and the FuelCalc crown-class factors. Fuel and
+    crown-radius columns are not returned here: they are supplied to
+    `read_inventory` as `biomass_column` / `crown_radius_column`.
+
+    This is the single authority the API router (pre-dispatch column validation)
+    and the griddle handler (what to project and require non-null) both use, so
+    they cannot disagree about which columns a request needs — the mismatch that
+    would otherwise let the API accept a request the worker then fails.
+    """
+    required = {"x", "y", "height", "crown_ratio"}
+    if source["biomass_source"]["type"] == "allometry":
+        required |= {"dbh", "fia_species_code"}
+    if source["vertical_distribution"] == "reinhardt_2006":
+        required.add("fia_species_code")
+    if source["species_inclusion"] == "fuelcalc_default":
+        required.add("fia_species_code")
+    if source["crown_class_adjustment"]["method"] == "fuelcalc_table":
+        required.add("fia_species_code")
+    return required
 
 
 def assign_tree_ids(df: pd.DataFrame) -> pd.DataFrame:

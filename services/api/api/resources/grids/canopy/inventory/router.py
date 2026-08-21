@@ -31,9 +31,6 @@ from api.resources.grids.canopy.inventory.examples import (
 from api.resources.grids.canopy.inventory.schema import (
     DEFAULT_INVENTORY_CANOPY_RESOLUTION_M,
     AllometryCanopyBiomassSource,
-    CanopyFuelcalcCrownClassAdjustment,
-    CanopySpeciesInclusion,
-    CanopyVerticalDistribution,
     CreateInventoryCanopyRequest,
     InventoryCanopySource,
     build_inventory_canopy_bands,
@@ -51,6 +48,7 @@ from lib.config import (
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,
 )
+from lib.inventory_io import canopy_required_columns
 
 router = APIRouter()
 
@@ -64,20 +62,16 @@ ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code
 def _required_columns(body: CreateInventoryCanopyRequest) -> set[str]:
     """Columns the selected methods read from the inventory.
 
-    Position and the crown interval are always needed; species, diameter,
-    and user-named columns are needed only by the methods that consume them.
+    The morphology set (position, crown interval, and conditionally dbh /
+    species) comes from ``lib.canopy_required_columns`` — the same authority the
+    griddle handler uses to decide what to project and require non-null — so the
+    API cannot accept a request the worker then fails on a column mismatch. The
+    user-named fuel and crown-radius columns, which must also exist, are added
+    here.
     """
-    required = {"x", "y", "height", "crown_ratio"}
-    if isinstance(body.biomass_source, AllometryCanopyBiomassSource):
-        required |= {"dbh", "fia_species_code"}
-    else:
+    required = canopy_required_columns(body.model_dump(mode="json"))
+    if not isinstance(body.biomass_source, AllometryCanopyBiomassSource):
         required.add(body.biomass_source.column)
-    if body.vertical_distribution is CanopyVerticalDistribution.reinhardt_2006:
-        required.add("fia_species_code")
-    if body.species_inclusion is CanopySpeciesInclusion.fuelcalc_default:
-        required.add("fia_species_code")
-    if isinstance(body.crown_class_adjustment, CanopyFuelcalcCrownClassAdjustment):
-        required.add("fia_species_code")
     if isinstance(body.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource):
         required.add(body.max_crown_radius_source.column)
     return required

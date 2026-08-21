@@ -26,7 +26,12 @@ from fastfuels_core.canopy_fuel import compute_canopy_metrics
 from lib.alignment import resolve_alignment_destination
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
-from lib.inventory_io import CROWN_CLASS_COLUMN, drop_null_rows, read_inventory
+from lib.inventory_io import (
+    CROWN_CLASS_COLUMN,
+    canopy_required_columns,
+    drop_null_rows,
+    read_inventory,
+)
 
 # An inventory has no native raster cell size. The API resolves the
 # domain-target default (30 m) before persisting, and a grid target inherits
@@ -304,6 +309,12 @@ def fetch_canopy_inventory(
 
     progress("Reading inventory...", 25)
     fuel_column, radius_column = _inventory_columns(source)
+    # Read (and require non-null) only the morphology columns the selected
+    # methods actually consume — the same set the API router validated against.
+    # A request taking fuel and crown radius from columns needs neither dbh nor
+    # fia_species_code, so an inventory lacking them must not fail or be silently
+    # thinned here.
+    required = list(canopy_required_columns(source))
     # The FuelCalc crown-class adjustment reads each tree's crown class; project
     # it from the inventory when that arm is selected (and the inventory has it).
     use_crown_class = source["crown_class_adjustment"]["method"] == "fuelcalc_table"
@@ -312,8 +323,9 @@ def fetch_canopy_inventory(
         fuel_column,
         radius_column,
         include_crown_class=use_crown_class,
+        required_columns=required,
     )
-    df = drop_null_rows(df, fuel_column, radius_column)
+    df = drop_null_rows(df, fuel_column, radius_column, required_columns=required)
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",

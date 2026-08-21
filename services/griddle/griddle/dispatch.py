@@ -11,6 +11,7 @@ import geopandas as gpd
 import xarray as xr
 
 from griddle.handlers import (
+    canopy_inventory,
     chm,
     chm_point_cloud,
     compose,
@@ -479,11 +480,23 @@ def handle_canopy(
             # confident answer instead of an unconstrained one.
             source["ground"] = ground
             return dataset
+        case "inventory":
+            progress("Deriving canopy fuel from inventory...", 10)
+            return canopy_inventory.fetch_canopy_inventory(
+                roi=domain_gdf,
+                source=source,
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
+                progress=progress,
+                extent_buffer_cells=extent_buffer_cells,
+            )
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown canopy product: {product}",
-                suggestion="Supported products: meta, naip, landfire, point_cloud",
+                suggestion=(
+                    "Supported products: meta, naip, landfire, point_cloud, inventory"
+                ),
             )
 
 

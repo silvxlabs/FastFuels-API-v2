@@ -31,6 +31,13 @@ REQUIRED_COLUMNS = [
     "crown_ratio",
 ]
 
+# Optional first-class FIA column (CCLCD, crown class code 1-5). Carried by
+# inventories that have it (some uploads); absent from standgen / GDAM output.
+# Projected only when present and never used to drop rows: a tree with no crown
+# class is still a valid tree — the canopy handler folds a missing code onto
+# FuelCalc's Other/none column rather than discarding the stem.
+CROWN_CLASS_COLUMN = "fia_crown_class_code"
+
 
 def _inventory_column_names(inventory_id: str) -> set[str] | None:
     """Column names in an inventory parquet, or None if the schema can't be read.
@@ -55,6 +62,7 @@ def read_inventory(
     inventory_id: str,
     biomass_column: str | None = None,
     crown_radius_column: str | None = None,
+    include_crown_class: bool = False,
 ) -> pd.DataFrame:
     """Read a tree-inventory parquet directly from GCS with column projection
     and, when the column is present, a `fia_status_code == 1` predicate pushdown.
@@ -64,6 +72,13 @@ def read_inventory(
     are skipped when statistics permit. This avoids staging the blob on the
     Cloud Run tmpfs, cuts peak memory roughly in half during load, and
     transfers less data over the wire.
+
+    `include_crown_class` projects `CROWN_CLASS_COLUMN` (FIA CCLCD) when the
+    inventory carries it, so the caller can find it in the returned frame; it is
+    left out silently when the inventory has no such column (standgen / GDAM
+    output, older uploads) or when the schema can't be read, and it never joins
+    the live-tree filter. The column is optional, so absence is not an error —
+    the consumer decides what a missing crown class means.
 
     `fia_status_code` is treated as optional and live-by-default. Inventories
     built by CHM extraction or GDAM allometry never record it (GDAM imputes
@@ -111,6 +126,18 @@ def read_inventory(
     for optional in (biomass_column, crown_radius_column):
         if optional and optional not in columns:
             columns.append(optional)
+
+    # Project the crown-class column only when the inventory positively has it
+    # (a readable schema listing it). A failed schema probe or a missing column
+    # both fall through to "no crown class" rather than raising a projection
+    # error mid-read; the consumer treats that as every tree unclassified.
+    if (
+        include_crown_class
+        and available is not None
+        and CROWN_CLASS_COLUMN in available
+        and CROWN_CLASS_COLUMN not in columns
+    ):
+        columns.append(CROWN_CLASS_COLUMN)
 
     filters = None if status_absent else [("fia_status_code", "=", 1)]
 

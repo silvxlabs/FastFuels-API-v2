@@ -340,11 +340,12 @@ class CanopyNoCrownClassAdjustment(BaseModel):
 class CanopyFuelcalcCrownClassAdjustment(BaseModel):
     """Multiply crown weight by the FuelCalc species x crown-class factors.
 
-    Tree inventories do not carry a crown-class column, so every tree
-    receives the factor selected by `missing_crown_class`. With the
-    `other_none` fallback that is a global 0.5 multiplier for most species —
-    a large, deliberate reduction that reproduces how FuelCalc treats trees
-    of unknown crown class.
+    The factor is selected per tree from the inventory's crown class
+    (`fia_crown_class_code`, FIA CCLCD). A tree whose code is missing — a null
+    value, or an inventory that carries no crown class at all — takes the factor
+    selected by `missing_crown_class`. With the `other_none` fallback that is a
+    global 0.5 multiplier for most species — a large, deliberate reduction that
+    reproduces how FuelCalc treats trees of unknown crown class.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -353,9 +354,10 @@ class CanopyFuelcalcCrownClassAdjustment(BaseModel):
     missing_crown_class: Literal["other_none"] = Field(
         default="other_none",
         description=(
-            "Factor column applied to trees without a crown class — "
-            "currently every tree. `other_none` is FuelCalc's Other/none "
-            "column (0.5 for most species)."
+            "Factor column applied to trees whose `fia_crown_class_code` is "
+            "missing — every tree in an inventory that carries no crown class. "
+            "`other_none` is FuelCalc's Other/none column (0.5 for most "
+            "species)."
         ),
     )
 

@@ -17,6 +17,7 @@ from collections.abc import Callable
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
 from affine import Affine
@@ -25,7 +26,7 @@ from fastfuels_core.canopy_fuel import compute_canopy_metrics
 from lib.alignment import resolve_alignment_destination
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
-from lib.inventory_io import drop_null_rows, read_inventory
+from lib.inventory_io import CROWN_CLASS_COLUMN, drop_null_rows, read_inventory
 
 # An inventory has no native raster cell size. The API resolves the
 # domain-target default (30 m) before persisting, and a grid target inherits
@@ -33,13 +34,21 @@ from lib.inventory_io import drop_null_rows, read_inventory
 # bypassed the API's resolution step.
 FALLBACK_RESOLUTION_M = 30.0
 
-# Per-tree column synthesized to carry a uniform crown class when the schema
-# selects the FuelCalc crown-class adjustment. v2 inventories carry no crown
-# position, so every tree takes the table's Other/none column — which is what
-# FuelCalc does with a blank crown class field. ``"N"`` is one of the codes the
-# FuelCalc table folds onto Other/none.
+# Per-tree column handed to core carrying each tree's crown class as one of
+# FuelCalc's letters. Built from the inventory's ``fia_crown_class_code`` (FIA
+# CCLCD) when it has one; a tree with no code — a null, or an inventory that
+# carries no crown class at all — takes ``"N"``, which core folds onto the
+# table's Other/none column, the schema's ``missing_crown_class`` fallback.
 _CROWN_CLASS_COLUMN = "_crown_class"
 _CROWN_CLASS_FILL = "N"
+
+# FIA CCLCD (crown class code) -> the FuelCalc/Reinhardt letters core reads.
+# 1 Open grown folds onto Dominant: its crowns receive full light from above,
+# like a dominant's. 2 Dominant, 3 Codominant, 4 Intermediate, 5 Overtopped map
+# straight through. Core owns letters+Other/none and invites callers carrying a
+# different coding to map onto them (available_fuel.CROWN_CLASS_REMAP); this is
+# that map for FIA. Any code not here (or null) falls to _CROWN_CLASS_FILL.
+_CCLCD_TO_CROWN_CLASS = {1: "D", 2: "D", 3: "C", 4: "I", 5: "S"}
 
 # schema CanopyRunningMeanEdge -> core edge (bulk_density.py). The schema names
 # each edge for the reading it produces; core names each for its arithmetic.
@@ -250,6 +259,21 @@ def _core_kwargs(source: dict) -> dict:
     return kwargs
 
 
+def _crown_class_letters(df: pd.DataFrame) -> "pd.Series | str":
+    """Each tree's crown class as a FuelCalc letter for core.
+
+    Translates the inventory's FIA CCLCD codes onto core's D/C/I/S; a tree with
+    no code — a null value, or a frame with no ``fia_crown_class_code`` column
+    at all — takes ``_CROWN_CLASS_FILL`` (``"N"`` -> Other/none). Returns the
+    scalar fill when the column is absent so the caller can assign it directly.
+    """
+    if CROWN_CLASS_COLUMN not in df.columns:
+        return _CROWN_CLASS_FILL
+    codes = pd.to_numeric(df[CROWN_CLASS_COLUMN], errors="coerce").astype("Int64")
+    letters = codes.map(_CCLCD_TO_CROWN_CLASS)
+    return letters.where(letters.notna(), _CROWN_CLASS_FILL)
+
+
 def fetch_canopy_inventory(
     roi: gpd.GeoDataFrame,
     source: dict,
@@ -280,7 +304,15 @@ def fetch_canopy_inventory(
 
     progress("Reading inventory...", 25)
     fuel_column, radius_column = _inventory_columns(source)
-    df = read_inventory(inventory_id, fuel_column, radius_column)
+    # The FuelCalc crown-class adjustment reads each tree's crown class; project
+    # it from the inventory when that arm is selected (and the inventory has it).
+    use_crown_class = source["crown_class_adjustment"]["method"] == "fuelcalc_table"
+    df = read_inventory(
+        inventory_id,
+        fuel_column,
+        radius_column,
+        include_crown_class=use_crown_class,
+    )
     df = drop_null_rows(df, fuel_column, radius_column)
     if df.empty:
         raise ProcessingError(
@@ -295,7 +327,7 @@ def fetch_canopy_inventory(
     dataset = _init_dataset(bands, transform, str(roi.crs), shape)
     kwargs = _core_kwargs(source)
     if kwargs.get("crown_class_column") == _CROWN_CLASS_COLUMN:
-        df[_CROWN_CLASS_COLUMN] = _CROWN_CLASS_FILL
+        df[_CROWN_CLASS_COLUMN] = _crown_class_letters(df)
 
     progress("Computing canopy metrics...", 45)
     try:

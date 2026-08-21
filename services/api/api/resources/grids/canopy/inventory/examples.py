@@ -201,9 +201,10 @@ CREATE_INVENTORY_CANOPY_OPENAPI_EXAMPLES: dict = {
         "description": (
             "Switches the pieces where the FastFuels defaults deliberately "
             "depart from FuelCalc 1.7: Brown (1978) crown allometry, "
-            "FuelCalc's hardwood exclusion, its crown-class factors (every "
-            "tree takes the Other/none factor because inventories carry no "
-            "crown class), plot-style stem attribution, its 1.524 m (5 ft) "
+            "FuelCalc's hardwood exclusion, its crown-class factors (applied "
+            "per tree from the inventory's FIA crown class where present, and "
+            "the Other/none factor for any tree without one), plot-style stem "
+            "attribution, its 1.524 m (5 ft) "
             "CBD window, and Crookston–Stage overlap cover. No "
             "`min_tree_height` is set because FuelCalc 1.7 includes small "
             "trees; add 1.83 m to match FFE-FVS or the original FuelCalc "

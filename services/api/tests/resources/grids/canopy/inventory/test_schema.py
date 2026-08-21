@@ -14,6 +14,7 @@ from api.resources.grids.canopy.inventory.examples import (
 from api.resources.grids.canopy.inventory.schema import (
     CFL_BAND_DEF,
     AllometryCanopyBiomassSource,
+    CanopyAllometryMaxCrownRadiusSource,
     CanopyAvailableFuel,
     CanopyBiomassEquations,
     CanopyBranchwoodSizePartition,
@@ -37,7 +38,6 @@ from api.resources.grids.canopy.inventory.schema import (
 from api.resources.grids.canopy.schema import LANDFIRE_CANOPY_BAND_DEFS
 from api.resources.grids.schema import BandType
 from api.resources.grids.voxelize.inventory.tree.schema import (
-    AllometryMaxCrownRadiusSource,
     InventoryColumnMaxCrownRadiusSource,
 )
 from pydantic import ValidationError
@@ -74,7 +74,9 @@ class TestRequestDefaults:
         assert (
             req.horizontal_distribution is CanopyHorizontalDistribution.crown_projected
         )
-        assert isinstance(req.max_crown_radius_source, AllometryMaxCrownRadiusSource)
+        assert isinstance(
+            req.max_crown_radius_source, CanopyAllometryMaxCrownRadiusSource
+        )
 
     def test_minimal_request_resolves_available_fuel_defaults(self):
         req = make_request()
@@ -525,7 +527,11 @@ class TestInventoryCanopySource:
         )
         dumped = self._source_from_request(req).model_dump(mode="json")
         # Load-bearing nulls survive the dump (no exclude_none).
-        assert dumped["cbd"] == {"method": "maximum_running_mean", "window": None}
+        assert dumped["cbd"] == {
+            "method": "maximum_running_mean",
+            "window": None,
+            "edge": "ground_clamped",
+        }
         assert dumped["cbh"]["relative_threshold_fraction"] is None
         assert dumped["chm"] is None
         assert dumped["cc"] is None
@@ -540,15 +546,23 @@ class TestInventoryCanopySource:
         assert dumped["available_fuel"]["branchwood"]["size_partition"] == (
             "brown_proportions"
         )
-        assert dumped["cbd"] == {"method": "maximum_running_mean", "window": 3.0}
+        assert dumped["cbd"] == {
+            "method": "maximum_running_mean",
+            "window": 3.0,
+            "edge": "ground_clamped",
+        }
         assert dumped["cbh"] == {
             "method": "bulk_density_threshold",
             "threshold": 0.012,
             "relative_threshold_fraction": 0.1,
             "smoothing_window": None,
+            "smoothing_edge": "ground_clamped",
         }
         assert dumped["cc"] == {"method": "crown_union"}
-        assert dumped["max_crown_radius_source"] == {"type": "allometry"}
+        assert dumped["max_crown_radius_source"] == {
+            "type": "allometry",
+            "equations": "purves",
+        }
 
     def test_source_forbids_extra_fields(self):
         with pytest.raises(ValidationError):

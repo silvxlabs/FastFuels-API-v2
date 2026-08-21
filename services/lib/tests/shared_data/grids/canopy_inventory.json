@@ -55,7 +55,7 @@
     "biomass_source": {"type": "allometry", "equations": "nsvb"},
     "available_fuel": {
       "foliage_fraction": 1.0,
-      "branchwood": {"size_partition": "none", "fraction": 0.5}
+      "branchwood": {"size_partition": "none", "fraction": 0.075}
     },
     "species_inclusion": "all_species",
     "crown_class_adjustment": {"method": "none"},

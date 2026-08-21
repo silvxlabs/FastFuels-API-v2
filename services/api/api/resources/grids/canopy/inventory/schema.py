@@ -230,6 +230,22 @@ class CanopyBranchwoodSizePartition(StrEnum):
     none = "none"
 
 
+# Default branchwood fraction for the `none` partition (a fraction of TOTAL
+# branchwood). `none` is the default partition for the national biomass
+# families (nsvb, jenkins) because it is the only basis that prices every
+# species: the Brown / Snell & Little fine-share crosswalk behind
+# `brown_proportions` covers ~16 species and raises on common western ones
+# (quaking aspen, jack pine, water birch). 0.075 reproduces, on average, the
+# available fuel the fine-class path computes where it can — a measured mean of
+# 0.076 of total branch (fine share x 0.5 consumed) across ~39k western
+# conifers.
+DEFAULT_NONE_BRANCHWOOD_FRACTION = 0.075
+# Default fraction when the partition resolves the already-fine class
+# (`equations` / `brown_proportions`): the Brown & Reinhardt (1991) / FuelCalc
+# consumed fraction of the fine branchwood.
+DEFAULT_FINE_BRANCHWOOD_FRACTION = 0.5
+
+
 class CanopyBranchwood(BaseModel):
     """Branchwood availability: the size basis and how much of it counts.
 
@@ -246,23 +262,28 @@ class CanopyBranchwood(BaseModel):
         description=(
             "Size basis for the branchwood fraction. Omitted (`null`), it "
             "resolves by equation family: `equations` for `brown_1978` "
-            "(which reports the fine class directly), `brown_proportions` "
-            "for `nsvb` and `jenkins` (which report only total branchwood). "
-            "`none` skips the partition so `fraction` applies to total "
-            "branchwood."
+            "(which reports the fine class directly), `none` for `nsvb` and "
+            "`jenkins` — total branchwood, the only basis that prices every "
+            "species, since the `brown_proportions` fine-share crosswalk "
+            "covers ~16 species and errors on common ones (quaking aspen, "
+            "jack pine, water birch). Set `brown_proportions` explicitly to "
+            "reduce an `nsvb`/`jenkins` total to the fine class where the "
+            "species are covered."
         ),
     )
-    fraction: float = Field(
-        default=0.5,
+    fraction: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
         description=(
-            "Fraction of the size basis counted as available fuel. Against "
-            "the fine class, 0.5 is the Brown & Reinhardt (1991) / FuelCalc "
-            "assumption; Conrad et al. (2024) measured species-specific "
-            "consumable fractions ranging from 0.0 to 0.99. Against total "
-            'branchwood (`size_partition: "none"`), it combines the '
-            "fine-branch share and the consumed share in one number."
+            "Fraction of the size basis counted as available fuel. Omitted "
+            "(`null`), it resolves by partition: 0.5 against the fine class "
+            "(`equations` / `brown_proportions`), the Brown & Reinhardt "
+            "(1991) / FuelCalc consumed fraction, and 0.075 against total "
+            "branchwood (`none`), which folds the fine-branch share and the "
+            "consumed share into one number. Conrad et al. (2024) measured "
+            "species-specific consumable fractions of the fine class from "
+            "0.0 to 0.99."
         ),
     )
 
@@ -853,12 +874,13 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
 
         With an allometry source, the branchwood size partition resolves by
         equation family: `brown_1978` reports the fine class directly
-        (`equations`); `nsvb` and `jenkins` report only total branchwood,
-        which Brown's species proportions reduce to the fine class
-        (`brown_proportions`). Requesting `equations` with a family that
-        carries no size classes is rejected rather than silently
-        approximated. `none` — fraction of total branchwood — is valid with
-        every family.
+        (`equations`); `nsvb` and `jenkins` report only total branchwood and
+        default to `none` (a fraction of that total), the only basis that
+        prices every species — the `brown_proportions` fine-share crosswalk
+        covers ~16 species and errors on common ones. Requesting `equations`
+        with a family that carries no size classes is rejected rather than
+        silently approximated. The fraction, when omitted, resolves by the
+        chosen partition (0.075 for `none`, 0.5 for the fine class).
         """
         if isinstance(self.biomass_source, InventoryColumnCanopyBiomassSource):
             if (
@@ -877,20 +899,33 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
             self.available_fuel = CanopyAvailableFuel()
 
         native = self.biomass_source.equations is CanopyBiomassEquations.brown_1978
-        partition = self.available_fuel.branchwood.size_partition
-        if partition is None:
-            self.available_fuel.branchwood.size_partition = (
+        branchwood = self.available_fuel.branchwood
+        if branchwood.size_partition is None:
+            branchwood.size_partition = (
                 CanopyBranchwoodSizePartition.equations
                 if native
-                else CanopyBranchwoodSizePartition.brown_proportions
+                else CanopyBranchwoodSizePartition.none
             )
-        elif partition is CanopyBranchwoodSizePartition.equations and not native:
+        elif (
+            branchwood.size_partition is CanopyBranchwoodSizePartition.equations
+            and not native
+        ):
             raise ValueError(
                 "branchwood size_partition 'equations' requires biomass "
                 "equations that report fine branchwood by size class "
                 f"(brown_1978). '{self.biomass_source.equations.value}' "
                 "reports only total branchwood; use 'brown_proportions' or "
                 "'none'."
+            )
+
+        # The fraction's referent depends on the partition, so its default
+        # does too: a fraction of total branchwood (`none`) is a much smaller
+        # number than a fraction of the already-fine class.
+        if branchwood.fraction is None:
+            branchwood.fraction = (
+                DEFAULT_NONE_BRANCHWOOD_FRACTION
+                if branchwood.size_partition is CanopyBranchwoodSizePartition.none
+                else DEFAULT_FINE_BRANCHWOOD_FRACTION
             )
         return self
 

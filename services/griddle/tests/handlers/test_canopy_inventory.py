@@ -37,7 +37,7 @@ def _source(**overrides) -> dict:
         "biomass_source": {"type": "allometry", "equations": "nsvb"},
         "available_fuel": {
             "foliage_fraction": 1.0,
-            "branchwood": {"size_partition": "brown_proportions", "fraction": 0.5},
+            "branchwood": {"size_partition": "none", "fraction": 0.075},
         },
         "species_inclusion": "all_species",
         "crown_class_adjustment": {"method": "none"},
@@ -110,9 +110,9 @@ class TestTranslator:
     def test_default_source_maps_to_fastfuels_native_kwargs(self):
         kw = ci._core_kwargs(_source())
         assert kw["equations"] == "nsvb"
-        assert kw["branchwood_size_partition"] == "brown_proportions"
+        assert kw["branchwood_size_partition"] == "none"
         assert kw["foliage_fraction"] == 1.0
-        assert kw["branchwood_fraction"] == 0.5
+        assert kw["branchwood_fraction"] == 0.075
         assert kw["exclude_hardwoods"] is False
         assert kw["crown_class_adjustment"] == "none"
         assert "crown_class_column" not in kw
@@ -329,10 +329,16 @@ class TestErrorPaths:
         assert exc.value.code == "EMPTY_INVENTORY"
 
     def test_unpriceable_species_becomes_input_error(self):
-        # Species 999 is not in the FuelCalc table; the default brown_proportions
-        # partition consults it and raises, which the handler turns terminal.
+        # Under the FuelCalc fine-share crosswalk (brown_proportions), a species
+        # outside the table raises in core; the handler turns that terminal.
         df = _trees(species=999)
+        src = _source(
+            available_fuel={
+                "foliage_fraction": 1.0,
+                "branchwood": {"size_partition": "brown_proportions", "fraction": 0.5},
+            }
+        )
         with pytest.raises(ProcessingError) as exc:
-            _run(_source(), df)
+            _run(src, df)
         assert exc.value.code == "CANOPY_FUEL_INPUT_ERROR"
         assert exc.value.suggestion is not None

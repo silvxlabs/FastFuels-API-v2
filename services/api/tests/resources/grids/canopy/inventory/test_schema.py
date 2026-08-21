@@ -79,13 +79,15 @@ class TestRequestDefaults:
         )
 
     def test_minimal_request_resolves_available_fuel_defaults(self):
+        # NSVB defaults to the national `none` partition (prices every
+        # species) with the 0.075 total-branchwood fraction.
         req = make_request()
         assert isinstance(req.available_fuel, CanopyAvailableFuel)
         assert req.available_fuel.foliage_fraction == 1.0
-        assert req.available_fuel.branchwood.fraction == 0.5
+        assert req.available_fuel.branchwood.fraction == 0.075
         assert (
             req.available_fuel.branchwood.size_partition
-            is CanopyBranchwoodSizePartition.brown_proportions
+            is CanopyBranchwoodSizePartition.none
         )
 
     def test_minimal_request_resolves_band_method_defaults(self):
@@ -199,12 +201,15 @@ class TestBiomassSourceAndAvailableFuel:
         )
 
     @pytest.mark.parametrize("equations", ["nsvb", "jenkins"])
-    def test_total_branchwood_families_resolve_brown_proportions(self, equations):
+    def test_total_branchwood_families_resolve_none(self, equations):
+        # The national families default to the `none` partition (fraction of
+        # total branchwood, 0.075) — the only basis that prices every species.
         req = make_request(biomass_source={"type": "allometry", "equations": equations})
         assert (
             req.available_fuel.branchwood.size_partition
-            is CanopyBranchwoodSizePartition.brown_proportions
+            is CanopyBranchwoodSizePartition.none
         )
+        assert req.available_fuel.branchwood.fraction == 0.075
 
     @pytest.mark.parametrize("equations", ["nsvb", "jenkins"])
     def test_equations_partition_rejected_without_size_classes(self, equations):
@@ -543,9 +548,10 @@ class TestInventoryCanopySource:
     def test_persisted_source_records_resolved_defaults(self):
         dumped = self._source_from_request(make_request()).model_dump(mode="json")
         assert dumped["biomass_source"] == {"type": "allometry", "equations": "nsvb"}
-        assert dumped["available_fuel"]["branchwood"]["size_partition"] == (
-            "brown_proportions"
-        )
+        assert dumped["available_fuel"]["branchwood"] == {
+            "size_partition": "none",
+            "fraction": 0.075,
+        }
         assert dumped["cbd"] == {
             "method": "maximum_running_mean",
             "window": 3.0,

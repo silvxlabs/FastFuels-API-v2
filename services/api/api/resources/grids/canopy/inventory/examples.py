@@ -20,7 +20,7 @@ EXAMPLE_INVENTORY_CANOPY_EXPLICIT_DEFAULTS = {
     "biomass_source": {"type": "allometry", "equations": "nsvb"},
     "available_fuel": {
         "foliage_fraction": 1.0,
-        "branchwood": {"size_partition": "brown_proportions", "fraction": 0.5},
+        "branchwood": {"size_partition": "none", "fraction": 0.075},
     },
     "species_inclusion": "all_species",
     "crown_class_adjustment": {"method": "none"},
@@ -172,7 +172,9 @@ CREATE_INVENTORY_CANOPY_OPENAPI_EXAMPLES: dict = {
             "\n\n"
             "Defaults follow a FuelCalc-style profile method with NSVB "
             "allometry: "
-            "available fuel is all foliage plus half the fine branchwood, "
+            "available fuel is all foliage plus a national fraction (0.075) "
+            "of NSVB branchwood — the `none` partition, which prices every "
+            "species where the FuelCalc fine-share crosswalk cannot — "
             "distributed over each crown by the Reinhardt et al. (2006) "
             "species curves, summed into 1 ft layers per cell; CBD is the "
             "maximum 3 m running mean of that profile, CBH and CHM are the "

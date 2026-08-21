@@ -164,12 +164,13 @@ class TestCreateInventoryCanopyGrid:
         assert source["alignment"]["target"] == "domain"
         assert source["alignment"]["resolution"] == 30.0
         assert source["bands"] == ["cbd", "cbh", "chm", "cc"]
-        # FastFuels-native defaults, resolved onto the source.
+        # FastFuels-native defaults, resolved onto the source. NSVB defaults to
+        # the national `none` partition (prices every species) at 0.075.
         assert source["biomass_source"] == {"type": "allometry", "equations": "nsvb"}
-        assert (
-            source["available_fuel"]["branchwood"]["size_partition"]
-            == "brown_proportions"
-        )
+        assert source["available_fuel"]["branchwood"] == {
+            "size_partition": "none",
+            "fraction": 0.075,
+        }
         assert source["species_inclusion"] == "all_species"
         assert source["crown_class_adjustment"] == {"method": "none"}
         assert source["vertical_distribution"] == "reinhardt_2006"

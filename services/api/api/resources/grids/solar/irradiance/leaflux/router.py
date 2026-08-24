@@ -9,12 +9,10 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-import geopandas as gpd
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Body,
-    HTTPException,
     Request,
     Response,
     status,
@@ -26,10 +24,14 @@ from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.schema import Grid
+from api.resources.grids.utils import (
+    validate_grid_dimensionality,
+    validate_grid_has_band,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
-from lib.domain_utils import parse_domain_gdf
+from lib.domain_utils import domain_centroid_lat_lon
 
 from .examples import CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES
 from .schema import (
@@ -43,115 +45,6 @@ router = APIRouter()
 COLLECTION = GRIDS_COLLECTION
 
 LEAF_AREA_DENSITY_KEY = "leaf_area_density"
-
-
-def _domain_centroid_lat_lon(domain) -> tuple[float, float]:
-    """Return (lat, lon) of the domain centroid in EPSG:4326."""
-    gdf = parse_domain_gdf(domain)
-    # TODO: assumes parse_domain_gdf returns a projected CRS
-    centroid = gdf.geometry.union_all().centroid
-    point = gpd.GeoSeries([centroid], crs=gdf.crs).to_crs("EPSG:4326").iloc[0]
-    return float(point.y), float(point.x)
-
-
-async def _get_validated_source_grid(
-    source_grid_id: str, owner_id: str, domain_id: str
-) -> Grid:
-    _, snapshot = await get_document_async(COLLECTION, source_grid_id)
-    if not snapshot.exists:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Source grid {source_grid_id!r} does not exist.",
-        )
-    data = snapshot.to_dict()
-
-    # Redundant with VerifiedDomain + the same-domain check below, but cheap.
-    # Can be delegated to get_document_async(owner_id=...) once confirmed.
-    if data.get("owner_id") != owner_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Source grid {source_grid_id!r} is not owned by the caller.",
-        )
-    grid = Grid(**data)
-    if grid.domain_id != domain_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Source grid {source_grid_id!r} is not in this domain.",
-        )
-
-    # Check that grid is completed
-    if grid.status != JobStatus.completed:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Source grid {source_grid_id!r} is not completed.",
-        )
-
-    # Check for 3D grid
-    if grid.georeference is None or len(grid.georeference.shape) != 3:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Source grid {source_grid_id!r} must be a 3D grid.",
-        )
-
-    # Check that we have a LAD band
-    if not any(b.key == LEAF_AREA_DENSITY_KEY for b in grid.bands):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Source grid {source_grid_id!r} has no {LEAF_AREA_DENSITY_KEY!r} "
-                "band. Voxelize the inventory with that band first."
-            ),
-        )
-    return grid
-
-
-# TODO: are there any other checks needed here?
-async def _validate_terrain_grid(
-    terrain_grid_id: str, owner_id: str, domain_id: str
-) -> None:
-    _, snapshot = await get_document_async(COLLECTION, terrain_grid_id)
-    if not snapshot.exists:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Terrain grid {terrain_grid_id!r} does not exist.",
-        )
-    data = snapshot.to_dict()
-
-    # Check owner
-    if data.get("owner_id") != owner_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Terrain grid {terrain_grid_id!r} is not owned by the caller.",
-        )
-
-    # Check domain
-    grid = Grid(**data)
-    if grid.domain_id != domain_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Terrain grid {terrain_grid_id!r} is not in this domain.",
-        )
-
-    # Check that grid is completed
-    if grid.status != JobStatus.completed:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Terrain grid {terrain_grid_id!r} is not completed.",
-        )
-
-    # Check that is 2D
-    if grid.georeference is None or len(grid.georeference.shape) != 2:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Terrain grid {terrain_grid_id!r} must be a 2D grid.",
-        )
-
-    # Check for elevation band
-    if not any(b.key == "elevation" for b in grid.bands):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Terrain grid {terrain_grid_id!r} has no 'elevation' band.",
-        )
 
 
 @router.post(
@@ -180,20 +73,54 @@ async def create_leaflux_irradiance_grid(
     await enforce_create_quotas(COLLECTION, request)
 
     # Resolve lat/lon from the domain centroid when either is not supplied.
-    latitude, longitude = body.latitude, body.longitude
-    if latitude is None or longitude is None:
-        latitude, longitude = _domain_centroid_lat_lon(domain)
+    latitude, longitude = domain_centroid_lat_lon(domain)
 
-    source_grid = await _get_validated_source_grid(
-        body.source_grid_id, owner_id, domain_id
+    # Check that grid exists, is owned, complete, and in domain
+    _, source_snapshot = await get_document_async(
+        collection=COLLECTION,
+        document_id=body.source_grid_id,
+        owner_id=owner_id,
+        document_status="completed",
+    )
+
+    # Validate that we have LAD band
+    grid_data = source_snapshot.to_dict()
+    validate_grid_has_band(
+        grid_data=grid_data, grid_id=body.source_grid_id, required=LEAF_AREA_DENSITY_KEY
+    )
+
+    # Validate that is 3D
+    validate_grid_dimensionality(
+        grid_data=grid_data, grid_id=body.source_grid_id, expected=3
     )
 
     if body.source_terrain_grid_id is not None:
-        await _validate_terrain_grid(body.source_terrain_grid_id, owner_id, domain_id)
+        # Validate terrain grid exists, is owned, is completed
+        _, terrain_source_snapshot = await get_document_async(
+            collection=COLLECTION,
+            document_id=body.source_terrain_grid_id,
+            owner_id=owner_id,
+            document_status="completed",
+        )
+        terrain_grid_data = terrain_source_snapshot.to_dict()
+
+        # Validate we have elevation band
+        validate_grid_has_band(
+            grid_data=terrain_grid_data,
+            grid_id=body.source_terrain_grid_id,
+            required="elevation",
+        )
+
+        # Validate is 2D
+        validate_grid_dimensionality(
+            grid_data=terrain_grid_data,
+            grid_id=body.source_terrain_grid_id,
+            expected=2,
+        )
 
     source = IrradianceLeafluxSource(
         source_grid_id=body.source_grid_id,
-        source_grid_checksum=source_grid.checksum,
+        source_grid_checksum=grid_data.get("checksum"),
         source_terrain_grid_id=body.source_terrain_grid_id,
         bands=body.bands,
         latitude=latitude,

@@ -131,18 +131,7 @@ class CreateLeafluxIrradianceRequest(BaseModel):
     date_time: datetime = Field(
         description="UTC instant at which to compute irradiance.",
     )
-    latitude: float | None = Field(
-        default=None,
-        ge=-90.0,
-        le=90.0,
-        description="Latitude for the solar position. Defaults to the domain centroid.",
-    )
-    longitude: float | None = Field(
-        default=None,
-        ge=-180.0,
-        le=180.0,
-        description="Longitude for the solar position. Defaults to the domain centroid.",
-    )
+
     extinction_coefficient: float = Field(
         default=0.5,
         gt=0.0,

@@ -145,3 +145,33 @@ class TestCreateLandfireFbfm40:
         )
 
         assert response.status_code == 422
+
+
+class TestSeasonalCoverage:
+    """Router-level tests for the `season` field on grid creation."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/fbfm40/landfire"
+
+    def test_annual_version_with_season_rejected(self, client, domain_for_testing):
+        """An annual-only version with season set fails schema validation
+        (422) before any LFPS call is made -- deterministic, no network."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"version": "2024", "season": "SP"},
+        )
+        assert response.status_code == 422
+
+    def test_season_without_lfps_version_rejected(self, client, domain_for_testing):
+        """season set with the default annual version (2024) is rejected."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"season": "SP"},
+        )
+        assert response.status_code == 422
+
+    def test_season_omitted_persists_none(self, client, domain_for_testing):
+        """Without season, the grid is created with source.season == None."""
+        response = client.post(self.route(domain_for_testing["id"]), json={})
+        assert response.status_code == 201
+        assert response.json()["source"]["season"] is None

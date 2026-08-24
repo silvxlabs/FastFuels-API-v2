@@ -32,6 +32,7 @@ class TestLandfireVersionsTable:
             "2023",
             "2024",
         ]
+        assert LANDFIRE_VERSIONS["fbfm40"]["lfps_available"] == ["2025"]
         assert LANDFIRE_VERSIONS["fbfm40"]["default"] == "2024"
 
     def test_fccs_versions(self):

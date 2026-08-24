@@ -1,48 +1,53 @@
 """Reproduce FuelCalc's tutorial output through the inventory canopy endpoint.
 
 FuelCalc 1.7 ships a two-plot tutorial treelist and, run on it pre- and
-post-thinning, prints a Stand Measurements block per plot. Those printed
-numbers are the reference here. This test lays the two plots out in space as a
-1x2 grid of 30 m cells — plot 1 in the west cell, plot 2 in the east — builds a
-real v2 tree inventory from them (including the new ``fia_crown_class_code``
-column, #521), configures the grid with the API's ``fuelcalc_comparison``
-example settings, runs the whole griddle pipeline (GCS parquet -> fastfuels-core
-canopy metrics -> zarr), and checks each cell against the plot report FuelCalc
-wrote for it.
+post-thinning, prints a Stand Measurements block per plot. This test lays the
+two plots out in space as a 1x2 grid of **ten-acre cells** — plot 1 in the west
+cell, plot 2 in the east — builds a real v2 tree inventory from them (including
+the ``fia_crown_class_code`` column, #521), configures the grid with the API's
+``fuelcalc_comparison`` example settings, runs the whole griddle pipeline (GCS
+parquet -> fastfuels-core canopy metrics -> zarr), and checks each cell against
+``fastfuels-core``'s own FuelCalc-parity numbers.
 
-Where this differs from ``fastfuels-core``'s own comparison test
+Where this differs from ``fastfuels-core``'s comparison test
 (``tests/canopy_fuel/test_fuelcalc_comparison.py``): that one calls core
-directly on a single aspatial 10-acre cell to check the *science*. This one goes
-through the *API schema and griddle ETL* on a spatial 30 m lattice to prove the
-contract a user actually drives reproduces FuelCalc. The objective is the schema
-reproduction, not a second copy of the science check.
+directly on a single aspatial ten-acre cell to check the *science*. This one
+goes through the *API schema and griddle ETL* on a spatial two-cell lattice to
+prove the contract a user actually drives produces the same numbers. The
+objective is the ETL reproduction, not a second copy of the science check — so
+the reference here is core's computed metrics (which core's own test pins
+against FuelCalc's printout), and the tolerances are tight.
 
-FuelCalc is the reference software, not the definitive answer. Three understood,
-measured effects separate this pipeline's numbers from FuelCalc's printout, and
-the tolerances below are sized to them:
+**Why ten-acre cells.** FuelCalc has no horizontal structure; it works from
+per-acre expansion factors. To represent that stand as whole trees the cell has
+to be big enough that ``expansion_factor * cell_acres`` lands on a whole number
+— core uses ten acres precisely because the tutorial's factors are quoted to a
+tenth, so ``* 10`` is exact with no rounding. A smaller cell (e.g. 30 m) forces
+a fractional-stem rounding that, on this treelist's uniform densities, is a pure
+tie: which records round up is then decided by ``argsort``'s tie-break, which
+differs by platform (arm64 vs amd64) and swings CBD by tens of percent. Matching
+core's ten-acre cell removes the quantization entirely and makes the whole test
+deterministic across platforms — there is no ``argsort`` here at all.
 
-- **Western larch P2 (a FuelCalc bug).** FuelCalc's compiled table carries
-  ``0.745*exp(-0.0632d)``; Brown 1978 Table 16 and FuelCalc's own User Guide
-  print ``-0.0362``. fastfuels-core implements the published coefficient, so
-  larch-bearing stands (both plots) land a little off FuelCalc's printed CBD /
-  CFL / stand height — the same deviation that test names, ~1-2% at the stand
-  level here.
-- **30 m stem quantization.** FuelCalc works from per-acre expansion factors; a
-  30 m cell holds whole stems, so each record's per-acre density is rounded
-  (largest-remainder, holding the stand total to <1%). Shifts CBH/CHM by at most
-  one 1 ft layer.
-- **30 m finite-cell cover.** ``crown_overlap`` cover is cell-size dependent at
-  fixed density — it converges to FuelCalc's aspatial value as the cell grows to
-  acre scale, and reads a characterized few-to-~16% low at 30 m. So ``cc`` is
-  checked as a bounded reduction of FuelCalc's, not an equality.
+**Western larch P2 (a FuelCalc bug).** The one place core deviates from
+FuelCalc's *printout*: FuelCalc's compiled table carries ``0.745*exp(-0.0632d)``
+where Brown 1978 Table 16 and FuelCalc's own User Guide print ``-0.0362``.
+fastfuels-core implements the published coefficient, so larch-bearing stands
+(both plots) land a little off FuelCalc's printed CBD / CFL / stand height. The
+reference values below are core's — which absorb that deviation — so this test
+reproduces core exactly; core's own test is where the FuelCalc anchor lives.
 
-CBD/CBH/CHM/CFL are invariant to where stems land within a cell (``stem``
-distribution drops each tree's fuel in its own cell); only ``cc`` depends on the
-placement, so the RNG seed is fixed.
+Canopy cover reads a few tenths of a percent below core's single-cell value: at
+ten acres the finite-cell edge effect on ``crown_overlap`` is nearly gone but
+not quite, and stems here are placed at random positions in the cell rather than
+all at its center. The RNG seed is fixed so that placement — and therefore cover
+— is reproducible; PCG64 is platform-independent, so it is identical on arm64
+and amd64.
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from uuid import uuid4
 
@@ -61,7 +66,11 @@ TREELIST = Path(__file__).parent / "data" / "fuelcalc_tutorial_treelist.csv"
 ACRE_M2 = 4046.8564224
 FT_TO_M = 0.3048
 LB_TO_KG = 0.45359237
-CELL_M = 30.0
+CELL_ACRES = 10
+# Side of a ten-acre square cell, in metres. Exactly 201.168 m
+# (201.168**2 == 10 * ACRE_M2), so a 2*SIDE x SIDE domain resolves to an exact
+# 1x2 lattice. Matches ``fastfuels-core``'s comparison test.
+SIDE = math.sqrt(CELL_ACRES * ACRE_M2)
 SEED = 0
 
 # FuelCalc species mnemonics -> FIA SPCD.
@@ -78,47 +87,41 @@ SPECIES_CODES = {
 # these back onto core's letters.
 CROWN_CLASS_TO_CCLCD = {"D": 2, "C": 3, "I": 4, "S": 5}
 
-# The domain fixture is 60 m x 30 m, so the 30 m lattice is one row of two
-# cells: west cell (col 0) is plot 1, east cell (col 1) is plot 2. Stems fill
-# the whole cell — cover must be normalized against the area the stems occupy.
-# numpy's uniform is high-exclusive, so no plot-1 stem reaches the shared
-# 720030 boundary, and a plot-2 stem at exactly 720030 falls in the east cell
-# (its own), so no stem lands in the wrong cell.
-PLOT_CELL_X = {1: (720000.0, 720030.0), 2: (720030.0, 720060.0)}
-CELL_Y = (5190000.0, 5190030.0)
+# The domain fixture spans 2*SIDE x SIDE from this origin (EPSG:32611), so the
+# ten-acre lattice is one row of two cells: west cell (col 0) is plot 1, east
+# cell (col 1) is plot 2. Each plot's stems fill its own cell.
+ORIGIN_X = 720000.0
+ORIGIN_Y = 5190000.0
+PLOT_CELL_X = {
+    1: (ORIGIN_X, ORIGIN_X + SIDE),
+    2: (ORIGIN_X + SIDE, ORIGIN_X + 2 * SIDE),
+}
+CELL_Y = (ORIGIN_Y, ORIGIN_Y + SIDE)
 
-# FuelCalc plot-report Stand Measurements (the .rtf reports shipped with the
-# tutorial), in FuelCalc's units: CBD kg/m**3, CBH/stand height ft, cover %,
-# canopy fuel load T/ac.
-FUELCALC_REPORT = {
-    (1, "pre"): dict(cbd=0.044, cbh_ft=1.0, chm_ft=103.0, cc=48.77, cfl_tac=3.79),
-    (1, "post"): dict(cbd=0.044, cbh_ft=2.0, chm_ft=103.0, cc=43.50, cfl_tac=3.24),
-    (2, "pre"): dict(cbd=0.046, cbh_ft=1.0, chm_ft=123.0, cc=40.99, cfl_tac=2.76),
-    (2, "post"): dict(cbd=0.023, cbh_ft=3.0, chm_ft=126.0, cc=31.54, cfl_tac=2.07),
+# fastfuels-core's FuelCalc-parity metrics for each plot (from its
+# test_fuelcalc_comparison.py), in FuelCalc's reporting units: CBD kg/m**3,
+# CBH/stand height ft, cover %, canopy fuel load T/ac. griddle reproduces
+# CBD/CBH/CHM/CFL exactly on the same stand; cover lands a few tenths low (see
+# the module docstring). "post" replays the tutorial's post-thinning expansion
+# factors (TPA_POST) directly rather than re-deriving the thinning.
+CORE_PARITY = {
+    (1, "pre"): dict(cbd=0.0447, cbh_ft=2.0, chm_ft=103.0, cc=48.77, cfl_tac=3.848),
+    (1, "post"): dict(cbd=0.0447, cbh_ft=2.0, chm_ft=103.0, cc=43.50, cfl_tac=3.303),
+    (2, "pre"): dict(cbd=0.0463, cbh_ft=1.0, chm_ft=125.0, cc=40.99, cfl_tac=2.952),
+    (2, "post"): dict(cbd=0.0236, cbh_ft=3.0, chm_ft=129.0, cc=31.54, cfl_tac=2.254),
 }
 
 TREATMENTS = {"pre": "TPA_PRE", "post": "TPA_POST"}
 
 
-def _largest_remainder(tpa: np.ndarray, area_m2: float) -> np.ndarray:
-    """Whole stems per record at the cell's density, preserving the stand total.
-
-    A 30 m cell holds far fewer stems than FuelCalc's nominal acre, so
-    ``tpa * cell_acres`` is fractional; rounding each record independently would
-    lose ~10% of the stand. Largest-remainder rounding holds the total to the
-    nearest whole stem.
-    """
-    target = tpa * area_m2 / ACRE_M2
-    floor = np.floor(target).astype(int)
-    remainder = int(round(target.sum())) - int(floor.sum())
-    order = np.argsort(-(target - floor))
-    counts = floor.copy()
-    counts[order[:remainder]] += 1
-    return counts
-
-
 def _build_inventory(expansion: str) -> pd.DataFrame:
-    """A v2 tree inventory for both plots laid out in their two cells."""
+    """A v2 tree inventory for both plots laid out in their two ten-acre cells.
+
+    Each record's per-acre expansion factor becomes ``round(factor * 10)`` whole
+    stems — exact for the tutorial's tenth-precision factors, so there is no
+    fractional rounding and no ``argsort`` tie-break to depend on. Stems are
+    placed at random positions within their cell (fixed seed).
+    """
     trees = pd.read_csv(TREELIST)
     # FuelCalc excludes dead trees from canopy fuel; drop them here too.
     trees = trees[trees["STATUS"] != "D"]
@@ -128,7 +131,7 @@ def _build_inventory(expansion: str) -> pd.DataFrame:
     frames = []
     for plot, (x0, x1) in PLOT_CELL_X.items():
         p = trees[trees["PLOT"] == plot]
-        counts = _largest_remainder(p[expansion].to_numpy(), CELL_M * CELL_M)
+        counts = np.rint(p[expansion].to_numpy() * CELL_ACRES).astype(int)
         idx = np.repeat(np.arange(len(p)), counts)
         n = len(idx)
         frames.append(
@@ -198,47 +201,47 @@ def _cell_values(ds, bands: list[str]) -> dict[int, dict[str, float]]:
     }
 
 
-def _assert_reproduces_fuelcalc(si: dict[str, float], ref: dict, plot: int, label: str):
-    """Each band against FuelCalc's report, in FuelCalc's units and tolerances."""
+def _assert_matches_core(si: dict[str, float], ref: dict, plot: int, label: str):
+    """Each band against core's FuelCalc-parity metrics, in FuelCalc's units."""
     where = f"plot {plot} {label}"
 
     cbd = si["cbd"]
-    assert cbd == pytest.approx(ref["cbd"], abs=0.004), (
-        f"{where}: CBD {cbd:.4f} kg/m**3 vs FuelCalc {ref['cbd']}"
+    assert cbd == pytest.approx(ref["cbd"], abs=5e-4), (
+        f"{where}: CBD {cbd:.4f} kg/m**3 vs core {ref['cbd']}"
     )
 
     # Core anchors CBH to the layer bottom; FuelCalc labels a layer by its top,
-    # one 1 ft layer higher. Within one layer of FuelCalc's after that shift.
+    # one 1 ft layer higher. core's reported canopy_base_height_ft applies that
+    # shift, and griddle reproduces it to the same 1 ft layer.
     cbh_ft = si["cbh"] / FT_TO_M + 1.0
-    assert abs(cbh_ft - ref["cbh_ft"]) <= 1.0 + 1e-6, (
-        f"{where}: CBH {cbh_ft:.1f} ft vs FuelCalc {ref['cbh_ft']}"
+    assert cbh_ft == pytest.approx(ref["cbh_ft"], abs=0.5), (
+        f"{where}: CBH {cbh_ft:.1f} ft vs core {ref['cbh_ft']}"
     )
 
-    # Stand height. Within a few feet — the larch coefficient sets where the
-    # profile crosses the threshold near the canopy top in the larch-tall plot.
     chm_ft = si["chm"] / FT_TO_M
-    assert abs(chm_ft - ref["chm_ft"]) <= 4.0 + 1e-6, (
-        f"{where}: stand height {chm_ft:.1f} ft vs FuelCalc {ref['chm_ft']}"
+    assert chm_ft == pytest.approx(ref["chm_ft"], abs=1.0), (
+        f"{where}: stand height {chm_ft:.1f} ft vs core {ref['chm_ft']}"
     )
 
     cfl_tac = si["cfl"] * ACRE_M2 / LB_TO_KG / 2000.0
-    assert cfl_tac == pytest.approx(ref["cfl_tac"], abs=0.25), (
-        f"{where}: canopy fuel load {cfl_tac:.3f} T/ac vs FuelCalc {ref['cfl_tac']}"
+    assert cfl_tac == pytest.approx(ref["cfl_tac"], abs=0.02), (
+        f"{where}: canopy fuel load {cfl_tac:.3f} T/ac vs core {ref['cfl_tac']}"
     )
 
-    # crown_overlap cover reads a characterized fraction low at 30 m (finite
-    # cell), never high. Bound it rather than equate it.
+    # crown_overlap cover reads a few tenths of a percent below core's
+    # single-cell value — the residual ten-acre finite-cell edge effect with
+    # stems placed off-center. Never high; bounded near equality.
     cc = si["cc"]
-    assert 0.80 * ref["cc"] <= cc <= 0.98 * ref["cc"], (
-        f"{where}: canopy cover {cc:.2f}% vs FuelCalc {ref['cc']}% "
-        f"(expected the 30 m finite-cell reduction, ~10-15% low)"
+    assert cc == pytest.approx(ref["cc"], abs=1.0), (
+        f"{where}: canopy cover {cc:.2f}% vs core {ref['cc']}%"
     )
 
 
 @pytest.mark.parametrize("label", ["pre", "post"])
 def test_griddle_reproduces_fuelcalc_tutorial(griddle_runner, stage_inventory, label):
     """The fuelcalc_comparison schema, run through griddle on the two tutorial
-    plots as a 1x2 grid, reproduces FuelCalc's per-plot reports."""
+    plots as a 1x2 ten-acre grid, reproduces fastfuels-core's FuelCalc-parity
+    metrics per plot."""
     inventory_id = stage_inventory(_build_inventory(TREATMENTS[label]))
 
     result = griddle_runner(
@@ -250,6 +253,4 @@ def test_griddle_reproduces_fuelcalc_tutorial(griddle_runner, stage_inventory, l
     cells = _cell_values(result.ds, bands)
 
     for plot in (1, 2):
-        _assert_reproduces_fuelcalc(
-            cells[plot], FUELCALC_REPORT[(plot, label)], plot, label
-        )
+        _assert_matches_core(cells[plot], CORE_PARITY[(plot, label)], plot, label)

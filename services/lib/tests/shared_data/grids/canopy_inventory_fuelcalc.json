@@ -118,7 +118,7 @@
     "extent_buffer_cells": 0,
     "alignment": {
       "target": "domain",
-      "resolution": 30.0,
+      "resolution": 201.168,
       "method": null
     },
     "source_inventory_id": "REPLACED_BY_TEST",

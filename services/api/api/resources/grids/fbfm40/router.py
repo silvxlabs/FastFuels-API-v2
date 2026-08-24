@@ -75,7 +75,8 @@ async def create_landfire_fbfm40(
       Fetches data from a saved copy of the annual release, unless `season` is set.
     - **season**: (optional) LANDFIRE Seasonal Fuels release: "ES" (early
       spring), "SP" (spring), "SU" (summer), or "FA" (fall). Setting
-      `season` fetches data from LANDFIRE Product Service
+      `season` fetches data from the LANDFIRE Product Service on demand
+      rather than a saved annual copy.
 
     ## Response
 

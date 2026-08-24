@@ -216,8 +216,6 @@ class TestIrradianceLeafluxSource:
         body = {
             "source_grid_id": "grid-1",
             "bands": [LeafluxBand.irradiance_surface_relative],
-            "latitude": 46.9,
-            "longitude": -114.0,
             "date_time": DATE_TIME,
             "extinction_coefficient": 0.5,
         }
@@ -239,9 +237,11 @@ class TestIrradianceLeafluxSource:
         assert source.source_grid_checksum == "sum123"
         assert source.model_dump(mode="json")["source_grid_checksum"] == "sum123"
 
-    @pytest.mark.parametrize("field", ["latitude", "longitude", "date_time", "bands"])
+    @pytest.mark.parametrize(
+        "field", ["source_grid_id", "bands", "date_time", "extinction_coefficient"]
+    )
     def test_required_fields(self, field):
-        """lat/lon (and bands, date_time) are always persisted for reproducibility."""
+        """Every resolved model choice is persisted for reproducibility."""
         body = self._minimal()
         del body[field]
         with pytest.raises(ValidationError):
@@ -275,7 +275,5 @@ class TestIrradianceLeafluxSource:
         assert data["source_grid_id"] == "grid-1"
         assert data["source_terrain_grid_id"] == "terrain-1"
         assert data["bands"] == [CANOPY, SURFACE]
-        assert data["latitude"] == 46.9
-        assert data["longitude"] == -114.0
         assert data["extinction_coefficient"] == 0.4
         assert data["date_time"].startswith("2025-07-01")

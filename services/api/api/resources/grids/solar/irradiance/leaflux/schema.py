@@ -89,8 +89,6 @@ class IrradianceLeafluxSource(BaseModel):
     )
     source_terrain_grid_id: str | None = None
     bands: list[LeafluxBand]
-    latitude: float
-    longitude: float
     date_time: datetime
     extinction_coefficient: float
 

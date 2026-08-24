@@ -3,9 +3,9 @@
 The integration test (tests/integration/test_leaflux.py) is the ground truth: it
 runs the whole handler against an independent whole-domain leaflux run on the
 static fixture. These unit tests cover the atomic pieces underneath it — tile
-geometry, the coordinate/orientation conventions, and the night/empty
-short-circuits — plus one fast, GCS-free bridge test that the per-tile assembly
-reproduces a whole-domain run.
+geometry, the coordinate/orientation conventions, the domain->sun resolution,
+and the night/empty short-circuits — plus one fast, GCS-free bridge test that
+the per-tile assembly reproduces a whole-domain run.
 """
 
 from __future__ import annotations
@@ -14,14 +14,17 @@ import math
 from datetime import datetime
 from types import SimpleNamespace
 
+import geopandas as gpd
 import numpy as np
 import pytest
 from leaflux import SolarPosition
+from shapely.geometry import box
 from treevox.handlers import leaflux as handler
 from treevox.handlers.leaflux import (
     CANOPY_BAND,
     SURFACE_BAND,
     _canopy_irradiance,
+    _domain_centroid_lat_lon,
     _leaf_area,
     _plan_tiles,
     _scatter,
@@ -34,6 +37,14 @@ from treevox.handlers.leaflux import (
 
 def _boom(*args, **kwargs):
     raise AssertionError("leaflux model must not run on the night/empty path")
+
+
+def _domain_at(lat, lon, half=0.001):
+    """A one-row domain GeoDataFrame whose centroid is (lat, lon) in EPSG:4326."""
+    return gpd.GeoDataFrame(
+        geometry=[box(lon - half, lat - half, lon + half, lat + half)],
+        crs="EPSG:4326",
+    )
 
 
 # --- Tile geometry ---
@@ -134,13 +145,27 @@ def test_terrain_lift_shifts_z_by_terrain_under_leaf():
     assert la.leaf_area[0, 2] == np.float32(9.0)
 
 
+# --- Domain -> sun resolution ---
+
+
+def test_domain_centroid_lat_lon_returns_center():
+    lat, lon = _domain_centroid_lat_lon(_domain_at(46.9, -114.0))
+    assert lat == pytest.approx(46.9)
+    assert lon == pytest.approx(-114.0)
+
+
+def test_domain_centroid_lat_lon_reprojects_from_projected_crs():
+    # A domain stored in a projected CRS must still resolve to the right lat/lon.
+    projected = _domain_at(46.9, -114.0).to_crs("EPSG:32611")
+    lat, lon = _domain_centroid_lat_lon(projected)
+    assert lat == pytest.approx(46.9, abs=1e-4)
+    assert lon == pytest.approx(-114.0, abs=1e-4)
+
+
 def test_sun_daytime_returns_position_not_night():
     sol, night = _sun(
-        {
-            "date_time": datetime(2023, 6, 21, 19, 0, 0),
-            "latitude": 46.9,
-            "longitude": -114.0,
-        }
+        {"date_time": datetime(2023, 6, 21, 19, 0, 0)},
+        _domain_at(46.9, -114.0),
     )
     assert sol is not None
     assert night is False
@@ -149,13 +174,20 @@ def test_sun_daytime_returns_position_not_night():
 
 def test_sun_below_horizon_is_night():
     _, night = _sun(
-        {
-            "date_time": datetime(2023, 6, 21, 9, 0, 0),  # ~1-2am local at lon -114
-            "latitude": 46.9,
-            "longitude": -114.0,
-        }
+        {"date_time": datetime(2023, 6, 21, 9, 0, 0)},  # ~1-2am local at lon -114
+        _domain_at(46.9, -114.0),
     )
     assert night is True
+
+
+def test_sun_location_comes_from_domain():
+    # Same instant, two domains: the sun must track the domain centroid, not any
+    # coordinate on the source dict.
+    source = {"date_time": datetime(2023, 6, 21, 19, 0, 0)}
+    montana, _ = _sun(source, _domain_at(46.9, -114.0))
+    florida, _ = _sun(source, _domain_at(25.8, -80.2))
+    assert montana is not None and florida is not None
+    assert abs(montana.zenith - florida.zenith) > 1e-3
 
 
 # --- Night / empty short-circuits (must not run the model) ---
@@ -279,12 +311,10 @@ def test_run_leaflux_wires_job_and_tiles(monkeypatch):
             "source_grid_id": "src-lad",
             "source_terrain_grid_id": "src-dem",
             "date_time": datetime(2023, 6, 21, 19, 0, 0),
-            "latitude": 46.9,
-            "longitude": -114.0,
             "extinction_coefficient": 0.5,
         },
     }
-    result = handler.run_leaflux(grid, None, lambda *a, **k: None)
+    result = handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
 
     job = captured["job"]
     assert job.want_canopy and job.want_surface
@@ -328,12 +358,10 @@ def test_run_leaflux_no_surface_band_skips_terrain(monkeypatch):
             "source_grid_id": "src-lad",
             "source_terrain_grid_id": "src-dem",  # present but not requested
             "date_time": datetime(2023, 6, 21, 19, 0, 0),
-            "latitude": 46.9,
-            "longitude": -114.0,
             "extinction_coefficient": 0.5,
         },
     }
-    handler.run_leaflux(grid, None, lambda *a, **k: None)
+    handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
     job = captured["job"]
     assert job.want_canopy and not job.want_surface
     assert job.dem_id is None  # no terrain opened when surface isn't requested

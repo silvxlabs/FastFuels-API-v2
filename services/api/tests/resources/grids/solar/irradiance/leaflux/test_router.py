@@ -107,11 +107,6 @@ class TestCreateLeafluxIrradianceGrid:
         assert source["bands"] == [SURFACE]
         assert source["extinction_coefficient"] == 0.5
         assert source["source_grid_checksum"] == source_lad_grid["checksum"]
-        # lat/lon resolved from the domain centroid, not user-supplied.
-        assert isinstance(source["latitude"], float)
-        assert isinstance(source["longitude"], float)
-        assert -90.0 <= source["latitude"] <= 90.0
-        assert -180.0 <= source["longitude"] <= 180.0
 
         assert len(data["bands"]) == 1
         assert data["bands"][0]["key"] == SURFACE

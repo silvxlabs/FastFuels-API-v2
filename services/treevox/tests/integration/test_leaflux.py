@@ -1,9 +1,14 @@
 """Integration test for the LeafLux irradiance handler.
 
-The handler tiles the domain with `da.map_overlap`, casts shadows into each
-tile from an up-sun halo, and trims the halo back off. The correctness claim is
-that this chunked-with-halo computation reproduces a single, un-chunked leaflux
-run over the whole domain.
+The handler tiles the domain into disjoint core regions, reads each with an
+up-sun halo so shadows fall correctly into its core, runs leaflux on the padded
+window, and trims the halo back off. The correctness claim is that this
+tiled-with-halo computation reproduces a single, un-chunked leaflux run over the
+whole domain.
+
+The solar position is derived from the domain centroid, so this test passes a
+domain whose centroid is (LATITUDE, LONGITUDE) — the same coords the reference
+run uses — keeping the handler and reference in lockstep.
 
 This test verifies exactly that. It:
 
@@ -25,10 +30,12 @@ import math
 from datetime import datetime
 from uuid import uuid4
 
+import geopandas as gpd
 import numpy as np
 import pytest
 import xarray as xr
 from leaflux import Environment, LeafArea, SolarPosition, Terrain, attenuate_all
+from shapely.geometry import box
 from treevox.handlers import leaflux as handler
 
 from lib.config import GRIDS_BUCKET
@@ -48,6 +55,14 @@ LATITUDE = 46.9
 LONGITUDE = -114.0
 DATE_TIME = datetime(2023, 6, 21, 19, 0, 0)  # ~solar noon UTC in summer
 EXTINCTION = 0.5
+
+
+def _domain_at(lat, lon, half=0.001):
+    """A one-row domain GeoDataFrame whose centroid is (lat, lon) in EPSG:4326."""
+    return gpd.GeoDataFrame(
+        geometry=[box(lon - half, lat - half, lon + half, lat + half)],
+        crs="EPSG:4326",
+    )
 
 
 def _reference_scatter(stack: np.ndarray, nz: int, ny: int, nx: int) -> np.ndarray:
@@ -154,6 +169,9 @@ def test_handler_matches_unchunked_leaflux(treevox_runner, monkeypatch):
         save_zarr(dem_path, dem, chunk_shape=(ny, nx))
 
         # 3. Shrink the tile so the domain spans many tiles (real halo/tiling).
+        #    The handler derives the sun from the domain centroid, so build a
+        #    domain centred on (LATITUDE, LONGITUDE) — the reference's coords.
+        domain_gdf = _domain_at(LATITUDE, LONGITUDE)
         sol = SolarPosition(DATE_TIME, LATITUDE, LONGITUDE)
         assert math.degrees(sol.zenith) < handler.MAX_ZENITH_DEG, "sun must be up"
         halo = math.ceil((nz * vr * math.tan(sol.zenith)) / hr)
@@ -174,15 +192,13 @@ def test_handler_matches_unchunked_leaflux(treevox_runner, monkeypatch):
                 "entity": "solar",
                 "source_grid_id": lad_grid_id,
                 "source_terrain_grid_id": dem_id,
-                "latitude": LATITUDE,
-                "longitude": LONGITUDE,
                 "date_time": DATE_TIME,
                 "extinction_coefficient": EXTINCTION,
             },
             "bands": [{"key": CANOPY_BAND}, {"key": SURFACE_BAND}],
         }
 
-        result = handler.run_leaflux(grid, None, lambda *a, **k: None)
+        result = handler.run_leaflux(grid, domain_gdf, lambda *a, **k: None)
         assert result.georeference["shape"] == [nz, ny, nx]
 
         out = xr.open_zarr(out_path, consolidated=True, decode_coords="all")

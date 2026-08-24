@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import dask.array as da
+import geopandas as gpd
 import numpy as np
 import rioxarray  # noqa: F401 — registers `.rio` accessor
 import xarray as xr
@@ -65,13 +66,21 @@ def _open(grid_id: str) -> xr.Dataset:
     )
 
 
-def _sun(source: dict) -> tuple[SolarPosition | None, bool]:
+def _domain_centroid_lat_lon(domain_gdf) -> tuple[float, float]:
+    """Return (lat, lon) of the domain centroid in EPSG:4326."""
+    centroid = domain_gdf.geometry.union_all().centroid
+    point = gpd.GeoSeries([centroid], crs=domain_gdf.crs).to_crs("EPSG:4326").iloc[0]
+    return float(point.y), float(point.x)
+
+
+def _sun(source: dict, domain_gdf) -> tuple[SolarPosition | None, bool]:
     """SolarPosition and a night flag; None sun when it is below the horizon."""
     dt = source["date_time"]
     if isinstance(dt, str):
         dt = datetime.fromisoformat(dt)
     try:
-        sol = SolarPosition(dt, source["latitude"], source["longitude"])
+        latitude, longitude = _domain_centroid_lat_lon(domain_gdf=domain_gdf)
+        sol = SolarPosition(dt, latitude, longitude)
         return sol, math.degrees(sol.zenith) > MAX_ZENITH_DEG
     except ValueError:  # SolarPosition rejects a sun below the horizon
         return None, True
@@ -353,7 +362,7 @@ def _init_output(
 
 def run_leaflux(
     grid: dict,
-    domain_gdf,  # inherited from the source grid; here for dispatch parity
+    domain_gdf: gpd.GeoDataFrame,  # inherited from the source grid; here for dispatch parity
     progress: Callable[[str, int | None], None],
 ) -> LeafluxResult:
     source = grid["source"]
@@ -367,7 +376,7 @@ def run_leaflux(
     vr = float(lad_ds.attrs["z_resolution"])
     z_origin = float(lad_ds.attrs["z_origin"])
 
-    sol, night = _sun(source)
+    sol, night = _sun(source, domain_gdf)
     halo = 0 if night else math.ceil((nz * vr * math.tan(sol.zenith)) / hr)
     core = max(min(WINDOW_TARGET_CELLS - 2 * halo, nx, ny), 1)
     bands = [b for b in (CANOPY_BAND, SURFACE_BAND) if b in requested]

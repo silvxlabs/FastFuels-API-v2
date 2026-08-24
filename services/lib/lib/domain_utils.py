@@ -87,11 +87,3 @@ def buffer_gdf(gdf: gpd.GeoDataFrame, buffer_m: float) -> gpd.GeoDataFrame:
 def buffer_domain(domain_gdf: gpd.GeoDataFrame, buffer_m: float) -> gpd.GeoDataFrame:
     """Expand a domain outward by ``buffer_m`` meters in its native CRS."""
     return buffer_gdf(domain_gdf, buffer_m)
-
-
-def domain_centroid_lat_lon(domain) -> tuple[float, float]:
-    """Return (lat, lon) of the domain centroid in EPSG:4326."""
-    gdf = parse_domain_gdf(domain)
-    centroid = gdf.geometry.union_all().centroid
-    point = gpd.GeoSeries([centroid], crs=gdf.crs).to_crs("EPSG:4326").iloc[0]
-    return float(point.y), float(point.x)

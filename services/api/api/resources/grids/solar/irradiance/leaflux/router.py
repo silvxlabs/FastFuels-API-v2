@@ -31,7 +31,6 @@ from api.resources.grids.utils import (
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
-from lib.domain_utils import domain_centroid_lat_lon
 
 from .examples import CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES
 from .schema import (
@@ -71,9 +70,6 @@ async def create_leaflux_irradiance_grid(
     # ***NOTE: quota enforcement + dispatch registration mirror the topography
     # and treevox routers; kept so this endpoint counts against create quotas.
     await enforce_create_quotas(COLLECTION, request)
-
-    # Resolve lat/lon from the domain centroid when either is not supplied.
-    latitude, longitude = domain_centroid_lat_lon(domain)
 
     # Check that grid exists, is owned, complete, and in domain
     _, source_snapshot = await get_document_async(
@@ -123,8 +119,6 @@ async def create_leaflux_irradiance_grid(
         source_grid_checksum=grid_data.get("checksum"),
         source_terrain_grid_id=body.source_terrain_grid_id,
         bands=body.bands,
-        latitude=latitude,
-        longitude=longitude,
         date_time=body.date_time,
         extinction_coefficient=body.extinction_coefficient,
     )

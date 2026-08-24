@@ -68,17 +68,6 @@ def rich_tree_inventory_for_canopy(firestore_client, domain_for_testing):
 
 
 @pytest.fixture(scope="session")
-def non_tree_inventory(firestore_client, domain_for_testing):
-    """A completed inventory that is not a tree inventory."""
-    yield from _seed_inventory(
-        firestore_client,
-        domain_id=domain_for_testing["id"],
-        name="Surface inventory",
-        inventory_type="surface",
-    )
-
-
-@pytest.fixture(scope="session")
 def columnless_tree_inventory(firestore_client, domain_for_testing):
     """A CHM-only tree inventory: position and height, no morphology."""
     data = make_inventory_data(
@@ -271,12 +260,35 @@ class TestInventoryCanopyValidation:
     def route(self, domain_id):
         return f"/domains/{domain_id}/grids/canopy/inventory"
 
-    def test_rejects_non_tree_inventory(
-        self, client, domain_for_testing, non_tree_inventory
-    ):
+    def test_rejects_non_tree_inventory(self, isolated_owner):
+        """A non-tree inventory is rejected with 422.
+
+        The ``type='surface'`` document is seeded under an isolated owner, not
+        the shared one: ``InventoryType`` only accepts ``tree``, so a surface
+        document in the shared owner's collection makes every ``GET
+        /inventories`` (which builds ``Inventory(**doc)`` over the owner's
+        inventories) 500 on the unparseable enum. The endpoint checks ownership
+        before type, so the inventory — and its domain — must belong to the
+        caller for the type rejection to be the path under test.
+        """
+        client, owner_id, seed = isolated_owner
+        domain = seed(
+            DOMAINS_COLLECTION,
+            make_domain_data(owner_id=owner_id, name="Canopy reject domain"),
+        )
+        surface = seed(
+            INVENTORIES_COLLECTION,
+            make_inventory_data(
+                domain_id=domain["id"],
+                owner_id=owner_id,
+                name="Surface inventory",
+                status="completed",
+                inventory_type="surface",
+            ),
+        )
         response = client.post(
-            self.route(domain_for_testing["id"]),
-            json={"source_inventory_id": non_tree_inventory["id"]},
+            self.route(domain["id"]),
+            json={"source_inventory_id": surface["id"]},
         )
         assert response.status_code == 422
         assert "tree inventory" in response.json()["detail"]

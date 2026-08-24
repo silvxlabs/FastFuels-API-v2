@@ -1299,7 +1299,7 @@ wheels = [
 
 [[package]]
 name = "leaflux"
-version = "0.5.1"
+version = "0.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numba" },
@@ -1309,9 +1309,9 @@ dependencies = [
     { name = "scipy" },
     { name = "sparse" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/8d/bec9dbd806b8c3ed753586e41456286c4c13cd9e3935cd2902341edc249c/leaflux-0.5.1.tar.gz", hash = "sha256:9634b69e6f7c8c206f2d5dfeb7c3bed236e99c8d700d0800a956c4d092d44705", size = 23942, upload-time = "2026-08-11T17:37:04.572Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/78/c2ee942b697766b0624b3ce7c30e835a1e9f075b7a636f92a7b59f0d8acd/leaflux-0.5.2.tar.gz", hash = "sha256:90eb696ffc504c67b9510b2fb30165098c3026db5b1dafd54b18e0d3e48c1a44", size = 16303, upload-time = "2026-08-24T17:22:25.966Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/ad/cd0d8ef33d1fa07acd7e5c8347654eac2684ce7e7bee2de589965f64f1bc/leaflux-0.5.1-py3-none-any.whl", hash = "sha256:dd5330bfddf56a8baf5f10d163ce673448ebd073a8f9705b2572a769b335acff", size = 16352, upload-time = "2026-08-11T17:37:03.715Z" },
+    { url = "https://files.pythonhosted.org/packages/52/fd/57cd765572796956153cf04707baf449eaeade8fb8f986cbc02029c31e12/leaflux-0.5.2-py3-none-any.whl", hash = "sha256:379bf54db2bcd32f71b674fc6e8ed4cdc6af76193fe4e2361191ed7abb544256", size = 16989, upload-time = "2026-08-24T17:22:25.105Z" },
 ]
 
 [[package]]
@@ -2692,7 +2692,7 @@ requires-dist = [
     { name = "functions-framework", specifier = ">=3.10.0" },
     { name = "google-cloud-run", marker = "extra == 'test'", specifier = ">=0.10.0" },
     { name = "google-cloud-tasks", marker = "extra == 'test'", specifier = ">=2.16.0" },
-    { name = "leaflux", specifier = ">=0.5.1" },
+    { name = "leaflux", specifier = ">=0.5.2" },
     { name = "lib", extras = ["firestore", "gcs", "zarr", "raster"], editable = "../lib" },
     { name = "pyarrow", specifier = ">=18.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },

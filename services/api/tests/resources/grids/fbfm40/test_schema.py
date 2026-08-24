@@ -243,6 +243,25 @@ class TestSeason:
         assert data["season"] is None
 
 
+class TestYear:
+    """Tests for the server-computed `year` field on the source model."""
+
+    def test_source_defaults_to_none(self):
+        """year defaults to None on the source (the router fills it in)."""
+        source = LandfireFbfm40Source(version="2024")
+        assert source.year is None
+
+    def test_source_round_trip(self):
+        """year survives source model_dump round-trip."""
+        source = LandfireFbfm40Source(version="2025", season="SP", year=2026)
+        data = source.model_dump()
+        assert data["year"] == 2026
+
+    def test_request_has_no_year_field(self):
+        """year is server-set, not a request field -- a client can't inject it."""
+        assert "year" not in CreateLandfireFbfm40Request.model_fields
+
+
 class TestFbfm40Band:
     """Tests for FBFM40_BAND constant."""
 

@@ -170,8 +170,13 @@ class TestSeasonalCoverage:
         )
         assert response.status_code == 422
 
-    def test_season_omitted_persists_none(self, client, domain_for_testing):
-        """Without season, the grid is created with source.season == None."""
+    def test_season_omitted_persists_none_and_annual_year(
+        self, client, domain_for_testing
+    ):
+        """Without season, the grid is created with source.season == None and
+        source.year == the annual vintage (the version year -- no LFPS call)."""
         response = client.post(self.route(domain_for_testing["id"]), json={})
         assert response.status_code == 201
-        assert response.json()["source"]["season"] is None
+        source = response.json()["source"]
+        assert source["season"] is None
+        assert source["year"] == 2024  # default version

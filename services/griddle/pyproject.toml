@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "fastfuels-core>=0.14.0",
     "functions-framework>=3.10.0",
-    "lib[firestore,gcs,zarr,raster,threedep,pointcloud,inventory]",
+    "lib[firestore,gcs,zarr,raster,threedep,pointcloud,inventory,landfire]",
     "pint>=0.24",
     "pyarrow>=18.0.0",
     "scipy>=1.14",

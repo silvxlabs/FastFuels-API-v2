@@ -45,7 +45,7 @@ LANDFIRE_CANOPY_BAND_DEFS = {
     LandfireCanopyFuelBand.chm: {
         "key": "chm",
         "name": "Canopy Height",
-        "description": "Height of the canopy top above ground.",
+        "description": "Height above ground of the canopy top.",
         "type": BandType.continuous,
         "unit": "m",
     },
@@ -59,7 +59,7 @@ LANDFIRE_CANOPY_BAND_DEFS = {
     LandfireCanopyFuelBand.cbh: {
         "key": "cbh",
         "name": "Canopy Base Height",
-        "description": "Height above ground of the base of the live crown.",
+        "description": "Height above ground of the base of the canopy fuel layer.",
         "type": BandType.continuous,
         "unit": "m",
     },
@@ -86,7 +86,7 @@ def build_landfire_canopy_bands(
 CHM_BAND = Band(
     key="chm",
     name="Canopy Height",
-    description="Height of the canopy top above ground.",
+    description="Height above ground of the canopy top.",
     type=BandType.continuous,
     unit="m",
     index=0,

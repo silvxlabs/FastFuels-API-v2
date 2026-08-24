@@ -27,6 +27,9 @@ from api.resources.grids.canopy.examples import (
     CREATE_NAIP_CHM_OPENAPI_EXAMPLES,
     CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES,
 )
+from api.resources.grids.canopy.inventory.router import (
+    router as inventory_canopy_router,
+)
 from api.resources.grids.canopy.schema import (
     CreateLandfireCanopyRequest,
     CreateMetaChmRequest,
@@ -494,3 +497,6 @@ async def create_point_cloud_chm(
     register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)
+
+
+router.include_router(inventory_canopy_router, prefix="/inventory")

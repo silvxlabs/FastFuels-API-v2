@@ -835,6 +835,12 @@ gcs = [
     { name = "gcsfs" },
     { name = "google-cloud-storage" },
 ]
+inventory = [
+    { name = "gcsfs" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+]
 landfire = [
     { name = "gcsfs" },
     { name = "geopandas" },
@@ -879,6 +885,7 @@ requires-dist = [
     { name = "dask", marker = "extra == 'zarr'", specifier = ">=2024.0.0" },
     { name = "gcsfs", marker = "extra == 'entwine'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.2.0" },
+    { name = "gcsfs", marker = "extra == 'inventory'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'landfire'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.2.0" },
     { name = "geopandas", marker = "extra == 'entwine'", specifier = ">=1.1.2" },
@@ -889,10 +896,13 @@ requires-dist = [
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.9.0" },
     { name = "google-cloud-storage", marker = "extra == 'pointcloud'", specifier = ">=3.9.0" },
     { name = "laspy", extras = ["lazrs"], marker = "extra == 'pointcloud'", specifier = ">=2.7.0" },
+    { name = "numpy", marker = "extra == 'inventory'", specifier = ">=2.0.0" },
     { name = "numpy", marker = "extra == 'pointcloud'", specifier = ">=2.0.0" },
     { name = "numpy", marker = "extra == 'raster'", specifier = ">=2.0.0" },
+    { name = "pandas", marker = "extra == 'inventory'", specifier = ">=2.0.0" },
     { name = "pint", specifier = ">=0.25" },
     { name = "pyarrow", marker = "extra == 'entwine'", specifier = ">=18.0.0" },
+    { name = "pyarrow", marker = "extra == 'inventory'", specifier = ">=18.0.0" },
     { name = "pyarrow", marker = "extra == 'landfire'", specifier = ">=18.0.0" },
     { name = "pyarrow", marker = "extra == 'pointcloud'", specifier = ">=18.0.0" },
     { name = "pyproj", marker = "extra == 'pointcloud'", specifier = ">=3.6" },
@@ -908,7 +918,7 @@ requires-dist = [
     { name = "xarray", marker = "extra == 'zarr'", specifier = ">=2025.1.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1.5" },
 ]
-provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "entwine", "pointcloud", "landfire"]
+provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "inventory", "entwine", "pointcloud", "landfire"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]

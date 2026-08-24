@@ -16,6 +16,7 @@ import pytest
 from shapely.geometry import box
 
 from lib.landfire.lfps import (
+    _SEASON_PATTERN,
     LFPS_PRODUCTS_TTL_SECONDS,
     CoverageStatus,
     LfpsJob,
@@ -26,6 +27,7 @@ from lib.landfire.lfps import (
     download,
     list_products,
     poll_status,
+    resolve_seasonal_product,
     submit_job,
 )
 
@@ -51,17 +53,24 @@ def make_products_response(names: list[str]) -> dict:
     }
 
 
-def _make_product(layer_name: str, season: str | None = None) -> LfpsProduct:
+def _make_product(
+    layer_name: str, season: str | None = None, season_year: int | None = None
+) -> LfpsProduct:
     """Build an `LfpsProduct` directly, for pre-seeding the cache in tests."""
+    # Strip any trailing season suffix so the acronym is the real product
+    # token for seasonal names too ("LF2025_FBFM40_SP26" -> "FBFM40"), the
+    # way LFPS reports `acronym` independently of the layer name.
+    core = _SEASON_PATTERN.sub("", layer_name)
     return LfpsProduct(
         layer_name=layer_name,
         product_name=f"{layer_name} product",
         theme="Fuels",
-        acronym=layer_name.split("_")[-1],
-        version=layer_name.split("_")[0].removeprefix("LF"),
+        acronym=core.split("_")[-1],
+        version=core.split("_")[0],
         conus=True,
         geo_areas="SW, NW",
         season=season,
+        season_year=season_year,
     )
 
 
@@ -139,6 +148,19 @@ class TestListProducts:
 
         assert products[0].season == "SP"
 
+    def test_seasonal_layer_parses_season_year_from_the_suffix(self):
+        # The "_SP26" suffix on an LF2025 layer is spring 2026 -- read from the
+        # layer name, not assumed to be version + 1.
+        body = make_products_response(["LF2025_FBFM40_SP26"])
+        with patch("lib.landfire.lfps._products", None):
+            with patch(
+                "lib.landfire.lfps.requests.get",
+                return_value=mock_response(body),
+            ):
+                products = list_products()
+
+        assert products[0].season_year == 2026
+
     def test_annual_layer_has_no_season(self):
         body = make_products_response(["LF2025_FBFM40"])
         with patch("lib.landfire.lfps._products", None):
@@ -149,6 +171,7 @@ class TestListProducts:
                 products = list_products()
 
         assert products[0].season is None
+        assert products[0].season_year is None
 
 
 class TestSubmitJob:
@@ -318,6 +341,7 @@ def _make_coverage_product(
     geo_areas: str = "",
     theme: str = "Fuels",
     season: str | None = None,
+    season_year: int | None = None,
 ) -> LfpsProduct:
     """Build an `LfpsProduct` directly, for pre-seeding `list_products()` in tests."""
     return LfpsProduct(
@@ -329,6 +353,7 @@ def _make_coverage_product(
         conus=True,
         geo_areas=geo_areas,
         season=season,
+        season_year=season_year,
     )
 
 
@@ -492,3 +517,34 @@ class TestCoversSeasonal:
 
         assert wrong_version == CoverageStatus.NO_SUCH_PRODUCT
         assert wrong_product == CoverageStatus.NO_SUCH_PRODUCT
+
+
+class TestResolveSeasonalProduct:
+    """Tests for resolving the live Seasonal Fuels catalog entry."""
+
+    def test_returns_matching_product_with_its_real_season_year(self):
+        products = [
+            _make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026),
+            _make_product("LF2024_FBFM40", season=None),
+        ]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            match = resolve_seasonal_product("fbfm40", "2025", "SP")
+
+        assert match is not None
+        assert match.layer_name == "LF2025_FBFM40_SP26"
+        assert match.season_year == 2026
+
+    def test_product_matched_case_insensitively(self):
+        products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            assert resolve_seasonal_product("FBFM40", "2025", "SP") is not None
+
+    def test_returns_none_when_season_not_live(self):
+        products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            assert resolve_seasonal_product("fbfm40", "2025", "FA") is None
+
+    def test_returns_none_on_version_mismatch(self):
+        products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            assert resolve_seasonal_product("fbfm40", "2024", "SP") is None

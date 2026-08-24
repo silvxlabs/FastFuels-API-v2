@@ -243,6 +243,11 @@ def _core_kwargs(source: dict) -> dict:
             kwargs["cbh_relative_fraction"] = cbh["relative_threshold_fraction"]
             kwargs["cbh_smoothing_window"] = cbh["smoothing_window"]
             kwargs["cbh_smoothing_edge"] = _EDGE[cbh["smoothing_edge"]]
+        elif cbh["method"] == "mean":
+            kwargs["cbh_weight_by_fuel"] = cbh["weight_by_available_fuel"]
+        elif cbh["method"] == "percentile":
+            kwargs["cbh_percentile"] = cbh["percentile"]
+        # "minimum" needs no extra kwargs; cbh_method carries it.
 
     chm = source.get("chm")
     if chm is not None:

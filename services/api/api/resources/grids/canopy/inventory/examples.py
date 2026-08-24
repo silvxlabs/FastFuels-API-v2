@@ -134,6 +134,12 @@ EXAMPLE_INVENTORY_CANOPY_VAN_WAGNER_CBD = {
     "cbd": {"method": "load_over_depth", "depth": "canopy_depth"},
 }
 
+EXAMPLE_INVENTORY_CANOPY_CONSERVATIVE_CBH = {
+    "source_inventory_id": "9c1f2ab4708d4290a8ab6ecf35f21ab4",
+    "bands": ["cbd", "cbh", "chm"],
+    "cbh": {"method": "percentile", "percentile": 20},
+}
+
 EXAMPLE_INVENTORY_CANOPY_TOTAL_BRANCHWOOD = {
     "source_inventory_id": "9c1f2ab4708d4290a8ab6ecf35f21ab4",
     "available_fuel": {
@@ -299,6 +305,29 @@ CREATE_INVENTORY_CANOPY_OPENAPI_EXAMPLES: dict = {
             '"fraction": 0.0}}`).'
         ),
     },
+    "conservative_cbh": {
+        "value": EXAMPLE_INVENTORY_CANOPY_CONSERVATIVE_CBH,
+        "summary": "Conservative CBH (crown-base percentile)",
+        "description": (
+            "Derives `cbh` as a plain statistic of the per-tree crown base "
+            "heights in each cell instead of a bulk-density threshold "
+            "crossing — here the 20th percentile, a conservative lower tail "
+            "that captures low ladder fuel a mean would hide (Fulé et al. "
+            "2002; Mast et al. 2026). Canopy base height is method-defined, "
+            "not an intrinsic stand property, and the choice matters: across "
+            "these methods CBH can shift several meters and swing predicted "
+            "torching index, so match the method to the decision.\n\n"
+            "The crown-base methods are `mean` (Van Wagner's stand mean, the "
+            "definition behind the classic crown-fire model; add "
+            "`weight_by_available_fuel: true` to weight by crown fuel), "
+            "`percentile` (`percentile: 50` is the median, 20 or 25 a "
+            "conservative lower tail), and `minimum` (the most conservative "
+            "— any tree can carry fire into the canopy, suited to "
+            "risk-averse screening and firefighter safety). Use the default "
+            "`bulk_density_threshold` method to reproduce FuelCalc / FFE-FVS "
+            "/ LANDFIRE instead."
+        ),
+    },
     "total_branchwood_fraction": {
         "value": EXAMPLE_INVENTORY_CANOPY_TOTAL_BRANCHWOOD,
         "summary": "Fraction of total branchwood",
@@ -349,6 +378,7 @@ INVENTORY_CANOPY_EXAMPLE_VALUES = [
     ("high_resolution_10m", EXAMPLE_INVENTORY_CANOPY_10M),
     ("flat_threshold", EXAMPLE_INVENTORY_CANOPY_FLAT_THRESHOLD),
     ("van_wagner_cbd", EXAMPLE_INVENTORY_CANOPY_VAN_WAGNER_CBD),
+    ("conservative_cbh", EXAMPLE_INVENTORY_CANOPY_CONSERVATIVE_CBH),
     ("total_branchwood_fraction", EXAMPLE_INVENTORY_CANOPY_TOTAL_BRANCHWOOD),
     ("precomputed_fuel_column", EXAMPLE_INVENTORY_CANOPY_COLUMN_FUEL),
     ("lidar_crown_radii", EXAMPLE_INVENTORY_CANOPY_LIDAR_CROWNS),

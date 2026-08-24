@@ -372,7 +372,8 @@ class TestCbdMethods:
             ValidationError, match="Missing or using another method: cbh"
         ):
             make_request(
-                cbd={"method": "load_over_depth"}, cbh={"method": "mean_crown_base"}
+                cbd={"method": "load_over_depth"},
+                cbh={"method": "minimum"},
             )
 
     def test_load_over_depth_canopy_depth_valid_with_default_thresholds(self):
@@ -439,9 +440,40 @@ class TestCbhChmMethods:
         assert req.cbh.threshold == 0.05
         assert req.chm.threshold == 0.012
 
-    def test_mean_crown_base(self):
-        req = make_request(cbh={"method": "mean_crown_base"})
-        assert req.cbh.method == "mean_crown_base"
+    def test_mean_defaults_to_unweighted(self):
+        req = make_request(cbh={"method": "mean"})
+        assert req.cbh.method == "mean"
+        assert req.cbh.weight_by_available_fuel is False
+
+    def test_mean_can_be_fuel_weighted(self):
+        req = make_request(cbh={"method": "mean", "weight_by_available_fuel": True})
+        assert req.cbh.weight_by_available_fuel is True
+
+    def test_minimum(self):
+        req = make_request(cbh={"method": "minimum"})
+        assert req.cbh.method == "minimum"
+
+    def test_percentile(self):
+        req = make_request(cbh={"method": "percentile", "percentile": 20})
+        assert req.cbh.method == "percentile"
+        assert req.cbh.percentile == 20.0
+
+    def test_percentile_requires_a_value(self):
+        with pytest.raises(ValidationError):
+            make_request(cbh={"method": "percentile"})
+
+    @pytest.mark.parametrize("percentile", [0.0, -1.0, 100.1])
+    def test_percentile_bounds(self, percentile):
+        with pytest.raises(ValidationError):
+            make_request(cbh={"method": "percentile", "percentile": percentile})
+
+    def test_mean_rejects_a_percentile_field(self):
+        with pytest.raises(ValidationError):
+            make_request(cbh={"method": "mean", "percentile": 20})
+
+    def test_mean_crown_base_method_is_retired(self):
+        with pytest.raises(ValidationError):
+            make_request(cbh={"method": "mean_crown_base"})
 
     def test_height_percentile(self):
         req = make_request(chm={"method": "height_percentile", "percentile": 95})
@@ -455,7 +487,7 @@ class TestCbhChmMethods:
 
     def test_chm_rejects_cbh_only_method(self):
         with pytest.raises(ValidationError):
-            make_request(chm={"method": "mean_crown_base"})
+            make_request(chm={"method": "minimum"})
 
 
 class TestCcMethods:

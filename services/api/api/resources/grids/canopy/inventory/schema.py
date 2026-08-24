@@ -560,20 +560,65 @@ class CanopyProfileThreshold(BaseModel):
     )
 
 
-class CanopyCbhMeanCrownBase(BaseModel):
-    """CBH as the available-fuel-weighted mean of per-tree crown base heights.
+class CanopyCbhMean(BaseModel):
+    """CBH as the mean of the per-tree crown base heights in each cell.
 
-    Kept for comparison work; per-tree averaging is known to misrepresent
-    crown-fire initiation in multi-storied stands.
+    Van Wagner's (1977) stand-mean definition — a plain summary of the
+    per-tree crown bases (`height * (1 - crown_ratio)`), one tree one vote
+    unless `weight_by_available_fuel` is set. A distinct convention from
+    the `bulk_density_threshold` profile method; the two diverge where tree
+    height varies within a cell.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    method: Literal["mean_crown_base"] = "mean_crown_base"
+    method: Literal["mean"] = "mean"
+    weight_by_available_fuel: bool = Field(
+        default=False,
+        description=(
+            "Weight the mean by each tree's available canopy fuel so heavier "
+            "crowns pull it, rather than one tree one vote. Van Wagner's "
+            "original mean is unweighted (the default)."
+        ),
+    )
+
+
+class CanopyCbhPercentile(BaseModel):
+    """CBH as a percentile of the per-tree crown base heights in each cell.
+
+    A conservative alternative to the mean for multi-storied stands, where
+    a mean hides low ladder fuel. 50 is the median; 20 and 25 (first
+    quartile) are the lower-tail aggregations used for conservative
+    screening (Fulé et al. 2002; Mast et al. 2026).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["percentile"] = "percentile"
+    percentile: Annotated[float, Field(gt=0.0, le=100.0)] = Field(
+        description=(
+            "Percentile of per-tree crown base heights. 50 is the median; "
+            "20 and 25 (first quartile) are common conservative lower-tail "
+            "choices."
+        ),
+    )
+
+
+class CanopyCbhMinimum(BaseModel):
+    """CBH as the lowest per-tree crown base height in each cell.
+
+    The most conservative characterization — any tree can carry fire into
+    the canopy (Mast et al. 2026), suited to risk-averse screening and
+    firefighter-safety assessments.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["minimum"] = "minimum"
 
 
 CanopyCbhMethod = Annotated[
-    CanopyProfileThreshold | CanopyCbhMeanCrownBase,
+    CanopyProfileThreshold | CanopyCbhMean | CanopyCbhPercentile | CanopyCbhMinimum,
     Field(discriminator="method"),
 ]
 

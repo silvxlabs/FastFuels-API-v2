@@ -208,17 +208,45 @@ class TestTranslator:
         src = _source(
             bands=["cbh", "chm", "cc"],
             cbd=None,
-            cbh={"method": "mean_crown_base"},
+            cbh={"method": "minimum"},
             chm={"method": "height_percentile", "percentile": 95.0},
             cc={"method": "cover_fraction", "height_threshold": 3.0},
         )
         kw = ci._core_kwargs(src)
-        assert kw["cbh_method"] == "mean_crown_base"
+        assert kw["cbh_method"] == "minimum"
         assert "cbh_threshold" not in kw
+        assert "cbh_weight_by_fuel" not in kw
+        assert "cbh_percentile" not in kw
         assert kw["chm_method"] == "height_percentile"
         assert kw["chm_percentile"] == 95.0
         assert kw["cover_method"] == "cover_fraction"
         assert kw["cover_height_threshold"] == 3.0
+
+    def test_crown_base_mean_cbh_passes_the_weight_flag(self):
+        src = _source(
+            bands=["cbh"],
+            cbd=None,
+            chm=None,
+            cc=None,
+            cbh={"method": "mean", "weight_by_available_fuel": True},
+        )
+        kw = ci._core_kwargs(src)
+        assert kw["cbh_method"] == "mean"
+        assert kw["cbh_weight_by_fuel"] is True
+        assert "cbh_threshold" not in kw
+
+    def test_crown_base_percentile_cbh_passes_the_percentile(self):
+        src = _source(
+            bands=["cbh"],
+            cbd=None,
+            chm=None,
+            cc=None,
+            cbh={"method": "percentile", "percentile": 20.0},
+        )
+        kw = ci._core_kwargs(src)
+        assert kw["cbh_method"] == "percentile"
+        assert kw["cbh_percentile"] == 20.0
+        assert "cbh_threshold" not in kw
 
     def test_unrequested_bands_omit_method_kwargs(self):
         # Only cc requested: no cbd/cbh/chm method kwargs, so core's valid

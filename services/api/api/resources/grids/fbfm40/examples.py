@@ -37,6 +37,12 @@ EXAMPLE_FBFM40_NATIVE = {
     "alignment": {"target": "native"},
 }
 
+EXAMPLE_FBFM40_SEASONAL = {
+    "name": "FBFM40 spring seasonal fuels",
+    "version": "2025",
+    "season": "SP",
+}
+
 CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_FBFM40_MINIMAL,
@@ -92,6 +98,16 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
             "Disables the default domain anchor. Output preserves the "
             "source raster's pixel grid; will not compose with "
             "domain-anchored grids without further alignment."
+        ),
+    },
+    "seasonal": {
+        "value": EXAMPLE_FBFM40_SEASONAL,
+        "summary": "Seasonal Fuels release",
+        "description": (
+            "Fetches an on-demand Seasonal Fuels FBFM40 layer from LANDFIRE "
+            "Product Service for the given season, instead of the staged "
+            "annual release. `version` must be one of the versions LFPS "
+            "currently serves on-demand."
         ),
     },
 }

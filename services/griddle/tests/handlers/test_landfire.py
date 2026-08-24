@@ -101,8 +101,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -127,8 +126,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2020",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -152,8 +150,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2020",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -175,8 +172,7 @@ class TestFetchLandfireRasterNodataConsolidation:
 
         result = _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -242,8 +238,7 @@ class TestFetchFbfm40:
 
         _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=0,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -270,8 +265,7 @@ class TestFetchFbfm40:
 
         _fetch_landfire_raster(
             roi,
-            "FBFM40",
-            "2024",
+            "gs://mock/url.tiff",
             extent_buffer_cells=buffer,
             alignment={"target": "native"},
             target_grid_doc=None,
@@ -312,6 +306,41 @@ class TestFetchFbfm40:
         """FBFM40 codes should be <= 204."""
         result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
         assert result["fbfm"].values.max() <= 204
+
+
+class TestFetchFbfm40SeasonalPath:
+    """Unit tests for fetch_fbfm40's season branch -- routing to LFPS."""
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_season_routes_through_lfps(self, mock_fetch_lfps, mock_fetch_raster, roi):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+
+        result = fetch_fbfm40(roi, version="2025", season="SP", progress=progress)
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "fbfm40", "2025", {"target": "domain"}, None, 0, progress, "SP"
+        )
+        mock_fetch_raster.assert_called_once_with(
+            roi,
+            "/tmp/lfps_xyz/result.tif",
+            0,
+            {"target": "domain"},
+            None,
+            is_categorical=True,
+        )
+        assert "fbfm" in result.data_vars
+
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_no_season_does_not_call_lfps(self, mock_fetch_lfps, roi):
+        fetch_fbfm40(roi, version="2024")
+        mock_fetch_lfps.assert_not_called()
 
 
 class TestFetchFccs:
@@ -628,8 +657,9 @@ class TestFetchCanopyLandfire:
             progress=MagicMock(),
         )
 
-        product_codes = [call.args[1] for call in mock_fetch.call_args_list]
-        assert product_codes == ["CH", "CBD", "CBH", "CC"]
+        urls = [call.args[1] for call in mock_fetch.call_args_list]
+        for code, url in zip(["CH", "CBD", "CBH", "CC"], urls):
+            assert code in url
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
     def test_returns_dataset_with_requested_bands_in_order(self, mock_fetch, roi):
@@ -661,14 +691,14 @@ class TestFetchCanopyLandfire:
             progress=MagicMock(),
         )
         assert list(result.data_vars) == ["chm"]
-        assert mock_fetch.call_args_list[0].args[1] == "CH"
+        assert "CH" in mock_fetch.call_args_list[0].args[1]
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
     def test_applies_per_band_scale_factors(self, mock_fetch, roi):
         """End-to-end: chm/10, cbd/100, cbh/10, cc/1 all applied correctly."""
         from griddle.handlers.landfire import fetch_canopy_landfire
 
-        def fake_fetch(roi_, product, *_a, **_kw):
+        def fake_fetch(roi_, url, *_a, **_kw):
             # Return a 1x3 raster with values 0, "100" (in the source encoding), nodata
             return _make_canopy_raster(np.array([[0, 100, 32767]]))
 
@@ -700,11 +730,11 @@ class TestFetchCanopyLandfire:
             extent_buffer_cells=7,
             alignment=alignment,
         )
-        # _fetch_landfire_raster(roi, product, version, extent_buffer_cells,
-        #                       alignment, target_grid_doc, is_categorical=...)
+        # _fetch_landfire_raster(roi, url, extent_buffer_cells, alignment,
+        #                       target_grid_doc, is_categorical=...)
         call = mock_fetch.call_args_list[0]
-        assert call.args[3] == 7
-        assert call.args[4] == alignment
+        assert call.args[2] == 7
+        assert call.args[3] == alignment
         assert call.kwargs["is_categorical"] is False
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
@@ -720,7 +750,7 @@ class TestFetchCanopyLandfire:
             bands=["chm"],
             progress=MagicMock(),
         )
-        assert mock_fetch.call_args_list[0].args[4] == {"target": "domain"}
+        assert mock_fetch.call_args_list[0].args[3] == {"target": "domain"}
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
     def test_progress_callback_invoked_per_band(self, mock_fetch, roi):

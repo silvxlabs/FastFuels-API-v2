@@ -95,14 +95,14 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
         versions = LANDFIRE_VERSIONS["fbfm40"]
         if self.season is None and self.version not in versions["available"]:
             raise ValueError(
-                f"version {self.version!r} is only available for seasonal "
+                f"version {self.version} is only available for seasonal "
                 f"(season=...) requests. Available annual versions: "
                 f"{', '.join(versions['available'])}."
             )
 
         if self.season is not None and self.version not in versions["lfps_available"]:
             raise ValueError(
-                f"version {self.version!r} is not available for LANDFIRE "
+                f"version {self.version} is not available for LANDFIRE "
                 f"Seasonal Fuels. Available seasonal versions: "
                 f"{', '.join(versions['lfps_available'])}."
             )

@@ -11,7 +11,7 @@ SAV, depth), use the /grids/lookup/fbfm40 endpoint.
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from api.resources.grids.providers.landfire import (
     LandfireSource,
@@ -61,7 +61,22 @@ class LandfireFbfm40Source(LandfireSource):
         "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
     ] = "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
     remove_non_burnable: list[str] | None = None
-    season: str | None = None
+    season: str | None = Field(
+        default=None,
+        description=(
+            "LANDFIRE Seasonal Fuels window: ES (early spring), SP (spring), "
+            "SU (summer), FA (fall). Null for the annual product."
+        ),
+    )
+    year: int | None = Field(
+        default=None,
+        description=(
+            "Calendar year the fuel data represents. Annual: the landscape "
+            "vintage (same as `version`). Seasonal: the projected season year "
+            "(e.g. version 2025 + SP is spring 2026), read from the LANDFIRE "
+            "Product Service catalog. Set by the server; not a request field."
+        ),
+    )
 
 
 class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
@@ -71,11 +86,24 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
     To convert codes to fuel parameters, use /grids/lookup/fbfm40.
     """
 
-    version: LandfireFbfm40Version = LandfireFbfm40Version(
-        LANDFIRE_VERSIONS["fbfm40"]["default"]
+    version: LandfireFbfm40Version = Field(
+        default=LandfireFbfm40Version(LANDFIRE_VERSIONS["fbfm40"]["default"]),
+        description=(
+            "LANDFIRE landscape vintage year (e.g. '2024'). With `season` set, "
+            "this is the base vintage for LANDFIRE Seasonal Fuels; the calendar "
+            "year the data represents is reported back as `year`."
+        ),
     )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
-    season: LandfireSeason | None = None
+    season: LandfireSeason | None = Field(
+        default=None,
+        description=(
+            "LANDFIRE Seasonal Fuels window: ES (early spring), SP (spring), "
+            "SU (summer), FA (fall). When set, fetches seasonal fuels from the "
+            "LANDFIRE Product Service for the given season instead of the "
+            "staged annual release."
+        ),
+    )
 
     @field_validator("remove_non_burnable")
     @classmethod

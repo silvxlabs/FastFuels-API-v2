@@ -24,9 +24,24 @@ from griddle.handlers.landfire_lfps import (
 from rasterio.warp import transform_bounds
 
 from lib.errors import ProcessingError
-from lib.landfire import LfpsJob, LfpsJobFailedError
+from lib.landfire import LfpsJob, LfpsJobFailedError, LfpsProduct
 from lib.raster import REPROJECTION_GUARD_CELLS
 from lib.testing import SHARED_TEST_DOMAINS_DIR
+
+
+def _seasonal_product(layer_name: str = "LF2025_FBFM40_SP26") -> LfpsProduct:
+    """A live seasonal catalog entry, for patching resolve_seasonal_product."""
+    return LfpsProduct(
+        layer_name=layer_name,
+        product_name="Seasonal FBFM40",
+        theme="Seasonal Fuels",
+        acronym="FBFM40",
+        version="LF2025",
+        conus=True,
+        geo_areas="All",
+        season="SP",
+        season_year=2026,
+    )
 
 
 @pytest.fixture
@@ -133,8 +148,20 @@ class TestLfpsLayerName:
     def test_annual_layer_name(self):
         assert _lfps_layer_name("fbfm40", "2025") == "LF2025_FBFM40"
 
-    def test_seasonal_layer_name(self):
+    @patch("griddle.handlers.landfire_lfps.resolve_seasonal_product")
+    def test_seasonal_layer_name(self, mock_resolve):
+        """The seasonal layer name comes from the live catalog entry, not
+        from assuming the season year is version + 1."""
+        mock_resolve.return_value = _seasonal_product("LF2025_FBFM40_SP26")
         assert _lfps_layer_name("fbfm40", "2025", "SP") == "LF2025_FBFM40_SP26"
+        mock_resolve.assert_called_once_with("FBFM40", "2025", "SP")
+
+    @patch("griddle.handlers.landfire_lfps.resolve_seasonal_product")
+    def test_seasonal_not_live_raises(self, mock_resolve):
+        mock_resolve.return_value = None
+        with pytest.raises(ProcessingError) as exc_info:
+            _lfps_layer_name("fbfm40", "2025", "FA")
+        assert exc_info.value.code == "SEASONAL_NOT_AVAILABLE"
 
     def test_seasonal_requires_fbfm40(self):
         """LANDFIRE's Seasonal Fuels product only publishes FBFM40 -- any
@@ -153,13 +180,15 @@ class TestLfpsLayerName:
 class TestFetchLfps:
     """Unit tests for the fetch_lfps context manager."""
 
+    @patch("griddle.handlers.landfire_lfps.resolve_seasonal_product")
     @patch("griddle.handlers.landfire_lfps.time.sleep")
     @patch("griddle.handlers.landfire_lfps.download")
     @patch("griddle.handlers.landfire_lfps.poll_status")
     @patch("griddle.handlers.landfire_lfps.submit_job")
     def test_succeeds_and_yields_the_tif_path(
-        self, mock_submit, mock_poll, mock_download, mock_sleep, roi
+        self, mock_submit, mock_poll, mock_download, mock_sleep, mock_resolve, roi
     ):
+        mock_resolve.return_value = _seasonal_product("LF2025_FBFM40_SP26")
         mock_submit.return_value = LfpsJob(job_id="job-1", status="Pending")
         mock_poll.return_value = LfpsJob(
             job_id="job-1", status="Succeeded", output_file="https://.../job-1.zip"

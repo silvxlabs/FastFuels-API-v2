@@ -32,6 +32,7 @@ from api.resources.grids.utils import (
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
+from lib.landfire import resolve_seasonal_product
 
 router = APIRouter()
 
@@ -82,6 +83,11 @@ async def create_landfire_fbfm40(
 
     Returns the created Grid resource with status "pending". The backend will
     fetch the data and update status to "completed" when ready.
+
+    The response `source` reports `year`: the calendar year the fuel data
+    represents. For an annual grid this is the landscape vintage (same as
+    `version`); for a seasonal grid it is the projected season year (e.g.
+    `version` 2025 + `season` "SP" is spring 2026).
     """
     owner_id = request.state.id
     domain_id = domain["id"]
@@ -98,6 +104,16 @@ async def create_landfire_fbfm40(
             domain,
             season=body.season,
         )
+        # Read the represented year off the live LFPS catalog entry rather
+        # than assuming it is `version + 1`. Coverage validation above already
+        # confirmed the product is live, so the match is present (cached call).
+        matched = await asyncio.to_thread(
+            resolve_seasonal_product, "fbfm40", body.version, body.season
+        )
+        year = matched.season_year if matched else None
+    else:
+        # Annual FBFM40's version IS the landscape vintage year.
+        year = int(body.version)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -107,6 +123,7 @@ async def create_landfire_fbfm40(
         extent_buffer_cells=body.extent_buffer_cells,
         alignment=body.alignment,
         season=body.season,
+        year=year,
     )
 
     grid_data = {

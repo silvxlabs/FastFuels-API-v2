@@ -30,6 +30,7 @@ from lib.landfire import (
     LfpsJobFailedError,
     download,
     poll_status,
+    resolve_seasonal_product,
     submit_job,
 )
 from lib.raster import REPROJECTION_GUARD_CELLS
@@ -93,6 +94,9 @@ def _lfps_layer_name(product: str, version: str, season: str | None = None) -> s
 
     E.g. product="FBFM40", version="2025", season="SP" -> "LF2025_FBFM40_SP26".
     With no season, returns the plain annual layer -> "LF2025_FBFM40".
+
+    The seasonal layer name (and its season-year suffix) is read from the live
+    LFPS catalog, not constructed by assuming the season year is version + 1.
     """
     product = product.upper()
     if season is None:
@@ -108,8 +112,16 @@ def _lfps_layer_name(product: str, version: str, season: str | None = None) -> s
             message=f"Unknown LANDFIRE season: {season!r}",
             suggestion=f"Supported seasons: {', '.join(SEASON_CODES)}",
         )
-    season_year = str(int(version) + 1)[-2:]
-    return f"LF{version}_FBFM40_{season}{season_year}"
+    match = resolve_seasonal_product(product, version, season)
+    if match is None:
+        raise ProcessingError(
+            code="SEASONAL_NOT_AVAILABLE",
+            message=(
+                f"LANDFIRE Product Service isn't currently serving a {season} "
+                f"seasonal FBFM40 layer for version {version}."
+            ),
+        )
+    return match.layer_name
 
 
 @contextmanager

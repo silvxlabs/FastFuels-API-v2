@@ -56,6 +56,8 @@ class TestBandSpecs:
             "fuel_moisture.dead",
             "spcd",
             "tree_id",
+            "irradiance.canopy.relative",
+            "irradiance.surface.relative",
         }
         assert set(storage.BAND_SPECS) == expected
 

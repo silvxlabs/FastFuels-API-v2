@@ -9,12 +9,13 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from treevox.errors import ProcessingError
-from treevox.handlers import duet, voxelize
+from treevox.handlers import duet, leaflux, voxelize
 
 # Every handler returns an object carrying `gcs_path`, `georeference`, and
-# `chunk_shape`; main.py needs nothing else. Voxelize's georeference is 3D and
-# DUET's is 2D, since DUET reads a canopy and writes a surface.
-HandlerResult = voxelize.VoxelizationResult | duet.DuetResult
+# `chunk_shape`; main.py needs nothing else. Voxelize's and leaflux's
+# georeferences are 3D and DUET's is 2D, since DUET reads a canopy and writes a
+# surface.
+HandlerResult = voxelize.VoxelizationResult | duet.DuetResult | leaflux.LeafluxResult
 
 
 def dispatch_handler(
@@ -30,13 +31,16 @@ def dispatch_handler(
             return voxelize.voxelize_inventory(grid, domain_gdf, progress)
         case ("duet", "grid", "tree"):
             return duet.duet_grid(grid, domain_gdf, progress)
+        case ("irradiance", "grid", "solar"):
+            return leaflux.run_leaflux(grid, domain_gdf, progress)
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",
                 message=f"Unknown tree grid source: {key!r}",
                 suggestion=(
                     "Supported sources today: "
-                    "(operation='voxelize', input='inventory', entity='tree') and "
-                    "(operation='duet', input='grid', entity='tree')."
+                    "(operation='voxelize', input='inventory', entity='tree'), "
+                    "(operation='duet', input='grid', entity='tree'), and "
+                    "(operation='irradiance', input='grid', entity='solar')."
                 ),
             )

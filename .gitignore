@@ -51,3 +51,5 @@ tmp/
 /.claude/
 /tasks/
 /services/etcher/cache/
+.nodeterm/
+model.md

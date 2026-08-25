@@ -58,6 +58,7 @@ class TestHandleLandfire:
             extent_buffer_cells=0,
             alignment={"target": "domain"},
             target_grid_doc=None,
+            progress=progress,
         )
         assert result == mock_result
 
@@ -173,6 +174,7 @@ class TestHandleLandfire:
             extent_buffer_cells=0,
             alignment={"target": "domain"},
             target_grid_doc=None,
+            progress=progress,
         )
         assert result == mock_result
 
@@ -195,6 +197,7 @@ class TestHandleLandfire:
             extent_buffer_cells=0,
             alignment={"target": "domain"},
             target_grid_doc=None,
+            progress=progress,
         )
         assert result == mock_result
 

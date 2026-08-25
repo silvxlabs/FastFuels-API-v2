@@ -15,6 +15,7 @@ from griddle.handlers.landfire import (
     LANDFIRE_EXTRA_NODATA,
     _fetch_landfire_raster,
     _most_frequent,
+    _needs_lfps,
     _remove_non_burnable_blocks,
     fetch_fbfm13,
     fetch_fbfm40,
@@ -184,6 +185,21 @@ class TestFetchLandfireRasterNodataConsolidation:
         np.testing.assert_array_equal(result.values, [[55, 55], [55, 55]])
 
 
+class TestNeedsLfps:
+    """Unit tests for _needs_lfps."""
+
+    def test_staged_version_does_not_need_lfps(self):
+        assert _needs_lfps("fbfm40", "2024") is False
+
+    def test_lfps_only_version_needs_lfps(self):
+        assert _needs_lfps("fbfm40", "2025") is True
+
+    def test_product_without_lfps_available_key_returns_false(self):
+        """Falls back cleanly if a product's config has no lfps_available key
+        at all, rather than KeyError."""
+        assert _needs_lfps("fbfm13", "1999") is False
+
+
 class TestFetchFbfm13:
     """Integration tests for fetch_fbfm13."""
 
@@ -218,6 +234,43 @@ class TestFetchFbfm13:
         values = result["fbfm13"].values
         valid_codes = set(range(1, 14)) | {91, 92, 93, 98, 99}
         assert set(np.unique(values)).issubset(valid_codes)
+
+
+class TestFetchFbfm13LfpsPath:
+    """Unit tests for fetch_fbfm13's LFPS branch -- routing on lfps_available versions."""
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_lfps_available_version_routes_through_lfps(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+
+        result = fetch_fbfm13(roi, version="2025", progress=progress)
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "fbfm13", "2025", {"target": "domain"}, None, 0, progress
+        )
+        mock_fetch_raster.assert_called_once_with(
+            roi,
+            "/tmp/lfps_xyz/result.tif",
+            0,
+            {"target": "domain"},
+            None,
+            is_categorical=True,
+        )
+        assert "fbfm13" in result.data_vars
+
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_staged_version_does_not_call_lfps(self, mock_fetch_lfps, roi):
+        fetch_fbfm13(roi, version="2024")
+        mock_fetch_lfps.assert_not_called()
 
 
 class TestFetchFbfm40:
@@ -308,8 +361,9 @@ class TestFetchFbfm40:
         assert result["fbfm"].values.max() <= 204
 
 
-class TestFetchFbfm40SeasonalPath:
-    """Unit tests for fetch_fbfm40's season branch -- routing to LFPS."""
+class TestFetchFbfm40LfpsPath:
+    """Unit tests for fetch_fbfm40's LFPS branch -- routing to LFPS for a
+    season, an lfps_available version, or both."""
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")
     @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
@@ -334,6 +388,26 @@ class TestFetchFbfm40SeasonalPath:
             {"target": "domain"},
             None,
             is_categorical=True,
+        )
+        assert "fbfm" in result.data_vars
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_lfps_available_version_without_season_routes_through_lfps(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+
+        result = fetch_fbfm40(roi, version="2025", progress=progress)
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "fbfm40", "2025", {"target": "domain"}, None, 0, progress, None
         )
         assert "fbfm" in result.data_vars
 
@@ -401,6 +475,43 @@ class TestFetchFccs:
             default_result["fccs"].values,
             explicit_result["fccs"].values,
         )
+
+
+class TestFetchFccsLfpsPath:
+    """Unit tests for fetch_fccs's LFPS branch -- routing on lfps_available versions."""
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_lfps_available_version_routes_through_lfps(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+
+        result = fetch_fccs(roi, version="2025", progress=progress)
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "fccs", "2025", {"target": "domain"}, None, 0, progress
+        )
+        mock_fetch_raster.assert_called_once_with(
+            roi,
+            "/tmp/lfps_xyz/result.tif",
+            0,
+            {"target": "domain"},
+            None,
+            is_categorical=True,
+        )
+        assert "fccs" in result.data_vars
+
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_staged_version_does_not_call_lfps(self, mock_fetch_lfps, roi):
+        fetch_fccs(roi, version="2023")
+        mock_fetch_lfps.assert_not_called()
 
 
 class TestFetchTopography:

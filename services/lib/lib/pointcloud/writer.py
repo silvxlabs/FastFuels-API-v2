@@ -1,16 +1,11 @@
 """Spatially-partitioned, LOD-tagged Parquet.
 
 The output is a Hive-partitioned dataset -- ``tile_x=<i>/tile_y=<j>/part-*.parquet``
-plus a ``_manifest.json`` -- rather than one file. A reader that wants a box
-prunes on the partition columns, which come from the paths, so it touches only
-the parts that overlap.
-
-There is no combined ``_metadata`` footer. One was written and nothing ever read
-it: `reader.open_dataset` discovers by listing, and replacing the footer with the
-bytes "GARBAGE" left the dataset opening and counting rows fine. What it saves is
-one LIST per job, against a `FileMetaData` parse per file on the parent, which is
-this path's ceiling. An index of what a tile holds belongs in ``_manifest.json``,
-which every reader fetches anyway.
+plus standard Parquet ``_metadata`` and a small ``_manifest.json`` commit record.
+Readers open ``_metadata`` directly, so tile/LOD predicates are planned from one
+indexed object rather than by listing the dataset and opening every part footer.
+The manifest carries only application metadata Parquet does not: tiling,
+coordinate scaling, bounds, and total counts.
 
 Each part is written one row group per LOD level *that has points*, so a
 ``lod <= k`` filter prunes on row-group statistics. A level with none is skipped,
@@ -73,6 +68,7 @@ from lib.pointcloud.schema import (
     LOD_LEVELS,
     choose_tile_m,
     columns_for,
+    point_dtype,
 )
 from lib.pointcloud.summary import PointSummary
 
@@ -135,9 +131,9 @@ def clear_prefix(bucket, prefix):
     """Delete anything already stored under a dataset prefix.
 
     Part numbers restart at zero on every run, so a re-run that produces fewer
-    parts for a tile than its predecessor leaves the higher-numbered files in
-    place. Readers discover by listing, so those orphans come back as points --
-    a silent duplicate rather than an error.
+    parts for a tile than its predecessor would otherwise leave stale objects
+    beside the indexed parts. Clearing the complete prefix keeps storage and
+    its subsequently published `_metadata` in exact agreement.
 
     Imported here rather than at module scope for the same reason `GcsSink`
     defers its client: forkserver children re-import this module, and none of
@@ -249,7 +245,7 @@ def _grid_key(xs, ys):
     return (cell(xs) * _SORT_CELLS + cell(ys)).astype(np.uint16)
 
 
-def _encode(records, lod, scales, offsets):
+def _encode(records, lod, scales, offsets, metadata_collector=None):
     """One row group per LOD level that has points, spatially ordered within each.
 
     A level with no points writes no row group, so a sparse tile ends up with
@@ -307,6 +303,7 @@ def _encode(records, lod, scales, offsets):
                     use_dictionary=[c for c in DICT_COLUMNS if c in columns],
                     column_encoding=DELTA_COLUMNS,
                     write_statistics=True,
+                    metadata_collector=metadata_collector,
                 )
             writer.write_table(table, row_group_size=table.num_rows)
             del table
@@ -378,11 +375,25 @@ def _write_worker(in_q, out_q, init_args):
                 break
             tile, recs, rel, lod_offset = item
             try:
+                lod = assign_lod(len(recs), offset=lod_offset)
+                metadata = []
                 data = _encode(
-                    recs, assign_lod(len(recs), offset=lod_offset), scales, offsets
+                    recs,
+                    lod,
+                    scales,
+                    offsets,
+                    metadata_collector=metadata,
                 )
                 _W["sink"].put(rel, data)
-                out_q.put(("ok", len(data), rel, _summarize(recs)))
+                footer = metadata[0]
+                footer.set_file_path(rel)
+                footer_bytes = io.BytesIO()
+                # FileMetaData is not pickleable, so send its standard
+                # metadata-only serialization back to the parent.
+                footer.write_metadata_file(footer_bytes)
+                out_q.put(
+                    ("ok", len(data), rel, footer_bytes.getvalue(), _summarize(recs))
+                )
             except BaseException as e:
                 import traceback
 
@@ -447,7 +458,7 @@ class _WritePool:
                 if self.error is None:
                     self.error = RuntimeError(f"{item[3]}: {item[1]}\n{item[2]}")
                 continue
-            self._on_result(item[1], item[3])
+            self._on_result(item[1], item[2], item[3], item[4])
 
     def _put(self, item):
         while self.error is None:
@@ -506,8 +517,11 @@ def write_parquet(
             tile is written once its last node has been routed, which is what
             makes a tile one file rather than one per buffer eviction. None
             falls back to evicting the largest tile under budget pressure.
-        workers: Write processes. Must not exceed the vCPU allocation --
-            oversubscribing measured 2.4x the CPU for identical output.
+        workers: Write (encode) processes. Raising this past the core count
+            wastes CPU -- the pool alone measured 2.4x the CPU for identical
+            output -- but the write and chain pools together run more processes
+            than vCPUs by design; sizing them to fit the cores is slower. See
+            `lib.config`.
         depth: Per-worker queue depth, which is the parent's backpressure.
 
     Returns:
@@ -536,16 +550,19 @@ def write_parquet(
     clear_prefix(bucket, prefix)
 
     buffers, sizes, counts, nparts, flushed = {}, {}, {}, {}, {}
+    footers = {}
     buffered = 0
     lock = threading.Lock()
     stats = {"written_bytes": 0, "files": 0}
     summary = PointSummary(scales, offsets)
 
-    def on_result(nbytes_out, folded):
+    def on_result(nbytes_out, rel, footer_bytes, folded):
+        footer = pq.read_metadata(io.BytesIO(footer_bytes))
         with lock:
             stats["written_bytes"] += nbytes_out
             stats["files"] += 1
             summary.fold(*folded)
+            footers[rel] = footer
 
     # forkserver, not fork: this process has a collector thread, and forking a
     # threaded process can inherit a lock held by a thread the child lacks.
@@ -652,6 +669,13 @@ def write_parquet(
     finally:
         pool.close()
 
+    if sum(counts.values()) != summary.count:
+        raise RuntimeError(
+            "Point-cloud routed tile total does not match the stored point count."
+        )
+    if len(footers) != stats["files"]:
+        raise RuntimeError("Point-cloud Parquet footer count does not match its files.")
+
     manifest = {
         "tiles": len(counts),
         "tile_m": tile_m,
@@ -663,6 +687,30 @@ def write_parquet(
         "maxs": list(map(float, maxs)),
     }
     sink = GcsSink(bucket, prefix)
+    if footers:
+        ordered = [footers[path] for path in sorted(footers)]
+        combined = ordered[0]
+        for footer in ordered[1:]:
+            combined.append_row_groups(footer)
+        metadata_bytes = io.BytesIO()
+        combined.write_metadata_file(metadata_bytes)
+        sink.put("_metadata", metadata_bytes.getvalue())
+    else:
+        # Empty clouds still have a valid indexed dataset. There are no source
+        # fields from which to infer colour, so use the canonical base layout.
+        schema = pa.schema(
+            [("lod", pa.uint8())]
+            + [
+                (name, pa.from_numpy_dtype(dtype))
+                for name, (dtype, _) in point_dtype(False).fields.items()
+            ]
+        )
+        metadata_bytes = io.BytesIO()
+        pq.write_metadata(schema, metadata_bytes)
+        sink.put("_metadata", metadata_bytes.getvalue())
+
+    # The manifest is the commit marker: publish it only after every part and
+    # the global Parquet index are readable.
     sink.put("_manifest.json", json.dumps(manifest).encode())
 
     return {

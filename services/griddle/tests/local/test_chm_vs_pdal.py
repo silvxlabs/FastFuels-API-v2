@@ -7,10 +7,10 @@ them honest: it runs the same cloud through both and reports the difference.
 
 Three comparisons, each on a real 3DEP cloud:
 
-- **ground, classified** — our minimum surface over ASPRS class 2 against
-  ``filters.range`` plus ``writers.gdal`` with ``output_type=min``. Both are a
-  per-cell minimum over the same returns, so agreement should be near exact and
-  any difference is our gap filling.
+- **ground, classified** — our ground surface over ASPRS class 2 against the
+  same returns selected by ``filters.range``. Both are a per-cell mean over the
+  same returns, so agreement should be near exact and any difference is our gap
+  filling.
 - **ground, derived** — our progressive morphological filter against
   ``filters.pmf`` at the same parameters. This is the comparison the handler's
   docstring claims and never checked.
@@ -90,6 +90,12 @@ REAL_CLOUD = os.environ.get("PDAL_COMPARE_CLOUD")
 # PDAL's Delaunay pass for no extra signal.
 REAL_EDGE_M = 200.0
 
+# Where that window sits, in metres from the cloud's own origin. One corner of
+# one cloud is one terrain sample; ground detection is sensitive to slope and to
+# how completely the vendor classified ground, so being able to move the window
+# is what separates "our filter is wrong" from "that corner is hard".
+REAL_OFFSET_M = float(os.environ.get("PDAL_COMPARE_OFFSET", "50"))
+
 # Every cloud these comparisons use is Blackfoot, in the domain CRS lakitu
 # stored it in.
 REAL_CRS = "EPSG:32612"
@@ -111,6 +117,7 @@ def _stage_real_cloud():
     tile lookup miss; the window travels beside it instead.
     """
     import laspy
+    import pyarrow.parquet as pq
     import pyproj
 
     from lib.config import POINT_CLOUDS_BUCKET
@@ -118,7 +125,7 @@ def _stage_real_cloud():
     from lib.pointcloud.reader import open_dataset, read_manifest, read_points
     from lib.pointcloud.schema import cloud_prefix, tile_span
 
-    staged = CACHE / f"real-{REAL_CLOUD}"
+    staged = CACHE / f"real-{REAL_CLOUD}-at{REAL_OFFSET_M:g}"
     if (staged / "window.json").exists():
         return staged
     staged.mkdir(parents=True, exist_ok=True)
@@ -127,8 +134,8 @@ def _stage_real_cloud():
     prefix = cloud_prefix(POINT_CLOUDS_BUCKET, REAL_CLOUD)
     manifest = read_manifest(prefix)
     tile_m, origin = manifest["tile_m"], manifest["mins"]
-    min_x = float(np.floor(origin[0]) + 50.0)
-    min_y = float(np.floor(origin[1]) + 50.0)
+    min_x = float(np.floor(origin[0]) + REAL_OFFSET_M)
+    min_y = float(np.floor(origin[1]) + REAL_OFFSET_M)
     window = (min_x, min_y, min_x + REAL_EDGE_M, min_y + REAL_EDGE_M)
 
     fs = get_gcsfs_client()
@@ -146,8 +153,27 @@ def _stage_real_cloud():
                     (local / Path(name).name).write_bytes(stream.read())
     (root / "_manifest.json").write_text(json.dumps(manifest))
 
+    # `open_dataset` plans from `_metadata`, and the stored one indexes the whole
+    # cloud rather than the handful of tiles staged here, so it has to be rebuilt
+    # over what was actually copied — otherwise the dataset opens against parts
+    # that are not on disk.
+    parts = sorted(root.rglob("part-*.parquet"))
+    assert parts, f"no parts staged for {REAL_CLOUD} over {window}"
+    footers = []
+    for part in parts:
+        footer = pq.read_metadata(part)
+        footer.set_file_path(str(part.relative_to(root)))
+        footers.append(footer)
+    for footer in footers[1:]:
+        footers[0].append_row_groups(footer)
+    footers[0].write_metadata_file(str(root / "_metadata"))
+
     dataset = open_dataset(str(root), filesystem=LocalFileSystem())
-    x, y, z, classification = read_points(dataset, manifest, window)
+    # The filesystem has to be passed as well as opened with: the reader fetches
+    # each tile's file itself rather than through pyarrow, and defaults to GCS.
+    x, y, z, classification = read_points(
+        dataset, manifest, window, filesystem=LocalFileSystem()
+    )
     inside = (x >= window[0]) & (x < window[2]) & (y >= window[1]) & (y < window[3])
     x, y, z = x[inside], y[inside], z[inside]
 
@@ -296,17 +322,19 @@ def _run_ours(cloud_dataset, point_classes):
     roi = gpd.GeoDataFrame(geometry=[box(*extent)], crs=crs)
 
     captured = []
-    real_fill = chm_point_cloud._fill_gaps
+    real_fill = chm_point_cloud._blocked_fill_gaps
 
-    def capture_ground(surface, max_cells):
+    def capture_ground(ground, block_chunks, max_cells):
         # The ground handed to the height pass, which is what PDAL's is
         # comparable to. Captured rather than recomputed so the comparison sees
         # exactly what produced the CHM.
         #
-        # Every call is kept and the whole-grid one picked out afterwards: on the
-        # derived path this also runs inside `map_overlap`, once per block and
-        # once on a zero-size array dask uses to infer the dtype.
-        filled = real_fill(surface, max_cells)
+        # Hooked here rather than on `_fill_gaps` because this is the one call
+        # that takes the whole grid, on either ground path. `_fill_gaps` itself
+        # runs inside `map_overlap`, so it only ever sees a block — which looked
+        # like the whole grid for as long as the staged window happened to sit
+        # inside a single cloud tile, and stopped doing so the moment it did not.
+        filled = real_fill(ground, block_chunks, max_cells)
         captured.append(filled)
         return filled
 
@@ -315,7 +343,7 @@ def _run_ours(cloud_dataset, point_classes):
         patch.object(chm_point_cloud, "GRIDDLE_READ_WORKERS", 1),
         patch("lib.pointcloud.reader.get_gcsfs_client", return_value=LocalFileSystem()),
         patch.object(chm_point_cloud, "read_manifest", return_value=manifest),
-        patch.object(chm_point_cloud, "_fill_gaps", side_effect=capture_ground),
+        patch.object(chm_point_cloud, "_blocked_fill_gaps", side_effect=capture_ground),
     ):
         dataset, provenance = chm_point_cloud.fetch_point_cloud_chm(
             roi=roi,
@@ -324,10 +352,9 @@ def _run_ours(cloud_dataset, point_classes):
             alignment={"target": "domain", "resolution": RESOLUTION},
             progress=lambda *_args, **_kwargs: None,
         )
-    shape = dataset["chm"].shape
-    whole = [surface for surface in captured if surface.shape == shape]
-    assert whole, f"no whole-grid ground captured; saw {[s.shape for s in captured]}"
-    return dataset, provenance, whole[-1]
+    assert len(captured) == 1, f"expected one whole-grid ground, got {len(captured)}"
+    assert captured[0].shape == dataset["chm"].shape
+    return dataset, provenance, captured[0]
 
 
 def _pdal(pipeline, workdir):
@@ -404,18 +431,34 @@ def _pdal_points(stages, workdir, name, extra_dims=""):
 
 
 def _rasterise(dataset, x, y, values, how):
-    """Put values on our lattice with our own cell assignment and reduction."""
+    """Put values on our lattice with our own cell assignment and reduction.
+
+    `how` is ``"mean"`` for a ground surface and `np.maximum` for a canopy top —
+    the statistic the handler applies to that quantity. Reducing PDAL's points
+    the same way we reduce ours is what keeps the comparison about the algorithm
+    rather than about the choice of statistic.
+    """
     transform = dataset.rio.transform()
     height, width = dataset["chm"].shape
     lattice = (transform.c, transform.f, height, width)
-    fill = np.inf if how is np.minimum else -np.inf
-    raster = np.full(height * width, fill, dtype=np.float32)
+    size = height * width
     index, inside = chm_blocks.cell_indices(
         np.asarray(x), np.asarray(y), lattice, RESOLUTION
     )
-    how.at(raster, index[inside], np.asarray(values)[inside].astype(np.float32))
-    raster[~np.isfinite(raster)] = np.nan
-    return raster.reshape(height, width)
+    index = index[inside]
+    values = np.asarray(values)[inside].astype(np.float64)
+
+    if how == "mean":
+        with np.errstate(invalid="ignore"):
+            raster = np.bincount(index, values, size) / np.bincount(
+                index, minlength=size
+            )
+    else:
+        fill = np.inf if how is np.minimum else -np.inf
+        raster = np.full(size, fill, dtype=np.float64)
+        how.at(raster, index, values)
+        raster[~np.isfinite(raster)] = np.nan
+    return raster.reshape(height, width).astype(np.float32)
 
 
 def _pmf_stage():
@@ -483,12 +526,12 @@ class TestGroundSurface:
     def test_classified_ground_matches_pdal(
         self, cloud_dataset, sample_laz, output_dir, tmp_path
     ):
-        """Same returns, same reduction — so this one has to be exact.
+        """Same returns, same reduction — so this one has to be near exact.
 
-        Nothing algorithmic differs here: both take the lowest class-2 return in
-        each cell. What it checks is the path around that — the Parquet reader,
-        the millimetre coordinate decoding and the cell assignment — against a
-        cloud PDAL read straight from the LAZ.
+        Nothing algorithmic differs here: both take the mean of the class-2
+        returns in each cell. What it checks is the path around that — the
+        Parquet reader, the millimetre coordinate decoding and the cell
+        assignment — against a cloud PDAL read straight from the LAZ.
         """
         dataset, provenance, ground = _run_ours(cloud_dataset, point_classes=[2])
         assert provenance["ground_source"] == "classification"
@@ -501,7 +544,7 @@ class TestGroundSurface:
             tmp_path,
             "ground_classified",
         )
-        theirs = _rasterise(dataset, points.x, points.y, points.z, np.minimum)
+        theirs = _rasterise(dataset, points.x, points.y, points.z, "mean")
 
         stats = _compare("ground_classified", ground, theirs, output_dir, dataset)
         # Ours is gap-filled and PDAL's is not, so ours covers more.
@@ -538,12 +581,18 @@ class TestGroundSurface:
             "ground_pmf",
         )
         print(f"\n  pdal pmf kept {len(points.x):,} ground returns")
-        theirs = _rasterise(dataset, points.x, points.y, points.z, np.minimum)
+        theirs = _rasterise(dataset, points.x, points.y, points.z, "mean")
 
         stats = _compare("ground_derived", ground, theirs, output_dir, dataset)
         # Measured 0.00 / 0.04 / 0.285 / 98.3%; these sit just above that, so a
         # real drift in the filter shows up rather than hiding under slack.
-        assert stats["median_abs"] == 0.0
+        #
+        # The median is a bound rather than an equality, which it could be while
+        # both sides took a per-cell minimum: the two pick their ground returns
+        # differently — our snap against `filters.pmf`'s classification — and a
+        # mean over sets that differ by one return is close, not identical. It
+        # measured 0.009 m.
+        assert stats["median_abs"] < 0.02
         assert stats["p95_abs"] < 0.06
         assert stats["rmse"] < 0.35
         assert stats["within_10cm"] > 0.98

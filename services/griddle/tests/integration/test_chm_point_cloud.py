@@ -4,15 +4,9 @@ Integration tests for the point-cloud CHM handler.
 Runs the real handler against a real 3DEP cloud read from GCS, through the
 whole griddle job — Firestore document, zarr write, band summaries and all.
 The static cloud is `static-test-blackfoot-3dep`: 10,496,309 points over the
-`blackfoot.json` domain, carrying ASPRS ground classification.
-
-It is stored twice. `cloud.parquet` is what this reads, and `cloud.laz` beside
-it is the source it was written from — kept because `tests/local/
-test_chm_vs_pdal.py` reads the LAZ directly, and because it is how the dataset
-is rebuilt if the layout changes again: open the LAZ with laspy and hand the
-reader to the uploader's `_store`, which is the path that wrote it. Doing that
-reproduced the point count, classes, density and bounds this fixture's Firestore
-document already recorded, so the document needed no edit.
+`blackfoot.json` domain, carrying ASPRS ground classification. Regenerate it
+through `test_create_blackfoot_3dep_point_cloud` in the API E2E fixture suite
+when the stored point-cloud format changes.
 """
 
 import numpy as np

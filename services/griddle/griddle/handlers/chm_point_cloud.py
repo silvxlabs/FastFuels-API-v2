@@ -54,13 +54,27 @@ from lib.config import (
 )
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
-from lib.pointcloud.reader import read_manifest
+from lib.pointcloud.reader import open_point_cloud, read_manifest
 from lib.pointcloud.schema import cloud_prefix
 
 # Target block edge in cells. `_compute_block_cells` rounds it to a whole number
 # of cloud tiles and raises it to twice the halo, so a run's blocks are rarely
 # this size — it sets the scale, which is what a block's points cost to hold.
 DEFAULT_BLOCK_CELLS = 512
+
+# Returns one block of a percentile pass may hold. A percentile cannot be folded
+# a batch at a time, so a block of it costs its *points* -- ~24 bytes each, a
+# cell index and a height plus the sort that reduces them -- where every other
+# pass costs its cells. A block is one cloud tile, so this is compared against a
+# tile's *actual* point count (`_tile_blocks`), not one predicted from the
+# cloud-wide average: density is uneven -- overlapping flight lines, an urban
+# strip -- so an average hides the dense tile that is the one that OOMs.
+#
+# 8 M returns is ~190 MB in a worker, and GRIDDLE_READ_WORKERS of them at once.
+# A 500 m tile stays under it below 32 returns/m2, so all but the densest tiles
+# are one block; only a tile over this is split, spatially, into enough even
+# pieces to bring each under it.
+RETAINED_POINTS_PER_BLOCK = 8_000_000
 
 # How far `max_ground_distance_m` is measured before it saturates. The number
 # only carries information near the distances the filter can bridge — 30 m of
@@ -84,18 +98,33 @@ PMF_SLOPE = 1.0
 PMF_INITIAL_DISTANCE_M = 0.15
 PMF_MAX_DISTANCE_M = 2.5
 
-# A cell whose height exceeds *every* neighbour by more than this is a lone
-# spurious return rather than a treetop. Applied to the finished raster so the
+# Default `spike_filter.min_prominence_m`. A cell whose height exceeds *every*
+# neighbour by more than this is a lone spurious return rather than a treetop. Applied to the finished raster so the
 # band stays a true maximum.
 #
 # The threshold sits deliberately high. Measured noise returns stood 40-80 m
 # above their surroundings, while a real crown spans several cells so its peak
 # is within a few metres of its neighbours. Setting it near canopy scale would
 # delete isolated trees, which are real fuel — a lone 15 m tree in a meadow is
-# a one-cell spike by any tighter rule. The residual risk is a single-cell tree
-# more than this much taller than everything around it, which needs a crown
-# narrower than one cell to arise.
+# a one-cell spike by any tighter rule.
 SPIKE_THRESHOLD_M = 25.0
+
+# Default `spike_filter.min_canopy_footprint_m`: the narrowest ground footprint
+# canopy can occupy, and so how far around a cell the rule above looks for it. This is what makes that rule a statement
+# about shape rather than height: a cell towering over everything within a
+# crown's width of it has no crown that could have produced it, which is the
+# only thing separating a spike from a treetop — a real treetop is a local
+# maximum too, and height statistics alone cannot tell the two apart (#428).
+#
+# In metres, converted to cells at run time, for the reason `_pmf` gives about
+# its windows. "A real crown spans several cells" is a claim about the cell,
+# not the crown, and it fails as cells grow: at 30 m the identical raster shape
+# is 900 m2 of canopy in bare surroundings — a shelterbelt, a grove, a riparian
+# stringer — and deleting it loses real fuel (#485). Where one cell already
+# spans this footprint the rule has nothing left to decide on and does not run;
+# a spurious return there has to be dropped in the point domain, before the
+# cell maximum (#502), because no raster rule can see past the maximum.
+MIN_CANOPY_FOOTPRINT_M = 3.0
 
 # What the shared alignment resolver falls back to when `target="domain"` names
 # no resolution. The API resolves that default at create time and stores it, so
@@ -118,6 +147,8 @@ def fetch_point_cloud_chm(
     progress: Callable[[str, int | None], None],
     target_grid_doc: dict | None = None,
     extent_buffer_cells: int = 0,
+    spike_filter: dict | None = None,
+    aggregation: dict | None = None,
 ) -> tuple[xr.Dataset, dict]:
     """Build a canopy height model from a stored point cloud.
 
@@ -144,6 +175,10 @@ def fetch_point_cloud_chm(
         target_grid_doc: Grid document named by ``alignment.grid_id``, required
             when ``alignment.target`` is ``"grid"``.
         extent_buffer_cells: Output cells of buffer around the extent.
+        spike_filter: Persisted ``source.spike_filter``, deciding how lone
+            spurious returns are removed. ``None`` keeps every return.
+        aggregation: Persisted ``source.aggregation``, deciding the statistic
+            each cell reduces its returns with. ``None`` takes the maximum.
 
     Returns:
         Tuple of (Dataset with the ``chm`` variable, provenance dict recording
@@ -151,7 +186,8 @@ def fetch_point_cloud_chm(
 
     Raises:
         ProcessingError: If the alignment cannot produce a lattice this handler
-            can rasterize onto, or if the cloud contributes no points to it.
+            can rasterize onto, if the aggregation names no statistic, or if
+            the cloud contributes no points to the lattice.
     """
     with dask.config.set(scheduler="threads", num_workers=GRIDDLE_DASK_WORKERS):
         return _fetch(
@@ -162,6 +198,8 @@ def fetch_point_cloud_chm(
             progress,
             target_grid_doc,
             extent_buffer_cells,
+            spike_filter,
+            aggregation,
         )
 
 
@@ -173,23 +211,34 @@ def _fetch(
     progress: Callable[[str, int | None], None],
     target_grid_doc: dict | None,
     extent_buffer_cells: int,
+    spike_filter: dict | None,
+    aggregation: dict | None,
 ) -> tuple[xr.Dataset, dict]:
     """Body of `fetch_point_cloud_chm`, under a pinned dask thread pool."""
     transform, (height, width) = _resolve_lattice(
         roi, alignment, target_grid_doc, extent_buffer_cells
     )
     resolution = transform.a
+    statistic = _resolve_aggregation(aggregation)
 
     progress("Reading point cloud...", 10)
     prefix = cloud_prefix(POINT_CLOUDS_BUCKET, point_cloud_id)
     manifest = read_manifest(prefix)
     fill_cells = _fill_cells(resolution)
+    footprint_m = (spike_filter or {}).get(
+        "min_canopy_footprint_m", MIN_CANOPY_FOOTPRINT_M
+    )
+    prominence_m = (spike_filter or {}).get("min_prominence_m", SPIKE_THRESHOLD_M)
+    spike_window = (
+        0 if spike_filter is None else _spike_window_cells(footprint_m, resolution)
+    )
     # The widest halo any step needs, which is what the blocking has to be able
     # to feed. PMF only runs for a cloud with no ground class, so a classified
     # cloud is not charged for its much wider reach.
     halo_cells = max(
         fill_cells,
         int(np.ceil(GROUND_DISTANCE_CAP_M / resolution)),
+        spike_window // 2,
         0 if GROUND_CLASS in point_classes else _pmf_depth_cells(resolution),
     )
     tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
@@ -226,16 +275,18 @@ def _fetch(
 
     with _block_pool(prefix, manifest, BLOCK_FILESYSTEM) as pool:
 
-        def over_blocks(kind, classes=None, extra_for=None):
+        def over_blocks(kind, classes=None, extra_for=None, over=None):
             """Rasterise every block on the pool and assemble the grid.
 
             `extra_for` supplies whatever raster a pass samples, per block, so a
-            task carries its own slice rather than the whole grid.
+            task carries its own slice rather than the whole grid. `over`
+            overrides the division, for a pass whose blocks are sized by
+            something other than the halos.
             """
             return _run_blocks(
                 pool,
                 transform,
-                tiles,
+                tiles if over is None else over,
                 (height, width),
                 kind,
                 resolution,
@@ -245,7 +296,7 @@ def _fetch(
 
         if GROUND_CLASS in point_classes:
             progress("Reading ground returns...", 15)
-            ground = over_blocks("min", classes=(GROUND_CLASS,))
+            ground = over_blocks("mean", classes=(GROUND_CLASS,))
             ground_source = "classification"
         else:
             progress("Deriving ground surface...", 15)
@@ -295,21 +346,34 @@ def _fetch(
 
         progress("Rasterizing canopy heights...", 55)
         chm = over_blocks(
-            "max",
-            extra_for=lambda bl: _ground_window(ground, transform, bl, resolution),
+            "height",
+            extra_for=lambda bl: (
+                *_ground_window(ground, transform, bl, resolution),
+                statistic,
+            ),
+            over=_tile_blocks(
+                (height, width),
+                transform,
+                manifest,
+                _tile_point_counts(prefix, manifest, BLOCK_FILESYSTEM),
+            )
+            if statistic[0] == "percentile"
+            else None,
         )
 
-    blocked_chm = da.from_array(chm, chunks=block_chunks)
-    chm = np.asarray(
-        da.map_overlap(
-            _remove_spikes,
-            blocked_chm,
-            depth=_overlap_depth(blocked_chm, 1),
-            boundary="none",
-            dtype=np.float32,
-            threshold=SPIKE_THRESHOLD_M,
-        ).compute()
-    )
+    if spike_window:
+        blocked_chm = da.from_array(chm, chunks=block_chunks)
+        chm = np.asarray(
+            da.map_overlap(
+                _remove_spikes,
+                blocked_chm,
+                depth=_overlap_depth(blocked_chm, spike_window // 2),
+                boundary="none",
+                dtype=np.float32,
+                threshold=prominence_m,
+                window=spike_window,
+            ).compute()
+        )
 
     if not np.isfinite(chm).any():
         raise ProcessingError(
@@ -603,6 +667,134 @@ def _compute_block_cells(resolution: float, tile_m: float, halo_cells: int) -> i
     return max(1, int(round(tiles_per_block * tile_cells)))
 
 
+def _resolve_aggregation(aggregation: dict | None) -> tuple[str, float | None]:
+    """Persisted ``source.aggregation`` as the ``(method, percentile)`` a block takes.
+
+    ``median`` folds to the 50th percentile, so a worker carries three code
+    paths rather than four. Absent on grids created before the control existed,
+    which were built with the maximum.
+
+    Raises:
+        ProcessingError: If the stored source names a statistic this handler
+            cannot compute. The API rejects those at create time; this covers a
+            source that reached storage some other way.
+    """
+    aggregation = aggregation or {}
+    method = aggregation.get("method", "max")
+    if method in ("max", "mean"):
+        return method, None
+    if method == "median":
+        return "percentile", 50.0
+    percentile = aggregation.get("percentile")
+    if method == "percentile" and percentile is not None:
+        # The reducer indexes by (n - 1) * p / 100, so a rank outside this range
+        # reads another cell's returns. The API enforces it; this covers a
+        # source that reached storage another way.
+        if isinstance(percentile, bool) or not isinstance(percentile, (int, float)):
+            percentile = float("nan")
+        if 0.0 < percentile <= 100.0:
+            return "percentile", float(percentile)
+    raise ProcessingError(
+        code="UNSUPPORTED_AGGREGATION",
+        message=f"aggregation '{method}' does not name a statistic cells can take.",
+        suggestion=(
+            "Recreate the grid with aggregation method 'max', 'mean', "
+            "'median', or 'percentile' with a percentile."
+        ),
+    )
+
+
+def _tile_point_counts(prefix: str, manifest: dict, filesystem=None) -> dict:
+    """``(tile_x, tile_y) -> point count`` for every occupied tile.
+
+    Read from the dataset's own row-group statistics, so the count is the tile's
+    real size rather than the cloud-wide average. Only the retaining passes need
+    it -- a max or a mean folds and never holds a tile -- so it is read only for
+    those, and it reads `_metadata` (one object) rather than any point data.
+    """
+    storage = open_point_cloud(prefix, filesystem)
+    return {(tile["tile_x"], tile["tile_y"]): tile["points"] for tile in storage.tiles}
+
+
+def _tile_blocks(
+    shape: tuple[int, int],
+    transform: Affine,
+    manifest: dict,
+    tile_points: dict | None = None,
+) -> list[tuple[int, int, int, int]]:
+    """Blocks for a retaining (percentile/median) pass: one per cloud tile.
+
+    The height pass is exact for any partition of the lattice -- each cell is
+    owned by one block and a block reads its cells' whole world bounds -- so the
+    division's only job is to bound a worker's memory. A cloud tile is a read
+    unit that is already bounded, so a block that is one tile holds one tile's
+    returns: a real quantity, not one predicted from an average that a lumpy
+    cloud makes wrong.
+
+    Cut on the cloud's tile boundaries and stop. `tile_points` maps
+    ``(tile_x, tile_y) -> point count`` for the tiles the domain touches; a tile
+    over `RETAINED_POINTS_PER_BLOCK` is split, spatially and evenly, into enough
+    pieces to bring each under it (a cell's returns stay together in one piece,
+    so the split is exact). A tile absent from the map -- or the whole map None,
+    when counts were not read -- is taken as under budget and left whole.
+    """
+    height, width = shape
+    tile_m, tile_origin = manifest["tile_m"], manifest["mins"]
+    rows = _tile_segments(height, transform.f, transform.e, tile_origin[1], tile_m)
+    cols = _tile_segments(width, transform.c, transform.a, tile_origin[0], tile_m)
+    blocks = []
+    for r0, r1, ty in rows:
+        for c0, c1, tx in cols:
+            points = (tile_points or {}).get((tx, ty), 0)
+            pieces = _split_factor(points)
+            for row0, row1 in _even(r0, r1, pieces):
+                for col0, col1 in _even(c0, c1, pieces):
+                    blocks.append((row0, row1, col0, col1))
+    return blocks
+
+
+def _tile_segments(
+    count: int, anchor: float, step: float, tile_origin: float, tile_m: float
+) -> list[tuple[int, int, int]]:
+    """``(start, stop, tile_index)`` for each tile's span of one axis.
+
+    The cut points are `_tile_cuts`; the tile index of a span is the tile its
+    cells fall in, taken from the span's midpoint so the sign of `step` (the row
+    axis runs downward) is handled without a special case.
+    """
+    edges = [0, *_tile_cuts(count, anchor, step, tile_origin, tile_m), count]
+    segments = []
+    for start, stop in zip(edges[:-1], edges[1:], strict=True):
+        mid_world = anchor + step * (start + stop) / 2
+        tile_index = math.floor((mid_world - tile_origin) / tile_m)
+        segments.append((start, stop, tile_index))
+    return segments
+
+
+def _split_factor(points: int) -> int:
+    """Even pieces per axis to bring a tile of `points` under the budget.
+
+    ``ceil(sqrt(points / budget))`` so the tile splits into a roughly square
+    grid of about ``points / budget`` pieces. One when the tile already fits.
+    """
+    if points <= RETAINED_POINTS_PER_BLOCK:
+        return 1
+    return math.ceil(math.sqrt(points / RETAINED_POINTS_PER_BLOCK))
+
+
+def _even(start: int, stop: int, pieces: int) -> list[tuple[int, int]]:
+    """Split ``[start, stop)`` into `pieces` even half-open spans.
+
+    Even rather than greedy: a greedy split leaves a remainder piece that can be
+    a single cell, and the pieces here are already whole -- no halo to under-feed
+    -- so evenness only keeps them close in size. Never fewer than one span.
+    """
+    pieces = max(1, min(pieces, stop - start))
+    edges = [start + round(k * (stop - start) / pieces) for k in range(pieces)]
+    edges.append(stop)
+    return list(zip(edges[:-1], edges[1:], strict=True))
+
+
 def _tile_cuts(
     count: int, anchor: float, step: float, tile_origin: float, tile_m: float
 ) -> list[int]:
@@ -774,14 +966,45 @@ def _fill_gaps(surface: np.ndarray, max_cells: int) -> np.ndarray:
     return filled
 
 
-def _remove_spikes(chm: np.ndarray, threshold: float) -> np.ndarray:
-    """Drop cells that tower over every neighbour by more than `threshold`.
+def _spike_window_cells(footprint_m: float, resolution: float) -> int:
+    """`footprint_m` as an odd window of cells, or zero.
+
+    Zero where a single cell already spans that footprint: the rule asks
+    whether a feature is narrower than a crown, and at that cell size nothing
+    is, so it has no question left to answer. `_remove_spikes` returns its
+    input unchanged for a zero window and the caller skips the pass.
+
+    Rounded to odd so the window centres on the cell it judges, and floored at
+    3 so it always reaches past that cell.
+    """
+    if resolution >= footprint_m:
+        return 0
+    cells = max(3, round(footprint_m / resolution))
+    return cells + 1 if cells % 2 == 0 else cells
+
+
+def _remove_spikes(chm: np.ndarray, threshold: float, window: int) -> np.ndarray:
+    """Drop cells towering over every neighbour within `window` by `threshold`.
+
+    `window` spans `MIN_CANOPY_FOOTPRINT_M`, so the comparison is against every
+    cell a crown tall enough to explain the height would have reached into. A
+    zero window means a cell is already that wide and the raster cannot tell a
+    spike from a stand, so nothing is removed.
+
+    A rejected cell becomes nodata rather than a neighbour-derived height. It
+    is not known to hold canopy — its only tall return was spurious and the
+    raster cannot say what, if anything, is under it — so filling one in would
+    manufacture fuel the returns do not support. The cost that argued for
+    filling, NaN suppressing local maxima in the ITD window (#430), is paid at
+    the consumer: `standgen.handlers.chm` fills nodata with 0 before detection.
 
     The footprint excludes its own centre so the comparison is against the
     neighbours alone, and `cval=-inf` keeps the frame from wrapping around.
     """
-    footprint = np.ones((3, 3), dtype=bool)
-    footprint[1, 1] = False
+    if window < 3:
+        return chm
+    footprint = np.ones((window, window), dtype=bool)
+    footprint[window // 2, window // 2] = False
     filled = np.where(np.isnan(chm), -np.inf, chm)
     neighbour_max = maximum_filter(
         filled, footprint=footprint, mode="constant", cval=-np.inf

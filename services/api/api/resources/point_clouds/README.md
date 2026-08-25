@@ -28,19 +28,15 @@ ALS-only model). Each carries a `type` discriminator:
 
 ## Scope of this resource
 
-This package ships the **CRUD framework only**:
+This package ships the resource lifecycle and read surface:
 
 - `schema.py` — `PointCloud`, `PointCloudType`, `PointCloudGeoreference`, the update request body,
-  and the list response.
-- `router.py` — list (cross-domain + domain-scoped), get, patch (metadata only), and delete (with
-  async GCS cleanup).
-
-**Creation endpoints are intentionally absent here** and arrive in follow-on work:
-
-- **#328** — upload a point cloud (signed-URL ingest + uploader handler).
-- **#329** — fetch an ALS point cloud from USGS 3DEP (EPT fetch + coverage pre-flight).
-- **#330** — convert a point cloud to a CHM (a new `point_cloud` source on the existing
-  `grids/canopy` grid — not a new resource).
+  list response, and data-streaming response models.
+- `router.py` — list (cross-domain + domain-scoped), get, patch (metadata only), Firestore delete,
+  tile-layout metadata, and JSON/binary tile reads.
+- `utils.py` — authorization, indexed tile selection, response limits, and JSON/binary encoding.
+- `upload/` and `threedep/` — source-specific asynchronous creation.
+- `cache.py` — checksum-keyed indexed-dataset caching and off-event-loop Parquet reads.
 
 A point cloud comes into existence via a creation router (the `upload` source, #328) or by being
 seeded directly in Firestore (tests). The creation routers use a `source`-keyed sub-router
@@ -53,7 +49,10 @@ GET    /domains/-/pointclouds                       # list across all domains (w
 GET    /domains/{domain_id}/pointclouds             # list within a domain
 GET    /domains/{domain_id}/pointclouds/{id}        # get
 PATCH  /domains/{domain_id}/pointclouds/{id}        # update metadata only
-DELETE /domains/{domain_id}/pointclouds/{id}        # delete (+ async GCS cleanup)
+DELETE /domains/{domain_id}/pointclouds/{id}        # delete resource document
+GET    /domains/{domain_id}/pointclouds/{id}/data/metadata
+GET    /domains/{domain_id}/pointclouds/{id}/data/{tile_x}/{tile_y}
+GET    /domains/{domain_id}/pointclouds/{id}/data/{tile_x}/{tile_y}/binary
 ```
 
 The path segment is the **collapsed single token `pointclouds`** (no underscore, no hyphen), matching
@@ -91,21 +90,27 @@ API).
 ## Storage
 
 - Firestore collection: `POINT_CLOUDS_COLLECTION` (default `pointclouds-v2`).
-- GCS bucket: `POINT_CLOUDS_BUCKET`. Each point cloud owns the directory `{id}/` at the bucket root;
-  `delete` operates on that whole directory via `delete_directory_safe` and is therefore
-  format-agnostic.
-- The **concrete object layout under `{id}/` and the file format are owned by the ingest workers**
-  (#328/#329). This resource deliberately commits to no specific format (e.g. COPC vs. plain LAZ) —
-  that decision belongs to whoever writes the bytes. The upload worker stores `{id}/cloud.parquet/`
-  (plain LAZ, domain CRS); see the uploader service README for why LAZ-not-COPC and the planned
-  lossless LAZ → COPC upgrade path.
+- GCS bucket: `POINT_CLOUDS_BUCKET`. Each point cloud owns the directory `{id}/` at the bucket root.
+  The API currently deletes the resource document; Walle reaps the resulting orphan artifact.
+- Both ingest workers write `{id}/cloud.parquet/`, Hive-partitioned by `tile_x` and `tile_y`, plus
+  standard Parquet `_metadata`. That aggregate footer is the authoritative read index: file paths,
+  schemas, row groups, column statistics, byte offsets, and compressed sizes. Readers open it with
+  `pyarrow.dataset.parquet_dataset`, so tile/LOD filters require neither a dataset listing nor a
+  footer request per part.
+- `_manifest.json` is the small application commit record. It carries tiling, scale/offset, source
+  bounds, and total point/tile counts that Parquet does not describe, and is published only after
+  the parts and `_metadata` are complete. There is one current format, with no version switch or
+  fallback parser; retained clouds must be regenerated when that contract changes.
+- The public metadata route derives occupied tiles, stored columns, and cumulative LOD counts from
+  `_metadata`; it does not expose internal object paths. Tile reads use Arrow predicate pushdown on
+  that same cached indexed dataset.
 
 ## Service boundary
 
-The API must stay free of GDAL/PDAL at runtime (see the repo `CLAUDE.md`). This router does Firestore
-+ (future) signed-URL + Cloud Tasks dispatch only; it imports just `api.db.*`, `api.dependencies`,
-`api.schema`, and `lib.config`. All point-cloud parsing happens in workers. Do not import any `lib`
-module that transitively pulls in `rasterio` / `affine` / `pdal`.
+The API must stay free of GDAL/PDAL at runtime (see the repo `CLAUDE.md`). Creation parsing and
+reprojection remain in workers. The read endpoints use the GDAL-free shared point-cloud reader and
+PyArrow to project columns from the indexed Parquet dataset. Do not import any `lib` module
+that transitively pulls in `rasterio` / `affine` / `pdal`.
 
 ## Out of scope
 

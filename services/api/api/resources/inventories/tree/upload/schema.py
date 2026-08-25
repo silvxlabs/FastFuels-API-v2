@@ -34,6 +34,7 @@ class InventoryColumnMapping(BaseModel):
     height: str | None = None
     fia_species_code: str | None = None
     fia_status_code: str | None = None
+    fia_crown_class_code: str | None = None
     dbh: str | None = None
     crown_ratio: str | None = None
 

@@ -15,7 +15,10 @@ from api.app import EXPOSE_HEADERS
 from api.quota import _raise_quota_exceeded, _ratelimit_headers
 from api.resources.grids.router import _chunk_metadata_headers
 from api.resources.grids.schema import GridDataChunkMetadata
+from api.resources.point_clouds.utils import TileSelection, binary_headers
 from fastapi import HTTPException
+
+from lib.pointcloud.reader import PointCloudStorage
 
 
 def test_no_duplicate_or_empty_entries():
@@ -36,6 +39,38 @@ def test_grid_chunk_metadata_headers_are_exposed():
     )
     emitted = _chunk_metadata_headers(meta)
     assert {"X-Data-Z-Origin", "X-Data-Z-Resolution"} <= set(emitted)
+    assert set(emitted) <= set(EXPOSE_HEADERS)
+
+
+def test_point_cloud_binary_headers_are_exposed():
+    storage = PointCloudStorage(
+        prefix="bucket/cloud/cloud.parquet",
+        dataset=None,
+        tiles=(),
+        columns=({"name": "X", "dtype": "int32"},),
+        manifest={
+            "tile_m": 500.0,
+            "mins": [1000.0, 2000.0, 0.0],
+            "scales": [0.01, 0.01, 0.01],
+            "offsets": [1000.0, 2000.0, 0.0],
+        },
+    )
+    tile = {"tile_x": -1, "tile_y": 2}
+
+    selection = TileSelection("cloud", storage, tile, ["X"], [2, 5], lod=3)
+    emitted = binary_headers(selection, count=10)
+
+    assert {
+        "X-Data-Columns",
+        "X-Data-Dtypes",
+        "X-Data-Count",
+        "X-Data-Tile",
+        "X-Data-Bounds",
+        "X-Data-LOD",
+        "X-Data-Classes",
+        "X-Data-Scales",
+        "X-Data-Offsets",
+    } == set(emitted)
     assert set(emitted) <= set(EXPOSE_HEADERS)
 
 

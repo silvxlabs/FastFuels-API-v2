@@ -254,6 +254,27 @@ EXAMPLE_POINT_CLOUD_CHM_ALIGNED_TO_GRID_AT_1M = {
     },
 }
 
+EXAMPLE_POINT_CLOUD_CHM_NO_SPIKE_FILTER = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "spike_filter": None,
+}
+
+EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "spike_filter": {"min_canopy_footprint_m": 5.0, "min_prominence_m": 15.0},
+}
+
+EXAMPLE_POINT_CLOUD_CHM_PERCENTILE = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "aggregation": {"method": "percentile", "percentile": 98},
+}
+
+EXAMPLE_POINT_CLOUD_CHM_MEAN_AT_10M = {
+    "source_point_cloud_id": "8fc4dcad181944fd9cb594af32b58432",
+    "alignment": {"target": "domain", "resolution": 10.0},
+    "aggregation": {"method": "mean"},
+}
+
 CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
     "minimal": {
         "value": EXAMPLE_POINT_CLOUD_CHM_MINIMAL,
@@ -321,9 +342,69 @@ CREATE_POINT_CLOUD_CHM_OPENAPI_EXAMPLES: dict = {
             "heights on the cells of a 30 m LANDFIRE grid."
         ),
     },
+    "spike_filter": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER,
+        "summary": "Tune the removal of spurious returns",
+        "description": (
+            "A cell holds the tallest return that falls in it, so one bad "
+            "return — a bird, haze — becomes the height of that cell unless "
+            "the cloud classified it as noise, and many clouds do not. Such a "
+            "return leaves a shape real canopy cannot: a single cell towering "
+            "over everything around it.\n\n"
+            "`min_canopy_footprint_m` is the narrowest ground footprint real "
+            "canopy can occupy. A cell is judged against everything within "
+            "that distance, and only a cell narrower than it can be rejected — "
+            "so the filter does not run once `alignment.resolution` reaches "
+            "this value, where one cell holds a stand rather than a crown. "
+            "`min_prominence_m` is how far above every neighbour a cell must "
+            "rise. Both are in meters and default to 3 and 25."
+        ),
+    },
+    "no_spike_filter": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_NO_SPIKE_FILTER,
+        "summary": "Keep every return",
+        "description": (
+            "`null` turns the filter off, so nothing is removed from the "
+            "finished grid. Use it when the cloud's noise is already "
+            "classified, or when you would rather inspect the raw heights."
+        ),
+    },
+    "percentile": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_PERCENTILE,
+        "summary": "Take a high percentile instead of the maximum",
+        "description": (
+            "A cell takes the tallest return that falls in it, so one return "
+            "the cloud failed to classify as noise becomes the height of that "
+            "cell on its own. A high percentile does not have that property: "
+            "at the 98th, a cell's height is one the returns agree on.\n\n"
+            "`percentile` is the rank to take, as a percentage of the cell's "
+            "returns. 100 is the tallest return and 50 the median; between two "
+            "returns the height is interpolated."
+        ),
+    },
+    "mean_at_10m": {
+        "value": EXAMPLE_POINT_CLOUD_CHM_MEAN_AT_10M,
+        "summary": "Average height over 10 m cells",
+        "description": (
+            "Which statistic to take is really a question about cell size. A "
+            "1 m cell sits inside a crown, so its tallest return is that "
+            "crown's top. A 10 m cell holds a stand, and its tallest return is "
+            "the tallest tree in it — which is a fact about one tree, not "
+            "about the stand.\n\n"
+            "Measured on one cloud rasterized twice, the same returns gave a "
+            "mean height of 4.83 m at 1 m cells and 15.48 m at 10 m, and the "
+            "share of cells above 5 m went from 34.6% to 83.1%. `mean` and "
+            "`median` describe the cell rather than its tallest thing, so they "
+            "do not move that way."
+        ),
+    },
 }
 
 POINT_CLOUD_CHM_EXAMPLE_VALUES = [
+    ("percentile", EXAMPLE_POINT_CLOUD_CHM_PERCENTILE),
+    ("mean_at_10m", EXAMPLE_POINT_CLOUD_CHM_MEAN_AT_10M),
+    ("spike_filter", EXAMPLE_POINT_CLOUD_CHM_SPIKE_FILTER),
+    ("no_spike_filter", EXAMPLE_POINT_CLOUD_CHM_NO_SPIKE_FILTER),
     ("minimal", EXAMPLE_POINT_CLOUD_CHM_MINIMAL),
     ("named", EXAMPLE_POINT_CLOUD_CHM_NAMED),
     ("resolution_5m", EXAMPLE_POINT_CLOUD_CHM_5M),

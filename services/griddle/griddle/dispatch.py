@@ -11,6 +11,7 @@ import geopandas as gpd
 import xarray as xr
 
 from griddle.handlers import (
+    canopy_inventory,
     chm,
     chm_point_cloud,
     compose,
@@ -152,6 +153,7 @@ def handle_landfire(
             version = source.get("version", LANDFIRE_VERSIONS["fbfm40"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
             remove_non_burnable = source.get("remove_non_burnable")
+            season = source.get("season")
             return landfire.fetch_fbfm40(
                 domain_gdf,
                 version,
@@ -159,6 +161,8 @@ def handle_landfire(
                 extent_buffer_cells=extent_buffer_cells,
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
+                season=season,
+                progress=progress,
             )
         case "fccs":
             version = source.get("version", LANDFIRE_VERSIONS["fccs"]["default"])
@@ -466,17 +470,36 @@ def handle_canopy(
                 target_grid_doc=target_grid_doc,
                 progress=progress,
                 extent_buffer_cells=extent_buffer_cells,
+                # Absent on grids created before the control existed, which
+                # were built with the filter on at its defaults. An explicit
+                # null is the user turning it off.
+                spike_filter=source.get("spike_filter", {}),
+                # Absent on grids created before the control existed, which
+                # took the maximum, and that is what an absent one means here.
+                aggregation=source.get("aggregation"),
             )
             # How ground was obtained, and how well constrained it was. Without
             # this a derived-ground CHM over a large building looks like a
             # confident answer instead of an unconstrained one.
             source["ground"] = ground
             return dataset
+        case "inventory":
+            progress("Deriving canopy fuel from inventory...", 10)
+            return canopy_inventory.fetch_canopy_inventory(
+                roi=domain_gdf,
+                source=source,
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
+                progress=progress,
+                extent_buffer_cells=extent_buffer_cells,
+            )
         case _:
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown canopy product: {product}",
-                suggestion="Supported products: meta, naip, landfire, point_cloud",
+                suggestion=(
+                    "Supported products: meta, naip, landfire, point_cloud, inventory"
+                ),
             )
 
 

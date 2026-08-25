@@ -1,0 +1,34 @@
+{
+  "created_on": "2026-02-04T11:32:35.277033",
+  "crs": {
+    "properties": {
+      "name": "EPSG:32611"
+    },
+    "type": "name"
+  },
+  "description": "Synthetic 400 m x 200 m domain that resolves to a 1x2 grid of ten-acre (201.168 m) cells at the canopy_inventory_fuelcalc resolution: west cell holds FuelCalc tutorial plot 1, east cell holds plot 2. The lattice anchors at the lower-left and covers the bounds via ceil, so 400 m x 200 m yields exactly two 201.168 m cells spanning 720000-720402.336. Ten-acre cells match fastfuels-core's FuelCalc comparison so per-acre expansion factors become whole stems exactly.",
+  "id": "fuelcalc-tutorial-2plot",
+  "modified_on": "2026-02-04T11:32:35.277033",
+  "name": "FuelCalc Tutorial Two-Plot",
+  "tags": [],
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "domain",
+      "properties": {},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [720000.0, 5190000.0],
+            [720400.0, 5190000.0],
+            [720400.0, 5190200.0],
+            [720000.0, 5190200.0],
+            [720000.0, 5190000.0]
+          ]
+        ]
+      }
+    }
+  ]
+}

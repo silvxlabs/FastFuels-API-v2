@@ -21,7 +21,9 @@ from api.resources.grids.modification_models import (
 from api.resources.grids.schema import BandType, GridDataChunkMetadata
 from api.resources.modifications import stringify_modification_coordinates
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+from lib.domain_utils import parse_domain_gdf
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
+from lib.landfire import CoverageStatus, covers_annual, covers_seasonal
 
 
 def dump_modifications_for_firestore(
@@ -35,6 +37,55 @@ def dump_modifications_for_firestore(
     pattern; the read-back validator on ``Grid`` decodes them again.
     """
     return stringify_modification_coordinates([m.model_dump() for m in modifications])
+
+
+def validate_lfps_coverage(
+    product: str,
+    version: str,
+    domain: dict,
+    season: str | None = None,
+) -> None:
+    """Check on-demand LFPS coverage for a domain before creating a grid.
+
+    Reprojects the domain to EPSG:5070 (the CRS `covers_annual`'s and
+    `covers_seasonal`'s boundary data is loaded in) and checks whether LFPS
+    actually serves `product`/`version` (Seasonal Fuels, when `season` is
+    given; otherwise the annual/on-demand product) there. `PARTIAL`
+    coverage is allowed through same as `FULL` -- the uncovered portion
+    just comes back as nodata, same as any other out-of-coverage cell.
+
+    This is a plain sync function -- `covers_annual`/`covers_seasonal`
+    make a real HTTP call to LFPS, so async callers should wrap it with
+    `asyncio.to_thread(...)` rather than awaiting it directly.
+
+    Raises:
+        HTTPException(422): LFPS doesn't serve this product/version (and
+            season, if given) at all (`NO_SUCH_PRODUCT`), or doesn't cover
+            the domain at all (`NONE`).
+    """
+    geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
+    if season is None:
+        coverage = covers_annual(product, version, geometry)
+    else:
+        coverage = covers_seasonal(product, version, season, geometry)
+
+    if coverage in (CoverageStatus.NONE, CoverageStatus.NO_SUCH_PRODUCT):
+        if season is None:
+            season_clause = ""
+            info = "see https://landfire.gov/data for the data delivery schedule"
+        else:
+            season_clause = f" season {season!r}"
+            info = "see https://landfire.gov/fuel/seasonal_fuels for availability"
+
+        if coverage is CoverageStatus.NO_SUCH_PRODUCT:
+            reason = "it isn't currently published by LANDFIRE Product Service"
+        else:
+            reason = "LANDFIRE Product Service doesn't currently cover this domain's location"
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Can't fetch {product!r} version {version!r}{season_clause}: {reason}; {info}.",
+        )
 
 
 def resolve_modification_fuel_model_labels(

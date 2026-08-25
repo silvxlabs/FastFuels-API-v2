@@ -25,10 +25,15 @@ pool stays until someone measures it in-region rather than because the reasoning
 above still holds.
 
 Blocking does not change the answer. Every pass here is cell-local: a cell's
-value depends only on points inside it, and the reductions are commutative, so
-how the points are grouped cannot matter -- and for the same reason a block can
-be folded a batch at a time rather than read whole, which is what keeps a
-worker's memory off the tile's point count.
+value depends only on points inside it, and the reductions are order-
+independent, so how the points are grouped cannot matter.
+
+What follows from that differs by statistic. A maximum or a mean is also a
+*fold*, so a batch can be reduced and dropped and a worker's memory stays off
+the tile's point count. A percentile is not: it holds the block's returns to
+the end. Blocking is exact either way -- sorting is a function of the multiset
+-- but a percentile's blocks have to be sized by their points rather than by
+their cells, which is `chm_point_cloud._retaining_block_cells`.
 """
 
 import numpy as np
@@ -45,9 +50,17 @@ import numpy as np
 SURFACE_CLASSES = (0, 1, 2, 3, 4, 5)
 GROUND_CLASS = 2
 
-# Heights outside this range are not canopy. Matches the v1 sanity filter.
-MIN_CANOPY_HEIGHT_M = 0.0
+# Heights above this are not canopy. Matches the v1 sanity filter.
 MAX_CANOPY_HEIGHT_M = 100.0
+
+# The floor heights are clamped to, rather than filtered against: an unbiased
+# ground has returns on both sides of it, so a return below it is ground.
+MIN_CANOPY_HEIGHT_M = 0.0
+
+# How far below the ground estimate a return may sit and still be one. Within
+# this it is the estimate's own scatter and reads as zero height; deeper is a
+# blunder, and dropping it keeps it from making a bare cell out of nothing.
+GROUND_TOLERANCE_M = 0.5
 
 # A point within this distance of the provisional surface is taken to be a
 # ground return. Used to re-derive the ground from real measurements rather
@@ -95,8 +108,9 @@ def run_block(job):
     Args:
         job: ``(kind, lattice, resolution, classes, extra)``. ``extra`` carries
             whatever raster the pass samples -- the block's slice of the
-            provisional surface for ``"snap"``, and ``(slice, lattice)`` of the
-            ground for ``"max"``. Both are block-sized, so a task stays small.
+            provisional surface for ``"snap"``, and ``(slice, lattice,
+            statistic)`` of the ground for ``"height"``. Both rasters are
+            block-sized, so a task stays small.
 
     Returns:
         The block's ``(rows, cols)`` float32 raster.
@@ -110,13 +124,17 @@ def run_block(job):
             _W["dataset"], _W["manifest"], bounds, wanted, _W["filesystem"]
         )
 
+    if kind == "mean":
+        return mean_surface_block(reader, lattice, resolution, classes)
     if kind == "min":
         return min_surface_block(reader, lattice, resolution, classes)
     if kind == "snap":
         return snap_ground_block(reader, extra, lattice, resolution)
-    if kind == "max":
-        ground, ground_lattice = extra
-        return max_height_block(reader, ground, ground_lattice, lattice, resolution)
+    if kind == "height":
+        ground, ground_lattice, statistic = extra
+        return height_block(
+            reader, ground, ground_lattice, lattice, resolution, statistic
+        )
     raise ValueError(f"unknown block kind {kind!r}")
 
 
@@ -191,8 +209,35 @@ def sample_bilinear(surface, x, y, lattice, resolution) -> np.ndarray:
     )
 
 
+def mean_surface_block(reader, lattice, resolution, classes) -> np.ndarray:
+    """Mean z per cell over the given classes, NaN where no point falls.
+
+    The mean, not the minimum: a minimum is an extreme-value statistic, so it
+    sits further below the surface the more returns a cell holds, and every
+    height measured above it rises to match (issue #503). A mean is unbiased at
+    any count.
+
+    Cell-local, and a sum and a count are both commutative, so a block needs no
+    halo and the answer cannot depend on how the points were grouped.
+    """
+    _, _, height, width = lattice
+    size = height * width
+    total, count = np.zeros(size), np.zeros(size)
+    for x, y, z, _ in reader(block_bounds(lattice, resolution), classes):
+        index, inside = cell_indices(x, y, lattice, resolution)
+        total += np.bincount(index[inside], z[inside], size)
+        count += np.bincount(index[inside], minlength=size)
+    # 0/0 is the NaN an empty cell wants; nothing else divides by zero.
+    with np.errstate(invalid="ignore"):
+        return (total / count).reshape(height, width).astype(np.float32)
+
+
 def min_surface_block(reader, lattice, resolution, classes) -> np.ndarray:
     """Lowest z per cell over the given classes, NaN where no point falls.
+
+    The input `_pmf` opens, which is defined on a minimum surface (Zhang et al.
+    2003). Not a ground estimate -- `mean_surface_block` says why a minimum is
+    the wrong statistic for one.
 
     Cell-local: a cell's minimum depends only on points inside it, so a block
     needs no halo and blocked output is identical to rasterising the cloud whole.
@@ -214,23 +259,27 @@ def snap_ground_block(reader, provisional, lattice, resolution) -> np.ndarray:
     The opened surface has been eroded and dilated, so reading it directly runs
     about 0.1 m low; taking the real returns that sit near it does not.
 
+    The accepted returns are averaged for the reason `mean_surface_block` gives.
+
     `provisional` is this block's slice of the filtered surface, so the lookup
     is block-local -- a point's snap test reads its own cell and no other.
     """
     _, _, height, width = lattice
-    ground = np.full(height * width, np.inf, dtype=np.float32)
+    size = height * width
+    total, count = np.zeros(size), np.zeros(size)
     flat = provisional.reshape(-1)
     for x, y, z, _ in reader(block_bounds(lattice, resolution), SURFACE_CLASSES):
         index, inside = cell_indices(x, y, lattice, resolution)
         z, index = z[inside], index[inside]
         near = np.abs(z - flat[index]) <= GROUND_SNAP_TOLERANCE_M
-        np.minimum.at(ground, index[near], z[near].astype(np.float32))
-    ground[~np.isfinite(ground)] = np.nan
-    return ground.reshape(height, width)
+        total += np.bincount(index[near], z[near], size)
+        count += np.bincount(index[near], minlength=size)
+    with np.errstate(invalid="ignore"):
+        return (total / count).reshape(height, width).astype(np.float32)
 
 
-def max_height_block(reader, ground, ground_lattice, lattice, resolution):
-    """Highest height-above-ground per cell, for one block.
+def point_heights(reader, ground, ground_lattice, lattice, resolution):
+    """Yield ``(cell index, height above ground)`` a batch at a time.
 
     Ground is sampled bilinearly at each point rather than read from the point's
     own cell: on a slope a cell-constant ground under-reads uphill and
@@ -248,18 +297,113 @@ def max_height_block(reader, ground, ground_lattice, lattice, resolution):
     The in-bounds mask is applied before sampling, not after. Points outside the
     block are discarded either way, and not sampling them is what keeps the slice
     to one cell of halo rather than the tile's full overhang.
+
+    Heights are clamped up to zero rather than filtered against it. Ground is an
+    unbiased estimate, so returns sit on both sides of it, and dropping the ones
+    below cost a measured 0.9% of cells on a real cloud -- cells that are bare
+    ground, not cells with nothing in them. `GROUND_TOLERANCE_M` bounds how far
+    below the clamp reaches.
     """
-    _, _, height, width = lattice
-    chm = np.full(height * width, -np.inf, dtype=np.float32)
     for x, y, z, _ in reader(block_bounds(lattice, resolution), SURFACE_CLASSES):
         index, inside = cell_indices(x, y, lattice, resolution)
         index, x, y, z = index[inside], x[inside], y[inside], z[inside]
         above = z - sample_bilinear(ground, x, y, ground_lattice, resolution)
         usable = (
-            (above >= MIN_CANOPY_HEIGHT_M)
+            (above >= -GROUND_TOLERANCE_M)
             & (above < MAX_CANOPY_HEIGHT_M)
             & np.isfinite(above)
         )
-        np.maximum.at(chm, index[usable], above[usable].astype(np.float32))
-    chm[~np.isfinite(chm)] = np.nan
-    return chm.reshape(height, width)
+        yield (
+            index[usable],
+            np.maximum(above[usable], MIN_CANOPY_HEIGHT_M).astype(np.float32),
+        )
+
+
+def height_block(reader, ground, ground_lattice, lattice, resolution, statistic):
+    """One statistic of the heights above ground per cell, for one block.
+
+    Args:
+        reader: Per-block point reader.
+        ground: This block's slice of the ground raster, grown by one cell.
+        ground_lattice: Lattice of that slice.
+        lattice: The block's own lattice.
+        resolution: Cell size in metres.
+        statistic: ``(method, percentile)``, with ``percentile`` set only for
+            ``"percentile"``.
+
+    Returns:
+        The block's ``(rows, cols)`` float32 raster, NaN where no return fell.
+    """
+    method, percentile = statistic
+    _, _, height, width = lattice
+    size = height * width
+    batches = point_heights(reader, ground, ground_lattice, lattice, resolution)
+
+    if method == "max":
+        chm = np.full(size, -np.inf, dtype=np.float32)
+        for index, above in batches:
+            np.maximum.at(chm, index, above)
+        chm[~np.isfinite(chm)] = np.nan
+        return chm.reshape(height, width)
+
+    if method == "mean":
+        # A sum and a count, for the reason `mean_surface_block` gives: both
+        # are commutative and cell-local, so a batch can be folded and dropped
+        # and the answer does not depend on how the points were grouped.
+        total, count = np.zeros(size), np.zeros(size)
+        for index, above in batches:
+            total += np.bincount(index, above, size)
+            count += np.bincount(index, minlength=size)
+        with np.errstate(invalid="ignore"):
+            return (total / count).reshape(height, width).astype(np.float32)
+
+    return _percentile_block(batches, percentile, size).reshape(height, width)
+
+
+def _percentile_block(batches, percentile: float, size: int) -> np.ndarray:
+    """Linearly interpolated percentile per cell, over retained returns.
+
+    A percentile is not a fold: no state smaller than the cell's whole set of
+    returns answers it, because which return is the answer is not known until
+    the last one has arrived. So this holds every usable return in the block --
+    a cell index and a height, 8 bytes -- and reduces once at the end.
+
+    That is why a percentile is blocked by its points rather than by its cells;
+    `chm_point_cloud._retaining_block_cells` sizes the blocks that reach here.
+
+    Order still cannot matter. Sorting is a function of the multiset, so any
+    grouping of the same returns produces the same sorted run and the same
+    arithmetic on it -- bit for bit, not approximately.
+
+    The rank is numpy's default definition (`method="linear"`, Hyndman and Fan
+    type 7): the percentile sits at ``(n - 1) * p / 100`` in the sorted run, and
+    between two returns the height is interpolated.
+    """
+    out = np.full(size, np.nan, dtype=np.float32)
+    indices, heights = [], []
+    for index, above in batches:
+        indices.append(index.astype(np.int32))
+        heights.append(above)
+    if not indices:
+        return out
+
+    index = np.concatenate(indices)
+    height = np.concatenate(heights)
+    del indices, heights
+    if index.size == 0:
+        return out
+
+    order = np.lexsort((height, index))
+    index, height = index[order], height[order]
+    del order
+
+    starts = np.flatnonzero(np.concatenate(([True], index[1:] != index[:-1])))
+    counts = np.diff(np.concatenate((starts, [index.size])))
+    virtual = (counts - 1) * (percentile / 100.0)
+    low = np.floor(virtual).astype(np.int64)
+    high = np.minimum(low + 1, counts - 1)
+    fraction = virtual - low
+    lower = height[starts + low].astype(np.float64)
+    upper = height[starts + high].astype(np.float64)
+    out[index[starts]] = lower + (upper - lower) * fraction
+    return out

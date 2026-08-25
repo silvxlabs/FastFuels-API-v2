@@ -19,7 +19,7 @@ from api.resources.grids.providers.landfire import (
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
-from lib.landfire import NB_CODE_MAP
+from lib.landfire import NB_CODE_MAP, SEASON_CODES
 
 
 class TestLandfireSource:
@@ -182,6 +182,84 @@ class TestCreateLandfireFbfm40Request:
         """FBFM40 is a 30m raster, so at most 10 buffer cells are allowed."""
         with pytest.raises(ValidationError):
             CreateLandfireFbfm40Request(extent_buffer_cells=11)
+
+
+class TestSeason:
+    """Tests for season on request and source models."""
+
+    def test_request_defaults_to_none(self):
+        """season defaults to None."""
+        request = CreateLandfireFbfm40Request()
+        assert request.season is None
+
+    def test_source_defaults_to_none(self):
+        """season defaults to None on the source model."""
+        source = LandfireFbfm40Source(version="2024")
+        assert source.season is None
+
+    @pytest.mark.parametrize("season", SEASON_CODES)
+    def test_request_accepts_valid_season_codes(self, season):
+        """Each LANDFIRE Seasonal Fuels code is accepted."""
+        request = CreateLandfireFbfm40Request(version="2025", season=season)
+        assert request.season == season
+
+    def test_request_rejects_invalid_season(self):
+        """An unknown season code is rejected."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(version="2025", season="XX")
+
+    def test_seasonal_version_without_season_rejected(self):
+        """An LFPS-only version with no season is rejected."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(version="2025")
+
+    def test_annual_version_with_season_rejected(self):
+        """A staged-annual-only version with season set is rejected."""
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm40Request(version="2024", season="SP")
+
+    def test_seasonal_version_with_season_accepted(self):
+        """An LFPS-available version with season set is accepted."""
+        request = CreateLandfireFbfm40Request(version="2025", season="SP")
+        assert request.version == "2025"
+        assert request.season == "SP"
+
+    def test_annual_version_without_season_accepted(self):
+        """A staged-annual version with no season is accepted (regression)."""
+        request = CreateLandfireFbfm40Request(version="2022")
+        assert request.version == "2022"
+        assert request.season is None
+
+    def test_source_round_trip(self):
+        """season survives source model_dump round-trip."""
+        source = LandfireFbfm40Source(version="2025", season="SP")
+        data = source.model_dump()
+        assert data["season"] == "SP"
+
+    def test_source_none_round_trip(self):
+        """None season survives source model_dump round-trip."""
+        source = LandfireFbfm40Source(version="2024")
+        data = source.model_dump()
+        assert data["season"] is None
+
+
+class TestYear:
+    """Tests for the server-computed `year` field on the source model."""
+
+    def test_source_defaults_to_none(self):
+        """year defaults to None on the source (the router fills it in)."""
+        source = LandfireFbfm40Source(version="2024")
+        assert source.year is None
+
+    def test_source_round_trip(self):
+        """year survives source model_dump round-trip."""
+        source = LandfireFbfm40Source(version="2025", season="SP", year=2026)
+        data = source.model_dump()
+        assert data["year"] == 2026
+
+    def test_request_has_no_year_field(self):
+        """year is server-set, not a request field -- a client can't inject it."""
+        assert "year" not in CreateLandfireFbfm40Request.model_fields
 
 
 class TestFbfm40Band:

@@ -29,7 +29,7 @@ import requests
 from shapely.geometry.base import BaseGeometry
 
 from lib.config import RASTERS_BUCKET
-from lib.landfire.config import LANDFIRE_USER_EMAIL
+from lib.landfire.config import LANDFIRE_USER_EMAIL, SEASON_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -43,20 +43,25 @@ _REQUEST_TIMEOUT = 60
 # so caching for an hour costs nothing in staleness
 LFPS_PRODUCTS_TTL_SECONDS = float(os.getenv("LFPS_PRODUCTS_TTL_SECONDS", 3600))
 
-# Trailing season+year suffix on seasonal fuels layers, e.g. "_SP26" in
-# LF2025_FBFM40_SP26. The year is the season's own year, one ahead of the
-# base layer's `version` year -- not something this field needs to capture.
-_SEASON_PATTERN = re.compile(r"_(SP|SU|ES|FA)\d{2}$")
+# Matches the trailing season+year suffix on a Seasonal Fuels layer name,
+# e.g. "_SP26" in "LF2025_FBFM40_SP26". The two digits are the season's own
+# two-digit year -- the calendar year the seasonal fuels represent, which
+# LANDFIRE currently sets one ahead of the base layer's `version` year but
+# which we read from the layer name rather than assume.
+_SEASON_PATTERN = re.compile(rf"_({'|'.join(SEASON_CODES)})(\d{{2}})$")
 
 _products: list[LfpsProduct] | None = None
 _products_fetched_on: datetime | None = None
 
 
-def _parse_season(layer_name: str) -> str | None:
-    """Extract the season code from a seasonal layer name, e.g. "SP" from
-    "LF2025_FBFM40_SP26". None for a non-seasonal (annual) layer."""
+def _parse_season_suffix(layer_name: str) -> tuple[str | None, int | None]:
+    """Extract the season code and four-digit year from a seasonal layer name,
+    e.g. ("SP", 2026) from "LF2025_FBFM40_SP26". (None, None) for a
+    non-seasonal (annual) layer."""
     match = _SEASON_PATTERN.search(layer_name)
-    return match.group(1) if match else None
+    if match is None:
+        return None, None
+    return match.group(1), 2000 + int(match.group(2))
 
 
 class LfpsJobFailedError(Exception):
@@ -92,6 +97,7 @@ class LfpsProduct:
     conus: bool
     geo_areas: str
     season: str | None
+    season_year: int | None
 
 
 @dataclass(frozen=True)
@@ -132,19 +138,22 @@ def list_products(refresh: bool = False) -> list[LfpsProduct]:
     response.raise_for_status()
     raw_products = response.json()["products"]
 
-    _products = [
-        LfpsProduct(
-            layer_name=p["layerName"],
-            product_name=p["productName"],
-            theme=p["theme"],
-            acronym=p["acronym"],
-            version=p["version"],
-            conus=p["conus"],
-            geo_areas=p["geoAreas"],
-            season=_parse_season(p["layerName"]),
+    _products = []
+    for p in raw_products:
+        season, season_year = _parse_season_suffix(p["layerName"])
+        _products.append(
+            LfpsProduct(
+                layer_name=p["layerName"],
+                product_name=p["productName"],
+                theme=p["theme"],
+                acronym=p["acronym"],
+                version=p["version"],
+                conus=p["conus"],
+                geo_areas=p["geoAreas"],
+                season=season,
+                season_year=season_year,
+            )
         )
-        for p in raw_products
-    ]
     _products_fetched_on = datetime.now(UTC)
     logger.info(f"Loaded LFPS product catalog: {len(_products)} products")
     return _products
@@ -325,6 +334,36 @@ def covers_annual(product: str, version: str, geometry: BaseGeometry) -> Coverag
     return CoverageStatus.FULL if remaining.is_empty else CoverageStatus.PARTIAL
 
 
+def resolve_seasonal_product(
+    product: str, version: str, season: str
+) -> LfpsProduct | None:
+    """Find the live Seasonal Fuels catalog entry for a product/version/season.
+
+    Returns the matching `LfpsProduct` (carrying its real `layer_name` and
+    `season_year`), or None if LFPS isn't currently serving that
+    product/version/season. This is the single matcher the API and griddle
+    use to resolve the actual layer and year from the catalog instead of
+    assuming the season year is `version + 1`.
+
+    Args:
+        product: Product acronym, matched case-insensitively against
+            `LfpsProduct.acronym` (e.g. "fbfm40" matches "FBFM40").
+        version: LANDFIRE version year (e.g. "2025") -- matched against
+            LFPS's "LF{version}" format.
+        season: A season code (e.g. "SP").
+    """
+    return next(
+        (
+            p
+            for p in list_products()
+            if p.season == season
+            and p.acronym.lower() == product.lower()
+            and p.version == f"LF{version}"
+        ),
+        None,
+    )
+
+
 def covers_seasonal(
     product: str, version: str, season: str, geometry: BaseGeometry
 ) -> CoverageStatus:
@@ -346,13 +385,7 @@ def covers_seasonal(
         CoverageStatus. NO_SUCH_PRODUCT if `season` isn't currently live
         for `product`/`version`. Otherwise FULL, PARTIAL, or NONE.
     """
-    is_live = any(
-        p.season == season
-        and p.acronym.lower() == product.lower()
-        and p.version == f"LF{version}"
-        for p in list_products()
-    )
-    if not is_live:
+    if resolve_seasonal_product(product, version, season) is None:
         return CoverageStatus.NO_SUCH_PRODUCT
 
     boundary = SEASONAL_BOUNDARIES[season]

@@ -11,9 +11,9 @@ produce any combination of the four.
 """
 
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import (
@@ -45,7 +45,7 @@ LANDFIRE_CANOPY_BAND_DEFS = {
     LandfireCanopyFuelBand.chm: {
         "key": "chm",
         "name": "Canopy Height",
-        "description": "Height of the canopy top above ground.",
+        "description": "Height above ground of the canopy top.",
         "type": BandType.continuous,
         "unit": "m",
     },
@@ -59,7 +59,7 @@ LANDFIRE_CANOPY_BAND_DEFS = {
     LandfireCanopyFuelBand.cbh: {
         "key": "cbh",
         "name": "Canopy Base Height",
-        "description": "Height above ground of the base of the live crown.",
+        "description": "Height above ground of the base of the canopy fuel layer.",
         "type": BandType.continuous,
         "unit": "m",
     },
@@ -86,7 +86,7 @@ def build_landfire_canopy_bands(
 CHM_BAND = Band(
     key="chm",
     name="Canopy Height",
-    description="Height of the canopy top above ground.",
+    description="Height above ground of the canopy top.",
     type=BandType.continuous,
     unit="m",
     index=0,
@@ -209,11 +209,111 @@ class PointCloudGround(BaseModel):
     )
 
 
+class ChmSpikeFilter(BaseModel):
+    """Removal of lone spurious returns from a point-cloud canopy height model.
+
+    Under the default `max` aggregation a cell takes the tallest return that
+    falls in it, so one bad return — a bird, haze, a multiple-time-around
+    artifact — becomes the cell's height unless the cloud classified it as
+    noise. Many do not.
+
+    Such a return leaves a shape real canopy cannot: a single cell towering
+    over everything around it. Both fields are the two halves of that shape, in
+    meters, so they mean the same thing at any `alignment.resolution`. A `mean`,
+    `median`, or `percentile` aggregation already resists a lone return, so this
+    filter is aimed at the `max` case.
+    """
+
+    min_canopy_footprint_m: float = Field(
+        default=3.0,
+        gt=0,
+        description=(
+            "Narrowest ground footprint real canopy can occupy, in meters. A "
+            "cell is judged against everything within this distance, and only "
+            "a cell narrower than it can be rejected — so the filter does not "
+            "run at all once `alignment.resolution` reaches this value, where "
+            "one cell holds a stand rather than a crown."
+        ),
+    )
+    min_prominence_m: float = Field(
+        default=25.0,
+        gt=0,
+        description=(
+            "How far above every neighbour a cell must rise to be rejected, in "
+            "meters. Measured noise returns stood 40-80 m above their "
+            "surroundings; a real crown's peak is within a few meters of the "
+            "cells beside it."
+        ),
+    )
+
+
+class ChmMaxAggregation(BaseModel):
+    """Tallest return in the cell.
+
+    The height of whatever the cell's tallest thing is, which is a crown at a
+    cell narrower than one and a stand's tallest tree at a cell wider than one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["max"] = "max"
+
+
+class ChmMeanAggregation(BaseModel):
+    """Average height of every return in the cell.
+
+    Weighted by how the returns fall, so a cell that is half canopy and half
+    gap reads between the two rather than at the canopy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["mean"] = "mean"
+
+
+class ChmMedianAggregation(BaseModel):
+    """Height half the cell's returns lie below.
+
+    The same statistic as `percentile` at 50, spelled the way it is usually
+    asked for.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["median"] = "median"
+
+
+class ChmPercentileAggregation(BaseModel):
+    """Height a given fraction of the cell's returns lie below."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: Literal["percentile"] = "percentile"
+    percentile: float = Field(
+        gt=0,
+        le=100,
+        description=(
+            "Rank to take, as a percentage of the cell's returns. 100 is the "
+            "tallest return and 50 the median. Between two returns the height "
+            "is interpolated linearly."
+        ),
+    )
+
+
+ChmAggregation = Annotated[
+    ChmMaxAggregation
+    | ChmMeanAggregation
+    | ChmMedianAggregation
+    | ChmPercentileAggregation,
+    Field(discriminator="method"),
+]
+
+
 class PointCloudChmSource(CanopySource):
     """Source for a canopy height model rasterized from a point cloud.
 
-    Produces a continuous canopy height raster by taking the greatest height
-    above ground of any return in each cell.
+    Produces a continuous canopy height raster by reducing the heights above
+    ground of the returns in each cell to one value.
     """
 
     product: Literal["point_cloud"] = "point_cloud"
@@ -240,6 +340,20 @@ class PointCloudChmSource(CanopySource):
             "finishes processing; `null` before then."
         ),
     )
+    spike_filter: ChmSpikeFilter | None = Field(
+        default=None,
+        description=(
+            "Spurious-return removal this grid was built with, resolved from "
+            "the request. `null` means the grid was built without it."
+        ),
+    )
+    aggregation: ChmAggregation = Field(
+        default_factory=ChmMaxAggregation,
+        description=(
+            "Statistic this grid's cells reduce their returns with, resolved "
+            "from the request."
+        ),
+    )
 
 
 class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
@@ -255,6 +369,21 @@ class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
 
     source_point_cloud_id: str = Field(
         description="ID of the point cloud to rasterize. Must be an ALS cloud in this domain."
+    )
+    spike_filter: ChmSpikeFilter | None = Field(
+        default_factory=ChmSpikeFilter,
+        description=(
+            "Removal of lone spurious returns. Omit for the defaults; send "
+            "`null` to keep every return, leaving unclassified noise in the "
+            "grid."
+        ),
+    )
+    aggregation: ChmAggregation = Field(
+        default_factory=ChmMaxAggregation,
+        description=(
+            "Statistic each cell reduces the heights above ground of its "
+            "returns with. Carries `percentile` only on `method: percentile`."
+        ),
     )
 
 

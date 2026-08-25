@@ -27,6 +27,7 @@ _V2_COLUMNS = {
     "height",
     "fia_species_code",
     "fia_status_code",
+    "fia_crown_class_code",
     "dbh",
     "crown_ratio",
 }
@@ -41,6 +42,7 @@ _COLUMN_METADATA = {
     "y": ("continuous", "m"),
     "fia_species_code": ("categorical", None),
     "fia_status_code": ("categorical", None),
+    "fia_crown_class_code": ("categorical", None),
     "dbh": ("continuous", "cm"),
     "height": ("continuous", "m"),
     "crown_ratio": ("continuous", None),
@@ -53,6 +55,9 @@ class _InventorySchema(pa.DataFrameModel):
     height: Series[float] = pa.Field(ge=0, le=116)
     fia_species_code: Series[int] | None = pa.Field(nullable=True)
     fia_status_code: Series[int] | None = pa.Field(isin=[0, 1, 2, 3], nullable=True)
+    fia_crown_class_code: Series[int] | None = pa.Field(
+        isin=[1, 2, 3, 4, 5], nullable=True
+    )
     dbh: Series[float] | None = pa.Field(ge=0, nullable=True)
     crown_ratio: Series[float] | None = pa.Field(ge=0, le=1, nullable=True)
 

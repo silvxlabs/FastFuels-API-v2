@@ -9,10 +9,17 @@ These are pure unit tests with no external dependencies.
 import pytest
 from api.resources.grids.canopy.schema import (
     Attribution,
+    ChmMaxAggregation,
+    ChmMeanAggregation,
+    ChmMedianAggregation,
+    ChmPercentileAggregation,
+    ChmSpikeFilter,
     CreateMetaChmRequest,
     CreateNaipChmRequest,
+    CreatePointCloudChmRequest,
     MetaChmSource,
     NaipChmSource,
+    PointCloudChmSource,
     build_chm_bands,
 )
 from api.resources.grids.providers.canopy import CanopySource
@@ -308,3 +315,178 @@ class TestCreateNaipChmRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateNaipChmRequest(extent_buffer_cells=11)
+
+
+class TestChmSpikeFilter:
+    """Removing lone spurious returns from a point-cloud CHM."""
+
+    def test_defaults_are_the_measured_ones(self):
+        """A request that says nothing gets the shipped behaviour."""
+        spike_filter = ChmSpikeFilter()
+
+        assert spike_filter.min_canopy_footprint_m == 3.0
+        assert spike_filter.min_prominence_m == 25.0
+
+    def test_values_are_accepted(self):
+        spike_filter = ChmSpikeFilter(
+            min_canopy_footprint_m=30.0, min_prominence_m=40.0
+        )
+
+        assert spike_filter.min_canopy_footprint_m == 30.0
+        assert spike_filter.min_prominence_m == 40.0
+
+    @pytest.mark.parametrize("field", ["min_canopy_footprint_m", "min_prominence_m"])
+    @pytest.mark.parametrize("value", [0.0, -1.0])
+    def test_non_positive_distances_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            ChmSpikeFilter(**{field: value})
+
+
+class TestCreatePointCloudChmRequest:
+    """The point-cloud CHM create request."""
+
+    def test_minimal_valid_request(self):
+        request = CreatePointCloudChmRequest(source_point_cloud_id="cloud-1")
+
+        assert request.source_point_cloud_id == "cloud-1"
+
+    def test_spike_filter_is_on_by_default(self):
+        request = CreatePointCloudChmRequest(source_point_cloud_id="cloud-1")
+
+        assert request.spike_filter == ChmSpikeFilter()
+
+    def test_null_spike_filter_turns_it_off(self):
+        """The way to opt out, rather than a "none" sentinel inside the object."""
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1", spike_filter=None
+        )
+
+        assert request.spike_filter is None
+
+    def test_spike_filter_can_be_set(self):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1",
+            spike_filter={"min_canopy_footprint_m": 30.0},
+        )
+
+        assert request.spike_filter.min_canopy_footprint_m == 30.0
+        assert request.spike_filter.min_prominence_m == 25.0
+
+
+class TestPointCloudChmSource:
+    """What a stored point-cloud CHM grid records about how it was built."""
+
+    def test_spike_filter_is_recorded(self):
+        """Resolved, like `alignment.resolution`, so the grid is reproducible."""
+        source = PointCloudChmSource(
+            source_point_cloud_id="cloud-1", spike_filter=ChmSpikeFilter()
+        )
+
+        assert source.model_dump()["spike_filter"] == {
+            "min_canopy_footprint_m": 3.0,
+            "min_prominence_m": 25.0,
+        }
+
+    def test_spike_filter_records_being_off(self):
+        source = PointCloudChmSource(source_point_cloud_id="cloud-1", spike_filter=None)
+
+        assert source.model_dump()["spike_filter"] is None
+
+
+class TestChmAggregation:
+    """The statistic a point-cloud CHM cell reduces its returns with."""
+
+    def test_default_is_the_maximum(self):
+        """Omitting it has to reproduce what every existing grid was built with."""
+        request = CreatePointCloudChmRequest(source_point_cloud_id="cloud-1")
+
+        assert request.aggregation == ChmMaxAggregation()
+
+    @pytest.mark.parametrize(
+        "method,model",
+        [
+            ("max", ChmMaxAggregation),
+            ("mean", ChmMeanAggregation),
+            ("median", ChmMedianAggregation),
+        ],
+    )
+    def test_a_method_without_a_rank_carries_no_parameter(self, method, model):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1", aggregation={"method": method}
+        )
+
+        assert isinstance(request.aggregation, model)
+        assert request.aggregation.method == method
+
+    def test_percentile_carries_its_rank(self):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1",
+            aggregation={"method": "percentile", "percentile": 98},
+        )
+
+        assert isinstance(request.aggregation, ChmPercentileAggregation)
+        assert request.aggregation.percentile == 98.0
+
+    def test_percentile_without_a_rank_is_rejected(self):
+        """The discriminator is what makes `percentile` required, and only there."""
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1", aggregation={"method": "percentile"}
+            )
+
+    @pytest.mark.parametrize("percentile", [0.0, -1.0, 100.1, 101.0])
+    def test_a_rank_outside_the_range_is_rejected(self, percentile):
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1",
+                aggregation={"method": "percentile", "percentile": percentile},
+            )
+
+    @pytest.mark.parametrize("percentile", [0.5, 50.0, 95.0, 98.0, 100.0])
+    def test_a_rank_inside_the_range_is_accepted(self, percentile):
+        request = CreatePointCloudChmRequest(
+            source_point_cloud_id="cloud-1",
+            aggregation={"method": "percentile", "percentile": percentile},
+        )
+
+        assert request.aggregation.percentile == percentile
+
+    def test_a_rank_on_another_method_is_rejected(self):
+        """`percentile` is meaningless on `mean`; accepting it would hide a typo."""
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1",
+                aggregation={"method": "mean", "percentile": 95},
+            )
+
+    def test_an_unknown_method_is_rejected(self):
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1", aggregation={"method": "p95"}
+            )
+
+
+class TestPointCloudChmSourceAggregation:
+    """What a stored point-cloud CHM grid records about its statistic."""
+
+    def test_the_statistic_is_recorded(self):
+        source = PointCloudChmSource(
+            source_point_cloud_id="cloud-1",
+            aggregation=ChmPercentileAggregation(percentile=95),
+        )
+
+        assert source.model_dump()["aggregation"] == {
+            "method": "percentile",
+            "percentile": 95.0,
+        }
+
+    def test_a_grid_that_records_nothing_took_the_maximum(self):
+        """Every grid built before the control existed took the maximum.
+
+        The default is a true statement about those grids rather than a
+        placeholder, so the field is never null and never has to be read as
+        "unknown".
+        """
+        source = PointCloudChmSource(source_point_cloud_id="cloud-1")
+
+        assert source.model_dump()["aggregation"] == {"method": "max"}

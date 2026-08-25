@@ -24,6 +24,8 @@ from api.resources.grids.schema import (
 )
 from api.resources.grids.utils import compute_chunk_metadata
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.grids import compute_chunks_doc
@@ -273,6 +275,18 @@ async def _call_handler(
         array_format=array_format,
         order=order,
     )
+
+
+def _route_json(response) -> dict:
+    """Serialize a handler return value exactly as the JSON data route does.
+
+    Starlette's JSONResponse serializes with ``allow_nan=False``, so any
+    non-finite float that survives into the response is a bare 500 in
+    production (issue #487). Handler tests that only inspect the returned
+    model miss that entirely.
+    """
+    payload = jsonable_encoder(response)
+    return json.loads(JSONResponse(content=payload).body)
 
 
 # Static-zarr assertion helpers
@@ -756,6 +770,127 @@ class TestGetGridDataJson:
         assert exc.value.status_code == 413
         assert "int32" in exc.value.detail
 
+    # Non-finite value unit tests (issue #487)
+    #
+    # Float grids written by lib.zarr_utils.save_zarr carry fill_value=NaN, and
+    # any band whose cells can be missing (point-cloud CHM most visibly) holds
+    # NaN. NaN and +/-Inf have no JSON representation, so they must reach the
+    # client as null rather than raising inside the response serializer. These
+    # tests drive a fake zarr array, so they hold for every producer.
+
+    @pytest.mark.anyio
+    async def test_dense_nan_serializes_as_null(self, monkeypatch):
+        fake_array = FakeGridArray(
+            np.array([[1.0, np.nan], [np.nan, 4.0]], dtype=np.float32),
+            fill_value=np.float32(np.nan),
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_json,
+            array_format=GridDataArrayFormat.dense,
+        )
+
+        assert response.data.values == [1.0, None, None, 4.0]
+        assert _route_json(response)["data"]["values"] == [1.0, None, None, 4.0]
+
+    @pytest.mark.anyio
+    async def test_dense_infinity_serializes_as_null(self, monkeypatch):
+        fake_array = FakeGridArray(
+            np.array([[np.inf, -np.inf, 1.5]], dtype=np.float32),
+            fill_value=np.float32(np.nan),
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_json,
+            array_format=GridDataArrayFormat.dense,
+        )
+
+        assert response.data.values == [None, None, 1.5]
+        assert _route_json(response)["data"]["values"] == [None, None, 1.5]
+
+    @pytest.mark.anyio
+    async def test_dense_finite_values_unaffected(self, monkeypatch):
+        fake_array = FakeGridArray(
+            np.array([[1.5, 2.5, 3.5]], dtype=np.float32),
+            fill_value=np.float32(np.nan),
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_json,
+            array_format=GridDataArrayFormat.dense,
+        )
+
+        assert response.data.values == [1.5, 2.5, 3.5]
+        assert _route_json(response)["data"]["values"] == [1.5, 2.5, 3.5]
+
+    @pytest.mark.anyio
+    async def test_sparse_nan_fill_value_serializes_as_null(self, monkeypatch):
+        # NaN fill: the NaN cells are compressed out, and the fill value itself
+        # is reported as null — "cells not listed are nodata".
+        fake_array = FakeGridArray(
+            np.array([[1.0, np.nan, 3.0]], dtype=np.float32),
+            fill_value=np.float32(np.nan),
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_json,
+            array_format=GridDataArrayFormat.sparse,
+        )
+
+        assert response.data.indices == [0, 2]
+        assert response.data.values == [1.0, 3.0]
+        assert response.data.fill_value is None
+        payload = _route_json(response)["data"]
+        assert payload["indices"] == [0, 2]
+        assert payload["values"] == [1.0, 3.0]
+
+    @pytest.mark.anyio
+    async def test_sparse_without_fill_value_serializes_nan_as_null(self, monkeypatch):
+        # No fill value declared: every cell is listed, so the NaN cells appear
+        # in the values array and must serialize as null.
+        fake_array = FakeGridArray(
+            np.array([[np.nan, 2.0]], dtype=np.float32), fill_value=None
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_json,
+            array_format=GridDataArrayFormat.sparse,
+        )
+
+        assert response.data.indices == [0, 1]
+        assert response.data.values == [None, 2.0]
+        assert _route_json(response)["data"]["values"] == [None, 2.0]
+
+    @pytest.mark.anyio
+    async def test_sparse_null_fill_value_stays_in_payload(self, monkeypatch):
+        # The endpoint documents `fill_value: null`; response_model_exclude_none
+        # must not drop the key, or a client cannot tell a null fill from a
+        # field the API forgot to send.
+        fake_array = FakeGridArray(
+            np.array([[1.0, 2.0]], dtype=np.float32), fill_value=None
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_json,
+            array_format=GridDataArrayFormat.sparse,
+        )
+
+        payload = _route_json(response)["data"]
+        assert "fill_value" in payload
+        assert payload["fill_value"] is None
+
     # Static-fixture integration
 
     def test_2d_dense_matches_static_zarr(
@@ -1083,6 +1218,51 @@ class TestGetGridDataBinary:
 
         assert exc.value.status_code == 413
         assert "int32" in exc.value.detail
+
+    # Non-finite value unit tests (issue #487)
+    #
+    # The JSON variant maps NaN to null because JSON cannot carry it. Binary
+    # can, so these guard against a NaN fix leaking into the raw path.
+
+    @pytest.mark.anyio
+    async def test_dense_nan_stays_raw_float_bytes(self, monkeypatch):
+        fake_array = FakeGridArray(
+            np.array([[1.0, np.nan]], dtype=np.float32),
+            fill_value=np.float32(np.nan),
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_binary,
+            array_format=GridDataArrayFormat.dense,
+        )
+
+        values = np.frombuffer(response.body, dtype=np.float32)
+        assert values[0] == 1.0
+        assert np.isnan(values[1])
+
+    @pytest.mark.anyio
+    async def test_sparse_nan_fill_stays_raw_float_bytes(self, monkeypatch):
+        fake_array = FakeGridArray(
+            np.array([[1.0, np.nan, 3.0]], dtype=np.float32),
+            fill_value=np.float32(np.nan),
+        )
+
+        response = await _call_handler(
+            monkeypatch,
+            fake_array,
+            grids_router.get_grid_data_binary,
+            array_format=GridDataArrayFormat.sparse,
+        )
+
+        assert response.headers["X-Data-NNZ"] == "2"
+        assert response.headers["X-Data-Fill-Value"] == "nan"
+        index_bytes = 2 * np.dtype(np.int32).itemsize
+        indices = np.frombuffer(response.body[:index_bytes], dtype=np.int32)
+        values = np.frombuffer(response.body[index_bytes:], dtype=np.float32)
+        assert indices.tolist() == [0, 2]
+        assert values.tolist() == [1.0, 3.0]
 
     # Static-fixture integration
 

@@ -2,7 +2,7 @@
 
 Thin HTTP layer only. Source routing lives in `treevox.dispatch`; the
 voxelization job in `treevox.handlers.voxelize`; Firestore reads/writes in
-`treevox.firestore_io`; inventory parquet I/O in `treevox.inventory_io`;
+`treevox.firestore_io`; inventory parquet I/O in `lib.inventory_io`;
 error types in `treevox.errors`.
 
 Retry semantics (via `X-CloudTasks-TaskRetryCount`):

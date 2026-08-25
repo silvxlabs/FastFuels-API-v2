@@ -9,8 +9,10 @@ import pytest
 from api.resources.point_clouds.schema import (
     ListPointCloudsResponse,
     PointCloud,
+    PointCloudDataMetadata,
     PointCloudGeoreference,
     PointCloudSortField,
+    PointCloudTileDataResponse,
     PointCloudType,
     UpdatePointCloudRequestBody,
 )
@@ -69,6 +71,44 @@ class TestPointCloudGeoreference:
     def test_crs_required(self):
         with pytest.raises(ValidationError):
             PointCloudGeoreference(bounds=[0.0, 0.0, 0.0, 1.0, 1.0, 1.0])
+
+
+class TestPointCloudDataSchema:
+    def test_metadata_requires_exact_2d_and_3d_vectors(self):
+        metadata = PointCloudDataMetadata(
+            tile_m=500.0,
+            lod_levels=6,
+            crs="EPSG:32612",
+            bounds=[0.0, 0.0, 500.0, 500.0],
+            scales=[0.01, 0.01, 0.01],
+            offsets=[0.0, 0.0, 0.0],
+            columns={"X": "int32"},
+            tiles=[
+                {
+                    "tile_x": 0,
+                    "tile_y": 0,
+                    "bounds": [0.0, 0.0, 500.0, 500.0],
+                    "points_by_lod": [1, 1, 1, 1, 1, 4],
+                }
+            ],
+        )
+
+        assert metadata.tiles[0].points_by_lod[-1] == 4
+
+    def test_json_tile_response_is_columnar(self):
+        response = PointCloudTileDataResponse(
+            tile_x=0,
+            tile_y=0,
+            bounds=[0.0, 0.0, 500.0, 500.0],
+            lod=0,
+            classes=None,
+            scales=[0.01, 0.01, 0.01],
+            offsets=[0.0, 0.0, 0.0],
+            columns={"X": "int32"},
+            data={"X": [42]},
+        )
+
+        assert response.data == {"X": [42]}
 
 
 class TestPointCloud:

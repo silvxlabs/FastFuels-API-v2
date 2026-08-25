@@ -5,7 +5,7 @@ Routed to by `treevox.dispatch.dispatch_handler` on the
 
 Distinguishes carefully between:
 - *inventory* (tabular tree data — a parquet of rows); handled by
-  `treevox.inventory_io`.
+  `lib.inventory_io`.
 - *voxelization* (the 3D gridding job this module runs); the thing treevox
   actually does.
 
@@ -29,10 +29,10 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from lib.inventory_io import assign_tree_ids, drop_null_rows, read_inventory
 from treevox import storage, voxelize
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
-from treevox.inventory_io import assign_tree_ids, drop_null_rows, read_inventory
 
 logger = logging.getLogger(__name__)
 

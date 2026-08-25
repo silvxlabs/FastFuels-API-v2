@@ -7,6 +7,7 @@ Contains the shared version registry and the LANDFIRE Product Service client.
 from lib.landfire.config import (
     LANDFIRE_VERSIONS,
     NB_CODE_MAP,
+    SEASON_CODES,
     UnknownLandfireVersionError,
     validate_landfire_version,
 )
@@ -21,12 +22,14 @@ from lib.landfire.lfps import (
     download,
     list_products,
     poll_status,
+    resolve_seasonal_product,
     submit_job,
 )
 
 __all__ = [
     "LANDFIRE_VERSIONS",
     "NB_CODE_MAP",
+    "SEASON_CODES",
     "UnknownLandfireVersionError",
     "validate_landfire_version",
     "LfpsJob",
@@ -40,4 +43,5 @@ __all__ = [
     "CoverageStatus",
     "covers_annual",
     "covers_seasonal",
+    "resolve_seasonal_product",
 ]

@@ -14,6 +14,7 @@ import geopandas as gpd
 import numpy as np
 import pyproj
 import pytest
+from affine import Affine
 from griddle.handlers import chm_blocks, chm_point_cloud
 from pyarrow.fs import LocalFileSystem
 from scipy.ndimage import distance_transform_edt
@@ -61,6 +62,10 @@ _MANIFEST = {
     "mins": [0.0, 0.0, 0.0],
     "scales": [0.001, 0.001, 0.001],
     "offsets": [0.0, 0.0, 0.0],
+    # Read only by the retaining statistics, to size a block by the points it
+    # has to hold. Sparse enough here that one tile is always under the budget.
+    "points": 10_000,
+    "tiles": 1,
 }
 
 
@@ -69,16 +74,28 @@ def _roi(size: float = 4.0) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(geometry=[box(0.0, 0.0, size, size)], crs=CRS)
 
 
-def _flat_ground(size: int = 4, elevation: float = 10.0):
-    """One ground return at the centre of every cell of a `size`x`size` grid."""
+def _flat_ground(size: int = 4, elevation: float = 10.0, resolution: float = 1.0):
+    """One ground return at the centre of every cell of a `size`x`size` grid.
+
+    `resolution` is the cell size the grid will be rasterised at, so a fixture
+    stays one return per cell at any resolution.
+    """
     xs, ys, zs, classes = [], [], [], []
     for row in range(size):
         for col in range(size):
-            xs.append(col + 0.5)
-            ys.append(size - row - 0.5)
+            xs.append((col + 0.5) * resolution)
+            ys.append((size - row - 0.5) * resolution)
             zs.append(elevation)
             classes.append(2)
     return xs, ys, zs, classes
+
+
+# What the API stores on `source.spike_filter` for a request that asked for
+# nothing, so a test that says nothing about it runs the shipped behaviour.
+_DEFAULT_SPIKE_FILTER = {
+    "min_canopy_footprint_m": chm_point_cloud.MIN_CANOPY_FOOTPRINT_M,
+    "min_prominence_m": chm_point_cloud.SPIKE_THRESHOLD_M,
+}
 
 
 def _target_grid(transform, shape, crs=CRS):
@@ -95,11 +112,17 @@ def _run(
     target_grid_doc=None,
     extent_buffer_cells=0,
     block_cells=None,
+    spike_filter=_DEFAULT_SPIKE_FILTER,
+    aggregation=None,
 ):
     # Storage and the dataset handle are stubbed so the algorithm runs without
     # GCS. `block_cells` forces a blocking; left alone the handler picks one.
     patches = [
         patch.object(chm_point_cloud, "read_manifest", return_value=_MANIFEST),
+        # The retaining passes read per-tile counts from the dataset; stub it to
+        # "no counts", i.e. every tile under budget -> one block per tile. Tests
+        # that exercise the split override this.
+        patch.object(chm_point_cloud, "_tile_point_counts", return_value={}),
         # One worker so the pass runs here and these patches reach it; a
         # forkserver child would re-import and see the real reader.
         patch.object(chm_point_cloud, "GRIDDLE_READ_WORKERS", 1),
@@ -123,6 +146,8 @@ def _run(
             target_grid_doc=target_grid_doc,
             progress=lambda message, percent=None: None,
             extent_buffer_cells=extent_buffer_cells,
+            spike_filter=spike_filter,
+            aggregation=aggregation,
         )
 
 
@@ -224,6 +249,150 @@ class TestOutlierHandling:
 
         assert ds["chm"].values[0, :3] == pytest.approx(14.0)
 
+    @pytest.mark.parametrize("resolution", [1.0, 2.0])
+    def test_spike_is_removed_wherever_a_cell_is_narrower_than_a_crown(
+        self, resolution
+    ):
+        """The rule holds while a cell cannot hold a crown, not just at 1 m."""
+        x, y, z, c = _flat_ground(resolution=resolution)
+        x = [*x, resolution / 2]
+        y = [*y, 4 * resolution - resolution / 2]
+        z, c = [*z, 10.0 + 40.0], [*c, 1]
+
+        ds, _ = _run(
+            _chunks(x, y, z, c),
+            [1, 2],
+            resolution=resolution,
+            roi=_roi(size=4 * resolution),
+        )
+
+        assert np.isnan(ds["chm"].values[0, 0])
+
+    def test_the_filter_can_be_turned_off(self):
+        """`spike_filter: null` keeps every return, spurious ones included."""
+        x, y, z, c = _flat_ground()
+        x, y, z, c = [*x, 0.5], [*y, 3.5], [*z, 10.0 + 40.0], [*c, 1]
+
+        ds, _ = _run(_chunks(x, y, z, c), [1, 2], spike_filter=None)
+
+        assert ds["chm"].values[0, 0] == pytest.approx(40.0)
+
+    def test_footprint_reaches_coarse_cells_when_asked(self):
+        """The metre-sized footprint is the knob for the coarse case.
+
+        The default declines to judge a 30 m cell because one holds a stand. A
+        user who knows their cloud carries noise and their stands do not look
+        like this can say so.
+        """
+        x, y, z, c = _flat_ground(resolution=30.0)
+        x, y, z, c = [*x, 15.0], [*y, 105.0], [*z, 10.0 + 35.0], [*c, 5]
+
+        ds, _ = _run(
+            _chunks(x, y, z, c),
+            [2, 5],
+            resolution=30.0,
+            roi=_roi(size=120.0),
+            spike_filter={"min_canopy_footprint_m": 60.0, "min_prominence_m": 25.0},
+        )
+
+        assert np.isnan(ds["chm"].values[0, 0])
+
+    def test_prominence_can_be_lowered_to_catch_shorter_spikes(self):
+        """A 15 m lone return survives the default and not a 10 m prominence."""
+        x, y, z, c = _flat_ground()
+        x, y, z, c = [*x, 0.5], [*y, 3.5], [*z, 10.0 + 15.0], [*c, 1]
+
+        kept, _ = _run(_chunks(x, y, z, c), [1, 2])
+        dropped, _ = _run(
+            _chunks(x, y, z, c),
+            [1, 2],
+            spike_filter={"min_canopy_footprint_m": 3.0, "min_prominence_m": 10.0},
+        )
+
+        assert kept["chm"].values[0, 0] == pytest.approx(15.0)
+        assert np.isnan(dropped["chm"].values[0, 0])
+
+    @pytest.mark.parametrize("resolution", [5.0, 10.0, 30.0])
+    def test_isolated_stand_survives_where_a_cell_is_wider_than_a_crown(
+        self, resolution
+    ):
+        """One tall cell in a bare surround is a stand once cells are coarse.
+
+        The same raster shape means different things at different cell sizes:
+        at 1 m it needs a crown narrower than a metre to arise, which is what
+        makes it noise, while at 30 m it is 900 m2 of canopy in bare
+        surroundings -- a shelterbelt, a grove, a riparian stringer. Height
+        alone cannot separate the two, so the rule stops applying rather than
+        deleting the stand (#485).
+        """
+        x, y, z, c = _flat_ground(resolution=resolution)
+        x = [*x, resolution / 2]
+        y = [*y, 4 * resolution - resolution / 2]
+        z, c = [*z, 10.0 + 35.0], [*c, 5]
+
+        ds, _ = _run(
+            _chunks(x, y, z, c),
+            [2, 5],
+            resolution=resolution,
+            roi=_roi(size=4 * resolution),
+        )
+
+        assert ds["chm"].values[0, 0] == pytest.approx(35.0)
+
+
+class TestSpikeFootprint:
+    """The spike rule is sized in metres, like the fill and the PMF windows."""
+
+    @pytest.mark.parametrize(
+        "resolution,expected",
+        [(0.5, 7), (1.0, 3), (2.0, 3), (3.0, 0), (5.0, 0), (10.0, 0), (30.0, 0)],
+    )
+    def test_window_spans_the_narrowest_real_crown(self, resolution, expected):
+        """A window covering `MIN_CANOPY_FOOTPRINT_M`, or none at all.
+
+        Zero means a single cell is already wider than any crown that could
+        produce the feature, so isolation carries no information and the rule
+        does not run.
+        """
+        footprint = chm_point_cloud.MIN_CANOPY_FOOTPRINT_M
+
+        assert chm_point_cloud._spike_window_cells(footprint, resolution) == expected
+
+    def test_a_wider_window_judges_isolation_over_the_same_distance(self):
+        """Finer cells widen the window rather than shrinking what it sees.
+
+        At 0.5 m cells the window is 7, so a cell is only isolated if nothing
+        within 1.5 m of it is tall -- the same physical reach a 3-cell window
+        has at 1 m. A canopy return two cells away would be outside a 3-cell
+        window and is inside this one.
+        """
+        chm = np.zeros((7, 7), dtype=np.float32)
+        chm[3, 3] = 40.0
+        window = chm_point_cloud._spike_window_cells(
+            chm_point_cloud.MIN_CANOPY_FOOTPRINT_M, 0.5
+        )
+
+        alone = chm_point_cloud._remove_spikes(
+            chm, threshold=chm_point_cloud.SPIKE_THRESHOLD_M, window=window
+        )
+        with_canopy = chm.copy()
+        with_canopy[3, 5] = 20.0
+        accompanied = chm_point_cloud._remove_spikes(
+            with_canopy, threshold=chm_point_cloud.SPIKE_THRESHOLD_M, window=window
+        )
+
+        assert np.isnan(alone[3, 3])
+        assert accompanied[3, 3] == pytest.approx(40.0)
+
+    def test_no_window_leaves_the_raster_untouched(self):
+        chm = np.array([[0.0, 0.0, 0.0], [0.0, 40.0, 0.0], [0.0, 0.0, 0.0]])
+
+        despiked = chm_point_cloud._remove_spikes(
+            chm, threshold=chm_point_cloud.SPIKE_THRESHOLD_M, window=0
+        )
+
+        assert despiked == pytest.approx(chm)
+
 
 class TestGroundSource:
     """Ground comes from the classification when present, else from the data."""
@@ -317,6 +486,162 @@ class TestGroundGapFill:
         filled = chm_point_cloud._fill_gaps(surface, 4)
 
         assert np.isnan(filled[0, 5:]).all()
+
+
+# Vertical spread of a lidar ground return about the terrain it measures, in
+# metres. Ranging noise, beam footprint and the low vegetation a vendor calls
+# ground all land in here; the value is the order an airborne survey achieves.
+# It is what decides how far a per-cell extreme sits below the true surface.
+GROUND_NOISE_M = 0.10
+
+# The two densities issue #503 measured, in returns per square metre: a sparse
+# 3DEP acquisition and a dense one, 38x apart. At 1 m cells these are also
+# returns per cell.
+SPARSE_DENSITY = 0.65
+DENSE_DENSITY = 25.0
+
+# Height of the canopy return above the true surface. Any figure clear of the
+# noise works; the cell's correct CHM value is exactly this.
+CANOPY_HEIGHT_M = 10.0
+
+# Wide enough that the statistics are not the sample size talking: 1,600 cells,
+# and 40,000 ground returns at the dense end.
+STATISTICAL_DOMAIN_M = 40
+
+
+def _flat(x, y):
+    return np.full(np.shape(x), 100.0)
+
+
+def _slope(x, y):
+    """A 20% grade, steep enough that a cell spans 0.2 m of relief."""
+    return 100.0 + 0.2 * np.asarray(x) - 0.1 * np.asarray(y)
+
+
+def _ridge(x, y):
+    """10 m of relief over the domain, curved at a scale a window can smooth."""
+    return 100.0 + 5.0 * np.cos(np.pi * np.asarray(x) / 20.0)
+
+
+def _noisy_cloud(surface, density, seed, size=STATISTICAL_DOMAIN_M):
+    """Ground returns scattered over `surface`, plus a canopy return per cell.
+
+    Ground is sampled uniformly across the domain at `density` returns per
+    square metre and displaced by Gaussian noise, so the returns in any cell are
+    an unbiased sample of the terrain under it however many of them there are.
+
+    The canopy return sits at the cell centre exactly `CANOPY_HEIGHT_M` above
+    the true surface. Bilinear sampling at a cell centre reads that cell and no
+    other, so the cell's CHM is that height minus the ground estimate's error
+    there — which is what makes the error readable off the output band.
+    """
+    rng = np.random.default_rng(seed)
+    count = int(round(density * size * size))
+    x = rng.uniform(0.0, float(size), count)
+    y = rng.uniform(0.0, float(size), count)
+    z = surface(x, y) + rng.normal(0.0, GROUND_NOISE_M, count)
+
+    centres = np.arange(size) + 0.5
+    cx, cy = (axis.ravel() for axis in np.meshgrid(centres, centres))
+    return (
+        np.concatenate([x, cx]),
+        np.concatenate([y, cy]),
+        np.concatenate([z, surface(cx, cy) + CANOPY_HEIGHT_M]),
+        np.concatenate([np.full(count, 2), np.full(cx.size, 5)]),
+    )
+
+
+def _height_error(surface, density, seed=0, size=STATISTICAL_DOMAIN_M):
+    """Per-cell CHM error against the height every cell is known to have."""
+    dataset, _ = _run(
+        _chunks(*_noisy_cloud(surface, density, seed, size)),
+        [2, 5],
+        roi=_roi(size=float(size)),
+    )
+    error = dataset["chm"].values.astype(np.float64) - CANOPY_HEIGHT_M
+    return error[np.isfinite(error)]
+
+
+# A systematic offset smaller than half the ranging noise is not something the
+# returns can be said to disagree with. Above it, the number is the estimator.
+BIAS_TOLERANCE_M = 0.05
+
+# What the same terrain may read differently at 38x the density. The point of
+# the test is that this is not a tolerance the data forces: the returns are an
+# unbiased sample of the same surface at both, so a consistent estimator drives
+# this to zero and only the sample size keeps it off it.
+DENSITY_DRIFT_TOLERANCE_M = 0.03
+
+
+class TestHeightsDoNotDependOnPointDensity:
+    """The same terrain, sampled twice as densely, is still the same terrain.
+
+    Every test here puts one canopy return at each cell centre, exactly
+    `CANOPY_HEIGHT_M` above a surface known in closed form, so a cell's correct
+    value is that height and the output band reads back the ground estimator's
+    error directly.
+
+    A per-cell minimum cannot hold this. The minimum of n samples falls as n
+    rises — about 1.96 standard deviations below the mean at 25 returns against
+    0 at one — so a denser cloud puts the ground further under the terrain and
+    every height above it further over the truth. That is an estimator problem,
+    not an arithmetic one: the minimum is computed correctly and is the wrong
+    statistic. Issue #503 measured it on real clouds against PDAL, +0.13 m at
+    0.65 pts/m2 against +0.24 m at 25 pts/m2, with PDAL triangulating the return
+    positions instead.
+
+    The bias tests and the drift test say the same thing two ways on purpose:
+    the drift is what a user sees when they re-fly the same stand, and the bias
+    is what makes the sparse case wrong too, only less.
+    """
+
+    def test_sparse_cloud_reads_the_true_height(self):
+        assert abs(np.mean(_height_error(_flat, SPARSE_DENSITY))) < BIAS_TOLERANCE_M
+
+    def test_dense_cloud_reads_the_true_height(self):
+        assert abs(np.mean(_height_error(_flat, DENSE_DENSITY))) < BIAS_TOLERANCE_M
+
+    def test_the_two_densities_read_the_same_height(self):
+        """The headline of #503: the error scales with density."""
+        sparse = np.mean(_height_error(_flat, SPARSE_DENSITY))
+        dense = np.mean(_height_error(_flat, DENSE_DENSITY))
+
+        assert abs(dense - sparse) < DENSITY_DRIFT_TOLERANCE_M
+
+    def test_a_slope_reads_the_true_height(self):
+        """Ground under a slope is still ground, and the same at both densities.
+
+        A cell on a 20% grade spans 0.2 m of relief, so its lowest return is
+        also its most downhill one — a second way for an extreme to sit below
+        the cell rather than on it.
+        """
+        sparse = np.mean(_height_error(_slope, SPARSE_DENSITY))
+        dense = np.mean(_height_error(_slope, DENSE_DENSITY))
+
+        assert abs(dense) < BIAS_TOLERANCE_M
+        assert abs(dense - sparse) < DENSITY_DRIFT_TOLERANCE_M
+
+
+class TestGroundStillFollowsTheTerrain:
+    """Fidelity, held separately from bias so a fix cannot trade one for the other.
+
+    Every assertion here is on the spread of the error rather than its mean. A
+    constant offset moves the mean and leaves the spread alone, so these say
+    only whether the estimate tracks the terrain cell by cell — which is what
+    an estimator that removed the bias by widening a window until it flattened
+    the ground would lose.
+    """
+
+    def test_a_slope_is_followed_cell_by_cell(self):
+        assert np.std(_height_error(_slope, DENSE_DENSITY)) < 0.10
+
+    def test_a_ridge_is_not_smoothed_away(self):
+        """10 m of relief over 40 m, curved rather than planar, so a window
+        wide enough to average the noise away starts cutting the crest."""
+        error = _height_error(_ridge, DENSE_DENSITY)
+
+        assert np.std(error) < 0.10
+        assert np.max(np.abs(error - np.mean(error))) < 0.50
 
 
 class TestDatasetContract:
@@ -427,24 +752,31 @@ class TestReadingFromStorage:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        for tile_x, xs in ((0, [1.0, 2.0, 3.0]), (1, [501.0, 502.0])):
-            directory = root / f"tile_x={tile_x}" / "tile_y=0"
-            directory.mkdir(parents=True)
-            count = len(xs)
-            table = pa.table(
-                {
-                    "lod": pa.array([0] * count, pa.uint8()),
-                    "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
-                    "Y": pa.array([1000] * count, pa.int32()),
-                    "Z": pa.array(
-                        [round(v * 1000) for v in ([10.0, 20.0, 30.0][:count])],
-                        pa.int32(),
-                    ),
-                    "intensity": pa.array([0] * count, pa.uint16()),
-                    "classification": pa.array(([2, 5, 5][:count]), pa.uint8()),
-                }
-            )
-            pq.write_table(table, directory / "part-00000.parquet")
+        table = pa.table(
+            {
+                "tile_x": pa.array([0, 0, 0, 1, 1], pa.int32()),
+                "tile_y": pa.array([0] * 5, pa.int32()),
+                "lod": pa.array([0] * 5, pa.uint8()),
+                "X": pa.array([1000, 2000, 3000, 501000, 502000], pa.int32()),
+                "Y": pa.array([1000] * 5, pa.int32()),
+                "Z": pa.array([10000, 20000, 30000, 10000, 20000], pa.int32()),
+                "intensity": pa.array([0] * 5, pa.uint16()),
+                "classification": pa.array([2, 5, 5, 2, 5], pa.uint8()),
+            }
+        )
+        metadata = []
+        pq.write_to_dataset(
+            table,
+            root,
+            partition_cols=["tile_x", "tile_y"],
+            basename_template="part-{i}.parquet",
+            metadata_collector=metadata,
+        )
+        pq.write_metadata(
+            metadata[0].schema.to_arrow_schema(),
+            root / "_metadata",
+            metadata_collector=metadata,
+        )
 
     def test_reads_only_the_partitions_a_block_overlaps(self, tmp_path):
         root = tmp_path / "cloud.parquet"
@@ -531,6 +863,114 @@ class TestBlockingIsInvisible:
                     zs.append(ground + rng.uniform(1.0, 18.0))
                     classes.append(5)
         return xs, ys, zs, classes
+
+    def test_a_mean_survives_blocking(self):
+        """A sum and a count are folds, so the ordinary blocking covers them."""
+        cloud = self._cloud()
+        roi = _roi(self.SIZE_M)
+        aggregation = {"method": "mean"}
+
+        whole, _ = _run(
+            _chunks(*cloud),
+            [2],
+            resolution=self.RESOLUTION,
+            roi=roi,
+            block_cells=4096,
+            aggregation=aggregation,
+        )
+        blocked, _ = _run(
+            _chunks(*cloud),
+            [2],
+            resolution=self.RESOLUTION,
+            roi=roi,
+            block_cells=self.BLOCK_CELLS,
+            aggregation=aggregation,
+        )
+
+        assert whole["chm"].shape[0] // self.BLOCK_CELLS >= 2
+        assert np.isfinite(whole["chm"].values).any()
+        np.testing.assert_array_equal(whole["chm"].values, blocked["chm"].values)
+
+    @pytest.mark.parametrize(
+        "aggregation",
+        [{"method": "median"}, {"method": "percentile", "percentile": 95}],
+    )
+    def test_a_retaining_statistic_survives_any_division(self, aggregation):
+        """A retaining pass blocks by cloud tile, so the tiling is what divides
+        it. Any tiling has to agree, cell for cell, with the whole grid read in
+        one block — a tile per cell (the most divided the pass can be) as much
+        as a single tile over the domain.
+        """
+        cloud = self._cloud()
+        roi = _roi(self.SIZE_M)
+
+        def run(tile_m):
+            manifest = {**_MANIFEST, "tile_m": tile_m}
+            with patch.object(chm_point_cloud, "read_manifest", return_value=manifest):
+                blocks = chm_point_cloud._tile_blocks(
+                    (self._cells(), self._cells()), self._transform(), manifest
+                )
+                return len(blocks), _run(
+                    _chunks(*cloud),
+                    [2],
+                    resolution=self.RESOLUTION,
+                    roi=roi,
+                    aggregation=aggregation,
+                )
+
+        one, (whole, whole_provenance) = run(10_000.0)
+        many, (divided, divided_provenance) = run(self.RESOLUTION)
+
+        # Guard the guard: one block vs a block per cell, or the split is a no-op.
+        assert one == 1
+        assert many == self._cells() ** 2
+        assert np.isfinite(whole["chm"].values).any()
+
+        np.testing.assert_array_equal(whole["chm"].values, divided["chm"].values)
+        assert whole_provenance == divided_provenance
+
+    def test_a_tile_over_budget_is_split_and_stays_exact(self):
+        """A tile too dense to hold at once is split spatially, and the split is
+        exact: a cell's returns stay in one piece, so the percentile is the same
+        as the whole tile read at once.
+        """
+        cloud = self._cloud()
+        roi = _roi(self.SIZE_M)
+        aggregation = {"method": "percentile", "percentile": 95}
+
+        whole, whole_provenance = _run(
+            _chunks(*cloud),
+            [2],
+            resolution=self.RESOLUTION,
+            roi=roi,
+            aggregation=aggregation,
+        )
+
+        # The domain sits in tile (0, 0). Call it far over budget so the split
+        # factor is > 1, and check it actually divided.
+        counts = {(0, 0): 100 * chm_point_cloud.RETAINED_POINTS_PER_BLOCK}
+        blocks = chm_point_cloud._tile_blocks(
+            (self._cells(), self._cells()), self._transform(), _MANIFEST, counts
+        )
+        assert len(blocks) > 1
+
+        with patch.object(chm_point_cloud, "_tile_point_counts", return_value=counts):
+            split, split_provenance = _run(
+                _chunks(*cloud),
+                [2],
+                resolution=self.RESOLUTION,
+                roi=roi,
+                aggregation=aggregation,
+            )
+
+        np.testing.assert_array_equal(whole["chm"].values, split["chm"].values)
+        assert whole_provenance == split_provenance
+
+    def _cells(self):
+        return int(self.SIZE_M / self.RESOLUTION)
+
+    def _transform(self):
+        return Affine(self.RESOLUTION, 0, 0.0, 0, -self.RESOLUTION, self.SIZE_M)
 
     # [2] takes the classified path, whose only blocked stage is the point
     # pass, so it pins the scatter-reduction. [1] takes the derived path, where
@@ -775,32 +1215,44 @@ def _pool_dataset(root, tile_m=4.0):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
+    tile_xs, tile_ys, xs, ys, zs, cs = [], [], [], [], [], []
     for tile_x in (0, 1):
         for tile_y in (0, 1):
-            xs, ys, zs, cs = [], [], [], []
             for col in range(4):
                 for row in range(4):
                     x = tile_x * tile_m + col + 0.5
                     y = tile_y * tile_m + row + 0.5
+                    tile_xs += [tile_x, tile_x]
+                    tile_ys += [tile_y, tile_y]
                     xs += [x, x]
                     ys += [y, y]
                     zs += [10.0, 25.0]
                     cs += [2, 5]
-            directory = root / f"tile_x={tile_x}" / f"tile_y={tile_y}"
-            directory.mkdir(parents=True)
-            pq.write_table(
-                pa.table(
-                    {
-                        "lod": pa.array([0] * len(xs), pa.uint8()),
-                        "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
-                        "Y": pa.array([round(v * 1000) for v in ys], pa.int32()),
-                        "Z": pa.array([round(v * 1000) for v in zs], pa.int32()),
-                        "intensity": pa.array([0] * len(xs), pa.uint16()),
-                        "classification": pa.array(cs, pa.uint8()),
-                    }
-                ),
-                directory / "part-00000.parquet",
-            )
+    table = pa.table(
+        {
+            "tile_x": pa.array(tile_xs, pa.int32()),
+            "tile_y": pa.array(tile_ys, pa.int32()),
+            "lod": pa.array([0] * len(xs), pa.uint8()),
+            "X": pa.array([round(v * 1000) for v in xs], pa.int32()),
+            "Y": pa.array([round(v * 1000) for v in ys], pa.int32()),
+            "Z": pa.array([round(v * 1000) for v in zs], pa.int32()),
+            "intensity": pa.array([0] * len(xs), pa.uint16()),
+            "classification": pa.array(cs, pa.uint8()),
+        }
+    )
+    metadata = []
+    pq.write_to_dataset(
+        table,
+        root,
+        partition_cols=["tile_x", "tile_y"],
+        basename_template="part-{i}.parquet",
+        metadata_collector=metadata,
+    )
+    pq.write_metadata(
+        metadata[0].schema.to_arrow_schema(),
+        root / "_metadata",
+        metadata_collector=metadata,
+    )
     return {
         "tile_m": tile_m,
         "mins": [0.0, 0.0, 0.0],
@@ -852,3 +1304,192 @@ class TestBlockPool:
         assert np.array_equal(np.isnan(inline), np.isnan(pooled))
         np.testing.assert_array_equal(inline, pooled)
         assert inline_provenance == pooled_provenance
+
+
+class TestAggregation:
+    """The statistic a cell reduces the heights of its returns with.
+
+    One cell of the fixture carries a known stack of returns, so every expected
+    value is arithmetic on a list rather than a recorded output. The ground
+    return itself is in that stack at zero: canopy height is a statistic over
+    everything the cell caught, not over the canopy alone.
+    """
+
+    HEIGHTS = [0.0, 2.0, 4.0, 12.0]
+
+    def _cloud(self, resolution: float = 1.0, size: int = 4):
+        """Flat ground, with `HEIGHTS` stacked over the top-left cell."""
+        xs, ys, zs, classes = _flat_ground(size=size, resolution=resolution)
+        for height in self.HEIGHTS[1:]:
+            xs = [*xs, 0.5 * resolution]
+            ys = [*ys, (size - 0.5) * resolution]
+            zs = [*zs, 10.0 + height]
+            classes = [*classes, 5]
+        return xs, ys, zs, classes
+
+    def _corner(self, aggregation, **kwargs):
+        ds, _ = _run(_chunks(*self._cloud()), [2, 5], aggregation=aggregation, **kwargs)
+        return ds["chm"].values[0, 0]
+
+    def test_the_default_is_the_maximum(self):
+        """A grid created before the control existed took the maximum."""
+        assert self._corner(None) == pytest.approx(12.0)
+        assert self._corner({}) == pytest.approx(12.0)
+
+    def test_max_takes_the_tallest_return(self):
+        assert self._corner({"method": "max"}) == pytest.approx(12.0)
+
+    def test_mean_averages_every_return(self):
+        assert self._corner({"method": "mean"}) == pytest.approx(4.5)
+
+    def test_median_takes_the_middle_return(self):
+        assert self._corner({"method": "median"}) == pytest.approx(3.0)
+
+    @pytest.mark.parametrize("percentile", [1.0, 25.0, 50.0, 95.0, 98.0, 100.0])
+    def test_a_percentile_matches_the_one_numpy_computes(self, percentile):
+        """Linear interpolation between order statistics, numpy's default."""
+        expected = np.percentile(self.HEIGHTS, percentile)
+
+        value = self._corner({"method": "percentile", "percentile": percentile})
+
+        assert value == pytest.approx(expected, rel=1e-6)
+
+    def test_median_is_the_fiftieth_percentile(self):
+        assert self._corner({"method": "median"}) == self._corner(
+            {"method": "percentile", "percentile": 50}
+        )
+
+    def test_the_hundredth_percentile_is_the_maximum(self):
+        assert self._corner({"method": "percentile", "percentile": 100}) == (
+            self._corner({"method": "max"})
+        )
+
+    @pytest.mark.parametrize(
+        "aggregation",
+        [
+            {"method": "max"},
+            {"method": "mean"},
+            {"method": "median"},
+            {"method": "percentile", "percentile": 95},
+        ],
+    )
+    def test_a_cell_with_no_returns_stays_nodata(self, aggregation):
+        """No statistic invents a height where nothing was measured."""
+        ds, _ = _run(
+            _chunks(*self._cloud()),
+            [2, 5],
+            roi=_roi(size=6.0),
+            aggregation=aggregation,
+        )
+
+        # The cloud covers 4 m of the 6 m domain, so the last two columns of
+        # the top row caught nothing.
+        assert np.isnan(ds["chm"].values[0, 4])
+        assert np.isnan(ds["chm"].values[0, 5])
+
+    @pytest.mark.parametrize("resolution", [1.0, 5.0, 10.0, 30.0])
+    @pytest.mark.parametrize(
+        "aggregation",
+        [
+            {"method": "max"},
+            {"method": "mean"},
+            {"method": "median"},
+            {"method": "percentile", "percentile": 95},
+        ],
+    )
+    def test_a_coarser_cell_reduces_over_more_returns(self, resolution, aggregation):
+        """What #488 is about: the statistic is taken over whatever falls in.
+
+        The cloud is fixed — 900 ground returns on a 1 m lattice and one 20 m
+        canopy return in the corner — so a cell 30 m across holds 900 of them
+        and a cell 1 m across holds two. The maximum is blind to that and every
+        other statistic is not.
+        """
+        size = 30
+        xs, ys, zs, classes = _flat_ground(size=size, resolution=1.0)
+        xs, ys, zs = [*xs, 0.5], [*ys, size - 0.5], [*zs, 10.0 + 20.0]
+        classes = [*classes, 5]
+        cell = int(resolution)
+        expected_heights = [0.0] * (cell * cell) + [20.0]
+
+        ds, _ = _run(
+            _chunks(xs, ys, zs, classes),
+            [2, 5],
+            resolution=resolution,
+            roi=_roi(size=float(size)),
+            aggregation=aggregation,
+        )
+
+        method = aggregation["method"]
+        if method == "max":
+            expected = 20.0
+        elif method == "mean":
+            expected = float(np.mean(expected_heights))
+        elif method == "median":
+            expected = float(np.median(expected_heights))
+        else:
+            expected = float(np.percentile(expected_heights, aggregation["percentile"]))
+        assert ds["chm"].values[0, 0] == pytest.approx(expected, abs=1e-5)
+
+    @pytest.mark.parametrize("percentile", [25.0, 50.0, 95.0])
+    def test_every_cell_matches_the_percentile_numpy_computes(self, percentile):
+        """The grouped reduction against numpy, cell by cell, on scattered returns.
+
+        The single-cell cases above fix the definition; this fixes the grouping,
+        which is where a vectorised per-cell rank goes wrong — an off-by-one in
+        the group starts moves a cell's answer to its neighbour's returns.
+        """
+        rng = np.random.default_rng(11)
+        size = 6
+        xs, ys, zs, classes = _flat_ground(size=size)
+        canopy_x = rng.uniform(0.0, float(size), 400)
+        canopy_y = rng.uniform(0.0, float(size), 400)
+        canopy_h = rng.uniform(0.0, 18.0, 400)
+        xs = [*xs, *canopy_x]
+        ys = [*ys, *canopy_y]
+        zs = [*zs, *(10.0 + canopy_h)]
+        classes = [*classes, *([5] * 400)]
+
+        ds, _ = _run(
+            _chunks(xs, ys, zs, classes),
+            [2, 5],
+            roi=_roi(size=float(size)),
+            aggregation={"method": "percentile", "percentile": percentile},
+        )
+
+        # Every cell holds its ground return at zero plus whatever landed in it.
+        cols = np.floor(canopy_x).astype(int)
+        rows = size - 1 - np.floor(canopy_y).astype(int)
+        for row in range(size):
+            for col in range(size):
+                landed = canopy_h[(rows == row) & (cols == col)]
+                expected = np.percentile([0.0, *landed], percentile)
+                assert ds["chm"].values[row, col] == pytest.approx(expected, abs=1e-4)
+
+    def test_an_unknown_method_is_rejected(self):
+        """The API validates this; a malformed stored source must not run."""
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "p95"})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"
+
+    @pytest.mark.parametrize("rank", [0, -50, 120, 150, float("nan")])
+    def test_a_percentile_rank_out_of_range_is_rejected(self, rank):
+        """A stored rank outside ``0 < p <= 100`` reads a neighbour's returns.
+
+        The reducer indexes ``starts + floor((n - 1) * p / 100)``, so a rank
+        over 100 walks past a cell's own returns into the next cell's, and a
+        rank at or below 0 reads the wrong tail. The API rejects these at
+        create time; a source that reached storage another way must not run.
+        """
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "percentile", "percentile": rank})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"
+
+    def test_a_non_numeric_percentile_is_rejected(self):
+        """A `ProcessingError`, not the bare `ValueError` a `float()` would raise."""
+        with pytest.raises(ProcessingError) as error:
+            self._corner({"method": "percentile", "percentile": "high"})
+
+        assert error.value.code == "UNSUPPORTED_AGGREGATION"

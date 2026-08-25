@@ -115,21 +115,29 @@ class _Tile:
         return (slice(self.pr0, self.pr1), slice(self.pc0, self.pc1))
 
     @property
-    def core_in_pad(self) -> tuple:
-        """Index that trims a padded (z, y, x) result back to the core region."""
+    def core_in_pad_yx(self) -> tuple:
+        """Index that trims a padded (y, x) result back to the core region."""
         return (
-            slice(None),
             slice(self.r0 - self.pr0, self.r0 - self.pr0 + (self.r1 - self.r0)),
             slice(self.c0 - self.pc0, self.c0 - self.pc0 + (self.c1 - self.c0)),
         )
 
+    @property
+    def core_in_pad(self) -> tuple:
+        """Index that trims a padded (z, y, x) result back to the core region."""
+        return (slice(None), *self.core_in_pad_yx)
+
     def region(self, nz: int) -> dict:
-        """The output-zarr region this tile's core is written to."""
+        """The output-zarr region this tile's core is written to (3D)."""
         return {
             "z": slice(0, nz),
             "y": slice(self.r0, self.r1),
             "x": slice(self.c0, self.c1),
         }
+
+    def region_yx(self) -> dict:
+        """The output-zarr region this tile's core is written to (2D)."""
+        return {"y": slice(self.r0, self.r1), "x": slice(self.c0, self.c1)}
 
     def origin(self, ny: int) -> tuple[float, float]:
         """Global leaflux (x, y) origin for the padded window.
@@ -250,6 +258,7 @@ class _WriteJob:
     night: bool
     want_canopy: bool
     want_surface: bool
+    is_3d: bool
 
 
 # Per-worker source handles, opened once by the Pool initializer (or in-process
@@ -292,11 +301,15 @@ def _write_tile(tile: _Tile) -> None:
         surface = _surface_irradiance(
             lad, terrain, origin, job.sol, job.extn, job.voxel, job.night
         )
-        data[SURFACE_BAND] = (("z", "y", "x"), surface[tile.core_in_pad])
+        if job.is_3d:
+            data[SURFACE_BAND] = (("z", "y", "x"), surface[tile.core_in_pad])
+        else:
+            # 2D surface grid: keep only the ground layer (z=0), where all
+            # surface irradiance lives.
+            data[SURFACE_BAND] = (("y", "x"), surface[0][tile.core_in_pad_yx])
 
-    xr.Dataset(data).to_zarr(
-        job.out_path, region=tile.region(job.nz), safe_chunks=False
-    )
+    region = tile.region(job.nz) if job.is_3d else tile.region_yx()
+    xr.Dataset(data).to_zarr(job.out_path, region=region, safe_chunks=False)
 
 
 def _write_tiles(
@@ -329,28 +342,42 @@ def _write_tiles(
 
 
 def _init_output(
-    out_path: str, lad_ds: xr.Dataset, bands: list[str], core: int
+    out_path: str, lad_ds: xr.Dataset, bands: list[str], core: int, is_3d: bool
 ) -> None:
     """Write the output-zarr skeleton: metadata, coords, CRS and per-band attrs,
     but no data (compute=False). Chunked at the tile size so each per-tile region
     write lands in its own chunk (disjoint tiles -> safe concurrent writes). The
-    workers fill the data regions afterwards."""
+    workers fill the data regions afterwards.
+
+    A 3D grid (canopy requested) carries a z axis and z metadata; a surface-only
+    grid is 2D (y, x) with no z axis, matching every other 2D surface grid."""
     nz, ny, nx = lad_ds.sizes["z"], lad_ds.sizes["y"], lad_ds.sizes["x"]
-    skeleton = xr.Dataset(
-        {
+    if is_3d:
+        data_vars = {
             b: (
                 ("z", "y", "x"),
                 da.full((nz, ny, nx), np.nan, chunks=(nz, core, core), dtype="float32"),
             )
             for b in bands
-        },
-        coords={"z": lad_ds.z, "y": lad_ds.y, "x": lad_ds.x},
-    ).rio.write_crs(str(lad_ds.rio.crs))
+        }
+        coords = {"z": lad_ds.z, "y": lad_ds.y, "x": lad_ds.x}
+    else:
+        data_vars = {
+            b: (
+                ("y", "x"),
+                da.full((ny, nx), np.nan, chunks=(core, core), dtype="float32"),
+            )
+            for b in bands
+        }
+        coords = {"y": lad_ds.y, "x": lad_ds.x}
+
+    skeleton = xr.Dataset(data_vars, coords=coords).rio.write_crs(str(lad_ds.rio.crs))
     for b in bands:
         skeleton[b].attrs["grid_mapping"] = "spatial_ref"
     skeleton.attrs["transform"] = list(lad_ds.attrs["transform"])
-    skeleton.attrs["z_origin"] = float(lad_ds.attrs["z_origin"])
-    skeleton.attrs["z_resolution"] = float(lad_ds.attrs["z_resolution"])
+    if is_3d:
+        skeleton.attrs["z_origin"] = float(lad_ds.attrs["z_origin"])
+        skeleton.attrs["z_resolution"] = float(lad_ds.attrs["z_resolution"])
     skeleton.to_zarr(
         out_path,
         mode="w",
@@ -381,8 +408,13 @@ def run_leaflux(
     core = max(min(WINDOW_TARGET_CELLS - 2 * halo, nx, ny), 1)
     bands = [b for b in (CANOPY_BAND, SURFACE_BAND) if b in requested]
 
+    # Canopy is irreducibly 3D; a surface-only grid is a 2D terrain-draped
+    # field. So the output is 3D iff canopy was requested (a co-requested
+    # surface band then rides at z=0), and 2D for a surface-only request.
+    is_3d = CANOPY_BAND in requested
+
     progress("Writing irradiance grid...", 20)
-    _init_output(out_path, lad_ds, bands, core)
+    _init_output(out_path, lad_ds, bands, core, is_3d)
 
     job = _WriteJob(
         source_grid_id=source["source_grid_id"],
@@ -403,19 +435,27 @@ def run_leaflux(
         night=night,
         want_canopy=CANOPY_BAND in requested,
         want_surface=SURFACE_BAND in requested,
+        is_3d=is_3d,
     )
     progress("Computing irradiance...", 25)
     _write_tiles(_plan_tiles(ny, nx, core, halo), job, progress)
 
     progress("Finalizing...", 98)
-    return LeafluxResult(
-        out_path,
-        {
+    if is_3d:
+        georeference = {
             "crs": str(lad_ds.rio.crs),
             "transform": list(lad_ds.attrs["transform"]),
             "shape": [nz, ny, nx],
             "z_resolution": vr,
             "z_origin": z_origin,
-        },
-        [nz, core, core],
-    )
+        }
+        chunk_shape = [nz, core, core]
+    else:
+        georeference = {
+            "crs": str(lad_ds.rio.crs),
+            "transform": list(lad_ds.attrs["transform"]),
+            "shape": [ny, nx],
+        }
+        chunk_shape = [core, core]
+
+    return LeafluxResult(out_path, georeference, chunk_shape)

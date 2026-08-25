@@ -40,6 +40,7 @@ from api.resources.grids.exports.router import router as grid_exports_router
 from api.resources.grids.fbfm13.router import router as fbfm13_router
 from api.resources.grids.fbfm40.router import router as fbfm40_router
 from api.resources.grids.fccs.router import router as fccs_router
+from api.resources.grids.fuel_moisture.router import router as fuel_moisture_router
 from api.resources.grids.lookup.router import router as lookup_router
 from api.resources.grids.modifications.router import router as modifications_router
 from api.resources.grids.pim.router import router as pim_router
@@ -905,6 +906,9 @@ router.include_router(
 router.include_router(fbfm13_router, prefix="/fbfm13", tags=["Grids - FBFM13"])
 router.include_router(fbfm40_router, prefix="/fbfm40", tags=["Grids - FBFM40"])
 router.include_router(fccs_router, prefix="/fccs", tags=["Grids - FCCS"])
+router.include_router(
+    fuel_moisture_router, prefix="/fuel-moisture", tags=["Grids - Fuel Moisture"]
+)
 router.include_router(
     topography_router, prefix="/topography", tags=["Grids - Topography"]
 )

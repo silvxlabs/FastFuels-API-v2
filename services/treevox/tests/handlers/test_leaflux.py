@@ -229,8 +229,8 @@ def test_surface_night_zeros_ground_without_model(monkeypatch):
         (1, 1, 1),
         night=True,
     )
-    assert (out[0] == 0.0).all()  # ground reads 0 at night
-    assert np.isnan(out[1:]).all()  # nothing above the ground
+    assert out.shape == (3, 3)  # 2-D ground plane
+    assert (out == 0.0).all()  # ground reads 0 at night
 
 
 # --- Bridge: tiled assembly == whole-domain run (fast, no GCS) ---
@@ -252,15 +252,15 @@ def test_tiled_assembly_matches_whole_domain():
     assert halo < ny  # a padded window is not the whole grid
 
     canopy = np.full((nz, ny, nx), np.nan, dtype=np.float32)
-    surface = np.full((nz, ny, nx), np.nan, dtype=np.float32)
+    surface = np.full((ny, nx), np.nan, dtype=np.float32)
     for t in tiles:
         origin = t.origin(ny)
         canopy[:, t.r0 : t.r1, t.c0 : t.c1] = _canopy_irradiance(
             lad[t.pad_zyx], origin, sol, extn, voxel, night=False
         )[t.core_in_pad]
-        surface[:, t.r0 : t.r1, t.c0 : t.c1] = _surface_irradiance(
+        surface[t.r0 : t.r1, t.c0 : t.c1] = _surface_irradiance(
             lad[t.pad_zyx], terrain[t.pad_yx], origin, sol, extn, voxel, night=False
-        )[t.core_in_pad]
+        )[t.core_in_pad_yx]
 
     ref_canopy = _canopy_irradiance(lad, (0.0, 0.0), sol, extn, voxel, night=False)
     ref_surface = _surface_irradiance(
@@ -327,8 +327,57 @@ def test_run_leaflux_wires_job_and_tiles(monkeypatch):
         cover[t.r0 : t.r1, t.c0 : t.c1] += 1
     assert (cover == 1).all()  # planned tiles tile the domain
 
+    # Canopy requested -> 3D grid with z metadata.
+    assert job.is_3d is True
     assert result.georeference["shape"] == [6, 40, 40]
+    assert "z_resolution" in result.georeference
+    assert "z_origin" in result.georeference
     assert result.chunk_shape[0] == 6
+
+
+def test_run_leaflux_surface_only_is_2d(monkeypatch):
+    """A surface-only request yields a 2D (y, x) grid, not a 3D grid with NaN
+    padding layers."""
+    fake_lad = SimpleNamespace(
+        sizes={"z": 6, "y": 30, "x": 30},
+        attrs={
+            "transform": [2.0, 0, 0, 0, -2.0, 0],
+            "z_resolution": 1.0,
+            "z_origin": 100.0,
+        },
+        z=np.arange(6),
+        y=np.arange(30),
+        x=np.arange(30),
+        rio=SimpleNamespace(crs="EPSG:32611"),
+    )
+    monkeypatch.setattr(handler, "_open", lambda gid: fake_lad)
+    monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(
+        handler, "_write_tiles", lambda tiles, job, progress: captured.update(job=job)
+    )
+
+    grid = {
+        "id": "test-out",
+        "bands": [{"key": SURFACE_BAND}],
+        "source": {
+            "source_grid_id": "src-lad",
+            "source_terrain_grid_id": "src-dem",
+            "date_time": datetime(2023, 6, 21, 19, 0, 0),
+            "extinction_coefficient": 0.5,
+        },
+    }
+    result = handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
+
+    job = captured["job"]
+    assert job.want_surface and not job.want_canopy
+    assert job.is_3d is False
+    assert job.dem_id == "src-dem"
+    # 2D geometry: (y, x) only, no z axis or z metadata.
+    assert result.georeference["shape"] == [30, 30]
+    assert "z_resolution" not in result.georeference
+    assert "z_origin" not in result.georeference
+    assert len(result.chunk_shape) == 2
 
 
 def test_run_leaflux_no_surface_band_skips_terrain(monkeypatch):

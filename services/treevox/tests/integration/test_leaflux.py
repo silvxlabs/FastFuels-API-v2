@@ -148,8 +148,10 @@ def test_handler_matches_unchunked_leaflux(treevox_runner, monkeypatch):
 
     dem_id = f"test-{uuid4().hex}"
     leaflux_id = f"test-{uuid4().hex}"
+    surface_id = f"test-{uuid4().hex}"
     dem_path = f"gs://{GRIDS_BUCKET}/{dem_id}"
     out_path = f"gs://{GRIDS_BUCKET}/{leaflux_id}"
+    surface_path = f"gs://{GRIDS_BUCKET}/{surface_id}"
 
     try:
         # 2. Terrain grid aligned to the LAD lattice: a gentle tilted, wavy
@@ -213,7 +215,38 @@ def test_handler_matches_unchunked_leaflux(treevox_runner, monkeypatch):
         np.testing.assert_array_equal(out.x.values, xs)
         np.testing.assert_array_equal(out.y.values, ys)
         out.close()
+
+        # A surface-only request must produce a 2D (y, x) grid — not a 3D grid
+        # with NaN padding layers — matching the 2D surface data at z=0.
+        surface_grid = {
+            "id": surface_id,
+            "source": {
+                "operation": "irradiance",
+                "input": "grid",
+                "entity": "solar",
+                "source_grid_id": lad_grid_id,
+                "source_terrain_grid_id": dem_id,
+                "date_time": DATE_TIME,
+                "extinction_coefficient": EXTINCTION,
+            },
+            "bands": [{"key": SURFACE_BAND}],
+        }
+        surface_result = handler.run_leaflux(
+            surface_grid, domain_gdf, lambda *a, **k: None
+        )
+        assert surface_result.georeference["shape"] == [ny, nx]
+        assert "z_resolution" not in surface_result.georeference
+        assert len(surface_result.chunk_shape) == 2
+
+        surface_out = xr.open_zarr(surface_path, consolidated=True, decode_coords="all")
+        assert surface_out[SURFACE_BAND].dims == ("y", "x")
+        _assert_equal(
+            SURFACE_BAND,
+            surface_out[SURFACE_BAND].values,
+            ref[SURFACE_BAND][0],
+        )
+        surface_out.close()
     finally:
-        for path in (dem_path, out_path):
+        for path in (dem_path, out_path, surface_path):
             if exists(path):
                 delete_directory(path)

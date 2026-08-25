@@ -11,6 +11,7 @@ from griddle.dispatch import (
     handle_3dep,
     handle_canopy,
     handle_compose,
+    handle_fosberg,
     handle_landfire,
     handle_lookup,
     handle_pim,
@@ -346,6 +347,24 @@ class TestDispatchHandler:
         mock_handle_compose.assert_called_once_with(grid, grid["source"], progress)
         assert result == mock_result
 
+    @patch("griddle.dispatch.handle_fosberg")
+    def test_routes_fosberg_source(self, mock_handle_fosberg):
+        """dispatch_handler routes fosberg source to handle_fosberg."""
+        mock_result = MagicMock()
+        mock_handle_fosberg.return_value = mock_result
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+
+        grid = {
+            "source": {"name": "fosberg"},
+            "domain_id": "test-domain-id",
+        }
+
+        result = dispatch_handler(grid, mock_gdf, progress)
+
+        mock_handle_fosberg.assert_called_once_with(grid, grid["source"], progress)
+        assert result == mock_result
+
     @patch("griddle.dispatch.handle_lookup")
     def test_routes_lookup_source(self, mock_handle_lookup):
         """dispatch_handler routes lookup source to handle_lookup."""
@@ -379,6 +398,23 @@ class TestHandleCompose:
         result = handle_compose(grid, source, progress)
 
         mock_compose_grid.assert_called_once_with(grid, source, progress)
+        assert result == mock_result
+
+
+class TestHandleFosberg:
+    """Tests for handle_fosberg function."""
+
+    @patch("griddle.dispatch.fosberg.fosberg_grid")
+    def test_handle_fosberg_delegates_to_handler(self, mock_fosberg_grid):
+        mock_result = MagicMock()
+        mock_fosberg_grid.return_value = mock_result
+        grid = {"id": "grid-id", "source": {"name": "fosberg"}}
+        source = grid["source"]
+        progress = MagicMock()
+
+        result = handle_fosberg(grid, source, progress)
+
+        mock_fosberg_grid.assert_called_once_with(grid, source, progress)
         assert result == mock_result
 
 

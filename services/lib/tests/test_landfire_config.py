@@ -22,6 +22,7 @@ class TestLandfireVersionsTable:
 
     def test_fbfm13_versions(self):
         assert LANDFIRE_VERSIONS["fbfm13"]["available"] == ["2023", "2024"]
+        assert LANDFIRE_VERSIONS["fbfm13"]["lfps_available"] == ["2025"]
         assert LANDFIRE_VERSIONS["fbfm13"]["default"] == "2024"
 
     def test_fbfm40_versions(self):
@@ -37,6 +38,7 @@ class TestLandfireVersionsTable:
 
     def test_fccs_versions(self):
         assert LANDFIRE_VERSIONS["fccs"]["available"] == ["2023"]
+        assert LANDFIRE_VERSIONS["fccs"]["lfps_available"] == ["2025"]
         assert LANDFIRE_VERSIONS["fccs"]["default"] == "2023"
 
 

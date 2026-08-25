@@ -12,7 +12,7 @@ import geopandas as gpd
 import pytest
 from griddle.handlers import landfire
 
-from lib.landfire import list_products
+from lib.landfire import LANDFIRE_VERSIONS, list_products
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 
 
@@ -72,3 +72,45 @@ def test_seasonal_fbfm40(roi):
 
     fbfm_valid = _assert_valid_data(ds, "fbfm")
     assert fbfm_valid.max() <= 204  # matches test_landfire.py's FBFM40 range check
+
+
+def test_configured_seasonal_version_still_live():
+    """Fails once LANDFIRE moves seasonal fuels past our configured
+    version -- signals LANDFIRE_VERSIONS["fbfm40"]["lfps_available"]
+    needs updating, rather than silently going stale."""
+    version = LANDFIRE_VERSIONS["fbfm40"]["lfps_available"][0]
+    live = any(
+        p.acronym.upper() == "FBFM40"
+        and p.season is not None
+        and p.version == f"LF{version}"
+        for p in list_products()
+    )
+    assert live, (
+        f"No live seasonal FBFM40 product for version {version} -- LANDFIRE may "
+        'have moved on; update LANDFIRE_VERSIONS["fbfm40"]["lfps_available"].'
+    )
+
+
+@pytest.mark.parametrize(
+    ("product", "fetch_fn", "band"),
+    [
+        ("fbfm13", landfire.fetch_fbfm13, "fbfm13"),
+        ("fbfm40", landfire.fetch_fbfm40, "fbfm"),
+        ("fccs", landfire.fetch_fccs, "fccs"),
+    ],
+)
+def test_annual_lfps_available_version(roi, product, fetch_fn, band):
+    """Submit a real annual (non-seasonal) LFPS job for each product's
+    configured lfps_available version -- confirms LANDFIRE Product Service
+    is actually serving what our config says it should."""
+    lfps_versions = LANDFIRE_VERSIONS[product].get("lfps_available", [])
+    if not lfps_versions:
+        pytest.skip(f"No lfps_available version configured for {product}.")
+
+    ds = fetch_fn(roi, version=lfps_versions[0], progress=lambda *a, **k: None)
+
+    assert band in ds.data_vars
+    assert ds[band].dims == ("y", "x")
+    assert ds[band].rio.nodata is not None
+    assert ds.rio.height > 0
+    assert ds.rio.width > 0

@@ -83,15 +83,15 @@ def fosberg_grid(
 
 
 def _load(grid_id: str) -> xr.Dataset:
-    """Load a source grid's zarr, surfacing an unreadable store as a terminal error."""
+    """Load a source grid's zarr, surfacing a missing store as a terminal error."""
     try:
         return load_zarr(grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="FOSBERG_SOURCE_UNAVAILABLE",
             message=f"Could not load Fosberg source grid '{grid_id}': {e}",
             suggestion="Ensure the source grids exist and have been processed.",
-        )
+        ) from e
 
 
 def _same_grid(a: xr.DataArray, b: xr.DataArray) -> bool:

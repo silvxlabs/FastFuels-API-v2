@@ -235,7 +235,7 @@ def test_elevation_category_selects_correction():
     assert not np.allclose(near[OUTPUT_KEY].values, above[OUTPUT_KEY].values)
 
 
-def test_unreadable_source_raises_terminal_error():
+def test_missing_source_raises_terminal_error():
     def boom(_gid):
         raise FileNotFoundError("no such store")
 
@@ -256,3 +256,26 @@ def test_unreadable_source_raises_terminal_error():
                 lambda *a, **k: None,
             )
     assert exc.value.code == "FOSBERG_SOURCE_UNAVAILABLE"
+
+
+def test_transient_source_load_failure_propagates():
+    error = TimeoutError("GCS request timed out")
+
+    with patch("griddle.handlers.fosberg.load_zarr", side_effect=error):
+        with pytest.raises(TimeoutError) as exc:
+            fosberg_grid(
+                {"id": "grid_out"},
+                {
+                    "name": "fosberg",
+                    "source_topography_grid_id": "topo",
+                    "source_irradiance_grid_id": "irr",
+                    "dry_bulb_temp": 75,
+                    "relative_humidity": 30,
+                    "time": 1200,
+                    "month": "June",
+                    "elevation": "near",
+                },
+                lambda *a, **k: None,
+            )
+
+    assert exc.value is error

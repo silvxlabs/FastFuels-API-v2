@@ -20,6 +20,7 @@ from fastfuels_core.fuel_moisture.fosberg import calculate_1hr_fuel_moisture
 from rasterio.enums import Resampling
 
 from griddle.storage import load_zarr
+from lib.crs import crs_equal
 from lib.errors import ProcessingError
 
 SLOPE_KEY = "slope"
@@ -96,7 +97,7 @@ def _load(grid_id: str) -> xr.Dataset:
 def _same_grid(a: xr.DataArray, b: xr.DataArray) -> bool:
     """True when two arrays already share a CRS, shape, and transform."""
     return (
-        a.rio.crs == b.rio.crs
+        crs_equal(str(a.rio.crs), str(b.rio.crs))
         and a.shape == b.shape
         and a.rio.transform() == b.rio.transform()
     )
@@ -105,9 +106,16 @@ def _same_grid(a: xr.DataArray, b: xr.DataArray) -> bool:
 def _defined(da: xr.DataArray) -> np.ndarray:
     """Boolean mask of cells holding real data (not nodata)."""
     arr = da.values
-    nodata = da.rio.nodata
-    if nodata is not None and not (isinstance(nodata, float) and np.isnan(nodata)):
-        return arr != nodata
     if np.issubdtype(arr.dtype, np.floating):
-        return np.isfinite(arr)
-    return np.ones(arr.shape, dtype=bool)
+        # NaN/inf are never real data; also honor a non-NaN numeric sentinel.
+        # (rio.nodata can be a numpy float, for which isinstance(..., float)
+        # is False, so test it with np.isnan rather than a Python-type check.)
+        mask = np.isfinite(arr)
+        nodata = da.rio.nodata
+        if nodata is not None and np.isfinite(nodata):
+            mask &= arr != nodata
+        return mask
+    nodata = da.rio.nodata
+    if nodata is None:
+        return np.ones(arr.shape, dtype=bool)
+    return arr != nodata

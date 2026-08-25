@@ -12,7 +12,7 @@ from a topography grid (slope + aspect) and a leaflux irradiance grid
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.resources.grids.schema import Band, BandType
 
@@ -147,6 +147,13 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
             "correction."
         ),
     )
+
+    @field_validator("time")
+    @classmethod
+    def _valid_hhmm(cls, value: int) -> int:
+        if value % 100 >= 60:
+            raise ValueError("time must be a valid HHMM clock value (minutes 00-59)")
+        return value
 
 
 DEAD_1HR_BAND = Band(

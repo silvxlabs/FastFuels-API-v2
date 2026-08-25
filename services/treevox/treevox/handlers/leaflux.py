@@ -219,19 +219,19 @@ def _canopy_irradiance(lad, origin, sol, extn, voxel, night) -> np.ndarray:
 
 
 def _surface_irradiance(lad, terrain, origin, sol, extn, voxel, night) -> np.ndarray:
-    """Relative ground irradiance for a padded tile, placed at z=0 of a (z, y, x)
-    grid (all other cells AIR_FILL). `terrain` is a (y, x) surface in cell units;
-    the canopy is lifted onto it so shadows cast from the right height."""
-    grid = np.full(lad.shape, AIR_FILL, dtype=np.float32)
+    """Relative ground irradiance for a padded tile as a 2-D (y, x) plane.
+
+    `terrain` is a (y, x) surface in cell units; the canopy is lifted onto it so
+    shadows cast from the right height. Surface irradiance is inherently a ground
+    quantity, so this returns just that plane; a caller storing a 3-D surface band
+    places it on the ground layer (z=0) of an otherwise-air tile."""
     if night:
-        grid[0] = 0.0
-        return grid
+        return np.zeros(lad.shape[1:], dtype=np.float32)  # ground reads 0 at night
     leaf_area = _leaf_area(lad)
     _terrain_lift(leaf_area, terrain)
     env = Environment(leaf_area=leaf_area, terrain=Terrain(terrain), voxel_dim=voxel)
     irr = attenuate_all(env, sol, extn=extn, origin=origin)
-    grid[0] = irr.terrain_irradiance
-    return grid
+    return np.asarray(irr.terrain_irradiance, dtype=np.float32)
 
 
 # --- Per-tile parallel writer ----------------------------------------------
@@ -298,15 +298,16 @@ def _write_tile(tile: _Tile) -> None:
         data[CANOPY_BAND] = (("z", "y", "x"), canopy[tile.core_in_pad])
     if job.want_surface:
         terrain = _read_terrain(tile, lad.shape[1:])
-        surface = _surface_irradiance(
+        surface = _surface_irradiance(  # 2-D (y, x) ground plane
             lad, terrain, origin, job.sol, job.extn, job.voxel, job.night
         )
         if job.is_3d:
-            data[SURFACE_BAND] = (("z", "y", "x"), surface[tile.core_in_pad])
+            # Store the ground plane at z=0 of an otherwise-air (z, y, x) tile.
+            grid = np.full(lad.shape, AIR_FILL, dtype=np.float32)
+            grid[0] = surface
+            data[SURFACE_BAND] = (("z", "y", "x"), grid[tile.core_in_pad])
         else:
-            # 2D surface grid: keep only the ground layer (z=0), where all
-            # surface irradiance lives.
-            data[SURFACE_BAND] = (("y", "x"), surface[0][tile.core_in_pad_yx])
+            data[SURFACE_BAND] = (("y", "x"), surface[tile.core_in_pad_yx])
 
     region = tile.region(job.nz) if job.is_3d else tile.region_yx()
     xr.Dataset(data).to_zarr(job.out_path, region=region, safe_chunks=False)

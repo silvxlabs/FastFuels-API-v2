@@ -157,6 +157,23 @@ def test_nodata_cells_are_masked_to_nan():
     assert np.isfinite(out[1, 1])
 
 
+def test_float32_nan_nodata_is_masked():
+    # rio.nodata comes back as a numpy float32 NaN here (not a Python float). A
+    # NaN aspect cell must still be recognized as nodata; otherwise it reaches
+    # the core's table lookup and raises KeyError. Guards the regression where
+    # `isinstance(nodata, float)` is False for a numpy float and misfires.
+    slope = np.array([[10.0, 40.0], [0.0, 20.0]], dtype=np.float32)
+    aspect = np.array([[0.0, np.nan], [180.0, 270.0]], dtype=np.float32)
+    surface = np.full((2, 2), 0.5, dtype=np.float32)
+
+    result = _run(
+        _topo_ds(slope, aspect, nodata=np.float32("nan")), _surface_ds(surface)
+    )
+    out = result[OUTPUT_KEY].values
+    assert np.isnan(out[0, 1])  # NaN nodata cell masked, no crash
+    assert np.isfinite(out[0, 0])
+
+
 def test_surface_nodata_is_masked():
     slope = np.zeros((2, 2), dtype=np.float32)
     aspect = np.zeros((2, 2), dtype=np.float32)

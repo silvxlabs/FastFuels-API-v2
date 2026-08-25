@@ -229,8 +229,8 @@ def test_surface_night_zeros_ground_without_model(monkeypatch):
         (1, 1, 1),
         night=True,
     )
-    assert (out[0] == 0.0).all()  # ground reads 0 at night
-    assert np.isnan(out[1:]).all()  # nothing above the ground
+    assert out.shape == (3, 3)  # 2-D ground plane
+    assert (out == 0.0).all()  # ground reads 0 at night
 
 
 # --- Bridge: tiled assembly == whole-domain run (fast, no GCS) ---
@@ -252,15 +252,15 @@ def test_tiled_assembly_matches_whole_domain():
     assert halo < ny  # a padded window is not the whole grid
 
     canopy = np.full((nz, ny, nx), np.nan, dtype=np.float32)
-    surface = np.full((nz, ny, nx), np.nan, dtype=np.float32)
+    surface = np.full((ny, nx), np.nan, dtype=np.float32)
     for t in tiles:
         origin = t.origin(ny)
         canopy[:, t.r0 : t.r1, t.c0 : t.c1] = _canopy_irradiance(
             lad[t.pad_zyx], origin, sol, extn, voxel, night=False
         )[t.core_in_pad]
-        surface[:, t.r0 : t.r1, t.c0 : t.c1] = _surface_irradiance(
+        surface[t.r0 : t.r1, t.c0 : t.c1] = _surface_irradiance(
             lad[t.pad_zyx], terrain[t.pad_yx], origin, sol, extn, voxel, night=False
-        )[t.core_in_pad]
+        )[t.core_in_pad_yx]
 
     ref_canopy = _canopy_irradiance(lad, (0.0, 0.0), sol, extn, voxel, night=False)
     ref_surface = _surface_irradiance(

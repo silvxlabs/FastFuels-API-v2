@@ -125,6 +125,12 @@ class TestCreateFosbergFuelMoistureRequest:
         req = CreateFosbergFuelMoistureRequest(**_body(time=time))
         assert req.time == time
 
+    @pytest.mark.parametrize("time", [875, 960, 1099, 1260])
+    def test_time_invalid_minutes_rejected(self, time):
+        # In range but not a valid HHMM clock value (minutes >= 60).
+        with pytest.raises(ValidationError):
+            CreateFosbergFuelMoistureRequest(**_body(time=time))
+
     def test_invalid_month_rejected(self):
         with pytest.raises(ValidationError):
             CreateFosbergFuelMoistureRequest(**_body(month="Junuary"))

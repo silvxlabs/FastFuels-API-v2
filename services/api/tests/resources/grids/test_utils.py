@@ -12,6 +12,7 @@ import pytest
 from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.utils import (
     validate_format_supports_grid,
+    validate_grids_share_horizontal_lattice,
     validate_lfps_coverage,
 )
 from fastapi import HTTPException
@@ -23,6 +24,67 @@ from tests.fixtures import make_domain_data
 def _grid(shape):
     """Minimal grid_data dict carrying a georeference of the given shape."""
     return {"georeference": {"shape": shape}}
+
+
+_TRANSFORM = (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0)
+
+
+def _lattice_grid(
+    grid_id="grid",
+    shape=(40, 40),
+    crs="EPSG:32611",
+    transform=_TRANSFORM,
+):
+    return {
+        "id": grid_id,
+        "georeference": {
+            "shape": shape,
+            "crs": crs,
+            "transform": transform,
+        },
+    }
+
+
+class TestValidateGridsShareHorizontalLattice:
+    def test_matching_3d_and_2d_grids_pass(self):
+        validate_grids_share_horizontal_lattice(
+            _lattice_grid("lad-grid", shape=(6, 40, 40)),
+            _lattice_grid("terrain-grid", shape=(40, 40)),
+        )
+
+    def test_equivalent_crs_spellings_pass(self):
+        validate_grids_share_horizontal_lattice(
+            _lattice_grid("lad-grid", crs="EPSG:32611"),
+            _lattice_grid("terrain-grid", crs="urn:ogc:def:crs:EPSG::32611"),
+        )
+
+    def test_different_crs_raises_422(self):
+        with pytest.raises(HTTPException) as exc:
+            validate_grids_share_horizontal_lattice(
+                _lattice_grid("lad-grid", crs="EPSG:32611"),
+                _lattice_grid("terrain-grid", crs="EPSG:4326"),
+            )
+        assert exc.value.status_code == 422
+        assert "CRS" in exc.value.detail
+
+    def test_different_horizontal_shape_raises_422(self):
+        with pytest.raises(HTTPException) as exc:
+            validate_grids_share_horizontal_lattice(
+                _lattice_grid("lad-grid", shape=(6, 40, 40)),
+                _lattice_grid("terrain-grid", shape=(20, 20)),
+            )
+        assert exc.value.status_code == 422
+        assert "shape" in exc.value.detail
+
+    def test_different_transform_raises_422(self):
+        shifted = (*_TRANSFORM[:2], 500001.0, *_TRANSFORM[3:])
+        with pytest.raises(HTTPException) as exc:
+            validate_grids_share_horizontal_lattice(
+                _lattice_grid("lad-grid"),
+                _lattice_grid("terrain-grid", transform=shifted),
+            )
+        assert exc.value.status_code == 422
+        assert "transform" in exc.value.detail
 
 
 class TestValidateFormatSupportsGrid:

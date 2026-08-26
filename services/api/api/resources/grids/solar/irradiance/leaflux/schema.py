@@ -121,8 +121,11 @@ class CreateLeafluxIrradianceRequest(BaseModel):
         default=None,
         description=(
             "(optional) ID of a completed 2D terrain grid (with an `elevation` "
-            "band) in the same domain, used to drape the surface irradiance "
-            "band over real terrain instead of a flat plane."
+            "band) in the same domain and on the LAD grid's exact horizontal "
+            "lattice (equivalent CRS, shape, and affine transform), used to "
+            "drape the surface irradiance band over real terrain instead of a "
+            "flat plane. Resample the terrain with the LAD grid as its "
+            "alignment target when their lattices differ."
         ),
     )
     bands: list[LeafluxBand] = Field(

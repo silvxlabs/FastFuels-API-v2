@@ -27,6 +27,7 @@ from api.resources.grids.schema import Grid
 from api.resources.grids.utils import (
     validate_grid_dimensionality,
     validate_grid_has_band,
+    validate_grids_share_horizontal_lattice,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -76,6 +77,7 @@ async def create_leaflux_irradiance_grid(
         collection=COLLECTION,
         document_id=body.source_lad_grid_id,
         owner_id=owner_id,
+        domain_id=domain_id,
         document_status="completed",
     )
 
@@ -98,6 +100,7 @@ async def create_leaflux_irradiance_grid(
             collection=COLLECTION,
             document_id=body.source_terrain_grid_id,
             owner_id=owner_id,
+            domain_id=domain_id,
             document_status="completed",
         )
         terrain_grid_data = terrain_source_snapshot.to_dict()
@@ -114,6 +117,11 @@ async def create_leaflux_irradiance_grid(
             grid_data=terrain_grid_data,
             grid_id=body.source_terrain_grid_id,
             expected=2,
+        )
+
+        validate_grids_share_horizontal_lattice(
+            reference_grid=grid_data,
+            candidate_grid=terrain_grid_data,
         )
 
     source = IrradianceLeafluxSource(

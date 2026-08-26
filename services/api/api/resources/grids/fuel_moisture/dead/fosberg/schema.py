@@ -106,8 +106,11 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
     source_irradiance_grid_id: str = Field(
         description=(
             "ID of a completed leaflux irradiance grid with an "
-            "`irradiance.surface.relative` band. Per-cell shading is derived "
-            "as 1 - irradiance.surface.relative."
+            "`irradiance.surface.relative` band, on the topography grid's exact "
+            "horizontal lattice (equivalent CRS, y/x shape, and affine "
+            "transform). Per-cell shading is derived as "
+            "1 - irradiance.surface.relative. Resample one grid onto the other "
+            "when their lattices differ."
         ),
     )
 

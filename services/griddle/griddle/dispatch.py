@@ -146,12 +146,12 @@ def handle_landfire(
             remove_non_burnable = source.get("remove_non_burnable")
             return landfire.fetch_fbfm13(
                 domain_gdf,
+                progress,
                 version,
                 remove_non_burnable=remove_non_burnable,
                 extent_buffer_cells=extent_buffer_cells,
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
-                progress=progress,
             )
         case "fbfm40":
             version = source.get("version", LANDFIRE_VERSIONS["fbfm40"]["default"])
@@ -160,13 +160,13 @@ def handle_landfire(
             season = source.get("season")
             return landfire.fetch_fbfm40(
                 domain_gdf,
+                progress,
                 version,
                 remove_non_burnable=remove_non_burnable,
                 extent_buffer_cells=extent_buffer_cells,
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
                 season=season,
-                progress=progress,
             )
         case "fccs":
             version = source.get("version", LANDFIRE_VERSIONS["fccs"]["default"])
@@ -174,12 +174,12 @@ def handle_landfire(
             remove_bare_ground = source.get("remove_bare_ground", False)
             return landfire.fetch_fccs(
                 domain_gdf,
+                progress,
                 version,
                 remove_bare_ground=remove_bare_ground,
                 extent_buffer_cells=extent_buffer_cells,
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
-                progress=progress,
             )
         case "topography":
             version = source.get("version", "2020")

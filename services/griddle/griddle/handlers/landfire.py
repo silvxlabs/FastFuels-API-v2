@@ -143,18 +143,14 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
     return ds
 
 
-def _default_progress(message: str, pct: int | None = None) -> None:
-    """No-op progress callback used when a caller doesn't provide one."""
-
-
 def fetch_fbfm13(
     roi: gpd.GeoDataFrame,
+    progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fbfm13"]["default"],
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-    progress: Callable[[str, int | None], None] = _default_progress,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM13 fuel model codes.
 
@@ -212,12 +208,12 @@ def fetch_fbfm13(
 
 def fetch_fbfm40(
     roi: gpd.GeoDataFrame,
+    progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fbfm40"]["default"],
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-    progress: Callable[[str, int | None], None] = _default_progress,
     season: str | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM40 fuel model codes.
@@ -279,12 +275,12 @@ def fetch_fbfm40(
 
 def fetch_fccs(
     roi: gpd.GeoDataFrame,
+    progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fccs"]["default"],
     remove_bare_ground: bool = False,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-    progress: Callable[[str, int | None], None] = _default_progress,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FCCS fuel model codes.
 

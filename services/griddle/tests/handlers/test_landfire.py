@@ -205,32 +205,50 @@ class TestFetchFbfm13:
 
     def test_returns_dataset(self, roi):
         """fetch_fbfm13 returns a Dataset."""
-        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm13(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert isinstance(result, xr.Dataset)
 
     def test_has_fbfm13_variable(self, roi):
         """Dataset contains an 'fbfm13' variable."""
-        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm13(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert "fbfm13" in result.data_vars
 
     def test_fbfm13_shape(self, test_domain, roi):
         """The fbfm13 variable has the expected spatial shape."""
-        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm13(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert result["fbfm13"].shape == test_domain.expected_shape
 
     def test_fbfm13_dtype(self, roi):
         """The fbfm13 variable is int16 (categorical codes)."""
-        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm13(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert result["fbfm13"].dtype == "int16"
 
     def test_crs_preserved(self, roi):
         """CRS is preserved via rioxarray."""
-        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm13(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert result.rio.crs == roi.crs
 
     def test_fbfm13_values_in_valid_set(self, roi):
         """FBFM13 codes are limited to the Anderson 13 models plus non-burnable."""
-        result = fetch_fbfm13(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm13(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         values = result["fbfm13"].values
         valid_codes = set(range(1, 14)) | {91, 92, 93, 98, 99}
         assert set(np.unique(values)).issubset(valid_codes)
@@ -252,7 +270,7 @@ class TestFetchFbfm13LfpsPath:
         )
         progress = MagicMock()
 
-        result = fetch_fbfm13(roi, version="2025", progress=progress)
+        result = fetch_fbfm13(roi, progress, version="2025")
 
         mock_fetch_lfps.assert_called_once_with(
             roi, "fbfm13", "2025", {"target": "domain"}, None, 0, progress
@@ -267,28 +285,10 @@ class TestFetchFbfm13LfpsPath:
         )
         assert "fbfm13" in result.data_vars
 
-    @patch("griddle.handlers.landfire._fetch_landfire_raster")
-    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
-    def test_lfps_available_version_without_progress_does_not_raise(
-        self, mock_fetch_lfps, mock_fetch_raster, roi
-    ):
-        """Omitting progress must not crash -- fetch_lfps calls it unconditionally."""
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
-        mock_fetch_lfps.return_value = mock_cm
-        mock_fetch_raster.return_value = _make_canopy_raster(
-            np.zeros((4, 4), dtype=np.int16)
-        )
-
-        result = fetch_fbfm13(roi, version="2025")  # no progress passed
-
-        assert "fbfm13" in result.data_vars
-        # the substituted callback must actually be callable
-        mock_fetch_lfps.call_args[0][6]("test", 0)
-
     @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
     def test_staged_version_does_not_call_lfps(self, mock_fetch_lfps, roi):
-        fetch_fbfm13(roi, version="2024")
+        progress = MagicMock()
+        fetch_fbfm13(roi, progress, version="2024")
         mock_fetch_lfps.assert_not_called()
 
 
@@ -351,32 +351,50 @@ class TestFetchFbfm40:
 
     def test_returns_dataset(self, roi):
         """fetch_fbfm40 returns a Dataset."""
-        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm40(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert isinstance(result, xr.Dataset)
 
     def test_has_fbfm_variable(self, roi):
         """Dataset contains a 'fbfm' variable."""
-        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm40(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert "fbfm" in result.data_vars
 
     def test_fbfm_shape(self, test_domain, roi):
         """The fbfm variable has the expected spatial shape."""
-        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm40(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert result["fbfm"].shape == test_domain.expected_shape
 
     def test_fbfm_dtype(self, roi):
         """The fbfm variable is int16 (categorical codes)."""
-        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm40(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert result["fbfm"].dtype == "int16"
 
     def test_crs_preserved(self, roi):
         """CRS is preserved via rioxarray."""
-        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm40(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert result.rio.crs == roi.crs
 
     def test_fbfm_values_in_range(self, roi):
         """FBFM40 codes should be <= 204."""
-        result = fetch_fbfm40(roi=roi, version="2024", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fbfm40(
+            roi=roi, progress=progress, version="2024", extent_buffer_cells=8
+        )
         assert result["fbfm"].values.max() <= 204
 
 
@@ -395,7 +413,7 @@ class TestFetchFbfm40LfpsPath:
         )
         progress = MagicMock()
 
-        result = fetch_fbfm40(roi, version="2025", season="SP", progress=progress)
+        result = fetch_fbfm40(roi, progress, version="2025", season="SP")
 
         mock_fetch_lfps.assert_called_once_with(
             roi, "fbfm40", "2025", {"target": "domain"}, None, 0, progress, "SP"
@@ -423,35 +441,17 @@ class TestFetchFbfm40LfpsPath:
         )
         progress = MagicMock()
 
-        result = fetch_fbfm40(roi, version="2025", progress=progress)
+        result = fetch_fbfm40(roi, progress, version="2025")
 
         mock_fetch_lfps.assert_called_once_with(
             roi, "fbfm40", "2025", {"target": "domain"}, None, 0, progress, None
         )
         assert "fbfm" in result.data_vars
 
-    @patch("griddle.handlers.landfire._fetch_landfire_raster")
-    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
-    def test_lfps_available_version_without_progress_does_not_raise(
-        self, mock_fetch_lfps, mock_fetch_raster, roi
-    ):
-        """Omitting progress must not crash -- fetch_lfps calls it unconditionally."""
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
-        mock_fetch_lfps.return_value = mock_cm
-        mock_fetch_raster.return_value = _make_canopy_raster(
-            np.zeros((4, 4), dtype=np.int16)
-        )
-
-        result = fetch_fbfm40(roi, version="2025")  # no progress passed
-
-        assert "fbfm" in result.data_vars
-        # the substituted callback must actually be callable
-        mock_fetch_lfps.call_args[0][6]("test", 0)
-
     @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
     def test_no_season_does_not_call_lfps(self, mock_fetch_lfps, roi):
-        fetch_fbfm40(roi, version="2024")
+        progress = MagicMock()
+        fetch_fbfm40(roi, progress, version="2024")
         mock_fetch_lfps.assert_not_called()
 
 
@@ -460,32 +460,50 @@ class TestFetchFccs:
 
     def test_returns_dataset(self, roi):
         """fetch_fccs returns a Dataset."""
-        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fccs(
+            roi=roi, progress=progress, version="2023", extent_buffer_cells=8
+        )
         assert isinstance(result, xr.Dataset)
 
     def test_has_fccs_variable(self, roi):
         """Dataset contains a 'fccs' variable."""
-        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fccs(
+            roi=roi, progress=progress, version="2023", extent_buffer_cells=8
+        )
         assert "fccs" in result.data_vars
 
     def test_fccs_shape(self, test_domain, roi):
         """The fccs variable has the expected spatial shape."""
-        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fccs(
+            roi=roi, progress=progress, version="2023", extent_buffer_cells=8
+        )
         assert result["fccs"].shape == test_domain.expected_shape
 
     def test_fccs_dtype(self, roi):
         """The fccs variable is int32 (codes up to 12990133 exceed int16 range)."""
-        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fccs(
+            roi=roi, progress=progress, version="2023", extent_buffer_cells=8
+        )
         assert result["fccs"].dtype == "int32"
 
     def test_crs_preserved(self, roi):
         """CRS is preserved via rioxarray."""
-        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fccs(
+            roi=roi, progress=progress, version="2023", extent_buffer_cells=8
+        )
         assert result.rio.crs == roi.crs
 
     def test_fccs_valid_values_in_range(self, roi):
         """Mapped FCCS codes should be between 0 and 12990133."""
-        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fccs(
+            roi=roi, progress=progress, version="2023", extent_buffer_cells=8
+        )
         values = result["fccs"].values
         valid_mask = ~np.isin(values, [-1111, -9999])
         assert values[valid_mask].min() >= 0
@@ -493,22 +511,29 @@ class TestFetchFccs:
 
     def test_fccs_fill_values_are_expected(self, roi):
         """Any negative values are only the known fill values (-1111, -9999)."""
-        result = fetch_fccs(roi=roi, version="2023", extent_buffer_cells=8)
+        progress = MagicMock()
+        result = fetch_fccs(
+            roi=roi, progress=progress, version="2023", extent_buffer_cells=8
+        )
         values = result["fccs"].values
         negative_values = np.unique(values[values < 0])
         assert set(negative_values).issubset({-1111, -9999})
 
     def test_remove_bare_ground_removes_zeros(self, roi):
         """When remove_bare_ground=True, no bare ground cells (code 0) remain."""
-        result = fetch_fccs(roi=roi, remove_bare_ground=True)
+        progress = MagicMock()
+        result = fetch_fccs(roi=roi, progress=progress, remove_bare_ground=True)
         values = result["fccs"].values
         valid_mask = ~np.isin(values, [-1111, -9999])
         assert not np.any(values[valid_mask] == 0)
 
     def test_remove_bare_ground_false_by_default(self, roi):
         """remove_bare_ground defaults to False and does not alter the data."""
-        default_result = fetch_fccs(roi=roi)
-        explicit_result = fetch_fccs(roi=roi, remove_bare_ground=False)
+        progress = MagicMock()
+        default_result = fetch_fccs(roi=roi, progress=progress)
+        explicit_result = fetch_fccs(
+            roi=roi, progress=progress, remove_bare_ground=False
+        )
         np.testing.assert_array_equal(
             default_result["fccs"].values,
             explicit_result["fccs"].values,
@@ -531,7 +556,7 @@ class TestFetchFccsLfpsPath:
         )
         progress = MagicMock()
 
-        result = fetch_fccs(roi, version="2025", progress=progress)
+        result = fetch_fccs(roi, progress, version="2025")
 
         mock_fetch_lfps.assert_called_once_with(
             roi, "fccs", "2025", {"target": "domain"}, None, 0, progress
@@ -546,28 +571,10 @@ class TestFetchFccsLfpsPath:
         )
         assert "fccs" in result.data_vars
 
-    @patch("griddle.handlers.landfire._fetch_landfire_raster")
-    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
-    def test_lfps_available_version_without_progress_does_not_raise(
-        self, mock_fetch_lfps, mock_fetch_raster, roi
-    ):
-        """Omitting progress must not crash -- fetch_lfps calls it unconditionally."""
-        mock_cm = MagicMock()
-        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
-        mock_fetch_lfps.return_value = mock_cm
-        mock_fetch_raster.return_value = _make_canopy_raster(
-            np.zeros((4, 4), dtype=np.int16)
-        )
-
-        result = fetch_fccs(roi, version="2025")  # no progress passed
-
-        assert "fccs" in result.data_vars
-        # the substituted callback must actually be callable
-        mock_fetch_lfps.call_args[0][6]("test", 0)
-
     @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
     def test_staged_version_does_not_call_lfps(self, mock_fetch_lfps, roi):
-        fetch_fccs(roi, version="2023")
+        progress = MagicMock()
+        fetch_fccs(roi, progress, version="2023")
         mock_fetch_lfps.assert_not_called()
 
 

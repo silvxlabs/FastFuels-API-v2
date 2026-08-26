@@ -143,6 +143,10 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
     return ds
 
 
+def _default_progress(message: str, pct: int | None = None) -> None:
+    """No-op progress callback used when a caller doesn't provide one."""
+
+
 def fetch_fbfm13(
     roi: gpd.GeoDataFrame,
     version: str = LANDFIRE_VERSIONS["fbfm13"]["default"],
@@ -182,7 +186,7 @@ def fetch_fbfm13(
             alignment,
             target_grid_doc,
             extent_buffer_cells,
-            progress,
+            progress or _default_progress,
         )
     else:
         validate_landfire_version(product, version)
@@ -247,7 +251,7 @@ def fetch_fbfm40(
             alignment,
             target_grid_doc,
             extent_buffer_cells,
-            progress,
+            progress or _default_progress,
             season,
         )
     else:
@@ -311,7 +315,7 @@ def fetch_fccs(
             alignment,
             target_grid_doc,
             extent_buffer_cells,
-            progress,
+            progress or _default_progress,
         )
     else:
         validate_landfire_version(product, version)

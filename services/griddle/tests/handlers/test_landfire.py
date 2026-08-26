@@ -267,6 +267,25 @@ class TestFetchFbfm13LfpsPath:
         )
         assert "fbfm13" in result.data_vars
 
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_lfps_available_version_without_progress_does_not_raise(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        """Omitting progress must not crash -- fetch_lfps calls it unconditionally."""
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+
+        result = fetch_fbfm13(roi, version="2025")  # no progress passed
+
+        assert "fbfm13" in result.data_vars
+        # the substituted callback must actually be callable
+        mock_fetch_lfps.call_args[0][6]("test", 0)
+
     @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
     def test_staged_version_does_not_call_lfps(self, mock_fetch_lfps, roi):
         fetch_fbfm13(roi, version="2024")
@@ -411,6 +430,25 @@ class TestFetchFbfm40LfpsPath:
         )
         assert "fbfm" in result.data_vars
 
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_lfps_available_version_without_progress_does_not_raise(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        """Omitting progress must not crash -- fetch_lfps calls it unconditionally."""
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+
+        result = fetch_fbfm40(roi, version="2025")  # no progress passed
+
+        assert "fbfm" in result.data_vars
+        # the substituted callback must actually be callable
+        mock_fetch_lfps.call_args[0][6]("test", 0)
+
     @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
     def test_no_season_does_not_call_lfps(self, mock_fetch_lfps, roi):
         fetch_fbfm40(roi, version="2024")
@@ -507,6 +545,25 @@ class TestFetchFccsLfpsPath:
             is_categorical=True,
         )
         assert "fccs" in result.data_vars
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_lfps_available_version_without_progress_does_not_raise(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        """Omitting progress must not crash -- fetch_lfps calls it unconditionally."""
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+
+        result = fetch_fccs(roi, version="2025")  # no progress passed
+
+        assert "fccs" in result.data_vars
+        # the substituted callback must actually be callable
+        mock_fetch_lfps.call_args[0][6]("test", 0)
 
     @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
     def test_staged_version_does_not_call_lfps(self, mock_fetch_lfps, roi):

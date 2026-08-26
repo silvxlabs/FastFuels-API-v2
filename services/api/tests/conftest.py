@@ -28,8 +28,14 @@ from lib.config import (
     DOMAINS_COLLECTION,
     KEYS_COLLECTION,
 )
+from lib.testing import SHARED_TEST_DOMAINS_DIR
 from tests import fixtures
-from tests.fixtures import make_application_data, make_domain_data, make_key_data
+from tests.fixtures import (
+    load_domain_from_file,
+    make_application_data,
+    make_domain_data,
+    make_key_data,
+)
 
 TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080")
 TEST_API_KEY = os.environ.get("TEST_API_KEY", "")
@@ -138,6 +144,21 @@ def domain_with_different_owner(firestore_client):
 def second_domain(firestore_client, test_owner_id):
     """An extra domain owned by test-owner, for tests that need multiple domains."""
     domain_data = make_domain_data(name="Extra Domain for Testing")
+    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+        domain_data["id"]
+    )
+    doc_ref.set(domain_data)
+    yield domain_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def lfps_covered_domain(firestore_client, test_owner_id):
+    """A domain with known LANDFIRE Product Service SW coverage (Kingman, AZ)."""
+    domain_data = load_domain_from_file(
+        SHARED_TEST_DOMAINS_DIR / "threedep_ept_seam.json",
+        owner_id=test_owner_id,
+    )
     doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
         domain_data["id"]
     )

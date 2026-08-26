@@ -8,6 +8,8 @@ These examples are used in:
 domain_id comes from the URL path parameter, not the request body.
 """
 
+from lib.landfire import LANDFIRE_VERSIONS
+
 EXAMPLE_FBFM40_MINIMAL = {}
 
 EXAMPLE_FBFM40_WITH_METADATA = {
@@ -39,8 +41,8 @@ EXAMPLE_FBFM40_NATIVE = {
 
 EXAMPLE_FBFM40_SEASONAL = {
     "name": "FBFM40 spring seasonal fuels",
-    "version": "2025",
-    "season": "SP",
+    "version": LANDFIRE_VERSIONS["fbfm40"]["lfps_available"][0],
+    "season": "ES",
 }
 
 CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
@@ -112,11 +114,15 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
     },
 }
 
-ALL_FBFM40_EXAMPLE_VALUES = [
+STAGED_FBFM40_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_FBFM40_MINIMAL),
     ("with_metadata", EXAMPLE_FBFM40_WITH_METADATA),
     ("remove_non_burnable", EXAMPLE_FBFM40_REMOVE_NON_BURNABLE),
     ("with_buffer", EXAMPLE_FBFM40_WITH_BUFFER),
     ("domain_aligned_2m", EXAMPLE_FBFM40_DOMAIN_2M),
     ("native_anchor", EXAMPLE_FBFM40_NATIVE),
+]
+
+LFPS_FBFM40_EXAMPLE_VALUES = [
+    ("seasonal", EXAMPLE_FBFM40_SEASONAL),
 ]

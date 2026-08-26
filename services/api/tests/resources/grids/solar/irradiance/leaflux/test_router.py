@@ -17,6 +17,7 @@ from tests.fixtures import make_grid_data
 DATE_TIME = "2025-07-01T19:00:00Z"
 CANOPY = "irradiance.canopy.relative"
 SURFACE = "irradiance.surface.relative"
+TRANSFORM = (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0)
 
 # --- Fixtures ---
 
@@ -39,10 +40,16 @@ def grid_factory(firestore_client):
         bands=("leaf_area_density",),
         shape=(6, 40, 40),
         checksum="src-checksum",
+        crs="EPSG:32611",
+        transform=TRANSFORM,
     ):
         data = make_grid_data(domain_id=domain_id, name="source grid", status=status)
         data["bands"] = [{"key": key} for key in bands]
-        data["georeference"] = {"shape": list(shape)}
+        data["georeference"] = {
+            "crs": crs,
+            "transform": list(transform),
+            "shape": list(shape),
+        }
         data["checksum"] = checksum
         firestore_client.collection(GRIDS_COLLECTION).document(data["id"]).set(data)
         created.append(data["id"])
@@ -221,6 +228,19 @@ class TestCreateLeafluxIrradianceGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
+    def test_source_grid_in_another_domain_returns_404(
+        self, client, domain_for_testing, second_domain, grid_factory
+    ):
+        other_domain_lad = grid_factory(
+            second_domain["id"], bands=("leaf_area_density",), shape=(6, 40, 40)
+        )
+        body = {
+            "source_lad_grid_id": other_domain_lad["id"],
+            "date_time": DATE_TIME,
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 404
+
     def test_source_grid_missing_lad_band_returns_422(
         self, client, domain_for_testing, grid_factory
     ):
@@ -275,6 +295,26 @@ class TestCreateLeafluxIrradianceGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
+    def test_terrain_grid_in_another_domain_returns_404(
+        self,
+        client,
+        domain_for_testing,
+        second_domain,
+        source_lad_grid,
+        grid_factory,
+    ):
+        other_domain_terrain = grid_factory(
+            second_domain["id"], bands=("elevation",), shape=(40, 40)
+        )
+        body = {
+            "source_lad_grid_id": source_lad_grid["id"],
+            "source_terrain_grid_id": other_domain_terrain["id"],
+            "bands": [SURFACE],
+            "date_time": DATE_TIME,
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 404
+
     def test_terrain_grid_missing_elevation_band_returns_422(
         self, client, domain_for_testing, source_lad_grid, grid_factory
     ):
@@ -304,6 +344,52 @@ class TestCreateLeafluxIrradianceGrid:
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        ("terrain_overrides", "detail_fragment"),
+        [
+            ({"shape": (20, 20)}, "shape"),
+            (
+                {
+                    "transform": (
+                        2.0,
+                        0.0,
+                        500001.0,
+                        0.0,
+                        -2.0,
+                        5201000.0,
+                    )
+                },
+                "transform",
+            ),
+            ({"crs": "EPSG:4326"}, "CRS"),
+        ],
+    )
+    def test_terrain_grid_not_aligned_with_lad_returns_422(
+        self,
+        client,
+        domain_for_testing,
+        source_lad_grid,
+        grid_factory,
+        terrain_overrides,
+        detail_fragment,
+    ):
+        terrain = grid_factory(
+            domain_for_testing["id"],
+            bands=("elevation",),
+            shape=terrain_overrides.get("shape", (40, 40)),
+            crs=terrain_overrides.get("crs", "EPSG:32611"),
+            transform=terrain_overrides.get("transform", TRANSFORM),
+        )
+        body = {
+            "source_lad_grid_id": source_lad_grid["id"],
+            "source_terrain_grid_id": terrain["id"],
+            "bands": [SURFACE],
+            "date_time": DATE_TIME,
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 422
+        assert detail_fragment in response.json()["detail"]
 
     # --- Request body validation ---
 

@@ -4,7 +4,7 @@ api/v2/resources/grids/utils.py
 Shared validation and computation utilities for grid endpoints.
 """
 
-from math import ceil
+from math import ceil, isclose
 
 from fastapi import HTTPException, status
 
@@ -21,6 +21,7 @@ from api.resources.grids.modification_models import (
 from api.resources.grids.schema import BandType, GridDataChunkMetadata
 from api.resources.modifications import stringify_modification_coordinates
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 from lib.landfire import CoverageStatus, covers_annual, covers_seasonal
@@ -238,6 +239,73 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(f"Grid {grid_id} is {rank}D, expected {expected}D for this role."),
+        )
+
+
+def validate_grids_share_horizontal_lattice(
+    reference_grid: dict,
+    candidate_grid: dict,
+) -> None:
+    """Validate that two grids have the same horizontal raster lattice.
+
+    A 3D reference and 2D candidate may differ along z; their CRS, trailing
+    ``(y, x)`` shape, and six affine-transform coefficients must match. Derived
+    operations rely on this invariant so processing services can address both
+    inputs with the same pixel indices without resampling.
+
+    Raises:
+        HTTPException(422): If either grid lacks a georeference or their
+            horizontal lattices differ.
+    """
+    reference_grid_id = reference_grid["id"]
+    candidate_grid_id = candidate_grid["id"]
+    validate_grid_has_georeference(reference_grid, reference_grid_id)
+    validate_grid_has_georeference(candidate_grid, candidate_grid_id)
+
+    reference = reference_grid["georeference"]
+    candidate = candidate_grid["georeference"]
+    remediation = (
+        f"Resample grid {candidate_grid_id} with alignment.target='grid' and "
+        f"alignment.grid_id='{reference_grid_id}' before using these grids together."
+    )
+
+    if not crs_equal(reference.get("crs"), candidate.get("crs")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Grid {candidate_grid_id} does not share grid "
+                f"{reference_grid_id}'s horizontal CRS. {remediation}"
+            ),
+        )
+
+    reference_shape = tuple(reference.get("shape", ())[-2:])
+    candidate_shape = tuple(candidate.get("shape", ())[-2:])
+    if reference_shape != candidate_shape:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Grid {candidate_grid_id} has horizontal shape "
+                f"{candidate_shape}, but grid {reference_grid_id} has "
+                f"{reference_shape}. {remediation}"
+            ),
+        )
+
+    reference_transform = tuple(reference.get("transform", ()))
+    candidate_transform = tuple(candidate.get("transform", ()))
+    if (
+        len(reference_transform) != 6
+        or len(candidate_transform) != 6
+        or any(
+            not isclose(a, b, rel_tol=0.0, abs_tol=1e-9)
+            for a, b in zip(reference_transform, candidate_transform, strict=True)
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Grid {candidate_grid_id} does not share grid "
+                f"{reference_grid_id}'s horizontal transform. {remediation}"
+            ),
         )
 
 

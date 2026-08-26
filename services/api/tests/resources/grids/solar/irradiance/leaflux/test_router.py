@@ -83,7 +83,7 @@ class TestCreateLeafluxIrradianceGrid:
         self, client, domain_for_testing, source_lad_grid
     ):
         """Minimal request creates a pending grid with resolved defaults."""
-        body = {"source_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
 
@@ -102,11 +102,11 @@ class TestCreateLeafluxIrradianceGrid:
         assert source["operation"] == "irradiance"
         assert source["input"] == "grid"
         assert source["entity"] == "solar"
-        assert source["source_grid_id"] == source_lad_grid["id"]
+        assert source["source_lad_grid_id"] == source_lad_grid["id"]
         assert "source_terrain_grid_id" not in source
         assert source["bands"] == [SURFACE]
         assert source["extinction_coefficient"] == 0.5
-        assert source["source_grid_checksum"] == source_lad_grid["checksum"]
+        assert source["source_lad_grid_checksum"] == source_lad_grid["checksum"]
 
         assert len(data["bands"]) == 1
         assert data["bands"][0]["key"] == SURFACE
@@ -120,7 +120,7 @@ class TestCreateLeafluxIrradianceGrid:
             "name": "Midday irradiance",
             "description": "Canopy and surface.",
             "tags": ["solar", "irradiance"],
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "source_terrain_grid_id": terrain_grid["id"],
             "bands": [CANOPY, SURFACE],
             "date_time": DATE_TIME,
@@ -140,7 +140,7 @@ class TestCreateLeafluxIrradianceGrid:
 
     def test_canopy_only_request(self, client, domain_for_testing, source_lad_grid):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "bands": [CANOPY],
             "date_time": DATE_TIME,
         }
@@ -150,7 +150,7 @@ class TestCreateLeafluxIrradianceGrid:
 
     def test_surface_only_no_terrain(self, client, domain_for_testing, source_lad_grid):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "bands": [SURFACE],
             "date_time": DATE_TIME,
         }
@@ -162,7 +162,7 @@ class TestCreateLeafluxIrradianceGrid:
         self, client, domain_for_testing, source_lad_grid, terrain_grid
     ):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "source_terrain_grid_id": terrain_grid["id"],
             "bands": [SURFACE],
             "date_time": DATE_TIME,
@@ -174,7 +174,7 @@ class TestCreateLeafluxIrradianceGrid:
     def test_missing_bands_uses_default(
         self, client, domain_for_testing, source_lad_grid
     ):
-        body = {"source_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
         assert response.json()["source"]["bands"] == [SURFACE]
@@ -182,7 +182,7 @@ class TestCreateLeafluxIrradianceGrid:
     def test_response_excludes_owner_id(
         self, client, domain_for_testing, source_lad_grid
     ):
-        body = {"source_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201
         assert "owner_id" not in response.json()
@@ -190,7 +190,7 @@ class TestCreateLeafluxIrradianceGrid:
     # --- Domain validation ---
 
     def test_invalid_domain_returns_404(self, client, source_lad_grid):
-        body = {"source_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
         response = client.post(
             self.route("00000000000000000000000000000000"), json=body
         )
@@ -199,7 +199,7 @@ class TestCreateLeafluxIrradianceGrid:
     def test_wrong_owner_domain_returns_404(
         self, client, domain_with_different_owner, source_lad_grid
     ):
-        body = {"source_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": source_lad_grid["id"], "date_time": DATE_TIME}
         response = client.post(self.route(domain_with_different_owner["id"]), json=body)
         assert response.status_code == 404
 
@@ -207,7 +207,7 @@ class TestCreateLeafluxIrradianceGrid:
 
     def test_nonexistent_source_grid_returns_404(self, client, domain_for_testing):
         body = {
-            "source_grid_id": "00000000000000000000000000000000",
+            "source_lad_grid_id": "00000000000000000000000000000000",
             "date_time": DATE_TIME,
         }
         response = client.post(self.route(domain_for_testing["id"]), json=body)
@@ -217,7 +217,7 @@ class TestCreateLeafluxIrradianceGrid:
         self, client, domain_for_testing, grid_factory
     ):
         pending = grid_factory(domain_for_testing["id"], status="pending")
-        body = {"source_grid_id": pending["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": pending["id"], "date_time": DATE_TIME}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
@@ -229,7 +229,7 @@ class TestCreateLeafluxIrradianceGrid:
             bands=("bulk_density.foliage.live",),
             shape=(6, 40, 40),
         )
-        body = {"source_grid_id": no_lad["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": no_lad["id"], "date_time": DATE_TIME}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
@@ -239,7 +239,7 @@ class TestCreateLeafluxIrradianceGrid:
         two_d = grid_factory(
             domain_for_testing["id"], bands=("leaf_area_density",), shape=(40, 40)
         )
-        body = {"source_grid_id": two_d["id"], "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": two_d["id"], "date_time": DATE_TIME}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
@@ -249,7 +249,7 @@ class TestCreateLeafluxIrradianceGrid:
         self, client, domain_for_testing, source_lad_grid
     ):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "source_terrain_grid_id": "00000000000000000000000000000000",
             "bands": [SURFACE],
             "date_time": DATE_TIME,
@@ -267,7 +267,7 @@ class TestCreateLeafluxIrradianceGrid:
             shape=(40, 40),
         )
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "source_terrain_grid_id": pending_terrain["id"],
             "bands": [SURFACE],
             "date_time": DATE_TIME,
@@ -282,7 +282,7 @@ class TestCreateLeafluxIrradianceGrid:
             domain_for_testing["id"], bands=("leaf_area_density",), shape=(40, 40)
         )
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "source_terrain_grid_id": no_elev["id"],
             "bands": [SURFACE],
             "date_time": DATE_TIME,
@@ -297,7 +297,7 @@ class TestCreateLeafluxIrradianceGrid:
             domain_for_testing["id"], bands=("elevation",), shape=(6, 40, 40)
         )
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "source_terrain_grid_id": three_d_terrain["id"],
             "bands": [SURFACE],
             "date_time": DATE_TIME,
@@ -307,7 +307,7 @@ class TestCreateLeafluxIrradianceGrid:
 
     # --- Request body validation ---
 
-    def test_missing_source_grid_id_returns_422(self, client, domain_for_testing):
+    def test_missing_source_lad_grid_id_returns_422(self, client, domain_for_testing):
         response = client.post(
             self.route(domain_for_testing["id"]), json={"date_time": DATE_TIME}
         )
@@ -316,13 +316,13 @@ class TestCreateLeafluxIrradianceGrid:
     def test_missing_date_time_returns_422(
         self, client, domain_for_testing, source_lad_grid
     ):
-        body = {"source_grid_id": source_lad_grid["id"]}
+        body = {"source_lad_grid_id": source_lad_grid["id"]}
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
     def test_empty_bands_returns_422(self, client, domain_for_testing, source_lad_grid):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "bands": [],
             "date_time": DATE_TIME,
         }
@@ -333,7 +333,7 @@ class TestCreateLeafluxIrradianceGrid:
         self, client, domain_for_testing, source_lad_grid
     ):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "bands": [SURFACE, SURFACE],
             "date_time": DATE_TIME,
         }
@@ -344,7 +344,7 @@ class TestCreateLeafluxIrradianceGrid:
         self, client, domain_for_testing, source_lad_grid
     ):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "bands": ["not_a_band"],
             "date_time": DATE_TIME,
         }
@@ -356,7 +356,7 @@ class TestCreateLeafluxIrradianceGrid:
         self, client, domain_for_testing, source_lad_grid, extinction
     ):
         body = {
-            "source_grid_id": source_lad_grid["id"],
+            "source_lad_grid_id": source_lad_grid["id"],
             "date_time": DATE_TIME,
             "extinction_coefficient": extinction,
         }
@@ -379,8 +379,8 @@ class TestCreateLeafluxIrradianceGrid:
     ):
         """Every documented example must produce a successful request."""
         body = {**example_value}
-        if body.get("source_grid_id") == "GRID_ID":
-            body["source_grid_id"] = source_lad_grid["id"]
+        if body.get("source_lad_grid_id") == "LAD_GRID_ID":
+            body["source_lad_grid_id"] = source_lad_grid["id"]
         if body.get("source_terrain_grid_id") == "TERRAIN_GRID_ID":
             body["source_terrain_grid_id"] = terrain_grid["id"]
 

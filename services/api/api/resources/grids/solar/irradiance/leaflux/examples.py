@@ -2,7 +2,7 @@ CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES = {
     "minimal": {
         "summary": "Minimal - default surface band, no terrain",
         "value": {
-            "source_grid_id": "GRID_ID",
+            "source_lad_grid_id": "LAD_GRID_ID",
             "date_time": "2025-07-01T19:00:00Z",
         },
     },
@@ -12,7 +12,7 @@ CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES = {
             "name": "Midday irradiance",
             "description": "Relative canopy and surface irradiance.",
             "tags": ["solar", "irradiance"],
-            "source_grid_id": "GRID_ID",
+            "source_lad_grid_id": "LAD_GRID_ID",
             "source_terrain_grid_id": "TERRAIN_GRID_ID",
             "bands": [
                 "irradiance.canopy.relative",
@@ -25,7 +25,7 @@ CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES = {
     "canopy_only": {
         "summary": "Canopy only - no terrain needed",
         "value": {
-            "source_grid_id": "GRID_ID",
+            "source_lad_grid_id": "LAD_GRID_ID",
             "bands": ["irradiance.canopy.relative"],
             "date_time": "2025-07-01T19:00:00Z",
         },
@@ -33,7 +33,7 @@ CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES = {
     "surface_flat": {
         "summary": "Surface only - flat plane, no terrain supplied",
         "value": {
-            "source_grid_id": "GRID_ID",
+            "source_lad_grid_id": "LAD_GRID_ID",
             "bands": ["irradiance.surface.relative"],
             "date_time": "2025-07-01T19:00:00Z",
         },
@@ -41,7 +41,7 @@ CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES = {
     "surface_terrain": {
         "summary": "Surface only - draped on a supplied terrain grid",
         "value": {
-            "source_grid_id": "GRID_ID",
+            "source_lad_grid_id": "LAD_GRID_ID",
             "source_terrain_grid_id": "TERRAIN_GRID_ID",
             "bands": ["irradiance.surface.relative"],
             "date_time": "2025-07-01T19:00:00Z",

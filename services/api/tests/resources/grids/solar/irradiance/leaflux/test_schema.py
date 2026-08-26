@@ -100,13 +100,13 @@ class TestCreateLeafluxIrradianceRequest:
     """Validation rules for the request body."""
 
     def _minimal(self, **overrides) -> dict:
-        body = {"source_grid_id": "abc123", "date_time": DATE_TIME}
+        body = {"source_lad_grid_id": "abc123", "date_time": DATE_TIME}
         body.update(overrides)
         return body
 
     def test_minimal_valid_request(self):
         req = CreateLeafluxIrradianceRequest(**self._minimal())
-        assert req.source_grid_id == "abc123"
+        assert req.source_lad_grid_id == "abc123"
         assert req.source_terrain_grid_id is None
         assert req.bands == [LeafluxBand.irradiance_surface_relative]
         assert req.extinction_coefficient == 0.5
@@ -114,13 +114,13 @@ class TestCreateLeafluxIrradianceRequest:
         assert req.description == ""
         assert req.tags == []
 
-    def test_source_grid_id_is_required(self):
+    def test_source_lad_grid_id_is_required(self):
         with pytest.raises(ValidationError):
             CreateLeafluxIrradianceRequest(date_time=DATE_TIME)
 
     def test_date_time_is_required(self):
         with pytest.raises(ValidationError):
-            CreateLeafluxIrradianceRequest(source_grid_id="abc")
+            CreateLeafluxIrradianceRequest(source_lad_grid_id="abc")
 
     def test_date_time_parses_iso_z(self):
         req = CreateLeafluxIrradianceRequest(**self._minimal())
@@ -128,7 +128,9 @@ class TestCreateLeafluxIrradianceRequest:
         assert req.date_time.hour == 19
 
     def test_bands_defaults_to_surface(self):
-        req = CreateLeafluxIrradianceRequest(source_grid_id="abc", date_time=DATE_TIME)
+        req = CreateLeafluxIrradianceRequest(
+            source_lad_grid_id="abc", date_time=DATE_TIME
+        )
         assert req.bands == [LeafluxBand.irradiance_surface_relative]
 
     def test_bands_cannot_be_empty(self):
@@ -188,7 +190,7 @@ class TestCreateLeafluxIrradianceRequest:
             name="Midday irradiance",
             description="Canopy and surface.",
             tags=["solar"],
-            source_grid_id="grid-1",
+            source_lad_grid_id="grid-1",
             source_terrain_grid_id="terrain-1",
             bands=[CANOPY, SURFACE],
             date_time=DATE_TIME,
@@ -206,7 +208,7 @@ class TestCreateLeafluxIrradianceRequest:
     )
     def test_documented_examples_are_schema_valid(self, example_name, example_value):
         req = CreateLeafluxIrradianceRequest(**example_value)
-        assert req.source_grid_id, example_name
+        assert req.source_lad_grid_id, example_name
 
 
 class TestIrradianceLeafluxSource:
@@ -214,7 +216,7 @@ class TestIrradianceLeafluxSource:
 
     def _minimal(self, **overrides) -> dict:
         body = {
-            "source_grid_id": "grid-1",
+            "source_lad_grid_id": "grid-1",
             "bands": [LeafluxBand.irradiance_surface_relative],
             "date_time": DATE_TIME,
             "extinction_coefficient": 0.5,
@@ -228,17 +230,19 @@ class TestIrradianceLeafluxSource:
         assert source.input == "grid"
         assert source.entity == "solar"
 
-    def test_source_grid_checksum_defaults_to_none(self):
+    def test_source_lad_grid_checksum_defaults_to_none(self):
         source = IrradianceLeafluxSource(**self._minimal())
-        assert source.source_grid_checksum is None
+        assert source.source_lad_grid_checksum is None
 
-    def test_source_grid_checksum_round_trips(self):
-        source = IrradianceLeafluxSource(**self._minimal(source_grid_checksum="sum123"))
-        assert source.source_grid_checksum == "sum123"
-        assert source.model_dump(mode="json")["source_grid_checksum"] == "sum123"
+    def test_source_lad_grid_checksum_round_trips(self):
+        source = IrradianceLeafluxSource(
+            **self._minimal(source_lad_grid_checksum="sum123")
+        )
+        assert source.source_lad_grid_checksum == "sum123"
+        assert source.model_dump(mode="json")["source_lad_grid_checksum"] == "sum123"
 
     @pytest.mark.parametrize(
-        "field", ["source_grid_id", "bands", "date_time", "extinction_coefficient"]
+        "field", ["source_lad_grid_id", "bands", "date_time", "extinction_coefficient"]
     )
     def test_required_fields(self, field):
         """Every resolved model choice is persisted for reproducibility."""
@@ -255,7 +259,7 @@ class TestIrradianceLeafluxSource:
         source = IrradianceLeafluxSource(**self._minimal())
         data = source.model_dump(mode="json", exclude_none=True)
         assert "source_terrain_grid_id" not in data
-        assert "source_grid_checksum" not in data
+        assert "source_lad_grid_checksum" not in data
 
     def test_model_dump_includes_resolved_fields(self):
         source = IrradianceLeafluxSource(
@@ -272,7 +276,7 @@ class TestIrradianceLeafluxSource:
         assert data["operation"] == "irradiance"
         assert data["input"] == "grid"
         assert data["entity"] == "solar"
-        assert data["source_grid_id"] == "grid-1"
+        assert data["source_lad_grid_id"] == "grid-1"
         assert data["source_terrain_grid_id"] == "terrain-1"
         assert data["bands"] == [CANOPY, SURFACE]
         assert data["extinction_coefficient"] == 0.4

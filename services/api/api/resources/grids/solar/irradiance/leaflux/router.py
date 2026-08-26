@@ -74,7 +74,7 @@ async def create_leaflux_irradiance_grid(
     # Check that grid exists, is owned, complete, and in domain
     _, source_snapshot = await get_document_async(
         collection=COLLECTION,
-        document_id=body.source_grid_id,
+        document_id=body.source_lad_grid_id,
         owner_id=owner_id,
         document_status="completed",
     )
@@ -82,12 +82,14 @@ async def create_leaflux_irradiance_grid(
     # Validate that we have LAD band
     grid_data = source_snapshot.to_dict()
     validate_grid_has_band(
-        grid_data=grid_data, grid_id=body.source_grid_id, required=LEAF_AREA_DENSITY_KEY
+        grid_data=grid_data,
+        grid_id=body.source_lad_grid_id,
+        required=LEAF_AREA_DENSITY_KEY,
     )
 
     # Validate that is 3D
     validate_grid_dimensionality(
-        grid_data=grid_data, grid_id=body.source_grid_id, expected=3
+        grid_data=grid_data, grid_id=body.source_lad_grid_id, expected=3
     )
 
     if body.source_terrain_grid_id is not None:
@@ -115,8 +117,8 @@ async def create_leaflux_irradiance_grid(
         )
 
     source = IrradianceLeafluxSource(
-        source_grid_id=body.source_grid_id,
-        source_grid_checksum=grid_data.get("checksum"),
+        source_lad_grid_id=body.source_lad_grid_id,
+        source_lad_grid_checksum=grid_data.get("checksum"),
         source_terrain_grid_id=body.source_terrain_grid_id,
         bands=body.bands,
         date_time=body.date_time,

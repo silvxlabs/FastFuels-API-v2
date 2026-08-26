@@ -308,7 +308,7 @@ def test_run_leaflux_wires_job_and_tiles(monkeypatch):
         "id": "test-out",
         "bands": [{"key": CANOPY_BAND}, {"key": SURFACE_BAND}],
         "source": {
-            "source_grid_id": "src-lad",
+            "source_lad_grid_id": "src-lad",
             "source_terrain_grid_id": "src-dem",
             "date_time": datetime(2023, 6, 21, 19, 0, 0),
             "extinction_coefficient": 0.5,
@@ -361,7 +361,7 @@ def test_run_leaflux_surface_only_is_2d(monkeypatch):
         "id": "test-out",
         "bands": [{"key": SURFACE_BAND}],
         "source": {
-            "source_grid_id": "src-lad",
+            "source_lad_grid_id": "src-lad",
             "source_terrain_grid_id": "src-dem",
             "date_time": datetime(2023, 6, 21, 19, 0, 0),
             "extinction_coefficient": 0.5,
@@ -404,7 +404,7 @@ def test_run_leaflux_no_surface_band_skips_terrain(monkeypatch):
         "id": "test-out",
         "bands": [{"key": CANOPY_BAND}],
         "source": {
-            "source_grid_id": "src-lad",
+            "source_lad_grid_id": "src-lad",
             "source_terrain_grid_id": "src-dem",  # present but not requested
             "date_time": datetime(2023, 6, 21, 19, 0, 0),
             "extinction_coefficient": 0.5,

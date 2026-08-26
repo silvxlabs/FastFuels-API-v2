@@ -242,7 +242,7 @@ class _WriteJob:
     """Everything a worker needs to fill tiles, all picklable (no open datasets —
     those are opened once per worker in `_open_worker_sources`)."""
 
-    source_grid_id: str
+    lad_grid_id: str
     dem_id: str | None
     out_path: str
     nz: int
@@ -268,7 +268,7 @@ _WORKER: dict = {}
 
 def _open_worker_sources(job: _WriteJob) -> None:
     _WORKER["job"] = job
-    _WORKER["lad_ds"] = _open(job.source_grid_id)
+    _WORKER["lad_ds"] = _open(job.lad_grid_id)
     _WORKER["dem_ds"] = _open(job.dem_id) if job.dem_id else None
 
 
@@ -398,7 +398,7 @@ def run_leaflux(
     out_path = storage.gcs_path(grid["id"])
 
     progress("Opening source grids...", 10)
-    lad_ds = _open(source["source_grid_id"])
+    lad_ds = _open(source["source_lad_grid_id"])
     nz, ny, nx = lad_ds.sizes["z"], lad_ds.sizes["y"], lad_ds.sizes["x"]
     hr = float(lad_ds.attrs["transform"][0])
     vr = float(lad_ds.attrs["z_resolution"])
@@ -418,7 +418,7 @@ def run_leaflux(
     _init_output(out_path, lad_ds, bands, core, is_3d)
 
     job = _WriteJob(
-        source_grid_id=source["source_grid_id"],
+        lad_grid_id=source["source_lad_grid_id"],
         dem_id=source.get("source_terrain_grid_id")
         if SURFACE_BAND in requested
         else None,

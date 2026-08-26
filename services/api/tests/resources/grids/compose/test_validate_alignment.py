@@ -12,9 +12,10 @@ from fastapi import HTTPException
 _TRANSFORM = [2.0, 0.0, 720226.0, 0.0, -2.0, 5190646.0]
 
 
-def _grid(crs: str) -> dict:
+def _grid(crs: str, grid_id: str = "grid") -> dict:
     return {
-        "georeference": {"shape": [50, 100], "transform": list(_TRANSFORM), "crs": crs}
+        "id": grid_id,
+        "georeference": {"shape": [50, 100], "transform": list(_TRANSFORM), "crs": crs},
     }
 
 
@@ -24,18 +25,39 @@ def _inputs(aliases: list[str]) -> dict[str, ComposeInput]:
 
 def test_equivalent_crs_spellings_pass():
     # Same CRS spelled two ways (EPSG vs OGC URN) — must not be rejected.
-    source_grids = {"a": _grid("EPSG:32611"), "b": _grid("urn:ogc:def:crs:EPSG::32611")}
+    source_grids = {
+        "a": _grid("EPSG:32611", "a"),
+        "b": _grid("urn:ogc:def:crs:EPSG::32611", "b"),
+    }
     _validate_alignment(source_grids, _inputs(["a", "b"]))
 
 
 def test_matching_crs_passes():
-    source_grids = {"a": _grid("EPSG:32611"), "b": _grid("EPSG:32611")}
+    source_grids = {"a": _grid("EPSG:32611", "a"), "b": _grid("EPSG:32611", "b")}
     _validate_alignment(source_grids, _inputs(["a", "b"]))
 
 
 def test_different_crs_rejected():
-    source_grids = {"a": _grid("EPSG:32611"), "b": _grid("EPSG:4326")}
+    source_grids = {"a": _grid("EPSG:32611", "a"), "b": _grid("EPSG:4326", "b")}
     with pytest.raises(HTTPException) as exc:
         _validate_alignment(source_grids, _inputs(["a", "b"]))
     assert exc.value.status_code == 422
     assert "CRS" in exc.value.detail
+
+
+def test_different_shape_rejected():
+    source_grids = {"a": _grid("EPSG:32611", "a"), "b": _grid("EPSG:32611", "b")}
+    source_grids["b"]["georeference"]["shape"] = [25, 50]
+    with pytest.raises(HTTPException) as exc:
+        _validate_alignment(source_grids, _inputs(["a", "b"]))
+    assert exc.value.status_code == 422
+    assert "shape" in exc.value.detail
+
+
+def test_different_transform_rejected():
+    source_grids = {"a": _grid("EPSG:32611", "a"), "b": _grid("EPSG:32611", "b")}
+    source_grids["b"]["georeference"]["transform"][2] += 1.0
+    with pytest.raises(HTTPException) as exc:
+        _validate_alignment(source_grids, _inputs(["a", "b"]))
+    assert exc.value.status_code == 422
+    assert "transform" in exc.value.detail

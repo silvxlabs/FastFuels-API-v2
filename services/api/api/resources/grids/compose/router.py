@@ -1,6 +1,5 @@
 """Router for grid compose endpoints."""
 
-import math
 import uuid
 from datetime import datetime
 from typing import Annotated, Any
@@ -44,6 +43,7 @@ from api.resources.grids.utils import (
     validate_feature_modifications,
     validate_grid_has_band,
     validate_grid_has_georeference,
+    validate_grids_share_horizontal_lattice,
 )
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
@@ -54,7 +54,6 @@ from lib.config import (
     GRIDDLE_SERVICE,
     GRIDS_COLLECTION,
 )
-from lib.crs import crs_equal
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 from lib.units import canonicalize_unit
 
@@ -121,24 +120,16 @@ def _validate_alignment(
 ) -> None:
     first_alias = next(iter(source_grids))
     first_grid = source_grids[first_alias]
-    _shape_rank(first_grid, input_by_alias[first_alias].grid_id)
-    first_georef = first_grid["georeference"]
-    first_transform = tuple(first_georef["transform"])
+    first_grid_id = input_by_alias[first_alias].grid_id
+    _shape_rank(first_grid, first_grid_id)
 
     for alias, grid_data in source_grids.items():
         grid_id = input_by_alias[alias].grid_id
         _shape_rank(grid_data, grid_id)
-        georef = grid_data["georeference"]
-        if not crs_equal(georef.get("crs"), first_georef.get("crs")):
-            raise _http_422("All compose input grids must have the same CRS.")
-        if tuple(georef.get("shape", ())) != tuple(first_georef.get("shape", ())):
-            raise _http_422("All compose input grids must have the same shape.")
-        transform = tuple(georef.get("transform", ()))
-        if len(transform) != len(first_transform) or any(
-            not math.isclose(a, b, rel_tol=0.0, abs_tol=1e-9)
-            for a, b in zip(transform, first_transform, strict=True)
-        ):
-            raise _http_422("All compose input grids must have the same transform.")
+        validate_grids_share_horizontal_lattice(
+            reference_grid=first_grid,
+            candidate_grid=grid_data,
+        )
 
 
 async def _load_source_grids(

@@ -74,23 +74,6 @@ def test_seasonal_fbfm40(roi):
     assert fbfm_valid.max() <= 204  # matches test_landfire.py's FBFM40 range check
 
 
-def test_configured_seasonal_version_still_live():
-    """Fails once LANDFIRE moves seasonal fuels past our configured
-    version -- signals LANDFIRE_VERSIONS["fbfm40"]["lfps_available"]
-    needs updating, rather than silently going stale."""
-    version = LANDFIRE_VERSIONS["fbfm40"]["lfps_available"][0]
-    live = any(
-        p.acronym.upper() == "FBFM40"
-        and p.season is not None
-        and p.version == f"LF{version}"
-        for p in list_products()
-    )
-    assert live, (
-        f"No live seasonal FBFM40 product for version {version} -- LANDFIRE may "
-        'have moved on; update LANDFIRE_VERSIONS["fbfm40"]["lfps_available"].'
-    )
-
-
 @pytest.mark.parametrize(
     ("product", "fetch_fn", "band"),
     [

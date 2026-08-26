@@ -14,6 +14,7 @@ from lib.config import GRIDS_COLLECTION
 from tests.fixtures import make_grid_data
 
 SURFACE = "irradiance.surface.relative"
+TRANSFORM = (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0)
 
 
 @pytest.fixture
@@ -28,10 +29,19 @@ def grid_factory(firestore_client):
         bands=("slope", "aspect"),
         shape=(40, 40),
         checksum="src-checksum",
+        crs="EPSG:32611",
+        transform=TRANSFORM,
     ):
         data = make_grid_data(domain_id=domain_id, name="source grid", status=status)
-        data["bands"] = [{"key": key} for key in bands]
-        data["georeference"] = {"shape": list(shape)}
+        data["bands"] = [
+            {"key": key, "type": "continuous", "index": i}
+            for i, key in enumerate(bands)
+        ]
+        data["georeference"] = {
+            "crs": crs,
+            "transform": list(transform),
+            "shape": list(shape),
+        }
         data["checksum"] = checksum
         firestore_client.collection(GRIDS_COLLECTION).document(data["id"]).set(data)
         created.append(data["id"])
@@ -236,6 +246,50 @@ class TestCreateFosbergFuelMoistureGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
         assert SURFACE in response.json()["detail"]
+
+    @pytest.mark.parametrize(
+        ("irradiance_overrides", "detail_fragment"),
+        [
+            ({"shape": (20, 20)}, "shape"),
+            (
+                {"transform": (2.0, 0.0, 500001.0, 0.0, -2.0, 5201000.0)},
+                "transform",
+            ),
+            ({"crs": "EPSG:4326"}, "CRS"),
+        ],
+    )
+    def test_irradiance_not_aligned_with_topography_returns_422(
+        self,
+        client,
+        domain_for_testing,
+        topography_grid,
+        grid_factory,
+        irradiance_overrides,
+        detail_fragment,
+    ):
+        irr = grid_factory(
+            domain_for_testing["id"],
+            bands=(SURFACE,),
+            shape=irradiance_overrides.get("shape", (40, 40)),
+            crs=irradiance_overrides.get("crs", "EPSG:32611"),
+            transform=irradiance_overrides.get("transform", TRANSFORM),
+        )
+        body = self._body(topography_grid, irr)
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 422
+        assert detail_fragment in response.json()["detail"]
+
+    def test_3d_irradiance_sharing_horizontal_lattice_succeeds(
+        self, client, domain_for_testing, topography_grid, grid_factory
+    ):
+        """A canopy+surface irradiance grid is 3D; only its y/x lattice must
+        match the 2D topography grid."""
+        irr_3d = grid_factory(
+            domain_for_testing["id"], bands=(SURFACE,), shape=(6, 40, 40)
+        )
+        body = self._body(topography_grid, irr_3d)
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201
 
     # --- Request body validation ---
 

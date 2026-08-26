@@ -78,12 +78,12 @@ class IrradianceLeafluxSource(BaseModel):
     input: Literal["grid"] = "grid"
     entity: Literal["solar"] = "solar"
 
-    source_grid_id: str
-    source_grid_checksum: str | None = Field(
+    source_lad_grid_id: str
+    source_lad_grid_checksum: str | None = Field(
         default=None,
         description=(
-            "The source grid's `checksum` at the time this grid was created "
-            "from it. Compare it against the source grid's current `checksum` "
+            "The leaf-area-density grid's `checksum` at the time this grid was "
+            "created from it. Compare it against that grid's current `checksum` "
             "to tell whether the source has changed since."
         ),
     )
@@ -107,15 +107,25 @@ class CreateLeafluxIrradianceRequest(BaseModel):
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
 
-    source_grid_id: str = Field(
-        description="ID of a completed 3D grid that has a `leaf_area_density` band.",
+    source_lad_grid_id: str = Field(
+        description=(
+            "ID of the completed 3D fuel grid whose `leaf_area_density` (LAD) "
+            "band drives the Beer-Lambert light attenuation. This is the "
+            "primary input the irradiance field is computed from. Named for "
+            "the band it consumes so it reads unambiguously alongside "
+            "`source_terrain_grid_id`."
+        ),
     )
 
     source_terrain_grid_id: str | None = Field(
         default=None,
         description=(
-            "(optional) 2D terrain grid in the same domain, used for surface "
-            "irradiance."
+            "(optional) ID of a completed 2D terrain grid (with an `elevation` "
+            "band) in the same domain and on the LAD grid's exact horizontal "
+            "lattice (equivalent CRS, shape, and affine transform), used to "
+            "drape the surface irradiance band over real terrain instead of a "
+            "flat plane. Resample the terrain with the LAD grid as its "
+            "alignment target when their lattices differ."
         ),
     )
     bands: list[LeafluxBand] = Field(

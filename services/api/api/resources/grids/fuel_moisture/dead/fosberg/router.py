@@ -27,6 +27,7 @@ from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     validate_grid_dimensionality,
     validate_grid_has_band,
+    validate_grids_share_horizontal_lattice,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -119,6 +120,14 @@ async def create_fosberg_fuel_moisture_grid(
         grid_data=irr_grid,
         grid_id=body.source_irradiance_grid_id,
         required=SURFACE_IRRADIANCE_KEY,
+    )
+
+    # The moisture surface is derived cell-for-cell from both grids and inherits
+    # the topography grid's georeference, so the irradiance grid must sit on the
+    # same horizontal lattice (the irradiance grid may be 3D; only y/x matter).
+    validate_grids_share_horizontal_lattice(
+        reference_grid=topo_grid,
+        candidate_grid=irr_grid,
     )
 
     source = FosbergFuelMoistureSource(

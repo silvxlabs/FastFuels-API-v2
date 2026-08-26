@@ -44,7 +44,10 @@ def grid_factory(firestore_client):
         transform=TRANSFORM,
     ):
         data = make_grid_data(domain_id=domain_id, name="source grid", status=status)
-        data["bands"] = [{"key": key} for key in bands]
+        data["bands"] = [
+            {"key": key, "type": "continuous", "index": i}
+            for i, key in enumerate(bands)
+        ]
         data["georeference"] = {
             "crs": crs,
             "transform": list(transform),

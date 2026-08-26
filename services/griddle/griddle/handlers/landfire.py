@@ -154,7 +154,7 @@ def fetch_fbfm13(
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-    progress: Callable[[str, int | None], None] | None = None,
+    progress: Callable[[str, int | None], None] = _default_progress,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM13 fuel model codes.
 
@@ -186,7 +186,7 @@ def fetch_fbfm13(
             alignment,
             target_grid_doc,
             extent_buffer_cells,
-            progress or _default_progress,
+            progress,
         )
     else:
         validate_landfire_version(product, version)
@@ -217,7 +217,7 @@ def fetch_fbfm40(
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-    progress: Callable[[str, int | None], None] | None = None,
+    progress: Callable[[str, int | None], None] = _default_progress,
     season: str | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM40 fuel model codes.
@@ -251,7 +251,7 @@ def fetch_fbfm40(
             alignment,
             target_grid_doc,
             extent_buffer_cells,
-            progress or _default_progress,
+            progress,
             season,
         )
     else:
@@ -284,7 +284,7 @@ def fetch_fccs(
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-    progress: Callable[[str, int | None], None] | None = None,
+    progress: Callable[[str, int | None], None] = _default_progress,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FCCS fuel model codes.
 
@@ -315,7 +315,7 @@ def fetch_fccs(
             alignment,
             target_grid_doc,
             extent_buffer_cells,
-            progress or _default_progress,
+            progress,
         )
     else:
         validate_landfire_version(product, version)

@@ -17,6 +17,7 @@ LANDFIRE_USER_EMAIL = os.getenv("LANDFIRE_USER_EMAIL", "lwiard@newmexicoconsorti
 LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
     "fbfm13": {
         "available": ["2023", "2024"],
+        "lfps_available": ["2025"],
         "default": "2024",
     },
     "fbfm40": {
@@ -26,6 +27,7 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
     },
     "fccs": {
         "available": ["2023"],
+        "lfps_available": ["2025"],
         "default": "2023",
     },
 }

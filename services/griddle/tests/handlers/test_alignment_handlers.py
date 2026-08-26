@@ -81,9 +81,11 @@ class TestLandfireAlignmentDomain:
     def test_domain_target_passes_destination_kwargs(self, mock_cls):
         mock_cls.return_value = _mock_raster()
         roi = _domain_gdf()
+        progress = MagicMock()
 
         fetch_fbfm40(
             roi,
+            progress,
             version="2024",
             alignment={"target": "domain", "resolution": 2.0},
         )
@@ -103,8 +105,9 @@ class TestLandfireAlignmentDomain:
     def test_domain_target_default_uses_source_native_resolution(self, mock_cls):
         mock_cls.return_value = _mock_raster(source_resolution=30.0)
         roi = _domain_gdf()
+        progress = MagicMock()
 
-        fetch_fbfm40(roi, version="2024", alignment={"target": "domain"})
+        fetch_fbfm40(roi, progress, version="2024", alignment={"target": "domain"})
 
         kwargs = mock_cls.return_value.extract_window.call_args[1]
         transform = kwargs["destination_transform"]
@@ -122,8 +125,9 @@ class TestLandfireAlignmentDomain:
             native_in_roi_resolution=30.0,
         )
         roi = _domain_gdf()
+        progress = MagicMock()
 
-        fetch_fbfm40(roi, version="2024", alignment={"target": "domain"})
+        fetch_fbfm40(roi, progress, version="2024", alignment={"target": "domain"})
 
         kwargs = mock_cls.return_value.extract_window.call_args[1]
         transform = kwargs["destination_transform"]
@@ -140,8 +144,9 @@ class TestLandfireAlignmentNative:
     def test_native_target_no_resolution_passes_no_destination(self, mock_cls):
         mock_cls.return_value = _mock_raster()
         roi = _domain_gdf()
+        progress = MagicMock()
 
-        fetch_fbfm40(roi, version="2024", alignment={"target": "native"})
+        fetch_fbfm40(roi, progress, version="2024", alignment={"target": "native"})
 
         kwargs = mock_cls.return_value.extract_window.call_args[1]
         assert "destination_transform" not in kwargs
@@ -154,9 +159,11 @@ class TestLandfireAlignmentNative:
     def test_native_target_with_resolution_passes_resolution(self, mock_cls):
         mock_cls.return_value = _mock_raster()
         roi = _domain_gdf()
+        progress = MagicMock()
 
         fetch_fbfm40(
             roi,
+            progress,
             version="2024",
             alignment={"target": "native", "resolution": 5.0},
         )
@@ -173,6 +180,7 @@ class TestLandfireAlignmentGrid:
     def test_grid_target_exact_match(self, mock_cls):
         mock_cls.return_value = _mock_raster()
         roi = _domain_gdf()
+        progress = MagicMock()
         target_grid_doc = {
             "georeference": {
                 "crs": "EPSG:32611",
@@ -183,6 +191,7 @@ class TestLandfireAlignmentGrid:
 
         fetch_fbfm40(
             roi,
+            progress,
             version="2024",
             alignment={"target": "grid", "grid_id": "x"},
             target_grid_doc=target_grid_doc,
@@ -199,6 +208,7 @@ class TestLandfireAlignmentGrid:
     def test_grid_target_with_resolution_recomputes_shape(self, mock_cls):
         mock_cls.return_value = _mock_raster()
         roi = _domain_gdf()
+        progress = MagicMock()
         # Target grid: 30m cells, 10x10, anchored lower-left at (720100, 5190200).
         target_grid_doc = {
             "georeference": {
@@ -210,6 +220,7 @@ class TestLandfireAlignmentGrid:
 
         fetch_fbfm40(
             roi,
+            progress,
             version="2024",
             alignment={"target": "grid", "grid_id": "x", "resolution": 1.0},
             target_grid_doc=target_grid_doc,

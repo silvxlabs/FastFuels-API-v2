@@ -53,6 +53,7 @@ class TestHandleLandfire:
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
+            progress,
             "2023",
             remove_non_burnable=None,
             extent_buffer_cells=0,
@@ -72,7 +73,7 @@ class TestHandleLandfire:
         handle_landfire(mock_gdf, source, progress)
 
         _, call_kwargs = mock_fetch.call_args
-        assert call_kwargs == {} or mock_fetch.call_args[0][1] == "2024"
+        assert call_kwargs == {} or mock_fetch.call_args[0][2] == "2024"
 
     @patch("griddle.dispatch.landfire.fetch_fbfm13")
     def test_fbfm13_calls_progress_callback(self, mock_fetch):
@@ -103,13 +104,13 @@ class TestHandleLandfire:
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
+            progress,
             "2022",
             remove_non_burnable=None,
             extent_buffer_cells=0,
             alignment={"target": "domain"},
             target_grid_doc=None,
             season=None,
-            progress=progress,
         )
         assert result == mock_result
 
@@ -123,7 +124,7 @@ class TestHandleLandfire:
 
         handle_landfire(mock_gdf, source, progress)
 
-        assert mock_fetch.call_args[0][1] == "2024"
+        assert mock_fetch.call_args[0][2] == "2024"
 
     @patch("griddle.dispatch.landfire.fetch_fbfm40")
     def test_fbfm40_calls_progress_callback(self, mock_fetch):
@@ -152,7 +153,7 @@ class TestHandleLandfire:
 
         call_kwargs = mock_fetch.call_args[1]
         assert call_kwargs["season"] == "SP"
-        assert call_kwargs["progress"] is progress
+        assert mock_fetch.call_args[0][1] is progress
 
     @patch("griddle.dispatch.landfire.fetch_fccs")
     def test_routes_fccs_to_handler(self, mock_fetch):
@@ -168,6 +169,7 @@ class TestHandleLandfire:
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
+            progress,
             "2023",
             remove_bare_ground=False,
             extent_buffer_cells=0,
@@ -190,6 +192,7 @@ class TestHandleLandfire:
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
+            progress,
             "2023",
             remove_bare_ground=True,
             extent_buffer_cells=0,
@@ -210,7 +213,7 @@ class TestHandleLandfire:
         handle_landfire(mock_gdf, source, progress)
 
         call_args = mock_fetch.call_args[0]
-        assert call_args[1] == "2023"
+        assert call_args[2] == "2023"
 
     @patch("griddle.dispatch.landfire.fetch_fccs")
     def test_fccs_calls_progress(self, mock_fetch):

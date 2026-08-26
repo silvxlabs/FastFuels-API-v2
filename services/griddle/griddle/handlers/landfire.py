@@ -54,6 +54,11 @@ def _landfire_cog_url(product: str, version: str) -> str:
     return f"gs://{RASTERS_BUCKET}/LF{version}_{product}_CONUS.tif"
 
 
+def _needs_lfps(product: str, version: str) -> bool:
+    """Whether `version` is only served on-demand via LFPS, not as a staged COG."""
+    return version in LANDFIRE_VERSIONS[product].get("lfps_available", ())
+
+
 def _fetch_landfire_raster(
     roi: gpd.GeoDataFrame,
     url: str,
@@ -140,6 +145,7 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
 
 def fetch_fbfm13(
     roi: gpd.GeoDataFrame,
+    progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fbfm13"]["default"],
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
@@ -159,23 +165,38 @@ def fetch_fbfm13(
             ``{"target": "domain"}`` when omitted.
         target_grid_doc: Loaded grid document used when
             ``alignment["target"] == "grid"``.
+        progress: Progress callback, only used when `version` is fetched via
+            LFPS (submit/wait/download reports through it).
 
     Returns:
         Dataset with a single "fbfm13" variable (int16 categorical codes,
         1-13 plus non-burnable 91/92/93/98/99)
     """
-    product = "fbfm13"
-    validate_landfire_version(product, version)
     alignment = alignment or {"target": "domain"}
-    url = _landfire_cog_url(product, version)
-    data = _fetch_landfire_raster(
-        roi,
-        url,
-        extent_buffer_cells,
-        alignment,
-        target_grid_doc,
-        is_categorical=True,
-    )
+    product = "fbfm13"
+    if _needs_lfps(product, version):
+        source = landfire_lfps.fetch_lfps(
+            roi,
+            product,
+            version,
+            alignment,
+            target_grid_doc,
+            extent_buffer_cells,
+            progress,
+        )
+    else:
+        validate_landfire_version(product, version)
+        source = nullcontext(_landfire_cog_url(product, version))
+
+    with source as url:
+        data = _fetch_landfire_raster(
+            roi,
+            url,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+            is_categorical=True,
+        )
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
@@ -187,12 +208,12 @@ def fetch_fbfm13(
 
 def fetch_fbfm40(
     roi: gpd.GeoDataFrame,
+    progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fbfm40"]["default"],
     remove_non_burnable: list[str] | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-    progress: Callable[[str, int | None], None] | None = None,
     season: str | None = None,
 ) -> xr.Dataset:
     """Fetch LANDFIRE FBFM40 fuel model codes.
@@ -218,7 +239,7 @@ def fetch_fbfm40(
     """
     alignment = alignment or {"target": "domain"}
     product = "fbfm40"
-    if season is not None:
+    if season is not None or _needs_lfps(product, version):
         source = landfire_lfps.fetch_lfps(
             roi,
             product,
@@ -254,6 +275,7 @@ def fetch_fbfm40(
 
 def fetch_fccs(
     roi: gpd.GeoDataFrame,
+    progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fccs"]["default"],
     remove_bare_ground: bool = False,
     extent_buffer_cells: int = 0,
@@ -273,22 +295,37 @@ def fetch_fccs(
             ``{"target": "domain"}`` when omitted.
         target_grid_doc: Loaded grid document used when
             ``alignment["target"] == "grid"``.
+        progress: Progress callback, only used when `version` is fetched via
+            LFPS (submit/wait/download reports through it).
 
     Returns:
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
-    product = "fccs"
-    validate_landfire_version(product, version)
     alignment = alignment or {"target": "domain"}
-    url = _landfire_cog_url(product, version)
-    data = _fetch_landfire_raster(
-        roi,
-        url,
-        extent_buffer_cells,
-        alignment,
-        target_grid_doc,
-        is_categorical=True,
-    )
+    product = "fccs"
+    if _needs_lfps(product, version):
+        source = landfire_lfps.fetch_lfps(
+            roi,
+            product,
+            version,
+            alignment,
+            target_grid_doc,
+            extent_buffer_cells,
+            progress,
+        )
+    else:
+        validate_landfire_version(product, version)
+        source = nullcontext(_landfire_cog_url(product, version))
+
+    with source as url:
+        data = _fetch_landfire_raster(
+            roi,
+            url,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+            is_categorical=True,
+        )
 
     if remove_bare_ground:
         filtered = _remove_non_burnable_blocks(data.values, [0])

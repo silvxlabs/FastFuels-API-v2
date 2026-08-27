@@ -7,7 +7,8 @@ These tests make real HTTP requests to the API and interact with Firestore.
 
 import pytest
 from api.resources.grids.fbfm40.examples import (
-    ALL_FBFM40_EXAMPLE_VALUES,
+    LFPS_FBFM40_EXAMPLE_VALUES,
+    STAGED_FBFM40_EXAMPLE_VALUES,
 )
 
 
@@ -91,7 +92,7 @@ class TestCreateLandfireFbfm40:
         data = response.json()
         assert "owner_id" not in data
 
-    @pytest.mark.parametrize("example_name,example_value", ALL_FBFM40_EXAMPLE_VALUES)
+    @pytest.mark.parametrize("example_name,example_value", STAGED_FBFM40_EXAMPLE_VALUES)
     def test_documented_example_creates_grid(
         self, client, domain_for_testing, example_name, example_value
     ):
@@ -180,3 +181,18 @@ class TestSeasonalCoverage:
         source = response.json()["source"]
         assert source["season"] is None
         assert source["year"] == 2024  # default version
+
+    @pytest.mark.parametrize("example_name,example_value", LFPS_FBFM40_EXAMPLE_VALUES)
+    def test_lfps_documented_example_creates_grid(
+        self, client, lfps_covered_domain, example_name, example_value
+    ):
+        """Each LFPS-sourced example should successfully create a grid
+        against a domain known to have LFPS coverage. A failure here after
+        LANDFIRE rotates its live season means the example needs updating."""
+        response = client.post(
+            self.route(lfps_covered_domain["id"]), json=example_value
+        )
+        assert response.status_code == 201, (
+            f"Example '{example_name}' failed with status {response.status_code}: "
+            f"{response.json()}"
+        )

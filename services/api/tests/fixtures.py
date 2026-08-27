@@ -60,6 +60,27 @@ def make_domain_data(
     }
 
 
+def load_domain_from_file(path, owner_id: str | None = None) -> dict:
+    """Factory function to load a domain fixture file as Firestore-ready data.
+
+    Domain fixture files under lib.testing.SHARED_TEST_DOMAINS_DIR store
+    coordinates as plain lists and carry their own id/timestamps; this
+    stringifies coordinates for Firestore and assigns a fresh id/owner/
+    timestamps the same way make_domain_data does.
+    """
+    with open(path) as f:
+        domain_data = json.load(f)
+    domain_data["id"] = f"test-{uuid.uuid4().hex}"
+    domain_data["owner_id"] = owner_id or DEFAULT_OWNER_ID
+    domain_data["created_on"] = datetime.now()
+    domain_data["modified_on"] = datetime.now()
+    for feature in domain_data.get("features", []):
+        coords = feature.get("geometry", {}).get("coordinates")
+        if isinstance(coords, list):
+            feature["geometry"]["coordinates"] = json.dumps(coords)
+    return domain_data
+
+
 def make_grid_data(
     domain_id: str,
     owner_id: str | None = None,

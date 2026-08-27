@@ -15,6 +15,8 @@ from api.resources.grids.fbfm13.schema import (
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
+from lib.landfire import LANDFIRE_VERSIONS
+
 
 class TestLandfireFbfm13Source:
     """Tests for LandfireFbfm13Source model."""
@@ -84,6 +86,15 @@ class TestCreateLandfireFbfm13Request:
         """version must be a valid LANDFIRE FBFM13 version."""
         with pytest.raises(ValidationError):
             CreateLandfireFbfm13Request(version="2021")
+
+    def test_lfps_available_version_accepted(self):
+        """The current lfps_available version is accepted --
+        the annual "latest release" case, routed through LFPS."""
+
+        version = LANDFIRE_VERSIONS["fbfm13"]["lfps_available"][0]
+        request = CreateLandfireFbfm13Request(version=version)
+
+        assert request.version == version
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""

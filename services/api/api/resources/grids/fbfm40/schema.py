@@ -89,9 +89,13 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
     version: LandfireFbfm40Version = Field(
         default=LandfireFbfm40Version(LANDFIRE_VERSIONS["fbfm40"]["default"]),
         description=(
-            "LANDFIRE landscape vintage year (e.g. '2024'). With `season` set, "
-            "this is the base vintage for LANDFIRE Seasonal Fuels; the calendar "
-            "year the data represents is reported back as `year`."
+            "LANDFIRE landscape vintage year (e.g. '2024'). Most years are "
+            "served from staged LANDFIRE data; version "
+            f"{', '.join(LANDFIRE_VERSIONS['fbfm40']['lfps_available'])} "
+            "is instead fetched on demand from LANDFIRE Product Service. "
+            "With `season` set, this is the base vintage for LANDFIRE "
+            "Seasonal Fuels; the calendar year the data represents is "
+            "reported back as `year`."
         ),
     )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
@@ -121,18 +125,11 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
         """
 
         versions = LANDFIRE_VERSIONS["fbfm40"]
-        if self.season is None and self.version not in versions["available"]:
-            raise ValueError(
-                f"version {self.version} is only available for seasonal "
-                f"(season=...) requests. Available annual versions: "
-                f"{', '.join(versions['available'])}."
-            )
-
         if self.season is not None and self.version not in versions["lfps_available"]:
             raise ValueError(
-                f"version {self.version} is not available for LANDFIRE "
-                f"Seasonal Fuels. Available seasonal versions: "
-                f"{', '.join(versions['lfps_available'])}."
+                f"LANDFIRE Seasonal Fuels are only available for version "
+                f"{', '.join(versions['lfps_available'])}, not for version "
+                f"{self.version}."
             )
 
         return self

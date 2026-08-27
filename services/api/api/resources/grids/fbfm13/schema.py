@@ -12,7 +12,7 @@ loads, SAV, depth, moisture of extinction), use the
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from api.resources.grids.providers.landfire import (
     LandfireSource,
@@ -22,10 +22,18 @@ from api.resources.grids.providers.landfire import (
 from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
 from lib.landfire import LANDFIRE_VERSIONS
 
-# Build the version enum class from LANDFIRE_VERSIONS
+# Build the version enum class from LANDFIRE_VERSIONS, combining both
+# "available" (staged annual) and "lfps_available" (current-year, fetched
+# on demand from LANDFIRE Product Service) versions.
+_FBFM13_ALL_VERSIONS = list(
+    dict.fromkeys(
+        LANDFIRE_VERSIONS["fbfm13"]["available"]
+        + LANDFIRE_VERSIONS["fbfm13"]["lfps_available"]
+    )
+)
 LandfireFbfm13Version = StrEnum(
     "LandfireFbfm13Version",
-    {f"v{version}": version for version in LANDFIRE_VERSIONS["fbfm13"]["available"]},
+    {f"v{version}": version for version in _FBFM13_ALL_VERSIONS},
 )
 
 
@@ -50,8 +58,13 @@ class CreateLandfireFbfm13Request(CreateSourceGridRequestBase):
     To convert codes to fuel parameters, use /grids/lookup/fbfm13.
     """
 
-    version: LandfireFbfm13Version = LandfireFbfm13Version(
-        LANDFIRE_VERSIONS["fbfm13"]["default"]
+    version: LandfireFbfm13Version = Field(
+        default=LandfireFbfm13Version(LANDFIRE_VERSIONS["fbfm13"]["default"]),
+        description=(
+            "LANDFIRE version. Most years are served from staged LANDFIRE data; "
+            f"{', '.join(LANDFIRE_VERSIONS['fbfm13']['lfps_available'])} "
+            "is instead fetched on demand from LANDFIRE Product Service."
+        ),
     )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
 

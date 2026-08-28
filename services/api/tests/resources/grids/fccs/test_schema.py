@@ -15,6 +15,8 @@ from api.resources.grids.fccs.schema import (
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
+from lib.landfire import LANDFIRE_VERSIONS
+
 
 class TestLandfireFccsSource:
     """Tests for LandfireFccsSource model."""
@@ -84,6 +86,15 @@ class TestCreateLandfireFccsRequest:
         """version must be a valid LANDFIRE FCCS version."""
         with pytest.raises(ValidationError):
             CreateLandfireFccsRequest(version="2021")
+
+    def test_lfps_available_version_accepted(self):
+        """The current lfps_available version is accepted --
+        the annual "latest release" case, routed through LFPS."""
+
+        version = LANDFIRE_VERSIONS["fccs"]["lfps_available"][0]
+        request = CreateLandfireFccsRequest(version=version)
+
+        assert request.version == version
 
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""

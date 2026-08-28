@@ -4,6 +4,7 @@ api/v2/resources/grids/fbfm13/router.py
 Router for FBFM13 grid product endpoints.
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -25,11 +26,13 @@ from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
     validate_feature_modifications,
+    validate_lfps_coverage,
     validate_target_grid_alignment,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
+from lib.landfire import LANDFIRE_VERSIONS
 
 router = APIRouter()
 
@@ -81,6 +84,14 @@ async def create_landfire_fbfm13(
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
+
+    if body.version in LANDFIRE_VERSIONS["fbfm13"]["lfps_available"]:
+        await asyncio.to_thread(
+            validate_lfps_coverage,
+            "fbfm13",
+            body.version,
+            domain,
+        )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

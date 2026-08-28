@@ -32,7 +32,7 @@ from api.resources.grids.utils import (
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
-from lib.landfire import resolve_seasonal_product
+from lib.landfire import LANDFIRE_VERSIONS, resolve_seasonal_product
 
 router = APIRouter()
 
@@ -73,11 +73,8 @@ async def create_landfire_fbfm40(
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
     - **version**: (optional) LANDFIRE version. Default: "2024".
-      Fetches data from a saved copy of the annual release, unless `season` is set.
     - **season**: (optional) LANDFIRE Seasonal Fuels release: "ES" (early
-      spring), "SP" (spring), "SU" (summer), or "FA" (fall). Setting
-      `season` fetches data from the LANDFIRE Product Service on demand
-      rather than a saved annual copy.
+      spring), "SP" (spring), "SU" (summer), or "FA" (fall).
 
     ## Response
 
@@ -96,7 +93,11 @@ async def create_landfire_fbfm40(
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
-    if body.season is not None:
+    use_lfps = (
+        body.season is not None
+        or body.version in LANDFIRE_VERSIONS["fbfm40"]["lfps_available"]
+    )
+    if use_lfps:
         await asyncio.to_thread(
             validate_lfps_coverage,
             "fbfm40",
@@ -104,6 +105,7 @@ async def create_landfire_fbfm40(
             domain,
             season=body.season,
         )
+    if body.season is not None:
         # Read the represented year off the live LFPS catalog entry rather
         # than assuming it is `version + 1`. Coverage validation above already
         # confirmed the product is live, so the match is present (cached call).

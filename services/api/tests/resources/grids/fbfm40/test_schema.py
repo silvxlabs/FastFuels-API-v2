@@ -19,7 +19,7 @@ from api.resources.grids.providers.landfire import (
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
-from lib.landfire import NB_CODE_MAP, SEASON_CODES
+from lib.landfire import LANDFIRE_VERSIONS, NB_CODE_MAP, SEASON_CODES
 
 
 class TestLandfireSource:
@@ -146,6 +146,16 @@ class TestCreateLandfireFbfm40Request:
         with pytest.raises(ValidationError):
             CreateLandfireFbfm40Request(version="2021")
 
+    def test_lfps_available_version_accepted(self):
+        """The current lfps_available version is accepted with no season --
+        the annual "latest release" case, routed through LFPS."""
+
+        version = LANDFIRE_VERSIONS["fbfm40"]["lfps_available"][0]
+        request = CreateLandfireFbfm40Request(version=version)
+
+        assert request.version == version
+        assert request.season is None
+
     def test_full_request_with_all_fields(self):
         """Full request with all optional fields."""
         request = CreateLandfireFbfm40Request(
@@ -207,11 +217,6 @@ class TestSeason:
         """An unknown season code is rejected."""
         with pytest.raises(ValidationError):
             CreateLandfireFbfm40Request(version="2025", season="XX")
-
-    def test_seasonal_version_without_season_rejected(self):
-        """An LFPS-only version with no season is rejected."""
-        with pytest.raises(ValidationError):
-            CreateLandfireFbfm40Request(version="2025")
 
     def test_annual_version_with_season_rejected(self):
         """A staged-annual-only version with season set is rejected."""

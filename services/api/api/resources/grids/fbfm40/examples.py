@@ -40,9 +40,14 @@ EXAMPLE_FBFM40_NATIVE = {
 }
 
 EXAMPLE_FBFM40_SEASONAL = {
-    "name": "FBFM40 spring seasonal fuels",
+    "name": "FBFM40 early spring seasonal fuels",
     "version": LANDFIRE_VERSIONS["fbfm40"]["lfps_available"][0],
     "season": "ES",
+}
+
+EXAMPLE_FBFM40_LATEST_RELEASE = {
+    "name": "FBFM40 latest release",
+    "version": LANDFIRE_VERSIONS["fbfm40"]["lfps_available"][0],
 }
 
 CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
@@ -112,6 +117,16 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
             "currently serves on-demand."
         ),
     },
+    "latest_release": {
+        "value": EXAMPLE_FBFM40_LATEST_RELEASE,
+        "summary": "Latest release",
+        "description": (
+            "Fetches the latest FBFM40 release on demand from LANDFIRE "
+            "Product Service as it becomes available region by region — "
+            "more current landscape conditions than the staged national release. "
+            "See https://landfire.gov/data for the delivery schedule."
+        ),
+    },
 }
 
 STAGED_FBFM40_EXAMPLE_VALUES = [
@@ -125,4 +140,5 @@ STAGED_FBFM40_EXAMPLE_VALUES = [
 
 LFPS_FBFM40_EXAMPLE_VALUES = [
     ("seasonal", EXAMPLE_FBFM40_SEASONAL),
+    ("latest_release", EXAMPLE_FBFM40_LATEST_RELEASE),
 ]

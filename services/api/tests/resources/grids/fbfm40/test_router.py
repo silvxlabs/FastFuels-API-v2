@@ -148,6 +148,30 @@ class TestCreateLandfireFbfm40:
         assert response.status_code == 422
 
 
+class TestLfpsCoverage:
+    """Real LFPS-coverage tests for both the seasonal and annual LFPS-sourced
+    examples -- everything routed through validate_lfps_coverage."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/fbfm40/landfire"
+
+    @pytest.mark.parametrize("example_name,example_value", LFPS_FBFM40_EXAMPLE_VALUES)
+    def test_lfps_documented_example_creates_grid(
+        self, client, lfps_covered_domain, example_name, example_value
+    ):
+        """Confirms validate_lfps_coverage succeeds against real LFPS for a
+        domain with known coverage -- proving the coverage-check path works
+        end-to-end, not just under mocks."""
+
+        response = client.post(
+            self.route(lfps_covered_domain["id"]), json=example_value
+        )
+        assert response.status_code == 201, (
+            f"Example '{example_name}' failed with status {response.status_code}: "
+            f"{response.json()}"
+        )
+
+
 class TestSeasonalCoverage:
     """Router-level tests for the `season` field on grid creation."""
 
@@ -181,18 +205,3 @@ class TestSeasonalCoverage:
         source = response.json()["source"]
         assert source["season"] is None
         assert source["year"] == 2024  # default version
-
-    @pytest.mark.parametrize("example_name,example_value", LFPS_FBFM40_EXAMPLE_VALUES)
-    def test_lfps_documented_example_creates_grid(
-        self, client, lfps_covered_domain, example_name, example_value
-    ):
-        """Each LFPS-sourced example should successfully create a grid
-        against a domain known to have LFPS coverage. A failure here after
-        LANDFIRE rotates its live season means the example needs updating."""
-        response = client.post(
-            self.route(lfps_covered_domain["id"]), json=example_value
-        )
-        assert response.status_code == 201, (
-            f"Example '{example_name}' failed with status {response.status_code}: "
-            f"{response.json()}"
-        )

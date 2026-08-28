@@ -8,6 +8,8 @@ These examples are used in:
 domain_id comes from the URL path parameter, not the request body.
 """
 
+from lib.landfire import LANDFIRE_VERSIONS
+
 EXAMPLE_FBFM13_MINIMAL = {}
 
 EXAMPLE_FBFM13_WITH_METADATA = {
@@ -35,6 +37,11 @@ EXAMPLE_FBFM13_DOMAIN_2M = {
 EXAMPLE_FBFM13_NATIVE = {
     "name": "FBFM13 at native source pixel anchor",
     "alignment": {"target": "native"},
+}
+
+EXAMPLE_FBFM13_LATEST_RELEASE = {
+    "name": "FBFM13 latest release",
+    "version": LANDFIRE_VERSIONS["fbfm13"]["lfps_available"][0],
 }
 
 CREATE_LANDFIRE_FBFM13_OPENAPI_EXAMPLES = {
@@ -94,13 +101,27 @@ CREATE_LANDFIRE_FBFM13_OPENAPI_EXAMPLES = {
             "domain-anchored grids without further alignment."
         ),
     },
+    "latest_release": {
+        "value": EXAMPLE_FBFM13_LATEST_RELEASE,
+        "summary": "Latest release",
+        "description": (
+            "Fetches the latest FBFM13 release on demand from LANDFIRE "
+            "Product Service as it becomes available region by region — "
+            "more current landscape conditions than the staged national release. "
+            "See https://landfire.gov/data for the delivery schedule."
+        ),
+    },
 }
 
-ALL_FBFM13_EXAMPLE_VALUES = [
+STAGED_FBFM13_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_FBFM13_MINIMAL),
     ("with_metadata", EXAMPLE_FBFM13_WITH_METADATA),
     ("remove_non_burnable", EXAMPLE_FBFM13_REMOVE_NON_BURNABLE),
     ("with_buffer", EXAMPLE_FBFM13_WITH_BUFFER),
     ("domain_aligned_2m", EXAMPLE_FBFM13_DOMAIN_2M),
     ("native_anchor", EXAMPLE_FBFM13_NATIVE),
+]
+
+LFPS_FBFM13_EXAMPLE_VALUES = [
+    ("latest_release", EXAMPLE_FBFM13_LATEST_RELEASE),
 ]

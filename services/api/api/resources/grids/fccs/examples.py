@@ -8,6 +8,8 @@ These examples are used in:
 domain_id comes from the URL path parameter, not the request body.
 """
 
+from lib.landfire import LANDFIRE_VERSIONS
+
 EXAMPLE_FCCS_MINIMAL = {}
 
 EXAMPLE_FCCS_WITH_METADATA = {
@@ -35,6 +37,11 @@ EXAMPLE_FCCS_DOMAIN_2M = {
 EXAMPLE_FCCS_NATIVE = {
     "name": "FCCS at native source pixel anchor",
     "alignment": {"target": "native"},
+}
+
+EXAMPLE_FCCS_LATEST_RELEASE = {
+    "name": "FCCS latest release",
+    "version": LANDFIRE_VERSIONS["fccs"]["lfps_available"][0],
 }
 
 CREATE_LANDFIRE_FCCS_OPENAPI_EXAMPLES = {
@@ -93,13 +100,27 @@ CREATE_LANDFIRE_FCCS_OPENAPI_EXAMPLES = {
             "domain-anchored grids without further alignment."
         ),
     },
+    "latest_release": {
+        "value": EXAMPLE_FCCS_LATEST_RELEASE,
+        "summary": "Latest release",
+        "description": (
+            "Fetches the latest FCCS release on demand from LANDFIRE "
+            "Product Service as it becomes available region by region — "
+            "more current landscape conditions than the staged national release. "
+            "See https://landfire.gov/data for the delivery schedule."
+        ),
+    },
 }
 
-ALL_FCCS_EXAMPLE_VALUES = [
+STAGED_FCCS_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_FCCS_MINIMAL),
     ("with_metadata", EXAMPLE_FCCS_WITH_METADATA),
     ("remove_bare_ground", EXAMPLE_FCCS_REMOVE_BARE_GROUND),
     ("with_buffer", EXAMPLE_FCCS_WITH_BUFFER),
     ("domain_aligned_2m", EXAMPLE_FCCS_DOMAIN_2M),
     ("native_anchor", EXAMPLE_FCCS_NATIVE),
+]
+
+LFPS_FCCS_EXAMPLE_VALUES = [
+    ("latest_release", EXAMPLE_FCCS_LATEST_RELEASE),
 ]

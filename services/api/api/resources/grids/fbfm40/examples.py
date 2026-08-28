@@ -122,7 +122,9 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
         "summary": "Latest release",
         "description": (
             "Fetches the latest FBFM40 release on demand from LANDFIRE "
-            "Product Service instead of a staged release."
+            "Product Service as it becomes available region by region — "
+            "more current landscape conditions than the staged national release. "
+            "See https://landfire.gov/data for the delivery schedule."
         ),
     },
 }

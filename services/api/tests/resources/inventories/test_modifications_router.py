@@ -421,6 +421,38 @@ class TestApplyModificationsInPlace:
         )
         assert response.status_code == 422
 
+    def test_empty_conditions_accepted_whole_inventory(
+        self, client, domain_for_testing, source_inventory, firestore_client
+    ):
+        """A rule with no conditions is accepted (previously 422) and queued —
+        it applies to the whole inventory."""
+        source_id = source_inventory["id"]
+        response = client.post(
+            self.route(domain_for_testing["id"], source_id),
+            json={
+                "modifications": [
+                    {
+                        "conditions": [],
+                        "actions": {
+                            "attribute": "height",
+                            "modifier": "multiply",
+                            "value": 0.9,
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == "pending"
+
+        doc = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(source_id)
+            .get()
+            .to_dict()
+        )
+        assert doc["pending_modifications"][-1]["conditions"] == []
+
     def test_invalid_operator_for_species_returns_422(
         self, client, domain_for_testing, source_inventory
     ):

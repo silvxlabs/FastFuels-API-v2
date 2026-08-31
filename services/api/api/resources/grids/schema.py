@@ -195,8 +195,10 @@ class CreateGridRequestBase(BaseModel):
             "domain's projected CRS) to widen the geometry, and `target` "
             "(`centroid` or `cell`) to choose which part of the cell is "
             "tested. Actions modify band values via `replace`, `multiply`, "
-            "`divide`, `add`, or `subtract`. See the `GridModification` "
-            "schema for the full field reference and worked examples."
+            "`divide`, `add`, or `subtract`. A rule with an empty `conditions` "
+            "list applies its actions to the whole grid. See the "
+            "`GridModification` schema for the full field reference and worked "
+            "examples."
         ),
     )
 

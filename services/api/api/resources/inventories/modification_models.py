@@ -335,6 +335,9 @@ InventorySpatialCondition = Annotated[
 class InventoryModification(BaseModel):
     """A modification rule: when all conditions match, apply actions.
 
+    An empty ``conditions`` list applies the actions to the whole inventory —
+    every tree. Combined with a RemoveAction this clears the inventory.
+
     If a RemoveAction is present, it must be the only action.
     """
 
@@ -342,7 +345,14 @@ class InventoryModification(BaseModel):
         InventoryModificationCondition
         | InventoryExpressionCondition
         | InventorySpatialCondition
-    ] = Field(..., min_length=1)
+    ] = Field(
+        default_factory=list,
+        description=(
+            "Conditions that must all be true (ANDed) for the actions to "
+            "apply. An empty list applies the actions to the entire "
+            "inventory — every tree."
+        ),
+    )
     actions: list[InventoryModificationAction | RemoveAction] = Field(..., min_length=1)
 
     @field_validator("conditions", "actions", mode="before")

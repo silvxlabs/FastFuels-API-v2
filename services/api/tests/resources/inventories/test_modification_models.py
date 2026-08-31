@@ -281,12 +281,20 @@ class TestInventoryModification:
                 ],
             )
 
-    def test_empty_conditions_rejected(self):
-        with pytest.raises(ValidationError):
-            InventoryModification(
-                conditions=[],
-                actions={"modifier": "remove"},
-            )
+    def test_empty_conditions_accepted_whole_inventory(self):
+        """No conditions is valid — the actions apply to the whole inventory."""
+        mod = InventoryModification(
+            conditions=[],
+            actions={"modifier": "remove"},
+        )
+        assert mod.conditions == []
+
+    def test_conditions_default_to_empty(self):
+        """conditions may be omitted entirely and default to an empty list."""
+        mod = InventoryModification(
+            actions={"attribute": "height", "modifier": "multiply", "value": 0.9},
+        )
+        assert mod.conditions == []
 
     def test_empty_actions_rejected(self):
         with pytest.raises(ValidationError):

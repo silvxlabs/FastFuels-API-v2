@@ -70,7 +70,10 @@ def _apply_single_modification(
 ) -> None:
     conditions = mod.get("conditions", [])
     actions = mod.get("actions", [])
-    if not conditions or not actions:
+    # No conditions means the whole grid: _build_condition_mask starts from an
+    # all-True mask and ANDs each condition into it, so zero conditions leaves
+    # every cell selected. Only a rule with no actions is a genuine no-op.
+    if not actions:
         return
 
     mask = _build_condition_mask(ds, conditions, domain_id, feature_cache)

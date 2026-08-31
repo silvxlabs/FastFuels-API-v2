@@ -75,6 +75,10 @@ async def apply_modifications(
 
     ## Conditions
 
+    A rule with an **empty `conditions` list applies its actions to the whole
+    inventory** — every tree. Combined with `{"modifier": "remove"}` this
+    clears the inventory of all trees; use it deliberately.
+
     **Attribute conditions** compare a single tree attribute against a value:
     - `attribute`: one of `dbh`, `height`, `crown_ratio`, `fia_species_code`
     - `operator`: `eq`, `ne`, `gt`, `lt`, `ge`, `le`

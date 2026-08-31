@@ -200,6 +200,10 @@ class GridModification(BaseModel):
     independently, so adding a rule widens the overall selection. Putting two
     mutually exclusive conditions (a road feature AND a water feature) in one
     rule selects cells that are both at once — usually none.
+
+    An **empty `conditions` list applies the actions to the whole grid** —
+    every cell. Use it for a blanket adjustment (e.g. subtract a constant from
+    every cell); add conditions to narrow it to a region or value range.
     """
 
     model_config = ConfigDict(
@@ -291,7 +295,11 @@ class GridModification(BaseModel):
     )
 
     conditions: list[GridModificationCondition | GridSpatialCondition] = Field(
-        ..., description="Conditions that must all be true"
+        default_factory=list,
+        description=(
+            "Conditions that must all be true (ANDed). An empty list applies "
+            "the actions to the whole grid — every cell."
+        ),
     )
     actions: list[GridModificationAction] = Field(
         ..., description="Actions to apply when conditions match"

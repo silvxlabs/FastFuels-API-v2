@@ -252,6 +252,22 @@ class TestApplySingleModification:
         result = apply_single_modification(df, mod)
         assert len(result) == 0
 
+    def test_no_conditions_modifies_whole_inventory(self, sample_df):
+        """An empty condition list applies the action to every tree."""
+        mod = {
+            "conditions": [],
+            "actions": [{"attribute": "height", "modifier": "multiply", "value": 0.5}],
+        }
+        result = apply_single_modification(sample_df.copy(), mod)
+        expected = sample_df["height"] * 0.5
+        assert result["height"].tolist() == pytest.approx(expected.tolist())
+
+    def test_no_conditions_remove_clears_inventory(self, sample_df):
+        """An empty condition list with remove drops every tree."""
+        mod = {"conditions": [], "actions": [{"modifier": "remove"}]}
+        result = apply_single_modification(sample_df.copy(), mod)
+        assert len(result) == 0
+
 
 class TestApplyModifications:
     def test_single_modification(self, sample_df):

@@ -623,8 +623,23 @@ def test_empty_modifications_list_is_noop():
     assert (ds["fuel_load.1hr"].values == 1.0).all()
 
 
-def test_empty_conditions_skips_rule():
-    """A rule with no conditions does nothing — same as no-match."""
+def test_empty_conditions_applies_to_whole_grid():
+    """A rule with no conditions applies its actions to every cell."""
+    ds = _flat_dataset(1.0)
+    mods = [
+        {
+            "conditions": [],
+            "actions": [
+                {"band": "fuel_load.1hr", "modifier": "subtract", "value": 0.25}
+            ],
+        }
+    ]
+    apply_modifications(ds, mods, "d")
+    assert (ds["fuel_load.1hr"].values == 0.75).all()
+
+
+def test_empty_conditions_replace_whole_grid():
+    """No conditions + replace overwrites every cell."""
     ds = _flat_dataset(1.0)
     mods = [
         {
@@ -633,7 +648,26 @@ def test_empty_conditions_skips_rule():
         }
     ]
     apply_modifications(ds, mods, "d")
-    assert (ds["fuel_load.1hr"].values == 1.0).all()
+    assert (ds["fuel_load.1hr"].values == 0.0).all()
+
+
+def test_empty_conditions_preserves_nan_nodata():
+    """A whole-grid arithmetic action leaves NaN-nodata cells as NaN
+    (NaN - v = NaN, and the non-negative clamp keeps NaN)."""
+    ds = _flat_dataset(1.0)
+    ds["fuel_load.1hr"].values[0, 0] = np.nan
+    mods = [
+        {
+            "conditions": [],
+            "actions": [
+                {"band": "fuel_load.1hr", "modifier": "subtract", "value": 0.25}
+            ],
+        }
+    ]
+    apply_modifications(ds, mods, "d")
+    values = ds["fuel_load.1hr"].values
+    assert np.isnan(values[0, 0])
+    assert (values[~np.isnan(values)] == 0.75).all()
 
 
 def test_empty_actions_skips_rule():

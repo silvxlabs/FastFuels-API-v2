@@ -366,14 +366,20 @@ class TestGridModification:
         assert len(modification.conditions) == 1
         assert len(modification.actions) == 1
 
-    def test_conditions_is_required(self):
-        """conditions field is required."""
-        with pytest.raises(ValidationError):
-            GridModification(
-                actions=[
-                    {"band": "fuel_load.1hr", "modifier": "multiply", "value": 0.5}
-                ]
-            )
+    def test_conditions_defaults_to_empty_whole_grid(self):
+        """conditions is optional; omitting it applies actions to the whole grid."""
+        modification = GridModification(
+            actions=[{"band": "fuel_load.1hr", "modifier": "multiply", "value": 0.5}]
+        )
+        assert modification.conditions == []
+
+    def test_empty_conditions_accepted(self):
+        """An explicit empty conditions list is valid (whole-grid rule)."""
+        modification = GridModification(
+            conditions=[],
+            actions=[{"band": "fuel_load.1hr", "modifier": "subtract", "value": 1.0}],
+        )
+        assert modification.conditions == []
 
     def test_actions_is_required(self):
         """actions field is required."""

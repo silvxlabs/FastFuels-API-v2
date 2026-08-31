@@ -115,6 +115,10 @@ async def apply_grid_modifications(
 
     ## Conditions
 
+    A rule with an **empty `conditions` list applies its actions to the whole
+    grid** — every cell. Use it for a blanket adjustment (e.g. subtract a
+    constant from every cell); add conditions to narrow the selection.
+
     **Attribute conditions** compare a band's cell values against a value:
     - `band`: dot-notation band key (e.g., `fbfm`, `fuel_load.1hr`)
     - `operator`: `eq`, `ne`, `gt`, `lt`, `ge`, `le`

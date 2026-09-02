@@ -70,7 +70,9 @@ _COVERAGE_BY_STATUS = {
 class LandfireCreateLink(BaseModel):
     """The create request that fetches a release for this domain."""
 
-    href: str = Field(description="URL of the create endpoint.")
+    href: str = Field(
+        description="Path of the create endpoint, relative to the API base URL."
+    )
     method: Literal["POST"] = "POST"
     body: dict = Field(description="Request body selecting this release.")
 

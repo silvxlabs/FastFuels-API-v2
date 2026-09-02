@@ -197,8 +197,9 @@ class TestLandfireCoverage:
         assert latest["coverage"] == "full"
         create = latest["links"]["create"]
         assert create["method"] == "POST"
-        assert create["href"].endswith(
-            f"/domains/{lfps_covered_domain['id']}/grids/fccs/landfire"
+        assert (
+            create["href"]
+            == f"/domains/{lfps_covered_domain['id']}/grids/fccs/landfire"
         )
         assert create["body"]["version"] == latest["version"]
 

@@ -185,9 +185,12 @@ async def check_landfire_fbfm40_coverage(request: Request, domain: VerifiedDomai
     `latest` is the release representing the most recent point in time that
     fully covers the domain. `releases` lists every release, newest first.
     Each release that covers the domain carries a `links.create` request:
-    send its `body` to its `href` to create the grid.
+    send its `body` to its `href`, a path relative to this API's base URL,
+    to create the grid.
     """
     geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
     releases = await asyncio.to_thread(list_releases, "fbfm40", geometry, SEASON_CODES)
-    create_href = str(request.url_for("create_landfire_fbfm40", domain_id=domain["id"]))
+    create_href = str(
+        request.app.url_path_for("create_landfire_fbfm40", domain_id=domain["id"])
+    )
     return build_landfire_coverage_response("fbfm40", releases, create_href)

@@ -463,7 +463,7 @@ def list_releases(
             )
         )
         for season in seasons:
-            match = resolve_seasonal_product(product, version, season)
+            match = resolve_lf_product(product, version, season)
             releases.append(
                 LandfireRelease(
                     version,

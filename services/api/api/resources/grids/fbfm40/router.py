@@ -22,6 +22,10 @@ from api.resources.grids.fbfm40.schema import (
     CreateLandfireFbfm40Request,
     LandfireFbfm40Source,
 )
+from api.resources.grids.providers.landfire import (
+    LandfireCoverageResponse,
+    build_landfire_coverage_response,
+)
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
@@ -32,7 +36,13 @@ from api.resources.grids.utils import (
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
-from lib.landfire import LANDFIRE_VERSIONS, resolve_seasonal_product
+from lib.domain_utils import parse_domain_gdf
+from lib.landfire import (
+    LANDFIRE_VERSIONS,
+    SEASON_CODES,
+    list_releases,
+    resolve_seasonal_product,
+)
 
 router = APIRouter()
 
@@ -153,3 +163,34 @@ async def create_landfire_fbfm40(
     register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)
+
+
+@router.get(
+    "/landfire/coverage",
+    response_model=LandfireCoverageResponse,
+    summary="Check LANDFIRE FBFM40 release coverage for a domain",
+)
+async def check_landfire_fbfm40_coverage(request: Request, domain: VerifiedDomain):
+    """
+    # Check LANDFIRE FBFM40 Coverage
+
+    Immediate pre-flight check reporting every FBFM40 release the API serves
+    and how much of this domain each one covers. Staged annual releases are
+    national; the current-year release and the Seasonal Fuels windows are
+    served by LANDFIRE Product Service region by region, so coverage depends
+    on where the domain is and on what LANDFIRE has published so far.
+
+    ## Response
+
+    `latest` is the release representing the most recent point in time that
+    fully covers the domain. `releases` lists every release, newest first.
+    Each release that covers the domain carries a `links.create` request:
+    send its `body` to its `href`, a path relative to this API's base URL,
+    to create the grid.
+    """
+    geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
+    releases = await asyncio.to_thread(list_releases, "fbfm40", geometry, SEASON_CODES)
+    create_href = str(
+        request.app.url_path_for("create_landfire_fbfm40", domain_id=domain["id"])
+    )
+    return build_landfire_coverage_response("fbfm40", releases, create_href)

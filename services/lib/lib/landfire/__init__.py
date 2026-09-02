@@ -13,6 +13,7 @@ from lib.landfire.config import (
 )
 from lib.landfire.lfps import (
     CoverageStatus,
+    LandfireRelease,
     LfpsJob,
     LfpsJobFailedError,
     LfpsJobTimeoutError,
@@ -21,6 +22,7 @@ from lib.landfire.lfps import (
     covers_seasonal,
     download,
     list_products,
+    list_releases,
     poll_status,
     resolve_seasonal_product,
     submit_job,
@@ -37,6 +39,8 @@ __all__ = [
     "LfpsJobTimeoutError",
     "LfpsProduct",
     "list_products",
+    "list_releases",
+    "LandfireRelease",
     "submit_job",
     "poll_status",
     "download",

@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -29,7 +30,7 @@ import requests
 from shapely.geometry.base import BaseGeometry
 
 from lib.config import RASTERS_BUCKET
-from lib.landfire.config import LANDFIRE_USER_EMAIL, SEASON_CODES
+from lib.landfire.config import LANDFIRE_USER_EMAIL, LANDFIRE_VERSIONS, SEASON_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -393,3 +394,78 @@ def covers_seasonal(
         return CoverageStatus.NONE
     remaining = geometry.difference(boundary)
     return CoverageStatus.FULL if remaining.is_empty else CoverageStatus.PARTIAL
+
+
+@dataclass(frozen=True)
+class LandfireRelease:
+    """One release of a LANDFIRE product, and how much of a geometry it covers.
+
+    `season` is None for the annual product. `year` is the calendar year the
+    data represents (the vintage for annual; the season year for seasonal),
+    or None for a season LFPS hasn't published yet.
+    """
+
+    version: str
+    season: str | None
+    year: int | None
+    coverage: CoverageStatus
+
+
+def _release_recency(release: LandfireRelease) -> tuple[int, int]:
+    """Sort key ordering releases by the time their data represents.
+
+    Vintage first, then season within a vintage in calendar order. The
+    annual product ranks oldest within its vintage, since that vintage's
+    seasonal layers project a year ahead of the base landscape.
+    """
+    season_rank = (
+        0 if release.season is None else SEASON_CODES.index(release.season) + 1
+    )
+    return (int(release.version), season_rank)
+
+
+def list_releases(
+    product: str, geometry: BaseGeometry, seasons: Sequence[str] = ()
+) -> list[LandfireRelease]:
+    """Every release of `product` the API serves, with its coverage of `geometry`.
+
+    Staged annual versions are national rasters, so they always cover a
+    CONUS geometry. `lfps_available` versions are checked live against the
+    LFPS catalog, as are their Seasonal Fuels windows for each code in
+    `seasons`.
+
+    Args:
+        product: Registry key (e.g. "fbfm40").
+        geometry: Domain geometry, already reprojected to EPSG:5070.
+        seasons: Season codes to evaluate for each on-demand version. Empty
+            for products LANDFIRE doesn't publish seasonally.
+
+    Returns:
+        Releases ordered newest first by the time their data represents.
+    """
+    versions = LANDFIRE_VERSIONS[product]
+    on_demand = versions["lfps_available"]
+
+    releases = [
+        LandfireRelease(version, None, int(version), CoverageStatus.FULL)
+        for version in versions["available"]
+        if version not in on_demand
+    ]
+    for version in on_demand:
+        releases.append(
+            LandfireRelease(
+                version, None, int(version), covers_annual(product, version, geometry)
+            )
+        )
+        for season in seasons:
+            match = resolve_seasonal_product(product, version, season)
+            releases.append(
+                LandfireRelease(
+                    version,
+                    season,
+                    match.season_year if match else None,
+                    covers_seasonal(product, version, season, geometry),
+                )
+            )
+
+    return sorted(releases, key=_release_recency, reverse=True)

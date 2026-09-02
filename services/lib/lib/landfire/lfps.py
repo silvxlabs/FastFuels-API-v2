@@ -334,31 +334,36 @@ def covers_annual(product: str, version: str, geometry: BaseGeometry) -> Coverag
     return CoverageStatus.FULL if remaining.is_empty else CoverageStatus.PARTIAL
 
 
-def resolve_seasonal_product(
-    product: str, version: str, season: str
+def resolve_lf_product(
+    acronym: str, version: str, season: str | None = None
 ) -> LfpsProduct | None:
-    """Find the live Seasonal Fuels catalog entry for a product/version/season.
-
-    Returns the matching `LfpsProduct` (carrying its real `layer_name` and
-    `season_year`), or None if LFPS isn't currently serving that
-    product/version/season. This is the single matcher the API and griddle
-    use to resolve the actual layer and year from the catalog instead of
-    assuming the season year is `version + 1`.
+    """Find a product's name in the live LFPS catalog.
 
     Args:
-        product: Product acronym, matched case-insensitively against
-            `LfpsProduct.acronym` (e.g. "fbfm40" matches "FBFM40").
+        acronym: LFPS acronym, matched case-insensitively (e.g. "FBFM40",
+            "LDist").
         version: LANDFIRE version year (e.g. "2025") -- matched against
             LFPS's "LF{version}" format.
-        season: A season code (e.g. "SP").
+        season: A season code (e.g. "SP") to match a Seasonal Fuels entry.
+            Omitted (the default) matches the plain annual entry instead,
+            excluding any Seasonal Fuels entries that happen to share the
+            acronym/version.
+
+    Returns:
+        The matching `LfpsProduct`, or None if LFPS isn't currently serving
+        that acronym/version(/season).
     """
     return next(
         (
             p
             for p in list_products()
-            if p.season == season
-            and p.acronym.lower() == product.lower()
+            if p.acronym.lower() == acronym.lower()
             and p.version == f"LF{version}"
+            and (
+                p.season == season
+                if season is not None
+                else p.theme != "Seasonal Fuels"
+            )
         ),
         None,
     )
@@ -385,7 +390,7 @@ def covers_seasonal(
         CoverageStatus. NO_SUCH_PRODUCT if `season` isn't currently live
         for `product`/`version`. Otherwise FULL, PARTIAL, or NONE.
     """
-    if resolve_seasonal_product(product, version, season) is None:
+    if resolve_lf_product(product, version, season) is None:
         return CoverageStatus.NO_SUCH_PRODUCT
 
     boundary = SEASONAL_BOUNDARIES[season]

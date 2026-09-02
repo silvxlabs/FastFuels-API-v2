@@ -14,10 +14,18 @@ from lib.landfire.config import (
 
 class TestLandfireVersionsTable:
     def test_expected_products(self):
-        assert set(LANDFIRE_VERSIONS) == {"fbfm13", "fbfm40", "fccs"}
+        assert set(LANDFIRE_VERSIONS) == {
+            "fbfm13",
+            "fbfm40",
+            "fccs",
+            "annual_disturbance",
+        }
 
-    def test_default_is_always_in_available(self):
+    def test_default_is_always_available(self):
         for product, info in LANDFIRE_VERSIONS.items():
+            if product == "annual_disturbance":
+                assert info["default"] in info["lfps_available"], product
+                continue
             assert info["default"] in info["available"], product
 
     def test_fbfm13_versions(self):
@@ -40,6 +48,11 @@ class TestLandfireVersionsTable:
         assert LANDFIRE_VERSIONS["fccs"]["available"] == ["2023"]
         assert LANDFIRE_VERSIONS["fccs"]["lfps_available"] == ["2025"]
         assert LANDFIRE_VERSIONS["fccs"]["default"] == "2023"
+
+    def test_annual_disturbance_versions(self):
+        assert LANDFIRE_VERSIONS["annual_disturbance"]["lfps_available"] == ["2025"]
+        assert LANDFIRE_VERSIONS["annual_disturbance"]["default"] == "2025"
+        assert "available" not in LANDFIRE_VERSIONS["annual_disturbance"]
 
 
 class TestValidateLandfireVersion:

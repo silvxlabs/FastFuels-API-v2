@@ -19,6 +19,7 @@ from lib.landfire.lfps import (
     _SEASON_PATTERN,
     LFPS_PRODUCTS_TTL_SECONDS,
     CoverageStatus,
+    LandfireRelease,
     LfpsJob,
     LfpsJobFailedError,
     LfpsProduct,
@@ -26,6 +27,7 @@ from lib.landfire.lfps import (
     covers_seasonal,
     download,
     list_products,
+    list_releases,
     poll_status,
     resolve_lf_product,
     submit_job,
@@ -572,3 +574,120 @@ class TestResolveLfProduct:
         products = [_make_coverage_product("LDist", "LF2025", theme="Disturbance")]
         with patch("lib.landfire.lfps.list_products", return_value=products):
             assert resolve_lf_product("LDist", "2024") is None
+
+
+# A registry with one on-demand vintage and two staged ones, patched in for
+# list_releases so the tests don't track the real LANDFIRE_VERSIONS.
+RELEASE_REGISTRY = {
+    "fbfm40": {
+        "available": ["2023", "2024"],
+        "lfps_available": ["2025"],
+        "default": "2024",
+    },
+    "fbfm13": {
+        "available": ["2024"],
+        "lfps_available": ["2025"],
+        "default": "2024",
+    },
+}
+ALL_SEASONS = {"ES": SW, "SP": SW, "SU": SW, "FA": SW}
+
+
+def _patched_releases(products, product="fbfm40", geometry=None, seasons=()):
+    """Run list_releases with the registry, catalog, and boundaries patched."""
+    geometry = geometry if geometry is not None else box(1, 1, 2, 2)
+    with patch("lib.landfire.lfps.LANDFIRE_VERSIONS", RELEASE_REGISTRY):
+        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+            with patch("lib.landfire.lfps.SEASONAL_BOUNDARIES", ALL_SEASONS):
+                with patch("lib.landfire.lfps.list_products", return_value=products):
+                    return list_releases(product, geometry, seasons)
+
+
+class TestListReleases:
+    """Tests for enumerating every release with its coverage, newest first."""
+
+    def test_ordered_newest_first_with_seasons_ahead_of_their_vintage(self):
+        products = [
+            _make_coverage_product("FBFM40", "LF2025", geo_areas="SW"),
+            _make_coverage_product(
+                "FBFM40",
+                "LF2025",
+                theme="Seasonal Fuels",
+                season="ES",
+                season_year=2026,
+            ),
+            _make_coverage_product(
+                "FBFM40",
+                "LF2025",
+                theme="Seasonal Fuels",
+                season="SP",
+                season_year=2026,
+            ),
+        ]
+        releases = _patched_releases(products, seasons=("ES", "SP", "SU", "FA"))
+
+        assert [(r.version, r.season) for r in releases] == [
+            ("2025", "FA"),
+            ("2025", "SU"),
+            ("2025", "SP"),
+            ("2025", "ES"),
+            ("2025", None),
+            ("2024", None),
+            ("2023", None),
+        ]
+
+    def test_unpublished_seasons_have_no_year_and_published_read_catalog_year(self):
+        """The season year comes from the catalog, not `version + 1`."""
+        products = [
+            _make_coverage_product("FBFM40", "LF2025", geo_areas="SW"),
+            _make_coverage_product(
+                "FBFM40",
+                "LF2025",
+                theme="Seasonal Fuels",
+                season="SP",
+                season_year=2027,
+            ),
+        ]
+        releases = _patched_releases(products, seasons=("SP", "FA"))
+        by_season = {r.season: r for r in releases if r.season is not None}
+
+        assert by_season["SP"].year == 2027
+        assert by_season["SP"].coverage == CoverageStatus.FULL
+        assert by_season["FA"].year is None
+        assert by_season["FA"].coverage == CoverageStatus.NO_SUCH_PRODUCT
+
+    def test_staged_versions_are_full_wherever_the_geometry_is(self):
+        """Staged vintages are national rasters, so no GeoArea check applies."""
+        outside_every_geoarea = box(1000, 1000, 1001, 1001)
+        releases = _patched_releases([], geometry=outside_every_geoarea)
+
+        assert {r.version: r.coverage for r in releases} == {
+            "2025": CoverageStatus.NO_SUCH_PRODUCT,
+            "2024": CoverageStatus.FULL,
+            "2023": CoverageStatus.FULL,
+        }
+
+    def test_on_demand_annual_uses_live_geoarea_coverage(self):
+        products = [_make_coverage_product("FBFM40", "LF2025", geo_areas="SW")]
+        in_nw = box(11, 1, 12, 2)
+        releases = _patched_releases(products, geometry=in_nw)
+
+        assert releases[0] == LandfireRelease("2025", None, 2025, CoverageStatus.NONE)
+
+    def test_no_seasons_yields_annual_entries_only(self):
+        products = [
+            _make_coverage_product("FBFM13", "LF2025", geo_areas="SW"),
+            _make_coverage_product(
+                "FBFM13",
+                "LF2025",
+                theme="Seasonal Fuels",
+                season="SP",
+                season_year=2026,
+            ),
+        ]
+        releases = _patched_releases(products, product="fbfm13")
+
+        assert [(r.version, r.season, r.year) for r in releases] == [
+            ("2025", None, 2025),
+            ("2024", None, 2024),
+        ]

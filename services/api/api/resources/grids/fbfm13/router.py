@@ -22,6 +22,10 @@ from api.resources.grids.fbfm13.schema import (
     CreateLandfireFbfm13Request,
     LandfireFbfm13Source,
 )
+from api.resources.grids.providers.landfire import (
+    LandfireCoverageResponse,
+    build_landfire_coverage_response,
+)
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
@@ -32,7 +36,8 @@ from api.resources.grids.utils import (
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
-from lib.landfire import LANDFIRE_VERSIONS
+from lib.domain_utils import parse_domain_gdf
+from lib.landfire import LANDFIRE_VERSIONS, list_releases
 
 router = APIRouter()
 
@@ -126,3 +131,30 @@ async def create_landfire_fbfm13(
     await create_http_task_async(GRIDDLE_QUEUE, GRIDDLE_SERVICE, grid_id)
 
     return Grid(**grid_data)
+
+
+@router.get(
+    "/landfire/coverage",
+    response_model=LandfireCoverageResponse,
+    summary="Check LANDFIRE FBFM13 release coverage for a domain",
+)
+async def check_landfire_fbfm13_coverage(request: Request, domain: VerifiedDomain):
+    """
+    # Check LANDFIRE FBFM13 Coverage
+
+    Immediate pre-flight check reporting every FBFM13 release the API serves
+    and how much of this domain each one covers. Staged annual releases are
+    national; the current-year release is served by LANDFIRE Product Service
+    region by region, so its coverage depends on where the domain is.
+
+    ## Response
+
+    `latest` is the release representing the most recent point in time that
+    fully covers the domain. `releases` lists every release, newest first.
+    Each release that covers the domain carries a `links.create` request:
+    send its `body` to its `href` to create the grid.
+    """
+    geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
+    releases = await asyncio.to_thread(list_releases, "fbfm13", geometry)
+    create_href = str(request.url_for("create_landfire_fbfm13", domain_id=domain["id"]))
+    return build_landfire_coverage_response("fbfm13", releases, create_href)

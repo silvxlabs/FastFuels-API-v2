@@ -11,6 +11,8 @@ from api.resources.grids.fccs.examples import (
     STAGED_FCCS_EXAMPLE_VALUES,
 )
 
+from lib.landfire import LANDFIRE_VERSIONS
+
 
 class TestCreateLandfireFccs:
     """Test the POST /domains/{domain_id}/grids/fccs/landfire endpoint."""
@@ -177,3 +179,47 @@ class TestLfpsCoverage:
             f"Example '{example_name}' failed with status {response.status_code}: "
             f"{response.json()}"
         )
+
+
+class TestLandfireCoverage:
+    """Live coverage pre-flight against a domain with known LFPS coverage."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/fccs/landfire/coverage"
+
+    def test_reports_latest_release_with_create_link(self, client, lfps_covered_domain):
+        response = client.get(self.route(lfps_covered_domain["id"]))
+        assert response.status_code == 200, response.json()
+        body = response.json()
+
+        assert body["product"] == "fccs"
+        latest = body["latest"]
+        assert latest["coverage"] == "full"
+        create = latest["links"]["create"]
+        assert create["method"] == "POST"
+        assert create["href"].endswith(
+            f"/domains/{lfps_covered_domain['id']}/grids/fccs/landfire"
+        )
+        assert create["body"]["version"] == latest["version"]
+
+    def test_lists_every_registry_version_with_staged_ones_full(
+        self, client, lfps_covered_domain
+    ):
+        body = client.get(self.route(lfps_covered_domain["id"])).json()
+        annual = {r["version"]: r for r in body["releases"] if r["season"] is None}
+
+        versions = LANDFIRE_VERSIONS["fccs"]
+        assert set(annual) == set(versions["available"]) | set(
+            versions["lfps_available"]
+        )
+        for version in versions["available"]:
+            assert annual[version]["coverage"] == "full"
+            assert annual[version]["year"] == int(version)
+            assert annual[version]["links"]["create"]["body"] == {"version": version}
+        # The Kingman domain sits in the SW GeoArea LFPS serves the current year for.
+        for version in versions["lfps_available"]:
+            assert annual[version]["coverage"] == "full"
+
+    def test_has_no_seasonal_releases(self, client, lfps_covered_domain):
+        body = client.get(self.route(lfps_covered_domain["id"])).json()
+        assert all(r["season"] is None for r in body["releases"])

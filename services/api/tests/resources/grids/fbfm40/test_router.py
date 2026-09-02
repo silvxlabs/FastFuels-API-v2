@@ -11,6 +11,8 @@ from api.resources.grids.fbfm40.examples import (
     STAGED_FBFM40_EXAMPLE_VALUES,
 )
 
+from lib.landfire import LANDFIRE_VERSIONS, SEASON_CODES
+
 
 class TestCreateLandfireFbfm40:
     """Test the POST /domains/{domain_id}/grids/fbfm40/landfire endpoint."""
@@ -205,3 +207,60 @@ class TestSeasonalCoverage:
         source = response.json()["source"]
         assert source["season"] is None
         assert source["year"] == 2024  # default version
+
+
+class TestLandfireCoverage:
+    """Live coverage pre-flight against a domain with known LFPS coverage."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/fbfm40/landfire/coverage"
+
+    def test_reports_latest_release_with_create_link(self, client, lfps_covered_domain):
+        response = client.get(self.route(lfps_covered_domain["id"]))
+        assert response.status_code == 200, response.json()
+        body = response.json()
+
+        assert body["product"] == "fbfm40"
+        latest = body["latest"]
+        assert latest["coverage"] == "full"
+        create = latest["links"]["create"]
+        assert create["method"] == "POST"
+        assert create["href"].endswith(
+            f"/domains/{lfps_covered_domain['id']}/grids/fbfm40/landfire"
+        )
+        assert create["body"]["version"] == latest["version"]
+
+    def test_lists_every_registry_version_with_staged_ones_full(
+        self, client, lfps_covered_domain
+    ):
+        body = client.get(self.route(lfps_covered_domain["id"])).json()
+        annual = {r["version"]: r for r in body["releases"] if r["season"] is None}
+
+        versions = LANDFIRE_VERSIONS["fbfm40"]
+        assert set(annual) == set(versions["available"]) | set(
+            versions["lfps_available"]
+        )
+        for version in versions["available"]:
+            assert annual[version]["coverage"] == "full"
+            assert annual[version]["year"] == int(version)
+            assert annual[version]["links"]["create"]["body"] == {"version": version}
+        # The Kingman domain sits in the SW GeoArea LFPS serves the current year for.
+        for version in versions["lfps_available"]:
+            assert annual[version]["coverage"] == "full"
+
+    def test_lists_every_season_of_the_on_demand_vintage(
+        self, client, lfps_covered_domain
+    ):
+        body = client.get(self.route(lfps_covered_domain["id"])).json()
+        seasonal = [r for r in body["releases"] if r["season"] is not None]
+
+        on_demand = LANDFIRE_VERSIONS["fbfm40"]["lfps_available"]
+        assert {(r["version"], r["season"]) for r in seasonal} == {
+            (version, season) for version in on_demand for season in SEASON_CODES
+        }
+        for release in seasonal:
+            if release["coverage"] == "unpublished":
+                assert release["year"] is None
+                assert release["links"]["create"] is None
+            else:
+                assert release["year"] > int(release["version"])

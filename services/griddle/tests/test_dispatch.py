@@ -39,6 +39,58 @@ class TestHandleLandfire:
         assert exc_info.value.code == "UNKNOWN_PRODUCT"
         assert "unknown_product" in exc_info.value.message
 
+    @patch("griddle.dispatch.landfire.fetch_annual_disturbance")
+    def test_routes_annual_disturbance_to_handler(self, mock_fetch):
+        """handle_landfire routes annual_disturbance product to fetch_annual_disturbance."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_result = MagicMock()
+        mock_fetch.return_value = mock_result
+        progress = MagicMock()
+
+        source = {"product": "annual_disturbance", "version": "2025"}
+
+        result = handle_landfire(mock_gdf, source, progress)
+
+        mock_fetch.assert_called_once_with(
+            mock_gdf,
+            progress,
+            "2025",
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+        assert result == mock_result
+
+    @patch("griddle.dispatch.landfire.fetch_annual_disturbance")
+    def test_annual_disturbance_default_version(self, mock_fetch):
+        """handle_landfire uses 2025 as default version for annual_disturbance."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "annual_disturbance"}  # No version specified
+
+        handle_landfire(mock_gdf, source, progress)
+
+        call_args = mock_fetch.call_args[0]
+        assert call_args[2] == "2025"
+
+    @patch("griddle.dispatch.landfire.fetch_annual_disturbance")
+    def test_annual_disturbance_calls_progress(self, mock_fetch):
+        """handle_landfire reports progress for annual_disturbance."""
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        mock_fetch.return_value = MagicMock()
+        progress = MagicMock()
+
+        source = {"product": "annual_disturbance", "version": "2025"}
+
+        handle_landfire(mock_gdf, source, progress)
+
+        progress.assert_called_once()
+        call_args = progress.call_args[0]
+        assert "LANDFIRE" in call_args[0]
+        assert "annual_disturbance" in call_args[0]
+
     @patch("griddle.dispatch.landfire.fetch_fbfm13")
     def test_routes_fbfm13_to_handler(self, mock_fetch):
         """handle_landfire routes fbfm13 product to fetch_fbfm13."""

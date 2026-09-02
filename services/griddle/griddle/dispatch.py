@@ -140,6 +140,19 @@ def handle_landfire(
     target_grid_doc = _load_target_grid_doc(alignment)
 
     match product:
+        case "annual_disturbance":
+            version = source.get(
+                "version", LANDFIRE_VERSIONS["annual_disturbance"]["default"]
+            )
+            progress(f"Fetching LANDFIRE {product} v{version}...", 10)
+            return landfire.fetch_annual_disturbance(
+                domain_gdf,
+                progress,
+                version,
+                extent_buffer_cells=extent_buffer_cells,
+                alignment=alignment,
+                target_grid_doc=target_grid_doc,
+            )
         case "fbfm13":
             version = source.get("version", LANDFIRE_VERSIONS["fbfm13"]["default"])
             progress(f"Fetching LANDFIRE {product} v{version}...", 10)
@@ -197,7 +210,10 @@ def handle_landfire(
             raise ProcessingError(
                 code="UNKNOWN_PRODUCT",
                 message=f"Unknown LANDFIRE product: {product}",
-                suggestion="Supported products: fbfm13, fbfm40, fccs, topography",
+                suggestion=(
+                    "Supported products: fbfm13, fbfm40, fccs, topography, "
+                    "annual_disturbance"
+                ),
             )
 
 

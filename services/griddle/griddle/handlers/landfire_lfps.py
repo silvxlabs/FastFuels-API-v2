@@ -30,7 +30,7 @@ from lib.landfire import (
     LfpsJobFailedError,
     download,
     poll_status,
-    resolve_seasonal_product,
+    resolve_lf_product,
     submit_job,
 )
 from lib.raster import REPROJECTION_GUARD_CELLS
@@ -90,14 +90,25 @@ def _lfps_aoi_bbox(
 
 
 def _lfps_layer_name(product: str, version: str, season: str | None = None) -> str:
-    """Build the LFPS layer name for a fuel-model request.
+    """Build the LFPS layer name for a fetch request.
 
-    E.g. product="FBFM40", version="2025", season="SP" -> "LF2025_FBFM40_SP26".
-    With no season, returns the plain annual layer -> "LF2025_FBFM40".
+    Most products use "LF{version}_{PRODUCT}", e.g. "LF2025_FBFM40".
 
-    The seasonal layer name (and its season-year suffix) is read from the live
-    LFPS catalog, not constructed by assuming the season year is version + 1.
+    Because LFPS names them differently, FBFM40 seasonal layers and
+    annual_disturbance come from the live LFPS catalog via resolve_lf_product().
     """
+    if product.lower() == "annual_disturbance":
+        match = resolve_lf_product("LDist", version)
+        if match is None:
+            raise ProcessingError(
+                code="ANNUAL_DISTURBANCE_NOT_AVAILABLE",
+                message=(
+                    "LANDFIRE Product Service isn't currently serving a "
+                    f"Limited Annual Disturbance layer for version {version}."
+                ),
+            )
+        return match.layer_name
+
     product = product.upper()
     if season is None:
         return f"LF{version}_{product}"
@@ -112,7 +123,7 @@ def _lfps_layer_name(product: str, version: str, season: str | None = None) -> s
             message=f"Unknown LANDFIRE season: {season!r}",
             suggestion=f"Supported seasons: {', '.join(SEASON_CODES)}",
         )
-    match = resolve_seasonal_product(product, version, season)
+    match = resolve_lf_product(product, version, season)
     if match is None:
         raise ProcessingError(
             code="SEASONAL_NOT_AVAILABLE",

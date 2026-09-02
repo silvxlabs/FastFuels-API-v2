@@ -239,6 +239,23 @@ def _poll_inventory(client, domain_id, inventory_id, timeout=120) -> dict:
     pytest.fail(f"Inventory did not complete within {timeout}s")
 
 
+def _assert_eventually_absent(
+    gcs_path: str, timeout: int = 15, interval: int = 1
+) -> None:
+    """Assert a GCS object is deleted, tolerating the async cleanup race.
+
+    The uploader writes Firestore `status: completed` before it issues the raw
+    file's `delete_file` call (separate, unordered network operations) — a
+    poller can observe `completed` in the brief window before the delete has
+    actually landed. Retry instead of asserting instantly.
+    """
+    deadline = time.monotonic() + timeout
+    while exists(gcs_path):
+        if time.monotonic() >= deadline:
+            pytest.fail(f"{gcs_path} was not deleted within {timeout}s of completion")
+        time.sleep(interval)
+
+
 def _make_upload_file(fmt: str, domain_crs: str) -> Path:
     """Write a small upload file to a temp path and return it."""
     # Coordinates inside domain_for_testing bounds (x=[500000,501000], y=[5200000,5201000])
@@ -307,7 +324,7 @@ class TestUploadFullFlow:
 
             completed = _poll_inventory(client, domain_id, inventory_id)
 
-            assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
+            _assert_eventually_absent(f"gs://{UPLOADS_BUCKET}/{object_name}")
             assert completed["georeference"]["crs"] == domain_crs
 
             parquet_df = dd.read_parquet(

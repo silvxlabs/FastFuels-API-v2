@@ -5,14 +5,12 @@ Tests the LANDFIRE Limited Annual Disturbance endpoint.
 These tests make real HTTP requests to the API and interact with Firestore.
 """
 
-from unittest.mock import patch
-
 import pytest
 from api.resources.grids.disturbance.annual.examples import (
     LFPS_DISTURBANCE_EXAMPLE_VALUES,
 )
 
-from lib.landfire import LANDFIRE_VERSIONS, CoverageStatus
+from lib.landfire import LANDFIRE_VERSIONS
 
 
 class TestCreateLandfireDisturbance:

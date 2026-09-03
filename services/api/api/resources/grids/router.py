@@ -28,6 +28,7 @@ from api.dependencies import VerifiedDomain
 from api.resources.grids.cache import get_grid_array
 from api.resources.grids.canopy.router import router as canopy_router
 from api.resources.grids.compose.router import router as compose_router
+from api.resources.grids.disturbance.router import router as disturbance_router
 from api.resources.grids.duet.router import router as duet_router
 from api.resources.grids.duplicate.router import router as duplicate_router
 from api.resources.grids.exports.landscape.router import (
@@ -902,6 +903,9 @@ router.include_router(
     quicfire_export_router,
     prefix="/exports/quicfire",
     tags=["Grids - Exports"],
+)
+router.include_router(
+    disturbance_router, prefix="/disturbance", tags=["Grids - Disturbance"]
 )
 router.include_router(fbfm13_router, prefix="/fbfm13", tags=["Grids - FBFM13"])
 router.include_router(fbfm40_router, prefix="/fbfm40", tags=["Grids - FBFM40"])

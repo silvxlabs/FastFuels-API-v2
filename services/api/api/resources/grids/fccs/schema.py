@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from api.resources.grids.providers.landfire import LandfireSource
+from api.resources.grids.providers.landfire import BoundaryScatter, LandfireSource
 from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
 from lib.landfire import LANDFIRE_VERSIONS
 
@@ -42,6 +42,7 @@ class LandfireFccsSource(LandfireSource):
     product: Literal["fccs"] = "fccs"
     description: Literal["LANDFIRE FCCS fuelbed IDs"] = "LANDFIRE FCCS fuelbed IDs"
     remove_bare_ground: bool = False
+    boundary_scatter: BoundaryScatter | None = None
 
 
 class CreateLandfireFccsRequest(CreateSourceGridRequestBase):
@@ -60,6 +61,16 @@ class CreateLandfireFccsRequest(CreateSourceGridRequestBase):
         ),
     )
     remove_bare_ground: bool = False
+    boundary_scatter: BoundaryScatter | None = Field(
+        default=None,
+        description=(
+            "Stochastic scattering of fuelbed boundaries. Creates ragged, "
+            "natural-looking transitions between fuelbed types instead of "
+            "the staircase edges that nearest-neighbor resampling produces "
+            "at sub-30m resolutions. Bare ground (fuelbed 0) is protected "
+            "from scattering."
+        ),
+    )
 
 
 FCCS_BAND = Band(

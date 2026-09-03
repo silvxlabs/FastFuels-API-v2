@@ -103,6 +103,7 @@ async def create_landfire_fbfm13(
     source = LandfireFbfm13Source(
         version=body.version,
         remove_non_burnable=body.remove_non_burnable,
+        boundary_scatter=body.boundary_scatter,
         extent_buffer_cells=body.extent_buffer_cells,
         alignment=body.alignment,
     )

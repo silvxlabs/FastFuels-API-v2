@@ -20,6 +20,32 @@ from api.resources.grids.alignment import (
 from lib.landfire import CoverageStatus, LandfireRelease
 
 
+class BoundaryScatter(BaseModel):
+    """Controls stochastic scattering of category boundaries.
+
+    Creates ragged, natural-looking transitions between categorical values
+    (e.g. fuel model types) instead of the staircase edges that
+    nearest-neighbor resampling produces. The swap probability halves with
+    each cell of distance from the boundary. Non-burnable codes are
+    protected from scattering.
+    """
+
+    depth: int = Field(
+        10,
+        ge=1,
+        le=50,
+        description=(
+            "How many cells deep the scattering can reach. Effective "
+            "scattering decays rapidly — most mixing happens within the "
+            "first 3-4 cells."
+        ),
+    )
+    seed: int = Field(
+        42,
+        description="Random seed for reproducible scattering.",
+    )
+
+
 class LandfireSource(BaseModel):
     """Base source specification for LANDFIRE data products."""
 

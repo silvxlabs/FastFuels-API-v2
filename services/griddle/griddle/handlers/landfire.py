@@ -190,11 +190,100 @@ def fetch_annual_disturbance(
     return _to_dataset({"annual_disturbance": data})
 
 
+FBFM_NON_BURNABLE = set(range(91, 100))
+FCCS_BARE_GROUND = {0}
+
+
+def scatter_categorical_boundaries(
+    grid: np.ndarray,
+    depth: int,
+    seed: int,
+    protected: set[int],
+) -> np.ndarray:
+    """Stochastic boundary scattering for categorical raster data.
+
+    For each cardinal direction, rolls the grid 1..depth cells. At each
+    step, cells where the rolled value differs from the previous roll get a
+    swap probability of 0.5/distance. Protected values never participate:
+    cells holding a protected value won't change, and a protected value
+    won't overwrite another cell.
+
+    Args:
+        grid: 2D integer array of categorical codes.
+        depth: How many cells deep the scattering can reach.
+        seed: Random seed for reproducibility.
+        protected: Values that must not participate in scattering
+            (non-burnable codes, nodata sentinels, etc.).
+
+    Returns:
+        Scattered copy of grid, same shape and dtype.
+    """
+    src = grid.astype(np.float64)
+    target = src.copy()
+    rng = np.random.default_rng(seed)
+    rand_grid = rng.random(src.shape)
+
+    # Cells starting as protected can't accept a swap
+    rand_grid[np.isin(src, list(protected))] = 1.0
+
+    for direction, axis, shift in [
+        ("up", 0, -1),
+        ("right", 1, 1),
+        ("down", 0, 1),
+        ("left", 1, -1),
+    ]:
+        prob_grid = np.zeros_like(src)
+        current_roll = src.copy()
+
+        for i in range(1, depth + 1):
+            next_roll = np.roll(current_roll, shift, axis=axis)
+            diff = current_roll - next_roll
+            prob_grid[diff != 0] = 0.5 / i
+            current_roll = next_roll
+
+        # Don't let protected values overwrite other cells
+        rand_grid[np.isin(current_roll, list(protected))] = 1.0
+
+        # Zero out probabilities near cyclic boundaries
+        if direction == "up":
+            prob_grid[-depth:, :] = 0
+        elif direction == "down":
+            prob_grid[:depth, :] = 0
+        elif direction == "left":
+            prob_grid[:, -depth:] = 0
+        else:
+            prob_grid[:, :depth] = 0
+
+        target[rand_grid < prob_grid] = current_roll[rand_grid < prob_grid]
+
+    return target.astype(grid.dtype)
+
+
+def _apply_boundary_scatter(
+    data: DataArray,
+    boundary_scatter: dict,
+    protected: set[int],
+) -> DataArray:
+    """Apply boundary scatter to a categorical DataArray if configured."""
+    nodata = data.rio.nodata
+    if nodata is not None:
+        protected = protected | {int(nodata)}
+
+    scattered = scatter_categorical_boundaries(
+        data.values,
+        depth=boundary_scatter.get("depth", 10),
+        seed=boundary_scatter.get("seed", 42),
+        protected=protected,
+    )
+    return data.copy(data=scattered)
+
+
 def fetch_fbfm13(
     roi: gpd.GeoDataFrame,
     progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fbfm13"]["default"],
     remove_non_burnable: list[str] | None = None,
+    boundary_scatter: dict | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
@@ -250,6 +339,9 @@ def fetch_fbfm13(
         filtered = _remove_non_burnable_blocks(data.values, non_burnable_keys)
         data = data.copy(data=filtered)
 
+    if boundary_scatter:
+        data = _apply_boundary_scatter(data, boundary_scatter, FBFM_NON_BURNABLE)
+
     return _to_dataset({"fbfm13": data})
 
 
@@ -258,6 +350,7 @@ def fetch_fbfm40(
     progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fbfm40"]["default"],
     remove_non_burnable: list[str] | None = None,
+    boundary_scatter: dict | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
@@ -317,6 +410,9 @@ def fetch_fbfm40(
         filtered = _remove_non_burnable_blocks(data.values, non_burnable_keys)
         data = data.copy(data=filtered)
 
+    if boundary_scatter:
+        data = _apply_boundary_scatter(data, boundary_scatter, FBFM_NON_BURNABLE)
+
     return _to_dataset({"fbfm": data})
 
 
@@ -325,6 +421,7 @@ def fetch_fccs(
     progress: Callable[[str, int | None], None],
     version: str = LANDFIRE_VERSIONS["fccs"]["default"],
     remove_bare_ground: bool = False,
+    boundary_scatter: dict | None = None,
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
@@ -377,6 +474,9 @@ def fetch_fccs(
     if remove_bare_ground:
         filtered = _remove_non_burnable_blocks(data.values, [0])
         data = data.copy(data=filtered)
+
+    if boundary_scatter:
+        data = _apply_boundary_scatter(data, boundary_scatter, FCCS_BARE_GROUND)
 
     return _to_dataset({"fccs": data})
 

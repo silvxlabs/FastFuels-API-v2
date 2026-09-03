@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from api.resources.grids.providers.landfire import (
+    BoundaryScatter,
     LandfireSource,
     NonBurnableFuelModel,
     check_no_duplicate_non_burnable,
@@ -61,6 +62,7 @@ class LandfireFbfm40Source(LandfireSource):
         "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
     ] = "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
     remove_non_burnable: list[str] | None = None
+    boundary_scatter: BoundaryScatter | None = None
     season: str | None = Field(
         default=None,
         description=(
@@ -99,6 +101,16 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
         ),
     )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None
+    boundary_scatter: BoundaryScatter | None = Field(
+        default=None,
+        description=(
+            "Stochastic scattering of fuel model boundaries. Creates "
+            "ragged, natural-looking transitions between fuel model types "
+            "instead of the staircase edges that nearest-neighbor "
+            "resampling produces at sub-30m resolutions. Non-burnable "
+            "fuel model codes are protected from scattering."
+        ),
+    )
     season: LandfireSeason | None = Field(
         default=None,
         description=(

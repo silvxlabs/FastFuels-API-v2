@@ -107,6 +107,7 @@ async def create_landfire_fccs(
     source = LandfireFccsSource(
         version=body.version,
         remove_bare_ground=body.remove_bare_ground,
+        boundary_scatter=body.boundary_scatter,
         extent_buffer_cells=body.extent_buffer_cells,
         alignment=body.alignment,
     )

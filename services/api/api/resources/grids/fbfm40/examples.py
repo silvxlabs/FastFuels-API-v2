@@ -34,6 +34,12 @@ EXAMPLE_FBFM40_DOMAIN_2M = {
     "alignment": {"target": "domain", "resolution": 2.0, "method": "mode"},
 }
 
+EXAMPLE_FBFM40_BOUNDARY_SCATTER = {
+    "name": "FBFM40 at 2m with boundary scatter",
+    "alignment": {"target": "domain", "resolution": 2.0},
+    "boundary_scatter": {},
+}
+
 EXAMPLE_FBFM40_NATIVE = {
     "name": "FBFM40 at native source pixel anchor",
     "alignment": {"target": "native"},
@@ -98,6 +104,17 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
             "domain-anchored grids."
         ),
     },
+    "boundary_scatter": {
+        "value": EXAMPLE_FBFM40_BOUNDARY_SCATTER,
+        "summary": "2m output with boundary scatter",
+        "description": (
+            "Reprojects to 2m and applies stochastic boundary scattering. "
+            "Creates ragged, natural-looking transitions between fuel model "
+            "types instead of staircase edges. Non-burnable codes are "
+            "protected. Pass depth and seed inside boundary_scatter for "
+            "fine-grained control."
+        ),
+    },
     "native_anchor": {
         "value": EXAMPLE_FBFM40_NATIVE,
         "summary": "Preserve source pixel anchor",
@@ -135,6 +152,7 @@ STAGED_FBFM40_EXAMPLE_VALUES = [
     ("remove_non_burnable", EXAMPLE_FBFM40_REMOVE_NON_BURNABLE),
     ("with_buffer", EXAMPLE_FBFM40_WITH_BUFFER),
     ("domain_aligned_2m", EXAMPLE_FBFM40_DOMAIN_2M),
+    ("boundary_scatter", EXAMPLE_FBFM40_BOUNDARY_SCATTER),
     ("native_anchor", EXAMPLE_FBFM40_NATIVE),
 ]
 

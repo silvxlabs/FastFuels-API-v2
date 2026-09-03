@@ -22,6 +22,7 @@ from griddle.handlers.landfire import (
     fetch_fbfm40,
     fetch_fccs,
     fetch_topography,
+    scatter_categorical_boundaries,
 )
 
 from lib.testing import SHARED_TEST_DOMAINS_DIR
@@ -1005,3 +1006,102 @@ class TestFetchCanopyLandfire:
         assert progress.call_count == 3
         for call, band in zip(progress.call_args_list, ["chm", "cbd", "cbh"]):
             assert band in call.args[0]
+
+
+class TestScatterCategoricalBoundaries:
+    """Unit tests for boundary scattering of categorical grids."""
+
+    def test_uniform_grid_unchanged(self):
+        """A grid with one value everywhere has no boundaries to scatter."""
+        grid = np.full((20, 20), 101, dtype=np.int16)
+        result = scatter_categorical_boundaries(
+            grid, depth=10, seed=42, protected=set()
+        )
+        np.testing.assert_array_equal(result, grid)
+
+    def test_output_preserves_dtype(self):
+        grid = np.full((10, 10), 101, dtype=np.int16)
+        result = scatter_categorical_boundaries(grid, depth=5, seed=42, protected=set())
+        assert result.dtype == grid.dtype
+
+    def test_output_shape_matches_input(self):
+        grid = np.full((15, 25), 101, dtype=np.int16)
+        result = scatter_categorical_boundaries(grid, depth=5, seed=42, protected=set())
+        assert result.shape == grid.shape
+
+    def test_deterministic_with_same_seed(self):
+        grid = np.zeros((30, 30), dtype=np.int16)
+        grid[:, :15] = 101
+        grid[:, 15:] = 102
+        r1 = scatter_categorical_boundaries(grid, depth=10, seed=42, protected=set())
+        r2 = scatter_categorical_boundaries(grid, depth=10, seed=42, protected=set())
+        np.testing.assert_array_equal(r1, r2)
+
+    def test_different_seed_different_result(self):
+        grid = np.zeros((30, 30), dtype=np.int16)
+        grid[:, :15] = 101
+        grid[:, 15:] = 102
+        r1 = scatter_categorical_boundaries(grid, depth=10, seed=42, protected=set())
+        r2 = scatter_categorical_boundaries(grid, depth=10, seed=99, protected=set())
+        assert not np.array_equal(r1, r2)
+
+    def test_only_original_values_appear(self):
+        """Scattering should only redistribute existing values, not create new ones."""
+        grid = np.zeros((30, 30), dtype=np.int16)
+        grid[:, :15] = 101
+        grid[:, 15:] = 165
+        result = scatter_categorical_boundaries(
+            grid, depth=10, seed=42, protected=set()
+        )
+        assert set(np.unique(result)).issubset({101, 165})
+
+    def test_protected_values_stay_in_place(self):
+        """Cells with protected values must not change."""
+        grid = np.zeros((30, 30), dtype=np.int16)
+        grid[:, :10] = 91  # non-burnable
+        grid[:, 10:20] = 101
+        grid[:, 20:] = 102
+        protected = {91}
+        result = scatter_categorical_boundaries(
+            grid, depth=10, seed=42, protected=protected
+        )
+        np.testing.assert_array_equal(result[:, :10], 91)
+
+    def test_protected_values_dont_spread(self):
+        """Protected values should not overwrite neighboring cells."""
+        grid = np.zeros((30, 30), dtype=np.int16)
+        grid[:, :15] = 91  # non-burnable
+        grid[:, 15:] = 101
+        protected = {91}
+        result = scatter_categorical_boundaries(
+            grid, depth=10, seed=42, protected=protected
+        )
+        assert 91 not in result[:, 15:]
+
+    def test_scattering_occurs_at_boundary(self):
+        """With two vegetation types side by side, some cells near the
+        boundary should change."""
+        grid = np.zeros((40, 40), dtype=np.int16)
+        grid[:, :20] = 101
+        grid[:, 20:] = 165
+        result = scatter_categorical_boundaries(
+            grid, depth=10, seed=42, protected=set()
+        )
+        changed = result != grid
+        assert changed.any()
+        # Changes should be near the boundary (column 20), not at the edges
+        assert not changed[:, 0].any()
+        assert not changed[:, -1].any()
+
+    def test_depth_controls_scatter_reach(self):
+        """Larger depth should scatter further from the boundary."""
+        grid = np.zeros((40, 40), dtype=np.int16)
+        grid[:, :20] = 101
+        grid[:, 20:] = 165
+        shallow = scatter_categorical_boundaries(
+            grid, depth=2, seed=42, protected=set()
+        )
+        deep = scatter_categorical_boundaries(grid, depth=20, seed=42, protected=set())
+        shallow_changed = (shallow != grid).sum()
+        deep_changed = (deep != grid).sum()
+        assert deep_changed > shallow_changed

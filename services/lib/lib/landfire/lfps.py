@@ -30,7 +30,12 @@ import requests
 from shapely.geometry.base import BaseGeometry
 
 from lib.config import RASTERS_BUCKET
-from lib.landfire.config import LANDFIRE_USER_EMAIL, LANDFIRE_VERSIONS, SEASON_CODES
+from lib.landfire.config import (
+    LANDFIRE_USER_EMAIL,
+    LANDFIRE_VERSIONS,
+    SEASON_CODES,
+    lfps_acronym,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -290,8 +295,7 @@ def covers_annual(product: str, version: str, geometry: BaseGeometry) -> Coverag
     """Check LFPS coverage for an annual product/version against a geometry.
 
     Args:
-        product: Product acronym, matched case-insensitively against
-            `LfpsProduct.acronym` (e.g. "fbfm40" matches "FBFM40").
+        product: LANDFIRE_VERSIONS registry key for the product, e.g. "fbfm40".
         version: LANDFIRE version year (e.g. "2025") -- matched against
             LFPS's "LF{version}" format.
         geometry: Domain geometry, already reprojected to EPSG:5070.
@@ -302,16 +306,7 @@ def covers_annual(product: str, version: str, geometry: BaseGeometry) -> Coverag
         "All", or if every GeoArea the geometry touches is served. NONE
         if it touches no served GeoArea. PARTIAL otherwise.
     """
-    matching_product = next(
-        (
-            p
-            for p in list_products()
-            if p.theme != "Seasonal Fuels"
-            and p.acronym.lower() == product.lower()
-            and p.version == f"LF{version}"
-        ),
-        None,
-    )
+    matching_product = resolve_lf_product(product, version)
     if matching_product is None:
         return CoverageStatus.NO_SUCH_PRODUCT
 
@@ -336,13 +331,12 @@ def covers_annual(product: str, version: str, geometry: BaseGeometry) -> Coverag
 
 
 def resolve_lf_product(
-    acronym: str, version: str, season: str | None = None
+    product: str, version: str, season: str | None = None
 ) -> LfpsProduct | None:
     """Find a product's name in the live LFPS catalog.
 
     Args:
-        acronym: LFPS acronym, matched case-insensitively (e.g. "FBFM40",
-            "LDist").
+        product: LANDFIRE_VERSIONS registry key for the product, e.g. "fbfm40"
         version: LANDFIRE version year (e.g. "2025") -- matched against
             LFPS's "LF{version}" format.
         season: A season code (e.g. "SP") to match a Seasonal Fuels entry.
@@ -354,6 +348,7 @@ def resolve_lf_product(
         The matching `LfpsProduct`, or None if LFPS isn't currently serving
         that acronym/version(/season).
     """
+    acronym = lfps_acronym(product)
     return next(
         (
             p

@@ -36,6 +36,23 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
     },
 }
 
+# Most LANDFIRE_VERSIONS registry keys match their LFPS catalog acronym once
+# upper-cased (e.g. "fbfm40" -> "FBFM40"). LFPS_ACRONYM_OVERRIDES lists the
+# exceptions, where the LFPS acronym isn't derivable from the registry key.
+LFPS_ACRONYM_OVERRIDES: dict[str, str] = {
+    "annual_disturbance": "LDist",
+}
+
+
+def lfps_acronym(product: str) -> str:
+    """The acronym LFPS's live catalog uses for `product`.
+
+    Returns the override from LFPS_ACRONYM_OVERRIDES if `product`
+    is listed there; otherwise returns `product.upper()`.
+    """
+    return LFPS_ACRONYM_OVERRIDES.get(product, product.upper())
+
+
 # LANDFIRE's Seasonal Fuels product publishes four windows across the
 # year, listed here in calendar order: early spring (ES), spring (SP),
 # summer (SU), and fall (FA). Ordering code relies on this order.

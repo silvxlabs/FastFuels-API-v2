@@ -24,7 +24,7 @@ from lib.landfire.lfps import (
     list_products,
     list_releases,
     poll_status,
-    resolve_seasonal_product,
+    resolve_lf_product,
     submit_job,
 )
 
@@ -47,5 +47,5 @@ __all__ = [
     "CoverageStatus",
     "covers_annual",
     "covers_seasonal",
-    "resolve_seasonal_product",
+    "resolve_lf_product",
 ]

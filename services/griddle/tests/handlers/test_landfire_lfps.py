@@ -30,7 +30,7 @@ from lib.testing import SHARED_TEST_DOMAINS_DIR
 
 
 def _seasonal_product(layer_name: str = "LF2025_FBFM40_SP26") -> LfpsProduct:
-    """A live seasonal catalog entry, for patching resolve_seasonal_product."""
+    """A live seasonal catalog entry, for patching resolve_lf_product."""
     return LfpsProduct(
         layer_name=layer_name,
         product_name="Seasonal FBFM40",
@@ -148,7 +148,7 @@ class TestLfpsLayerName:
     def test_annual_layer_name(self):
         assert _lfps_layer_name("fbfm40", "2025") == "LF2025_FBFM40"
 
-    @patch("griddle.handlers.landfire_lfps.resolve_seasonal_product")
+    @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
     def test_seasonal_layer_name(self, mock_resolve):
         """The seasonal layer name comes from the live catalog entry, not
         from assuming the season year is version + 1."""
@@ -156,11 +156,11 @@ class TestLfpsLayerName:
         assert _lfps_layer_name("fbfm40", "2025", "SP") == "LF2025_FBFM40_SP26"
         mock_resolve.assert_called_once_with("FBFM40", "2025", "SP")
 
-    @patch("griddle.handlers.landfire_lfps.resolve_seasonal_product")
+    @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
     def test_seasonal_not_live_raises(self, mock_resolve):
         mock_resolve.return_value = None
         with pytest.raises(ProcessingError) as exc_info:
-            _lfps_layer_name("fbfm40", "2025", "FA")
+            _lfps_layer_name("fbfm40", "2099", "FA")
         assert exc_info.value.code == "SEASONAL_NOT_AVAILABLE"
 
     def test_seasonal_requires_fbfm40(self):
@@ -176,11 +176,36 @@ class TestLfpsLayerName:
             _lfps_layer_name("fbfm40", "2025", "WINTER")
         assert exc_info.value.code == "INVALID_SEASON"
 
+    @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
+    def test_annual_disturbance_layer_name(self, mock_resolve):
+        """annual_disturbance's real LFPS name comes from the live catalog,
+        not a constructed pattern -- mirrors the seasonal FBFM40 case above."""
+        mock_resolve.return_value = LfpsProduct(
+            layer_name="LF2025_LDist25",
+            product_name="Limited Annual Disturbance",
+            theme="Disturbance",
+            acronym="LDist",
+            version="LF2025",
+            conus=True,
+            geo_areas="All",
+            season=None,
+            season_year=None,
+        )
+        assert _lfps_layer_name("annual_disturbance", "2025") == "LF2025_LDist25"
+        mock_resolve.assert_called_once_with("LDist", "2025")
+
+    @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
+    def test_annual_disturbance_not_live_raises(self, mock_resolve):
+        mock_resolve.return_value = None
+        with pytest.raises(ProcessingError) as exc_info:
+            _lfps_layer_name("annual_disturbance", "2099")
+            assert exc_info.value.code == "ANNUAL_DISTURBANCE_NOT_AVAILABLE"
+
 
 class TestFetchLfps:
     """Unit tests for the fetch_lfps context manager."""
 
-    @patch("griddle.handlers.landfire_lfps.resolve_seasonal_product")
+    @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
     @patch("griddle.handlers.landfire_lfps.time.sleep")
     @patch("griddle.handlers.landfire_lfps.download")
     @patch("griddle.handlers.landfire_lfps.poll_status")

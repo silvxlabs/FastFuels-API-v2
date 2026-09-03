@@ -94,6 +94,7 @@ def test_configured_seasonal_version_still_live():
 @pytest.mark.parametrize(
     ("product", "fetch_fn", "band"),
     [
+        ("annual_disturbance", landfire.fetch_annual_disturbance, "annual_disturbance"),
         ("fbfm13", landfire.fetch_fbfm13, "fbfm13"),
         ("fbfm40", landfire.fetch_fbfm40, "fbfm"),
         ("fccs", landfire.fetch_fccs, "fccs"),

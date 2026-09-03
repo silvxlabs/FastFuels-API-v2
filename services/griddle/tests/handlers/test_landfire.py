@@ -17,6 +17,7 @@ from griddle.handlers.landfire import (
     _most_frequent,
     _needs_lfps,
     _remove_non_burnable_blocks,
+    fetch_annual_disturbance,
     fetch_fbfm13,
     fetch_fbfm40,
     fetch_fccs,
@@ -198,6 +199,66 @@ class TestNeedsLfps:
         """Falls back cleanly if a product's config has no lfps_available key
         at all, rather than KeyError."""
         assert _needs_lfps("fbfm13", "1999") is False
+
+
+class TestFetchAnnualDisturbance:
+    """Unit tests for fetch_annual_disturbance -- always via LFPS, no staged
+    COG path exists for this product."""
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_calls_fetch_lfps_and_returns_dataset(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+
+        result = fetch_annual_disturbance(roi, progress, version="2025")
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "annual_disturbance", "2025", {"target": "domain"}, None, 0, progress
+        )
+        mock_fetch_raster.assert_called_once_with(
+            roi,
+            "/tmp/lfps_xyz/result.tif",
+            0,
+            {"target": "domain"},
+            None,
+            is_categorical=True,
+        )
+        assert isinstance(result, xr.Dataset)
+        assert "annual_disturbance" in result.data_vars
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_threads_alignment_and_buffer(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+        alignment = {"target": "native", "method": "nearest"}
+
+        fetch_annual_disturbance(
+            roi,
+            progress,
+            version="2025",
+            extent_buffer_cells=6,
+            alignment=alignment,
+        )
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "annual_disturbance", "2025", alignment, None, 6, progress
+        )
 
 
 class TestFetchFbfm13:

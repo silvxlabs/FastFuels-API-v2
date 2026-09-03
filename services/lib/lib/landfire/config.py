@@ -30,6 +30,10 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
         "lfps_available": ["2025"],
         "default": "2023",
     },
+    "annual_disturbance": {
+        "lfps_available": ["2025"],
+        "default": "2025",
+    },
 }
 
 # LANDFIRE's Seasonal Fuels product publishes four windows across the

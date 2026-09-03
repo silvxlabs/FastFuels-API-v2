@@ -29,7 +29,7 @@ from lib.landfire.lfps import (
     list_products,
     list_releases,
     poll_status,
-    resolve_seasonal_product,
+    resolve_lf_product,
     submit_job,
 )
 
@@ -521,8 +521,9 @@ class TestCoversSeasonal:
         assert wrong_product == CoverageStatus.NO_SUCH_PRODUCT
 
 
-class TestResolveSeasonalProduct:
-    """Tests for resolving the live Seasonal Fuels catalog entry."""
+class TestResolveLfProduct:
+    """Tests for resolving a live LFPS catalog entry by acronym/version,
+    with and without a season."""
 
     def test_returns_matching_product_with_its_real_season_year(self):
         products = [
@@ -530,7 +531,7 @@ class TestResolveSeasonalProduct:
             _make_product("LF2024_FBFM40", season=None),
         ]
         with patch("lib.landfire.lfps.list_products", return_value=products):
-            match = resolve_seasonal_product("fbfm40", "2025", "SP")
+            match = resolve_lf_product("fbfm40", "2025", "SP")
 
         assert match is not None
         assert match.layer_name == "LF2025_FBFM40_SP26"
@@ -539,17 +540,40 @@ class TestResolveSeasonalProduct:
     def test_product_matched_case_insensitively(self):
         products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
         with patch("lib.landfire.lfps.list_products", return_value=products):
-            assert resolve_seasonal_product("FBFM40", "2025", "SP") is not None
+            assert resolve_lf_product("FBFM40", "2025", "SP") is not None
 
     def test_returns_none_when_season_not_live(self):
         products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
         with patch("lib.landfire.lfps.list_products", return_value=products):
-            assert resolve_seasonal_product("fbfm40", "2025", "FA") is None
+            assert resolve_lf_product("fbfm40", "2025", "FA") is None
 
     def test_returns_none_on_version_mismatch(self):
         products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
         with patch("lib.landfire.lfps.list_products", return_value=products):
-            assert resolve_seasonal_product("fbfm40", "2024", "SP") is None
+            assert resolve_lf_product("fbfm40", "2024", "SP") is None
+
+    def test_no_season_returns_the_annual_entry(self):
+        products = [
+            _make_coverage_product("LDist", "LF2025", theme="Disturbance"),
+            _make_coverage_product(
+                "LDist", "LF2025", theme="Seasonal Fuels", season="SP"
+            ),
+        ]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            match = resolve_lf_product("LDist", "2025")
+
+        assert match is not None
+        assert match.theme == "Disturbance"
+
+    def test_no_season_matched_case_insensitively(self):
+        products = [_make_coverage_product("LDist", "LF2025", theme="Disturbance")]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            assert resolve_lf_product("ldist", "2025") is not None
+
+    def test_no_season_returns_none_on_version_mismatch(self):
+        products = [_make_coverage_product("LDist", "LF2025", theme="Disturbance")]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            assert resolve_lf_product("LDist", "2024") is None
 
 
 # A registry with one on-demand vintage and two staged ones, patched in for

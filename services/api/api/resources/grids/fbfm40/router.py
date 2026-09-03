@@ -41,7 +41,7 @@ from lib.landfire import (
     LANDFIRE_VERSIONS,
     SEASON_CODES,
     list_releases,
-    resolve_seasonal_product,
+    resolve_lf_product,
 )
 
 router = APIRouter()
@@ -120,7 +120,7 @@ async def create_landfire_fbfm40(
         # than assuming it is `version + 1`. Coverage validation above already
         # confirmed the product is live, so the match is present (cached call).
         matched = await asyncio.to_thread(
-            resolve_seasonal_product, "fbfm40", body.version, body.season
+            resolve_lf_product, "fbfm40", body.version, body.season
         )
         year = matched.season_year if matched else None
     else:

@@ -143,6 +143,53 @@ def _to_dataset(variables: dict[str, DataArray]) -> xr.Dataset:
     return ds
 
 
+def fetch_annual_disturbance(
+    roi: gpd.GeoDataFrame,
+    progress: Callable[[str, int | None], None],
+    version: str = LANDFIRE_VERSIONS["annual_disturbance"]["default"],
+    extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
+) -> xr.Dataset:
+    """Fetch LANDFIRE Limited Annual Disturbance codes.
+
+    Always fetched on demand via LFPS.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest
+        version: LANDFIRE version year (default from LANDFIRE_VERSIONS)
+        extent_buffer_cells: Result-grid cells of buffer around the ROI
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}`` when omitted.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+        progress: Progress callback (submit/wait/download reports through it).
+
+    Returns:
+        Dataset with a single "annual_disturbance" variable (raw VALUE codes)
+    """
+    alignment = alignment or {"target": "domain"}
+    with landfire_lfps.fetch_lfps(
+        roi,
+        "annual_disturbance",
+        version,
+        alignment,
+        target_grid_doc,
+        extent_buffer_cells,
+        progress,
+    ) as url:
+        data = _fetch_landfire_raster(
+            roi,
+            url,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+            is_categorical=True,
+        )
+
+    return _to_dataset({"annual_disturbance": data})
+
+
 def fetch_fbfm13(
     roi: gpd.GeoDataFrame,
     progress: Callable[[str, int | None], None],

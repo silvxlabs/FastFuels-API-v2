@@ -28,9 +28,10 @@ class ReimputationMethod(BaseModel):
 
     Resample the PIM to ``resolution``, keep a cell's plot only where the CHM's
     canopy cover — the fraction of CHM cells taller than ``min_height`` — exceeds
-    ``cover_threshold``, then expand the surviving plots as ``tree/pim``. Defaults
-    are the v1 production values; ``fastfuels-core``'s own defaults are 1.0 m and
-    0.25.
+    ``cover_threshold``, then expand the surviving plots as ``tree/pim``.
+    ``resolution`` and ``min_height`` are the v1 production values;
+    ``cover_threshold`` defaults to 0.2. ``fastfuels-core``'s own defaults are
+    1.0 m and 0.25.
     """
 
     name: Literal["reimputation"] = "reimputation"
@@ -48,7 +49,7 @@ class ReimputationMethod(BaseModel):
         description="CHM height (meters) above which a cell counts as canopy.",
     )
     cover_threshold: float = Field(
-        default=0.1,
+        default=0.2,
         ge=0.0,
         le=1.0,
         description=(

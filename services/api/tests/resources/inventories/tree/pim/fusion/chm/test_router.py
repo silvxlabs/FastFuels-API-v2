@@ -145,7 +145,7 @@ class TestCreatePimChmFusionInventory:
         assert source["method"]["name"] == "reimputation"
         assert source["method"]["resolution"] == 7.5
         assert source["method"]["min_height"] == 2.0
-        assert source["method"]["cover_threshold"] == 0.1
+        assert source["method"]["cover_threshold"] == 0.2
 
         # Reimputation is a conditioned tree/pim expansion: full PIM column set.
         assert [c["key"] for c in data["columns"]] == [

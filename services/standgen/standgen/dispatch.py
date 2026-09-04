@@ -7,7 +7,7 @@ Routes inventory requests to the appropriate handler based on source type.
 import geopandas as gpd
 
 from lib.errors import ProcessingError
-from standgen.handlers import chm, gdam, pim
+from standgen.handlers import chm, gdam, pim, pim_chm_fusion
 
 
 def dispatch_handler(
@@ -22,6 +22,12 @@ def dispatch_handler(
 
     match source_name:
         case "pim":
+            # A PIM source that also fuses a CHM (name "pim", fusion ["chm"])
+            # goes to the fusion handler; a plain PIM expands directly.
+            if source.get("fusion") == ["chm"]:
+                return pim_chm_fusion.handle_pim_chm_fusion(
+                    inventory, source, domain_gdf, progress_callback
+                )
             return pim.handle_pim(inventory, source, domain_gdf, progress_callback)
         case "chm":
             return chm.handle_chm(inventory, source, domain_gdf, progress_callback)

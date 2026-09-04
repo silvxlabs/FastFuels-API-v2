@@ -18,12 +18,12 @@ class TestReimputationMethod:
     """Tests for the ReimputationMethod model."""
 
     def test_default_values(self):
-        """Defaults match the v1 production values."""
+        """resolution/min_height are v1 values; cover_threshold defaults to 0.2."""
         method = ReimputationMethod()
         assert method.name == "reimputation"
         assert method.resolution == 7.5
         assert method.min_height == 2.0
-        assert method.cover_threshold == 0.1
+        assert method.cover_threshold == 0.2
 
     def test_name_is_always_reimputation(self):
         """The name field cannot be set to anything else."""

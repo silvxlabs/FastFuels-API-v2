@@ -24,7 +24,7 @@ EXAMPLE_PIM_CHM_FULL = {
         "name": "reimputation",
         "resolution": 7.5,
         "min_height": 2.0,
-        "cover_threshold": 0.1,
+        "cover_threshold": 0.2,
     },
     "point_process": "inhomogeneous_poisson",
     "seed": 12345,

@@ -40,7 +40,14 @@ class GridModificationCondition(BaseModel):
     """
 
     band: str = Field(..., description="The band to check (dot-notation key)")
-    operator: Operator = Field(..., description="The comparison operator")
+    operator: Operator = Field(
+        ...,
+        description=(
+            "The comparison operator that tests the band against `value` "
+            "(e.g. `le` selects cells where band ≤ value). Conditions only "
+            "select cells; they do not change data."
+        ),
+    )
     value: int | float | str | list[int | float | str] = Field(
         ..., description="The value(s) to compare against"
     )
@@ -180,7 +187,14 @@ class GridModificationAction(BaseModel):
     """
 
     band: str = Field(..., description="The band to modify (dot-notation key)")
-    modifier: Modifier = Field(..., description="How to modify the value")
+    modifier: Modifier = Field(
+        ...,
+        description=(
+            "How the action changes the selected band: `add`, `subtract`, "
+            "`multiply`, `divide` (arithmetic against `value`), or `replace` "
+            "(overwrite with `value`)."
+        ),
+    )
     value: int | float | str = Field(
         ..., description="The value to use with the modifier"
     )

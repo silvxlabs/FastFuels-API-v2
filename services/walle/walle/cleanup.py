@@ -7,15 +7,15 @@ idempotent GCS-then-doc routine:
 1. Orphaned GCS blobs — an artifact whose owning doc is gone (blob only).
 2. Orphaned child docs — a child whose ``domain_id`` is gone (doc + artifact).
 3. TTL-expired docs — a doc past its owner's resolved retention (doc + artifact).
-4. Guest resources — a doc owned by an anonymous (guest) uid past a short
-   post-modification window (doc + artifact; guest domains are purged doc-only).
+4. Guest resources — a doc owned by an anonymous (guest) Firebase user past a
+   short window (doc + artifact; guest domains are purged doc-only).
 5. Stale test resources — an ephemeral ``test-`` doc past a short retention
    window (doc + artifact; test domains are purged doc-only).
 
 Docs are deleted synchronously by the API, so orphaned blobs (category 1) are
 the common case; 2 and 3 are the durable backstop and the retention policy; 4
-reaps no-account trial data via a Firebase Auth owner probe, and 5 sweeps the
-ephemeral integration-test junk that CI leaves in the shared project.
+reaps no-account trial data; 5 sweeps the ephemeral integration-test junk that
+CI leaves in the shared project.
 All Firestore re-checks and owner lookups are batched through ``get_all``; the
 run accumulates the deletions and executes them in bulk at the end — every GCS
 artifact first, then every Firestore doc — so a crash between the two leaves the
@@ -189,49 +189,33 @@ def _effective_ttl_days(
     return max(ttl, TTL_FLOOR_DAYS)
 
 
-# --- anonymous (guest) owner probe ----------------------------------------
+# --- anonymous (guest) owners ---------------------------------------------
 
 # Firebase Auth get_users accepts at most 100 identifiers per call.
 _GET_USERS_CHUNK = 100
 
 
-def _ensure_firebase_initialized() -> None:
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app()
+def anonymous_owners(owner_ids) -> set[str]:
+    """The subset of ``owner_ids`` that are anonymous Firebase users.
 
-
-def resolve_anonymous_owners(owner_ids) -> dict[str, bool]:
-    """Map each distinct owner_id -> whether it is an anonymous (guest) user.
-
-    A user with a real provider (password/google.com) is False; one whose
-    provider_data is empty, or that Auth no longer knows (records outliving the
-    30-day anonymous cleanup), is True and thus a guest-reap candidate.
+    Anonymous means a Firebase user with no sign-in provider. Owners Auth does
+    not know — application ids, test owners, deleted accounts — are not guests.
     """
     ids = [o for o in dict.fromkeys(owner_ids) if o]
     if not ids:
-        return {}
-    _ensure_firebase_initialized()
-    result: dict[str, bool] = {}
+        return set()
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app()
+    anonymous: set[str] = set()
     for start in range(0, len(ids), _GET_USERS_CHUNK):
-        chunk = ids[start : start + _GET_USERS_CHUNK]
-        found = firebase_auth.get_users([firebase_auth.UidIdentifier(u) for u in chunk])
-        has_provider = {u.uid for u in found.users if u.provider_data}
-        for uid in chunk:
-            result[uid] = uid not in has_provider
-    return result
-
-
-def _unresolved_anon_owners(
-    records: list[Record], resolved: dict[str, bool]
-) -> list[str]:
-    """Owner_ids not yet classified. Test owners are skipped (not real uids)."""
-    return [
-        r.owner_id
-        for r in records
-        if r.owner_id
-        and r.owner_id not in resolved
-        and not r.owner_id.startswith("test-")
-    ]
+        chunk = [
+            firebase_auth.UidIdentifier(u)
+            for u in ids[start : start + _GET_USERS_CHUNK]
+        ]
+        anonymous |= {
+            u.uid for u in firebase_auth.get_users(chunk).users if not u.provider_data
+        }
+    return anonymous
 
 
 # --- scanning -------------------------------------------------------------
@@ -373,20 +357,15 @@ def find_expired(
 
 
 def find_guest_expired(
-    records: list[Record], now: datetime, anonymous_owners: dict[str, bool]
+    records: list[Record], now: datetime, anonymous: set[str]
 ) -> list[Record]:
-    """Docs owned by an anonymous (guest) uid, past the guest window.
-
-    Ignores the TTL floor. Protected and test-owned records are left to their
-    own categories.
-    """
+    """Docs owned by an anonymous (guest) user, past the guest window (no TTL floor)."""
     cutoff = now - timedelta(hours=GUEST_TTL_HOURS)
     return [
         rec
         for rec in records
         if not _is_protected(rec.doc_id)
-        and not _is_test_record(rec)
-        and anonymous_owners.get(rec.owner_id, False)
+        and rec.owner_id in anonymous
         and _older_than(rec.modified_on, cutoff)
     ]
 
@@ -511,7 +490,7 @@ def run() -> dict:
     domain_ids = {r.doc_id for r in domain_records}
     summary = Summary()
     owner_ttls: dict[str, tuple[int | None, int | None]] = {}
-    anon_owners: dict[str, bool] = {}
+    anon_owners: set[str] = set()
     gcs_deletes: list[str] = []
     doc_deletes: list = []
     logger.info("walle start: %d domains", len(domain_ids))
@@ -525,9 +504,7 @@ def run() -> dict:
             r.owner_id for r in records if r.owner_id and r.owner_id not in owner_ttls
         ]
         owner_ttls.update(resolve_owner_ttls_bulk(new_owners))
-        anon_owners.update(
-            resolve_anonymous_owners(_unresolved_anon_owners(records, anon_owners))
-        )
+        anon_owners |= anonymous_owners(new_owners)
 
         # Categories on live docs, deduped so a doc is reaped under one reason.
         orphan_docs = (
@@ -596,8 +573,9 @@ def run() -> dict:
                 )
 
     # Guest and ephemeral-test domains carry no artifact — purge them doc-only.
-    anon_owners.update(
-        resolve_anonymous_owners(_unresolved_anon_owners(domain_records, anon_owners))
+    # Owners with a domain but no resources yet have not been probed above.
+    anon_owners |= anonymous_owners(
+        {r.owner_id for r in domain_records} - owner_ttls.keys()
     )
     guest_domains = find_guest_expired(domain_records, now, anon_owners)
     guest_domain_ids = {r.doc_id for r in guest_domains}

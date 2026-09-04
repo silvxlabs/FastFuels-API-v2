@@ -349,8 +349,7 @@ class _FakeGetUsersResult:
         self.users = users
 
 
-def test_resolve_anonymous_owners_classifies(monkeypatch):
-    monkeypatch.setattr(cleanup, "_ensure_firebase_initialized", lambda: None)
+def test_anonymous_owners_only_provider_less_known_users(monkeypatch):
     monkeypatch.setattr(
         cleanup.firebase_auth,
         "get_users",
@@ -358,85 +357,45 @@ def test_resolve_anonymous_owners_classifies(monkeypatch):
             [_FakeUser("anon", []), _FakeUser("real", [object()])]
         ),
     )
-    # "anon" has no provider -> guest; "real" has one -> keep; "missing" is not
-    # returned by Auth -> guest. None dropped, "anon" deduped.
-    result = cleanup.resolve_anonymous_owners(["anon", "real", "missing", None, "anon"])
-    assert result == {"anon": True, "real": False, "missing": True}
+    # "app-id" and "test-owner" are unknown to Auth -> not guests.
+    result = cleanup.anonymous_owners(["anon", "real", "app-id", "test-owner", None])
+    assert result == {"anon"}
 
 
-def test_resolve_anonymous_owners_empty_skips_firebase(monkeypatch):
-    monkeypatch.setattr(
-        cleanup,
-        "_ensure_firebase_initialized",
-        lambda: 1 / 0,  # must not be called
-    )
-    assert cleanup.resolve_anonymous_owners([None, ""]) == {}
+def test_anonymous_owners_empty_skips_firebase(monkeypatch):
+    monkeypatch.setattr(cleanup.firebase_auth, "get_users", lambda ids: 1 / 0)
+    assert cleanup.anonymous_owners([None, ""]) == set()
 
 
-def test_resolve_anonymous_owners_chunks(monkeypatch):
-    monkeypatch.setattr(cleanup, "_ensure_firebase_initialized", lambda: None)
+def test_anonymous_owners_chunks_and_dedupes(monkeypatch):
     monkeypatch.setattr(cleanup, "_GET_USERS_CHUNK", 2)
     calls = []
 
     def fake_get_users(ids):
         calls.append(len(ids))
-        return _FakeGetUsersResult([])  # nothing found -> all anonymous
+        return _FakeGetUsersResult([_FakeUser(i.uid, []) for i in ids])
 
     monkeypatch.setattr(cleanup.firebase_auth, "get_users", fake_get_users)
-    result = cleanup.resolve_anonymous_owners(["a", "b", "c"])
+    assert cleanup.anonymous_owners(["a", "b", "c", "a"]) == {"a", "b", "c"}
     assert calls == [2, 1]
-    assert result == {"a": True, "b": True, "c": True}
 
 
-def test_unresolved_anon_owners_skips_resolved_and_test_owners():
-    records = [
-        rec(doc_id="1", owner_id="anon"),
-        rec(doc_id="2", owner_id="known"),
-        rec(doc_id="3", owner_id="test-owner"),
-        rec(doc_id="4", owner_id=None),
-        rec(doc_id="5", owner_id="anon"),
-    ]
-    # "known" already classified, test owners skipped, None dropped; dup left for
-    # resolve_anonymous_owners to dedupe.
-    assert cleanup._unresolved_anon_owners(records, {"known": False}) == [
-        "anon",
-        "anon",
-    ]
-
-
-def test_guest_expired_reaps_old_anonymous():
-    old = rec(owner_id="anon", modified_on=NOW - timedelta(hours=25))
-    fresh = rec(owner_id="anon", modified_on=NOW - timedelta(hours=1))
-    assert cleanup.find_guest_expired([old, fresh], NOW, {"anon": True}) == [old]
-
-
-def test_guest_expired_spares_non_anonymous():
-    old = rec(owner_id="real", modified_on=NOW - timedelta(days=99))
-    assert cleanup.find_guest_expired([old], NOW, {"real": False}) == []
-
-
-def test_guest_expired_spares_unknown_owner():
-    old = rec(owner_id="mystery", modified_on=NOW - timedelta(days=99))
-    assert cleanup.find_guest_expired([old], NOW, {}) == []
+def test_guest_expired_reaps_old_anonymous_only():
+    old = rec(doc_id="1", owner_id="anon", modified_on=NOW - timedelta(hours=25))
+    fresh = rec(doc_id="2", owner_id="anon", modified_on=NOW - timedelta(hours=1))
+    real = rec(doc_id="3", owner_id="real", modified_on=NOW - timedelta(days=99))
+    assert cleanup.find_guest_expired([old, fresh, real], NOW, {"anon"}) == [old]
 
 
 def test_guest_expired_ignores_ttl_floor():
     # 25 h is far under the 7-day TTL floor; the guest category reaps anyway.
     old = rec(owner_id="anon", modified_on=NOW - timedelta(hours=25))
-    assert cleanup.find_guest_expired([old], NOW, {"anon": True}) == [old]
+    assert cleanup.find_guest_expired([old], NOW, {"anon"}) == [old]
 
 
-def test_guest_expired_excludes_test_and_protected():
-    test_owned = rec(
-        doc_id="x", owner_id="test-owner", modified_on=NOW - timedelta(days=9)
-    )
+def test_guest_expired_spares_protected_and_unknown_age():
     static = rec(
         doc_id="static-test-x", owner_id="anon", modified_on=NOW - timedelta(days=9)
     )
-    owners = {"test-owner": True, "anon": True}
-    assert cleanup.find_guest_expired([test_owned, static], NOW, owners) == []
-
-
-def test_guest_expired_null_modified_on_spared():
-    r = rec(owner_id="anon", modified_on=None)
-    assert cleanup.find_guest_expired([r], NOW, {"anon": True}) == []
+    no_age = rec(owner_id="anon", modified_on=None)
+    assert cleanup.find_guest_expired([static, no_age], NOW, {"anon"}) == []

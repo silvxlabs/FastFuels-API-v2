@@ -29,13 +29,11 @@ in the shared project. Real resource ids are server-generated `uuid4` hex (never
 longer than any test run, so an in-flight test is never raced. The persistent
 `static-test-` fixtures are excluded (they don't start with `test-`).
 
-The **guest** category reaps no-account trial data. Anonymous sign-in leaves no
-per-doc marker, so walle classifies each distinct `owner_id` via a batched
-Firebase Auth `get_users` probe: an owner with a real provider
-(`password`/`google.com`) is kept, one whose `provider_data` is empty — or that
-Auth no longer knows — is a guest. A guest who converts (links a credential) is
-no longer anonymous and drops out of the candidate set automatically. Test
-owners are never probed, so this category never touches test data.
+The **guest** category reaps no-account trial data. Nothing on the doc marks a
+guest, so walle asks Firebase Auth (`get_users`, batched) which owners are
+anonymous users — a Firebase user with no sign-in provider. Owners Auth does not
+know (application ids, test owners) are not guests, and a guest who links a
+credential stops being one.
 
 ## Configuration (env)
 
@@ -90,10 +88,8 @@ The job's service account needs Firestore access, GCS object-delete on the five
 artifact buckets, and Firebase Auth read (`get_users`) for the guest-owner probe
 (the Firebase Authentication Viewer role, or `identitytoolkit` accounts lookup).
 
-Every category except **guest** defaults to enforce; guest ships in dry-run
-(`WALLE_GUEST_REAP_DRY_RUN` defaults `true`) so its first nights only log
-candidates — flip it to enforce once they look right. Before creating the
-nightly trigger, run
+All categories except **guest** default to enforce (guest ships dry-run until
+its candidates have been checked in prod). Before creating the nightly trigger, run
 walle locally with the categories in dry-run and check the candidates against
 reality (above); once they look right, schedule it. Retention (180 days
 standard / never for applications) is a documented contract from a resource's

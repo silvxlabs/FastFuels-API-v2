@@ -7,8 +7,9 @@ idempotent GCS-then-doc routine:
 1. Orphaned GCS blobs — an artifact whose owning doc is gone (blob only).
 2. Orphaned child docs — a child whose ``domain_id`` is gone (doc + artifact).
 3. TTL-expired docs — a doc past its owner's resolved retention (doc + artifact).
-4. Guest resources — a doc owned by an anonymous (guest) Firebase user past a
-   short window (doc + artifact; guest domains are purged doc-only).
+4. Guest resources — a doc owned by an anonymous (guest) Firebase user, a
+   fixed window after creation (doc + artifact; guest domains are purged
+   doc-only).
 5. Stale test resources — an ephemeral ``test-`` doc past a short retention
    window (doc + artifact; test domains are purged doc-only).
 
@@ -70,7 +71,14 @@ _DEFAULT_TTLS = (DEFAULT_RESOURCE_TTL_DAYS, DEFAULT_FAILED_RESOURCE_TTL_DAYS)
 _TIER_TTL_OVERRIDES: dict[str, dict] = {"application": {"resource_ttl_days": None}}
 
 # Firestore fields the single scan projects — everything the categories need.
-_SCAN_FIELDS = ["domain_id", "owner_id", "status", "modified_on", "size_bytes"]
+_SCAN_FIELDS = [
+    "domain_id",
+    "owner_id",
+    "status",
+    "created_on",
+    "modified_on",
+    "size_bytes",
+]
 
 # Firestore batched reads (get_all) are chunked at this size. A fresh,
 # mostly-orphaned bucket can have thousands of candidates; chunking bounds each
@@ -89,6 +97,7 @@ class Record:
     domain_id: str | None
     owner_id: str | None
     status: str | None
+    created_on: datetime | None
     modified_on: datetime | None
     size_bytes: int | None
 
@@ -236,6 +245,7 @@ def scan_collection(layout: ResourceLayout) -> list[Record]:
                 domain_id=d.get("domain_id"),
                 owner_id=d.get("owner_id"),
                 status=d.get("status"),
+                created_on=d.get("created_on"),
                 modified_on=d.get("modified_on"),
                 size_bytes=d.get("size_bytes"),
             )
@@ -244,7 +254,7 @@ def scan_collection(layout: ResourceLayout) -> list[Record]:
 
 
 def scan_domains() -> list[Record]:
-    """Stream domain docs (id + modified_on + owner_id).
+    """Stream domain docs (id + created_on + modified_on + owner_id).
 
     Serves both the live-domain set (for orphaned-child detection) and the
     test-resource purge. ``owner_id`` is projected so the purge can match domains
@@ -253,7 +263,7 @@ def scan_domains() -> list[Record]:
     """
     stream = (
         firestore_client.collection(DOMAINS_COLLECTION)
-        .select(["modified_on", "owner_id"])
+        .select(["created_on", "modified_on", "owner_id"])
         .stream()
     )
     records = []
@@ -266,6 +276,7 @@ def scan_domains() -> list[Record]:
                 domain_id=None,
                 owner_id=d.get("owner_id"),
                 status=None,
+                created_on=d.get("created_on"),
                 modified_on=d.get("modified_on"),
                 size_bytes=None,
             )
@@ -359,14 +370,16 @@ def find_expired(
 def find_guest_expired(
     records: list[Record], now: datetime, anonymous: set[str]
 ) -> list[Record]:
-    """Docs owned by an anonymous (guest) user, past the guest window (no TTL floor)."""
+    """Docs owned by an anonymous (guest) user, created more than the guest
+    window ago. Keyed on creation, not modification, so a guest cannot extend
+    the window by touching a resource; no TTL floor applies."""
     cutoff = now - timedelta(hours=GUEST_TTL_HOURS)
     return [
         rec
         for rec in records
         if not _is_protected(rec.doc_id)
         and rec.owner_id in anonymous
-        and _older_than(rec.modified_on, cutoff)
+        and _older_than(rec.created_on, cutoff)
     ]
 
 

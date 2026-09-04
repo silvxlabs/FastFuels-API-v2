@@ -29,6 +29,7 @@ def rec(**kw) -> Record:
         domain_id="d1",
         owner_id="o1",
         status="completed",
+        created_on=NOW,
         modified_on=NOW,
         size_bytes=100,
     )
@@ -381,21 +382,29 @@ def test_anonymous_owners_chunks_and_dedupes(monkeypatch):
 
 
 def test_guest_expired_reaps_old_anonymous_only():
-    old = rec(doc_id="1", owner_id="anon", modified_on=NOW - timedelta(hours=25))
-    fresh = rec(doc_id="2", owner_id="anon", modified_on=NOW - timedelta(hours=1))
-    real = rec(doc_id="3", owner_id="real", modified_on=NOW - timedelta(days=99))
+    old = rec(doc_id="1", owner_id="anon", created_on=NOW - timedelta(hours=25))
+    fresh = rec(doc_id="2", owner_id="anon", created_on=NOW - timedelta(hours=1))
+    real = rec(doc_id="3", owner_id="real", created_on=NOW - timedelta(days=99))
     assert cleanup.find_guest_expired([old, fresh, real], NOW, {"anon"}) == [old]
+
+
+def test_guest_expired_keys_on_creation_not_modification():
+    # Touching a resource must not extend its life.
+    touched = rec(
+        owner_id="anon", created_on=NOW - timedelta(hours=25), modified_on=NOW
+    )
+    assert cleanup.find_guest_expired([touched], NOW, {"anon"}) == [touched]
 
 
 def test_guest_expired_ignores_ttl_floor():
     # 25 h is far under the 7-day TTL floor; the guest category reaps anyway.
-    old = rec(owner_id="anon", modified_on=NOW - timedelta(hours=25))
+    old = rec(owner_id="anon", created_on=NOW - timedelta(hours=25))
     assert cleanup.find_guest_expired([old], NOW, {"anon"}) == [old]
 
 
 def test_guest_expired_spares_protected_and_unknown_age():
     static = rec(
-        doc_id="static-test-x", owner_id="anon", modified_on=NOW - timedelta(days=9)
+        doc_id="static-test-x", owner_id="anon", created_on=NOW - timedelta(days=9)
     )
-    no_age = rec(owner_id="anon", modified_on=None)
+    no_age = rec(owner_id="anon", created_on=None)
     assert cleanup.find_guest_expired([static, no_age], NOW, {"anon"}) == []

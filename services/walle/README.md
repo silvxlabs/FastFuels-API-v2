@@ -14,7 +14,7 @@ dry-run switch:
 | Orphaned GCS blobs | an artifact whose owning doc is gone | the blob |
 | Orphaned child docs | a child whose `domain_id` no longer exists | doc + artifact |
 | TTL-expired docs | a doc past its owner's resolved retention | doc + artifact |
-| Guest resources | a doc owned by an anonymous (guest) uid past a short window | doc + artifact (guest domains: doc only) |
+| Guest resources | a doc owned by an anonymous (guest) uid, a fixed window after creation | doc + artifact (guest domains: doc only) |
 | Stale test resources | a `test-` doc past a short retention window | doc + artifact (test domains: doc only) |
 
 Deletion order is GCS-first, then the Firestore doc, so a crash between the two
@@ -33,7 +33,8 @@ The **guest** category reaps no-account trial data. Nothing on the doc marks a
 guest, so walle asks Firebase Auth (`get_users`, batched) which owners are
 anonymous users — a Firebase user with no sign-in provider. Owners Auth does not
 know (application ids, test owners) are not guests, and a guest who links a
-credential stops being one.
+credential stops being one. The window is measured from `created_on`, not
+`modified_on`, so touching a resource does not extend its life.
 
 ## Configuration (env)
 
@@ -46,8 +47,8 @@ credential stops being one.
 - `WALLE_TTL_FLOOR_DAYS` (default 7) — resolved TTLs are clamped to at least this.
 - `WALLE_ORPHAN_MIN_AGE_HOURS` (default 24) — orphaned docs younger than this are
   left alone.
-- `WALLE_GUEST_TTL_HOURS` (default 24) — anonymous-owned resources older than this
-  are reaped (ignores the TTL floor).
+- `WALLE_GUEST_TTL_HOURS` (default 24) — anonymous-owned resources created more
+  than this long ago are reaped (ignores the TTL floor).
 - `WALLE_TEST_TTL_DAYS` (default 7) — `test-` resources older than this are purged.
 
 Plus the standard `lib.config` infrastructure vars (`GCP_PROJECT`, the bucket and

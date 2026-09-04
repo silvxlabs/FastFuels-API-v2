@@ -8,6 +8,7 @@ from lib.landfire.config import (
     LANDFIRE_VERSIONS,
     NB_CODE_MAP,
     UnknownLandfireVersionError,
+    lfps_acronym,
     validate_landfire_version,
 )
 
@@ -94,3 +95,15 @@ class TestNbCodeMap:
             "NB8": 98,
             "NB9": 99,
         }
+
+
+class TestLfpsAcronym:
+    def test_defaults_to_upper_cased_product(self):
+        assert lfps_acronym("fbfm13") == "FBFM13"
+        assert lfps_acronym("fbfm40") == "FBFM40"
+        assert lfps_acronym("fccs") == "FCCS"
+
+    def test_annual_disturbance_uses_the_override(self):
+        """annual_disturbance's real LFPS acronym ("LDist") isn't derivable
+        by upper-casing the registry key -- it needs the override table."""
+        assert lfps_acronym("annual_disturbance") == "LDist"

@@ -154,7 +154,7 @@ class TestLfpsLayerName:
         from assuming the season year is version + 1."""
         mock_resolve.return_value = _seasonal_product("LF2025_FBFM40_SP26")
         assert _lfps_layer_name("fbfm40", "2025", "SP") == "LF2025_FBFM40_SP26"
-        mock_resolve.assert_called_once_with("FBFM40", "2025", "SP")
+        mock_resolve.assert_called_once_with("fbfm40", "2025", "SP")
 
     @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
     def test_seasonal_not_live_raises(self, mock_resolve):
@@ -192,14 +192,14 @@ class TestLfpsLayerName:
             season_year=None,
         )
         assert _lfps_layer_name("annual_disturbance", "2025") == "LF2025_LDist25"
-        mock_resolve.assert_called_once_with("LDist", "2025")
+        mock_resolve.assert_called_once_with("annual_disturbance", "2025")
 
     @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
     def test_annual_disturbance_not_live_raises(self, mock_resolve):
         mock_resolve.return_value = None
         with pytest.raises(ProcessingError) as exc_info:
             _lfps_layer_name("annual_disturbance", "2099")
-            assert exc_info.value.code == "ANNUAL_DISTURBANCE_NOT_AVAILABLE"
+        assert exc_info.value.code == "ANNUAL_DISTURBANCE_NOT_AVAILABLE"
 
 
 class TestFetchLfps:

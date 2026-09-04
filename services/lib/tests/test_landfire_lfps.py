@@ -525,6 +525,9 @@ class TestResolveLfProduct:
     """Tests for resolving a live LFPS catalog entry by acronym/version,
     with and without a season."""
 
+    # No case-insensitivity tests here anymore ("FBFM40", "ldist", as input).
+    # Callers always pass the lower-case registry key now
+
     def test_returns_matching_product_with_its_real_season_year(self):
         products = [
             _make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026),
@@ -537,11 +540,6 @@ class TestResolveLfProduct:
         assert match.layer_name == "LF2025_FBFM40_SP26"
         assert match.season_year == 2026
 
-    def test_product_matched_case_insensitively(self):
-        products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
-        with patch("lib.landfire.lfps.list_products", return_value=products):
-            assert resolve_lf_product("FBFM40", "2025", "SP") is not None
-
     def test_returns_none_when_season_not_live(self):
         products = [_make_product("LF2025_FBFM40_SP26", season="SP", season_year=2026)]
         with patch("lib.landfire.lfps.list_products", return_value=products):
@@ -552,7 +550,7 @@ class TestResolveLfProduct:
         with patch("lib.landfire.lfps.list_products", return_value=products):
             assert resolve_lf_product("fbfm40", "2024", "SP") is None
 
-    def test_no_season_returns_the_annual_entry(self):
+    def test_registry_key_resolves_via_acronym_override(self):
         products = [
             _make_coverage_product("LDist", "LF2025", theme="Disturbance"),
             _make_coverage_product(
@@ -560,20 +558,15 @@ class TestResolveLfProduct:
             ),
         ]
         with patch("lib.landfire.lfps.list_products", return_value=products):
-            match = resolve_lf_product("LDist", "2025")
+            match = resolve_lf_product("annual_disturbance", "2025")
 
         assert match is not None
         assert match.theme == "Disturbance"
 
-    def test_no_season_matched_case_insensitively(self):
+    def test_registry_key_returns_none_on_version_mismatch(self):
         products = [_make_coverage_product("LDist", "LF2025", theme="Disturbance")]
         with patch("lib.landfire.lfps.list_products", return_value=products):
-            assert resolve_lf_product("ldist", "2025") is not None
-
-    def test_no_season_returns_none_on_version_mismatch(self):
-        products = [_make_coverage_product("LDist", "LF2025", theme="Disturbance")]
-        with patch("lib.landfire.lfps.list_products", return_value=products):
-            assert resolve_lf_product("LDist", "2024") is None
+            assert resolve_lf_product("annual_disturbance", "2024") is None
 
 
 # A registry with one on-demand vintage and two staged ones, patched in for

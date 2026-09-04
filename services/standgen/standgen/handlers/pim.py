@@ -122,6 +122,53 @@ def handle_pim(
         extra={"inventory_id": inventory_id},
     )
 
+    return expand_plots(
+        inventory,
+        plots,
+        version,
+        domain_gdf,
+        progress,
+        seed=seed,
+        point_process=point_process,
+    )
+
+
+def expand_plots(
+    inventory: dict,
+    plots: gpd.GeoDataFrame,
+    version: str,
+    domain_gdf: gpd.GeoDataFrame,
+    progress,
+    *,
+    seed: int,
+    point_process: str,
+) -> dict:
+    """Expand a plots GeoDataFrame into a tree inventory and write it to GCS.
+
+    Shared tail of PIM expansion: given a GeoDataFrame of one PLOT_ID per pixel
+    center (with zero-density anchors at PLOT_ID == 0), load and filter the
+    TreeMap tree table, run the spatial point process, apply any modifications
+    and treatments, then write partitioned Parquet with per-column summaries.
+
+    Used by both ``handle_pim`` (plots read straight from the PIM raster) and the
+    PIM-CHM fusion handler (plots from ``sample_plots_from_hag`` with masked
+    cells set to 0). The PIM path is unchanged by this extraction.
+
+    Args:
+        inventory: Full inventory document from Firestore.
+        plots: GeoDataFrame with a PLOT_ID column and Point geometry per pixel.
+        version: TreeMap version year for tree-table selection.
+        domain_gdf: Domain geometry as GeoDataFrame.
+        progress: Callback for progress reporting.
+        seed: Random seed for the point process.
+        point_process: Spatial point process name.
+
+    Returns:
+        Dict with 'georeference', 'columns' with per-column summary statistics,
+        and 'forestry_metrics' with stand-level forestry scalars or None.
+    """
+    inventory_id = inventory["id"]
+
     # Load and prepare tree table
     progress("Loading tree table...", 20)
     tree_table = load_tree_table(version)

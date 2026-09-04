@@ -10,6 +10,7 @@ The limits come from ``resolve_quotas()``, which layers an owner's tier and over
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 
@@ -176,6 +177,12 @@ _DEFAULT_TIER = "standard"
 # All guests resolve from this one users-v2 doc; set its tier to "suspended"
 # to stop every guest create at once.
 GUEST_OWNER_ID = "guest"
+
+# Anonymous uids are free to mint, so per-uid budgets alone don't bound guest
+# spend: one shared weekly dispatch cap across every guest and resource type
+# (#567), counted on create-budgets-v2/guest/weeks/{iso_week}.
+GUEST_WEEKLY_DISPATCHES = int(os.getenv("GUEST_WEEKLY_DISPATCHES", "500"))
+_GUEST_COUNTER_FIELD = "dispatches"
 
 
 @dataclass(frozen=True)
@@ -444,6 +451,7 @@ class _WeeklyBudget:
     limit: int
     used: int | None  # None: the read failed open
     reset_at: datetime
+    guest: bool = False  # also counts against the shared guest cap
 
 
 def _ratelimit_headers(
@@ -534,6 +542,10 @@ def register_dispatch(
             )
         )
     background_tasks.add_task(_increment_budget, budget.owner_id, budget.counter_field)
+    if budget.guest:
+        background_tasks.add_task(
+            _increment_budget, GUEST_OWNER_ID, _GUEST_COUNTER_FIELD
+        )
 
 
 async def enforce_create_quotas(
@@ -554,7 +566,8 @@ async def enforce_create_quotas(
     The weekly dispatch budget is read in the same gather and checked only when
     ``dispatch`` is true (the default) and the type has a budget. Endpoints that
     create a resource without commissioning a worker job (layerset features)
-    pass ``dispatch=False``. On pass, the budget state is stashed on
+    pass ``dispatch=False``. Guests are then also checked against the shared
+    ``GUEST_WEEKLY_DISPATCHES`` cap. On pass, the budget state is stashed on
     ``request.state.weekly_budget`` for :func:`register_dispatch`.
     """
     spec = _RESOURCE_QUOTAS.get(collection)
@@ -583,14 +596,18 @@ async def enforce_create_quotas(
         aggregations["bytes"] = base.sum("size_bytes", alias="bytes")
 
     check_weekly = dispatch and spec.weekly_field is not None
+    check_guest = check_weekly and request.state.is_guest
     now = datetime.now(UTC)
+    week_id = iso_week_id(now)
 
     names = list(aggregations)
     coros = [aggregations[n].get() for n in names]
     if check_weekly:
         # _read_budget_used never raises (fails open to None), so appending it
         # to the gather cannot break the aggregation checks.
-        coros.append(_read_budget_used(owner_id, iso_week_id(now), spec.counter_field))
+        coros.append(_read_budget_used(owner_id, week_id, spec.counter_field))
+    if check_guest:
+        coros.append(_read_budget_used(GUEST_OWNER_ID, week_id, _GUEST_COUNTER_FIELD))
     results = await asyncio.gather(*coros)
     values = {n: res[0][0].value for n, res in zip(names, results)}
 
@@ -645,7 +662,7 @@ async def enforce_create_quotas(
             )
 
     if check_weekly:
-        used = results[-1]
+        used = results[len(names)]
         limit = getattr(quotas, spec.weekly_field)
         reset_at = next_week_start(now)
         # Deleting resources refunds nothing: the budget counts dispatches, so
@@ -664,6 +681,25 @@ async def enforce_create_quotas(
                     f"request a higher limit, contact {SUPPORT_EMAIL}."
                 ),
             )
+        if check_guest:
+            guest_used = results[-1]
+            if guest_used is not None and guest_used >= GUEST_WEEKLY_DISPATCHES:
+                _raise_quota_exceeded(
+                    quota="guest_weekly_dispatches",
+                    current=guest_used,
+                    limit=GUEST_WEEKLY_DISPATCHES,
+                    retry_after=False,
+                    window_reset_on=reset_at,
+                    headers=_ratelimit_headers(
+                        "guest_weekly_dispatches", 0, GUEST_WEEKLY_DISPATCHES, reset_at
+                    ),
+                    message=(
+                        f"Guest capacity for this week is used up ({guest_used}/"
+                        f"{GUEST_WEEKLY_DISPATCHES} jobs across all guests). It "
+                        f"resets {reset_at:%Y-%m-%d} (UTC). Create an account to "
+                        f"keep working."
+                    ),
+                )
         request.state.weekly_budget = _WeeklyBudget(
             owner_id=owner_id,
             quota_field=spec.weekly_field,
@@ -671,6 +707,7 @@ async def enforce_create_quotas(
             limit=limit,
             used=used,
             reset_at=reset_at,
+            guest=check_guest,
         )
 
 

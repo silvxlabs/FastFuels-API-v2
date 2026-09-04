@@ -1,18 +1,22 @@
 """The nightly reconciliation pass.
 
 One projected scan per collection produces light records; from those shared
-reads walle derives four deletion categories and reaps them through one
+reads walle derives five deletion categories and reaps them through one
 idempotent GCS-then-doc routine:
 
 1. Orphaned GCS blobs — an artifact whose owning doc is gone (blob only).
 2. Orphaned child docs — a child whose ``domain_id`` is gone (doc + artifact).
 3. TTL-expired docs — a doc past its owner's resolved retention (doc + artifact).
-4. Stale test resources — an ephemeral ``test-`` doc past a short retention
+4. Guest resources — a doc owned by an anonymous (guest) Firebase user, a
+   fixed window after creation (doc + artifact; guest domains are purged
+   doc-only).
+5. Stale test resources — an ephemeral ``test-`` doc past a short retention
    window (doc + artifact; test domains are purged doc-only).
 
 Docs are deleted synchronously by the API, so orphaned blobs (category 1) are
 the common case; 2 and 3 are the durable backstop and the retention policy; 4
-sweeps the ephemeral integration-test junk that CI leaves in the shared project.
+reaps no-account trial data; 5 sweeps the ephemeral integration-test junk that
+CI leaves in the shared project.
 All Firestore re-checks and owner lookups are batched through ``get_all``; the
 run accumulates the deletions and executes them in bulk at the end — every GCS
 artifact first, then every Firestore doc — so a crash between the two leaves the
@@ -24,6 +28,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+
 from lib.config import (
     APPLICATIONS_COLLECTION,
     DOMAINS_COLLECTION,
@@ -31,6 +38,8 @@ from lib.config import (
 )
 from lib.firestore.documents import firestore_client
 from walle.config import (
+    GUEST_REAP_DRY_RUN,
+    GUEST_TTL_HOURS,
     ORPHAN_BLOBS_DRY_RUN,
     ORPHAN_DOCS_DRY_RUN,
     ORPHAN_MIN_AGE_HOURS,
@@ -61,8 +70,15 @@ DEFAULT_FAILED_RESOURCE_TTL_DAYS = 14
 _DEFAULT_TTLS = (DEFAULT_RESOURCE_TTL_DAYS, DEFAULT_FAILED_RESOURCE_TTL_DAYS)
 _TIER_TTL_OVERRIDES: dict[str, dict] = {"application": {"resource_ttl_days": None}}
 
-# Firestore fields the single scan projects — everything the four categories need.
-_SCAN_FIELDS = ["domain_id", "owner_id", "status", "modified_on", "size_bytes"]
+# Firestore fields the single scan projects — everything the categories need.
+_SCAN_FIELDS = [
+    "domain_id",
+    "owner_id",
+    "status",
+    "created_on",
+    "modified_on",
+    "size_bytes",
+]
 
 # Firestore batched reads (get_all) are chunked at this size. A fresh,
 # mostly-orphaned bucket can have thousands of candidates; chunking bounds each
@@ -81,6 +97,7 @@ class Record:
     domain_id: str | None
     owner_id: str | None
     status: str | None
+    created_on: datetime | None
     modified_on: datetime | None
     size_bytes: int | None
 
@@ -181,6 +198,35 @@ def _effective_ttl_days(
     return max(ttl, TTL_FLOOR_DAYS)
 
 
+# --- anonymous (guest) owners ---------------------------------------------
+
+# Firebase Auth get_users accepts at most 100 identifiers per call.
+_GET_USERS_CHUNK = 100
+
+
+def anonymous_owners(owner_ids) -> set[str]:
+    """The subset of ``owner_ids`` that are anonymous Firebase users.
+
+    Anonymous means a Firebase user with no sign-in provider. Owners Auth does
+    not know — application ids, test owners, deleted accounts — are not guests.
+    """
+    ids = [o for o in dict.fromkeys(owner_ids) if o]
+    if not ids:
+        return set()
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app()
+    anonymous: set[str] = set()
+    for start in range(0, len(ids), _GET_USERS_CHUNK):
+        chunk = [
+            firebase_auth.UidIdentifier(u)
+            for u in ids[start : start + _GET_USERS_CHUNK]
+        ]
+        anonymous |= {
+            u.uid for u in firebase_auth.get_users(chunk).users if not u.provider_data
+        }
+    return anonymous
+
+
 # --- scanning -------------------------------------------------------------
 
 
@@ -199,6 +245,7 @@ def scan_collection(layout: ResourceLayout) -> list[Record]:
                 domain_id=d.get("domain_id"),
                 owner_id=d.get("owner_id"),
                 status=d.get("status"),
+                created_on=d.get("created_on"),
                 modified_on=d.get("modified_on"),
                 size_bytes=d.get("size_bytes"),
             )
@@ -207,7 +254,7 @@ def scan_collection(layout: ResourceLayout) -> list[Record]:
 
 
 def scan_domains() -> list[Record]:
-    """Stream domain docs (id + modified_on + owner_id).
+    """Stream domain docs (id + created_on + modified_on + owner_id).
 
     Serves both the live-domain set (for orphaned-child detection) and the
     test-resource purge. ``owner_id`` is projected so the purge can match domains
@@ -216,7 +263,7 @@ def scan_domains() -> list[Record]:
     """
     stream = (
         firestore_client.collection(DOMAINS_COLLECTION)
-        .select(["modified_on", "owner_id"])
+        .select(["created_on", "modified_on", "owner_id"])
         .stream()
     )
     records = []
@@ -229,6 +276,7 @@ def scan_domains() -> list[Record]:
                 domain_id=None,
                 owner_id=d.get("owner_id"),
                 status=None,
+                created_on=d.get("created_on"),
                 modified_on=d.get("modified_on"),
                 size_bytes=None,
             )
@@ -317,6 +365,22 @@ def find_expired(
         if _older_than(rec.modified_on, now - timedelta(days=ttl_days)):
             out.append(rec)
     return out
+
+
+def find_guest_expired(
+    records: list[Record], now: datetime, anonymous: set[str]
+) -> list[Record]:
+    """Docs owned by an anonymous (guest) user, created more than the guest
+    window ago. Keyed on creation, not modification, so a guest cannot extend
+    the window by touching a resource; no TTL floor applies."""
+    cutoff = now - timedelta(hours=GUEST_TTL_HOURS)
+    return [
+        rec
+        for rec in records
+        if not _is_protected(rec.doc_id)
+        and rec.owner_id in anonymous
+        and _older_than(rec.created_on, cutoff)
+    ]
 
 
 def find_stale_test(records: list[Record], now: datetime) -> list[Record]:
@@ -439,6 +503,7 @@ def run() -> dict:
     domain_ids = {r.doc_id for r in domain_records}
     summary = Summary()
     owner_ttls: dict[str, tuple[int | None, int | None]] = {}
+    anon_owners: set[str] = set()
     gcs_deletes: list[str] = []
     doc_deletes: list = []
     logger.info("walle start: %d domains", len(domain_ids))
@@ -452,6 +517,7 @@ def run() -> dict:
             r.owner_id for r in records if r.owner_id and r.owner_id not in owner_ttls
         ]
         owner_ttls.update(resolve_owner_ttls_bulk(new_owners))
+        anon_owners |= anonymous_owners(new_owners)
 
         # Categories on live docs, deduped so a doc is reaped under one reason.
         orphan_docs = (
@@ -466,6 +532,12 @@ def run() -> dict:
             if r.doc_id not in reaped_ids
         ]
         reaped_ids |= {r.doc_id for r in expired}
+        guest = [
+            r
+            for r in find_guest_expired(records, now, anon_owners)
+            if r.doc_id not in reaped_ids
+        ]
+        reaped_ids |= {r.doc_id for r in guest}
         stale_test = [
             r for r in find_stale_test(records, now) if r.doc_id not in reaped_ids
         ]
@@ -474,13 +546,14 @@ def run() -> dict:
         orphan_blobs = find_orphan_blobs(layout, artifacts, live_ids)
 
         logger.info(
-            "%s: %d docs, %d artifacts | orphan_blobs=%d orphan_docs=%d expired=%d test=%d",
+            "%s: %d docs, %d artifacts | orphan_blobs=%d orphan_docs=%d expired=%d guest=%d test=%d",
             layout.name,
             len(records),
             len(artifacts),
             len(orphan_blobs),
             len(orphan_docs),
             len(expired),
+            len(guest),
             len(stale_test),
         )
 
@@ -496,6 +569,7 @@ def run() -> dict:
         for category, dry_run, batch in (
             ("orphan_doc", ORPHAN_DOCS_DRY_RUN, orphan_docs),
             ("ttl", TTL_DRY_RUN, expired),
+            ("guest", GUEST_REAP_DRY_RUN, guest),
             ("test_stale", TEST_PURGE_DRY_RUN, stale_test),
         ):
             for rec in batch:
@@ -511,23 +585,40 @@ def run() -> dict:
                     doc_deletes=doc_deletes,
                 )
 
-    # Ephemeral test domains carry no artifact — purge them doc-only.
-    stale_test_domains = find_stale_test(domain_records, now)
-    logger.info(
-        "domains: %d docs | test=%d", len(domain_records), len(stale_test_domains)
+    # Guest and ephemeral-test domains carry no artifact — purge them doc-only.
+    # Owners with a domain but no resources yet have not been probed above.
+    anon_owners |= anonymous_owners(
+        {r.owner_id for r in domain_records} - owner_ttls.keys()
     )
-    for rec in stale_test_domains:
-        _reap_doc(
-            "domains",
-            rec,
-            None,
-            now,
-            category="test_stale",
-            dry_run=TEST_PURGE_DRY_RUN,
-            summary=summary,
-            gcs_deletes=gcs_deletes,
-            doc_deletes=doc_deletes,
-        )
+    guest_domains = find_guest_expired(domain_records, now, anon_owners)
+    guest_domain_ids = {r.doc_id for r in guest_domains}
+    stale_test_domains = [
+        r
+        for r in find_stale_test(domain_records, now)
+        if r.doc_id not in guest_domain_ids
+    ]
+    logger.info(
+        "domains: %d docs | guest=%d test=%d",
+        len(domain_records),
+        len(guest_domains),
+        len(stale_test_domains),
+    )
+    for category, dry_run, batch in (
+        ("guest", GUEST_REAP_DRY_RUN, guest_domains),
+        ("test_stale", TEST_PURGE_DRY_RUN, stale_test_domains),
+    ):
+        for rec in batch:
+            _reap_doc(
+                "domains",
+                rec,
+                None,
+                now,
+                category=category,
+                dry_run=dry_run,
+                summary=summary,
+                gcs_deletes=gcs_deletes,
+                doc_deletes=doc_deletes,
+            )
 
     # Execute the accumulated deletes in bulk: every GCS artifact first, then the
     # docs, so a crash between leaves the docs behind for the next run to re-reap.

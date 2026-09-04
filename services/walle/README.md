@@ -6,7 +6,7 @@ deletes Firestore docs synchronously (so quota frees instantly); walle reclaims
 the physical bytes and enforces retention.
 
 It runs **one reconciliation pass** — a single projected scan per collection —
-and deletes for four reasons ("deletion categories"), each with its own
+and deletes for five reasons ("deletion categories"), each with its own
 dry-run switch:
 
 | Category | Detects | Deletes |
@@ -14,6 +14,7 @@ dry-run switch:
 | Orphaned GCS blobs | an artifact whose owning doc is gone | the blob |
 | Orphaned child docs | a child whose `domain_id` no longer exists | doc + artifact |
 | TTL-expired docs | a doc past its owner's resolved retention | doc + artifact |
+| Guest resources | a doc owned by an anonymous (guest) uid, a fixed window after creation | doc + artifact (guest domains: doc only) |
 | Stale test resources | a `test-` doc past a short retention window | doc + artifact (test domains: doc only) |
 
 Deletion order is GCS-first, then the Firestore doc, so a crash between the two
@@ -28,15 +29,26 @@ in the shared project. Real resource ids are server-generated `uuid4` hex (never
 longer than any test run, so an in-flight test is never raced. The persistent
 `static-test-` fixtures are excluded (they don't start with `test-`).
 
+The **guest** category reaps no-account trial data. Nothing on the doc marks a
+guest, so walle asks Firebase Auth (`get_users`, batched) which owners are
+anonymous users — a Firebase user with no sign-in provider. Owners Auth does not
+know (application ids, test owners) are not guests, and a guest who links a
+credential stops being one. The window is measured from `created_on`, not
+`modified_on`, so touching a resource does not extend its life.
+
 ## Configuration (env)
 
 - `WALLE_ORPHAN_BLOBS_DRY_RUN`, `WALLE_ORPHAN_DOCS_DRY_RUN`, `WALLE_TTL_DRY_RUN`,
   `WALLE_TEST_PURGE_DRY_RUN` — default `false` (enforce). Set `true` to log a
   category's candidates without deleting; used to validate a category locally
   before shipping.
+- `WALLE_GUEST_REAP_DRY_RUN` — default `true` (dry-run). The guest category ships
+  logging-only; set `false` to enforce once the candidates look right in prod.
 - `WALLE_TTL_FLOOR_DAYS` (default 7) — resolved TTLs are clamped to at least this.
 - `WALLE_ORPHAN_MIN_AGE_HOURS` (default 24) — orphaned docs younger than this are
   left alone.
+- `WALLE_GUEST_TTL_HOURS` (default 24) — anonymous-owned resources created more
+  than this long ago are reaped (ignores the TTL floor).
 - `WALLE_TEST_TTL_DAYS` (default 7) — `test-` resources older than this are purged.
 
 Plus the standard `lib.config` infrastructure vars (`GCP_PROJECT`, the bucket and
@@ -73,10 +85,12 @@ the image does **not** run it — a nightly Cloud Scheduler trigger (HTTP
 `POST .../jobs/walle-v2:run`, mirroring v1 walle) runs it, and that trigger is
 provisioned **out-of-band**.
 
-The job's service account needs Firestore access and GCS object-delete on the
-five artifact buckets.
+The job's service account needs Firestore access, GCS object-delete on the five
+artifact buckets, and Firebase Auth read (`get_users`) for the guest-owner probe
+(the Firebase Authentication Viewer role, or `identitytoolkit` accounts lookup).
 
-All categories default to enforce. Before creating the nightly trigger, run
+All categories except **guest** default to enforce (guest ships dry-run until
+its candidates have been checked in prod). Before creating the nightly trigger, run
 walle locally with the categories in dry-run and check the candidates against
 reality (above); once they look right, schedule it. Retention (180 days
 standard / never for applications) is a documented contract from a resource's

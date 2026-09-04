@@ -29,6 +29,7 @@ def rec(**kw) -> Record:
         domain_id="d1",
         owner_id="o1",
         status="completed",
+        created_on=NOW,
         modified_on=NOW,
         size_bytes=100,
     )
@@ -333,3 +334,77 @@ def test_delete_artifacts_empty_is_noop(monkeypatch):
         layouts, "get_gcsfs_client", lambda: (_ for _ in ()).throw(AssertionError)
     )
     layouts.delete_artifacts([])  # must not touch GCS
+
+
+# --- guest (anonymous-owner) expiry ---------------------------------------
+
+
+class _FakeUser:
+    def __init__(self, uid, provider_data):
+        self.uid = uid
+        self.provider_data = provider_data
+
+
+class _FakeGetUsersResult:
+    def __init__(self, users):
+        self.users = users
+
+
+def test_anonymous_owners_only_provider_less_known_users(monkeypatch):
+    monkeypatch.setattr(
+        cleanup.firebase_auth,
+        "get_users",
+        lambda ids: _FakeGetUsersResult(
+            [_FakeUser("anon", []), _FakeUser("real", [object()])]
+        ),
+    )
+    # "app-id" and "test-owner" are unknown to Auth -> not guests.
+    result = cleanup.anonymous_owners(["anon", "real", "app-id", "test-owner", None])
+    assert result == {"anon"}
+
+
+def test_anonymous_owners_empty_skips_firebase(monkeypatch):
+    monkeypatch.setattr(cleanup.firebase_auth, "get_users", lambda ids: 1 / 0)
+    assert cleanup.anonymous_owners([None, ""]) == set()
+
+
+def test_anonymous_owners_chunks_and_dedupes(monkeypatch):
+    monkeypatch.setattr(cleanup, "_GET_USERS_CHUNK", 2)
+    calls = []
+
+    def fake_get_users(ids):
+        calls.append(len(ids))
+        return _FakeGetUsersResult([_FakeUser(i.uid, []) for i in ids])
+
+    monkeypatch.setattr(cleanup.firebase_auth, "get_users", fake_get_users)
+    assert cleanup.anonymous_owners(["a", "b", "c", "a"]) == {"a", "b", "c"}
+    assert calls == [2, 1]
+
+
+def test_guest_expired_reaps_old_anonymous_only():
+    old = rec(doc_id="1", owner_id="anon", created_on=NOW - timedelta(hours=25))
+    fresh = rec(doc_id="2", owner_id="anon", created_on=NOW - timedelta(hours=1))
+    real = rec(doc_id="3", owner_id="real", created_on=NOW - timedelta(days=99))
+    assert cleanup.find_guest_expired([old, fresh, real], NOW, {"anon"}) == [old]
+
+
+def test_guest_expired_keys_on_creation_not_modification():
+    # Touching a resource must not extend its life.
+    touched = rec(
+        owner_id="anon", created_on=NOW - timedelta(hours=25), modified_on=NOW
+    )
+    assert cleanup.find_guest_expired([touched], NOW, {"anon"}) == [touched]
+
+
+def test_guest_expired_ignores_ttl_floor():
+    # 25 h is far under the 7-day TTL floor; the guest category reaps anyway.
+    old = rec(owner_id="anon", created_on=NOW - timedelta(hours=25))
+    assert cleanup.find_guest_expired([old], NOW, {"anon"}) == [old]
+
+
+def test_guest_expired_spares_protected_and_unknown_age():
+    static = rec(
+        doc_id="static-test-x", owner_id="anon", created_on=NOW - timedelta(days=9)
+    )
+    no_age = rec(owner_id="anon", created_on=None)
+    assert cleanup.find_guest_expired([static, no_age], NOW, {"anon"}) == []

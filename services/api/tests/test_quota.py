@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from api.quota import (
     _RESOURCE_QUOTAS,
+    GUEST_OWNER_ID,
     RETRY_AFTER_SECONDS,
     TIER_PRESETS,
     OwnerQuotaConfig,
@@ -103,6 +104,17 @@ class TestTierPresets:
         # Suspension blocks creates but does not change retention.
         assert q.resource_ttl_days == 180
         assert q.failed_resource_ttl_days == 14
+
+    def test_guest_preset(self):
+        q = Quotas(**TIER_PRESETS["guest"])
+        assert q.max_domains == 2
+        assert q.max_grids == 8
+        assert q.max_active_grids == 2
+        assert q.max_pointclouds == 0
+        assert q.max_api_keys == 0
+        assert q.max_applications == 0
+        assert q.max_weekly_grid_dispatches == 10
+        assert q.resource_ttl_days == 1
 
 
 def _fake_firestore(*, exists: bool, data: dict | None = None) -> MagicMock:
@@ -232,6 +244,22 @@ class TestResolveOwnerConfig:
             quotas = await resolve_quotas("cfg-wrap", Access.PERSONAL)
         assert isinstance(quotas, Quotas)
         assert quotas.max_active_grids == 3
+
+    async def test_guest_reads_shared_doc_and_defaults_to_guest_tier(self):
+        client = _fake_firestore(exists=False)
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("guest-uid-a", Access.PERSONAL, True)
+        assert cfg.tier == "guest"
+        assert cfg.quotas == Quotas(**TIER_PRESETS["guest"])
+        client.collection.assert_called_once_with(USERS_COLLECTION)
+        client.collection.return_value.document.assert_called_once_with(GUEST_OWNER_ID)
+
+    async def test_guest_kill_switch_via_shared_doc_tier(self):
+        client = _fake_firestore(exists=True, data={"tier": "suspended"})
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("guest-uid-b", Access.PERSONAL, True)
+        assert cfg.tier == "suspended"
+        assert cfg.quotas.max_domains == 0
 
 
 class TestQuotaExceededDetail:
@@ -423,7 +451,7 @@ def _fake_enforce_client(
 
 def _fake_request(owner_id: str = "owner-weekly") -> MagicMock:
     request = MagicMock()
-    request.state = SimpleNamespace(id=owner_id, access=Access.PERSONAL)
+    request.state = SimpleNamespace(id=owner_id, access=Access.PERSONAL, is_guest=False)
     return request
 
 

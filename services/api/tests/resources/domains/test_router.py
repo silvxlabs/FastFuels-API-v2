@@ -12,6 +12,8 @@ happy paths and example verification.
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from api.resources.domains.examples import (
@@ -19,6 +21,9 @@ from api.resources.domains.examples import (
     EXAMPLE_PADDED,
     EXAMPLE_WGS84_DEFAULT,
 )
+from api.resources.domains.router import create_domain
+from api.resources.domains.schema import CreateDomainRequestBody
+from fastapi import HTTPException
 from google.cloud import firestore
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
@@ -67,6 +72,46 @@ def domain_with_different_owner(firestore_client):
     doc_ref.set(domain_data)
     yield domain_data
     doc_ref.delete()
+
+
+class TestGuestAreaCap:
+    """Guests are capped at 4 sq km; the guard runs before any write."""
+
+    @staticmethod
+    def _body(side_m: float) -> CreateDomainRequestBody:
+        x0, y0 = 500000, 5000000
+        ring = [
+            [x0, y0],
+            [x0 + side_m, y0],
+            [x0 + side_m, y0 + side_m],
+            [x0, y0 + side_m],
+            [x0, y0],
+        ]
+        return CreateDomainRequestBody(
+            type="FeatureCollection",
+            features=[
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {"type": "Polygon", "coordinates": [ring]},
+                }
+            ],
+            crs={"type": "name", "properties": {"name": "EPSG:32611"}},
+        )
+
+    @pytest.mark.anyio
+    async def test_guest_over_4_sq_km_returns_422(self):
+        request = MagicMock()
+        request.state = SimpleNamespace(
+            id="guest-uid", access="personal", is_guest=True
+        )
+        with (
+            patch("api.resources.domains.router.enforce_create_quotas", AsyncMock()),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await create_domain(request, self._body(3000))  # 9 sq km
+        assert exc.value.status_code == 422
+        assert "4 square kilometers" in exc.value.detail
 
 
 class TestCreateDomainExamples:

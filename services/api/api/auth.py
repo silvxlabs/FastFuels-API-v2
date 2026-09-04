@@ -75,6 +75,7 @@ async def _api_key_auth(request: Request, key_id: str) -> Request:
 
     request.state.id = key.owner_id
     request.state.access = key.access
+    request.state.is_guest = False
 
     return request
 
@@ -89,14 +90,18 @@ def _token_auth(request: Request, token: str | None) -> Request:
     """Authenticate via Firebase Bearer token."""
     _ensure_firebase_initialized()
     try:
-        request.state.id = verify_id_token(token)["uid"]
+        decoded = verify_id_token(token)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
         )
 
+    request.state.id = decoded["uid"]
     request.state.access = Access.PERSONAL
+    request.state.is_guest = (
+        decoded.get("firebase", {}).get("sign_in_provider") == "anonymous"
+    )
     return request
 
 

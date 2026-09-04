@@ -140,12 +140,42 @@ TIER_PRESETS: dict[str, dict] = {
         "resource_ttl_days": None,
     },
     "partner": {},  # negotiated per partner; defaults until one is onboarded
+    "guest": {
+        "max_active_grids": 2,
+        "max_active_exports": 1,
+        "max_active_inventories": 1,
+        "max_active_features": 1,
+        "max_active_pointclouds": 0,
+        "max_domains": 2,
+        "max_grids": 8,
+        "max_exports": 2,
+        "max_inventories": 3,
+        "max_features": 3,
+        "max_pointclouds": 0,
+        "max_api_keys": 0,
+        "max_applications": 0,
+        "max_grid_storage_bytes": 1 * GiB,
+        "max_export_storage_bytes": 1 * GiB,
+        "max_inventory_storage_bytes": GiB // 2,
+        "max_feature_storage_bytes": GiB // 10,
+        "max_pointcloud_storage_bytes": 0,
+        "max_weekly_grid_dispatches": 10,
+        "max_weekly_export_dispatches": 3,
+        "max_weekly_inventory_dispatches": 4,
+        "max_weekly_feature_dispatches": 4,
+        "max_weekly_pointcloud_dispatches": 0,
+        "resource_ttl_days": 1,
+    },
     "suspended": {
         field: 0 for field in Quotas.model_fields if field.startswith("max_")
     },
 }
 
 _DEFAULT_TIER = "standard"
+
+# All guests resolve from this one users-v2 doc; set its tier to "suspended"
+# to stop every guest create at once.
+GUEST_OWNER_ID = "guest"
 
 
 @dataclass(frozen=True)
@@ -157,24 +187,30 @@ class OwnerQuotaConfig:
 
 
 @lru(force_asyncio=True, expire=300)
-async def resolve_owner_config(owner_id: str, access: Access) -> OwnerQuotaConfig:
+async def resolve_owner_config(
+    owner_id: str, access: Access, is_guest: bool = False
+) -> OwnerQuotaConfig:
     """Resolve an owner's tier and quotas from its owner document.
 
     Applies the owner's tier preset and any ``quota_overrides`` on top of the
     defaults. A missing or malformed document resolves to the default tier. The
     reported ``tier`` is always a known preset — an unrecognized stored value
     reports (and applies) the default tier, so ``tier`` and ``quotas`` never
-    disagree.
+    disagree. Guests resolve from the shared ``GUEST_OWNER_ID`` doc and default
+    to the ``guest`` tier.
     """
+    default_tier = _DEFAULT_TIER
+    if is_guest:
+        owner_id, default_tier = GUEST_OWNER_ID, "guest"
     collection = (
         USERS_COLLECTION if access == Access.PERSONAL else APPLICATIONS_COLLECTION
     )
     doc = await firestore_client.collection(collection).document(owner_id).get()
     data = doc.to_dict() if doc.exists else {}
 
-    tier = data.get("tier") or _DEFAULT_TIER
+    tier = data.get("tier") or default_tier
     if tier not in TIER_PRESETS:
-        tier = _DEFAULT_TIER
+        tier = default_tier
     preset = TIER_PRESETS[tier]
     overrides = data.get("quota_overrides") or {}
     try:
@@ -187,9 +223,11 @@ async def resolve_owner_config(owner_id: str, access: Access) -> OwnerQuotaConfi
     return OwnerQuotaConfig(tier=tier, quotas=quotas)
 
 
-async def resolve_quotas(owner_id: str, access: Access) -> Quotas:
+async def resolve_quotas(
+    owner_id: str, access: Access, is_guest: bool = False
+) -> Quotas:
     """Resolve an owner's usage limits (see :func:`resolve_owner_config`)."""
-    return (await resolve_owner_config(owner_id, access)).quotas
+    return (await resolve_owner_config(owner_id, access, is_guest)).quotas
 
 
 @dataclass(frozen=True)
@@ -524,7 +562,9 @@ async def enforce_create_quotas(
         return
 
     owner_id = request.state.id
-    quotas = await resolve_quotas(owner_id, request.state.access)
+    quotas = await resolve_quotas(
+        owner_id, request.state.access, request.state.is_guest
+    )
     base = firestore_client.collection(collection).where(
         filter=FieldFilter("owner_id", "==", owner_id)
     )
@@ -649,7 +689,7 @@ _USAGE_COLLECTIONS: dict[str, str] = {
 }
 
 
-async def get_usage(owner_id: str, access: Access) -> dict:
+async def get_usage(owner_id: str, access: Access, is_guest: bool = False) -> dict:
     """Compute an owner's current usage against their resolved limits.
 
     Backs ``GET /users/me/usage``. Runs the same aggregations enforcement uses —
@@ -659,7 +699,7 @@ async def get_usage(owner_id: str, access: Access) -> dict:
     §9 usage shape; ``lifecycle.next_expiry_on`` is ``None`` until the retention
     sweeper ships (phase 5).
     """
-    quotas = (await resolve_owner_config(owner_id, access)).quotas
+    quotas = (await resolve_owner_config(owner_id, access, is_guest)).quotas
 
     # Build every aggregation up front, keyed by (output-key, metric), so they
     # can be gathered together and reassembled by key.

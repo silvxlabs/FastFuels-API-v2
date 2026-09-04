@@ -578,6 +578,12 @@ async def enforce_create_quotas(
     quotas = await resolve_quotas(
         owner_id, request.state.access, request.state.is_guest
     )
+    # Guests cannot ask for more; an account is their next step.
+    raise_limit = (
+        "Create an account for higher limits."
+        if request.state.is_guest
+        else f"To request a higher limit, contact {SUPPORT_EMAIL}."
+    )
     base = firestore_client.collection(collection).where(
         filter=FieldFilter("owner_id", "==", owner_id)
     )
@@ -626,8 +632,7 @@ async def enforce_create_quotas(
                 message=(
                     f"You have {active} {spec.label} jobs in progress (limit "
                     f"{limit}). Wait for jobs to complete or delete unneeded "
-                    f"{spec.label}s, then retry. To request a higher limit, "
-                    f"contact {SUPPORT_EMAIL}."
+                    f"{spec.label}s, then retry. {raise_limit}"
                 ),
             )
 
@@ -640,8 +645,7 @@ async def enforce_create_quotas(
             retry_after=False,
             message=(
                 f"You have {count} {spec.label}s (limit {limit}). Delete unneeded "
-                f"{spec.label}s, then retry. To request a higher limit, contact "
-                f"{SUPPORT_EMAIL}."
+                f"{spec.label}s, then retry. {raise_limit}"
             ),
         )
 
@@ -656,8 +660,7 @@ async def enforce_create_quotas(
                 message=(
                     f"Your {spec.label}s use {total_bytes / GiB:.1f} GiB of storage "
                     f"(limit {limit / GiB:.0f} GiB). Delete unneeded {spec.label}s "
-                    f"to free space, then retry. To request a higher limit, contact "
-                    f"{SUPPORT_EMAIL}."
+                    f"to free space, then retry. {raise_limit}"
                 ),
             )
 
@@ -677,8 +680,8 @@ async def enforce_create_quotas(
                 headers=_ratelimit_headers(spec.weekly_field, 0, limit, reset_at),
                 message=(
                     f"Your weekly {spec.label} budget is spent ({used}/{limit} "
-                    f"jobs this week). It resets {reset_at:%Y-%m-%d} (UTC). To "
-                    f"request a higher limit, contact {SUPPORT_EMAIL}."
+                    f"jobs this week). It resets {reset_at:%Y-%m-%d} (UTC). "
+                    f"{raise_limit}"
                 ),
             )
         if check_guest:

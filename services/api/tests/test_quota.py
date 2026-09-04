@@ -586,6 +586,16 @@ class TestEnforceWeeklyBudget:
             await self._enforce(client, request)
         assert exc.value.detail["quota"] == "max_weekly_grid_dispatches"
 
+    async def test_guest_messages_point_to_an_account_not_support(self):
+        limit = Quotas().max_weekly_grid_dispatches
+        client = _fake_enforce_client(budget_data={"grid_dispatches": limit})
+        request = _fake_request("guest-d", is_guest=True)
+        with pytest.raises(HTTPException) as exc:
+            await self._enforce(client, request)
+        message = exc.value.detail["message"]
+        assert message.endswith("Create an account for higher limits.")
+        assert "contact" not in message
+
     async def test_standard_users_ignore_spent_guest_cap(self):
         client = _fake_enforce_client(
             guest_budget_data={"dispatches": GUEST_WEEKLY_DISPATCHES}

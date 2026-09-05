@@ -32,8 +32,10 @@ The hooks are defined in `.pre-commit-config.yaml` and include:
 - **[Ruff](https://docs.astral.sh/ruff/)** — linting and formatting (replaces flake8, black, and isort)
 - **[Gitleaks](https://github.com/gitleaks/gitleaks)** — secret detection
 - **General checks** — YAML/TOML validation, trailing whitespace, private key detection
+- **Commit message check** (`scripts/check_commit_message.sh`, `commit-msg` stage) — rejects AI-tool attribution
+  trailers (`Co-Authored-By: Claude ...`, `Generated with ...`, session links). GitHub artifacts are human-authored.
 
-Hooks run automatically on `git commit`. To run them manually on all files:
+Hooks run automatically on `git commit` (`pre-commit install` sets up both the `pre-commit` and `commit-msg` hooks). To run them manually on all files:
 
 ```bash
 pre-commit run --all-files

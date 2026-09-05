@@ -471,7 +471,7 @@ wheels = [
 
 [[package]]
 name = "fastfuels-core"
-version = "0.12.1"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dask", extra = ["dataframe"] },
@@ -487,9 +487,9 @@ dependencies = [
     { name = "shapely" },
     { name = "xarray" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/22/8066b7ac1fb880fa0d5c233742f781148ec67437066b93a272280e99c0b6/fastfuels_core-0.12.1.tar.gz", hash = "sha256:2d6254c650beb749b6295bf7c3565ec4c6efcd87580dba4611138793451ca848", size = 947920, upload-time = "2026-07-13T19:14:55.295Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/0a/6bd43066b755f0b540d873cc655f88897b35f1cfc2ec6d720f7328ee2d08/fastfuels_core-0.15.0.tar.gz", hash = "sha256:6c247684ebfcf9cf18ea98eb03c5f5faf80f99bcfc81a015bc07bfccf54876e3", size = 1045560, upload-time = "2026-09-05T03:19:15.319Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1a/9f/ff203e4e8a773071742e33d05c13f9cd351720fb547af010f1de2895a80c/fastfuels_core-0.12.1-py3-none-any.whl", hash = "sha256:66b535141400a572b4841bf43f9ba0b92a1e7e6d58e114ea760fe438a18f1724", size = 767856, upload-time = "2026-07-13T19:14:53.641Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/61/e55de807dcb8b06754c6278d8b8289c7f6fcb26b6917915771debeeb68aa/fastfuels_core-0.15.0-py3-none-any.whl", hash = "sha256:458e804e5f51fd3c65054e413d79501bdac3c82a4b4811ff28216916c5331df3", size = 816657, upload-time = "2026-09-05T03:19:14.091Z" },
 ]
 
 [[package]]
@@ -1086,23 +1086,42 @@ zarr = [
 requires-dist = [
     { name = "affine", marker = "extra == 'raster'", specifier = ">=2.4.0" },
     { name = "dask", marker = "extra == 'zarr'", specifier = ">=2024.0.0" },
+    { name = "gcsfs", marker = "extra == 'entwine'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.2.0" },
+    { name = "gcsfs", marker = "extra == 'inventory'", specifier = ">=2026.2.0" },
+    { name = "gcsfs", marker = "extra == 'landfire'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.2.0" },
+    { name = "geopandas", marker = "extra == 'entwine'", specifier = ">=1.1.2" },
+    { name = "geopandas", marker = "extra == 'landfire'", specifier = ">=1.1.2" },
     { name = "geopandas", marker = "extra == 'raster'", specifier = ">=1.1.2" },
     { name = "geopandas", marker = "extra == 'threedep'", specifier = ">=1.1.2" },
     { name = "google-cloud-firestore", marker = "extra == 'firestore'", specifier = ">=2.23.0" },
     { name = "google-cloud-storage", marker = "extra == 'gcs'", specifier = ">=3.9.0" },
+    { name = "google-cloud-storage", marker = "extra == 'pointcloud'", specifier = ">=3.9.0" },
+    { name = "laspy", extras = ["lazrs"], marker = "extra == 'pointcloud'", specifier = ">=2.7.0" },
+    { name = "numpy", marker = "extra == 'inventory'", specifier = ">=2.0.0" },
+    { name = "numpy", marker = "extra == 'pointcloud'", specifier = ">=2.0.0" },
     { name = "numpy", marker = "extra == 'raster'", specifier = ">=2.0.0" },
+    { name = "pandas", marker = "extra == 'inventory'", specifier = ">=2.0.0" },
     { name = "pint", specifier = ">=0.25" },
+    { name = "pyarrow", marker = "extra == 'entwine'", specifier = ">=18.0.0" },
+    { name = "pyarrow", marker = "extra == 'inventory'", specifier = ">=18.0.0" },
+    { name = "pyarrow", marker = "extra == 'landfire'", specifier = ">=18.0.0" },
+    { name = "pyarrow", marker = "extra == 'pointcloud'", specifier = ">=18.0.0" },
+    { name = "pyproj", marker = "extra == 'pointcloud'", specifier = ">=3.6" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
+    { name = "requests", marker = "extra == 'entwine'", specifier = ">=2.32" },
+    { name = "requests", marker = "extra == 'landfire'", specifier = ">=2.32" },
     { name = "rioxarray", marker = "extra == 'raster'", specifier = ">=0.21.0" },
     { name = "s3fs", marker = "extra == 'threedep'", specifier = ">=2024.2.0" },
+    { name = "shapely", marker = "extra == 'entwine'", specifier = ">=2.0" },
+    { name = "shapely", marker = "extra == 'landfire'", specifier = ">=2.0" },
     { name = "xarray", marker = "extra == 'raster'", specifier = ">=2025.1.0" },
     { name = "xarray", marker = "extra == 'zarr'", specifier = ">=2025.1.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1.5" },
 ]
-provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep"]
+provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "inventory", "entwine", "pointcloud", "landfire"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]
@@ -1260,11 +1279,15 @@ wheels = [
 
 [[package]]
 name = "nsvb"
-version = "0.2.1"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a5/d2/9b9d9e25685b1945cfbee34f4c5aa10d35d85bc625a3121e71230f4104b7/nsvb-0.2.1.tar.gz", hash = "sha256:6f2ef5f0d37f7c342a6a400bee8cf0c07643642d8843c0c1be9b5469e923283e", size = 4373502, upload-time = "2024-06-17T18:07:02.804Z" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/99/dc/d1739ec1192d7f524250401392f65aa1a0fe4d14171060ae3e4115fbfede/nsvb-0.3.0.tar.gz", hash = "sha256:17f9771a229ec7871c0e1d0f085078e10d5963d9bf2e66b25ea89075e11168c8", size = 4422038, upload-time = "2026-08-13T14:20:05.315Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/bf/e4fb6fafb951173f0ade658c65bec3d755d62ebc9528832603664f9180cb/nsvb-0.2.1-py3-none-any.whl", hash = "sha256:00c0296336dc509da4699d630e01ab305452a1da08a74730d4351317c9e6dfa7", size = 4393516, upload-time = "2024-06-17T18:06:58.856Z" },
+    { url = "https://files.pythonhosted.org/packages/10/dd/555e996ff4311845aef6289a5443ec9eb85ebd8cf5e52768a615c125fa6f/nsvb-0.3.0-py3-none-any.whl", hash = "sha256:1eefd260206e837889614eaa6c6a9421cc03ff25e556625ab3137a340e5b4dd9", size = 4419160, upload-time = "2026-08-13T14:20:03.405Z" },
 ]
 
 [[package]]
@@ -2153,7 +2176,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "dask", extras = ["dataframe"] },
-    { name = "fastfuels-core", specifier = ">=0.12.1" },
+    { name = "fastfuels-core", specifier = ">=0.15.0" },
     { name = "functions-framework", specifier = ">=3.10.0" },
     { name = "gcsfs" },
     { name = "google-cloud-run", marker = "extra == 'test'", specifier = ">=0.10.0" },

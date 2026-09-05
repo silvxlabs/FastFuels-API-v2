@@ -41,11 +41,27 @@ def load_grid(grid_id: str) -> xr.Dataset:
     return load_zarr(path)
 
 
-def load_tree_table(version: str) -> pd.DataFrame:
-    """Load a TreeMap tree table from GCS as a pandas DataFrame."""
+# Column names vary by TreeMap version
+TREEMAP_COLUMNS = {
+    "2022": {"tree_id": "TM_ID", "plot_id": "TM_ID", "plt_cn": "PLT_CN"},
+    "2020": {"tree_id": "TM_ID", "plot_id": "TM_ID", "plt_cn": "PLT_CN"},
+    "2016": {"tree_id": "tm_id", "plot_id": "tm_id", "plt_cn": "CN"},
+    "2014": {"tree_id": "tl_id", "plot_id": "tl_id", "plt_cn": "CN"},
+}
+
+
+def load_tree_table(version: str, plot_ids) -> pd.DataFrame:
+    """Load the rows of a TreeMap tree table for the given plot ids."""
+    col_map = TREEMAP_COLUMNS.get(version)
+    if col_map is None:
+        raise ProcessingError(
+            code="UNSUPPORTED_VERSION",
+            message=f"TreeMap version '{version}' is not supported.",
+            suggestion="Supported versions: 2014, 2016, 2020, 2022",
+        )
     path = f"gs://{TABLES_BUCKET}/TreeMap{version}_tree_table.parquet"
     logger.info(f"Loading tree table from {path}")
-    return pd.read_parquet(path)
+    return pd.read_parquet(path, filters=[(col_map["plot_id"], "in", plot_ids)])
 
 
 def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:

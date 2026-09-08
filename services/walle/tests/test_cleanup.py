@@ -381,13 +381,24 @@ def test_anonymous_owners_chunks_and_dedupes(monkeypatch):
     assert calls == [2, 1]
 
 
-def test_anonymous_owners_probe_failure_is_soft(monkeypatch):
-    # A probe failure must not fail the run: return empty so guest is skipped.
+def test_anonymous_owners_probe_failure_is_soft(monkeypatch, caplog):
+    # A probe failure must not fail the run: return empty so guest is skipped,
+    # but emit a distinct, greppable WARNING naming the probable IAM cause so a
+    # permanent silent skip is detectable during dry-run review.
     def boom(ids):
         raise RuntimeError("permission denied")
 
     monkeypatch.setattr(cleanup.firebase_auth, "get_users", boom)
-    assert cleanup.anonymous_owners(["a", "b"]) == set()
+    with caplog.at_level("WARNING", logger=cleanup.logger.name):
+        assert cleanup.anonymous_owners(["a", "b"]) == set()
+
+    probe_warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "GUEST PROBE FAILED" in r.getMessage()
+    ]
+    assert len(probe_warnings) == 1
+    assert "get_users" in probe_warnings[0].getMessage()
 
 
 def test_guest_expired_reaps_old_anonymous_only():
@@ -417,3 +428,42 @@ def test_guest_expired_spares_protected_and_unknown_age():
     )
     no_age = rec(owner_id="anon", created_on=None)
     assert cleanup.find_guest_expired([static, no_age], NOW, {"anon"}) == []
+
+
+def _reap_log_age(category, r, caplog):
+    """The age=... token from a dry-run _reap_doc log line for one record."""
+    caplog.clear()
+    with caplog.at_level("INFO", logger=cleanup.logger.name):
+        cleanup._reap_doc(
+            "grids",
+            r,
+            None,
+            NOW,
+            category=category,
+            dry_run=True,
+            summary=cleanup.Summary(),
+            gcs_deletes=[],
+            doc_deletes=[],
+        )
+    msg = caplog.records[-1].getMessage()
+    return next(tok for tok in msg.split() if tok.startswith("age="))
+
+
+def test_reap_log_guest_age_uses_created_on(caplog):
+    # Guest decisions key on created_on, so the vetting log must report the
+    # created_on-based age — not the (misleading) modified_on age.
+    r = rec(
+        owner_id="anon",
+        created_on=NOW - timedelta(days=10),
+        modified_on=NOW - timedelta(days=1),
+    )
+    assert _reap_log_age("guest", r, caplog) == "age=10.0d"
+
+
+def test_reap_log_nonguest_age_uses_modified_on(caplog):
+    # Every other category still reports the modified_on age.
+    r = rec(
+        created_on=NOW - timedelta(days=10),
+        modified_on=NOW - timedelta(days=1),
+    )
+    assert _reap_log_age("ttl", r, caplog) == "age=1.0d"

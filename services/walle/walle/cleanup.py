@@ -231,8 +231,20 @@ def anonymous_owners(owner_ids) -> set[str]:
                 if not u.provider_data
             }
         return anonymous
-    except Exception:
-        logger.exception("guest owner probe failed; skipping guest category this run")
+    except Exception as exc:
+        # Soft-fail: an Auth outage must not block orphan/TTL/test reaping. But a
+        # permanent failure (compute SA missing the get_users IAM permission)
+        # would silently find zero guests every night, indistinguishable from
+        # "no guests" in the run summary. Emit a distinct, greppable WARNING that
+        # names the probable cause so the skip is detectable during dry-run review.
+        logger.warning(
+            "GUEST PROBE FAILED (%s): guest category SKIPPED this run — a "
+            "guest=0 tally is NOT authoritative. Probable cause: the compute "
+            "service account lacks the Firebase get_users (Identity Toolkit) "
+            "IAM permission. Verify before trusting guest reap counts.",
+            exc.__class__.__name__,
+            exc_info=True,
+        )
         return set()
 
 
@@ -464,7 +476,10 @@ def _reap_doc(
     doc_deletes: list,
 ) -> None:
     """Reap one doc (+ its artifact if ``path`` is given). Domains pass ``path=None``."""
-    age = _age_days(rec.modified_on, now)
+    # Guest reaping keys on created_on, not modified_on (find_guest_expired), so
+    # the vetting log must report the same age the decision used.
+    age_ts = rec.created_on if category == "guest" else rec.modified_on
+    age = _age_days(age_ts, now)
     age_str = f"{age:.1f}d" if age is not None else "unknown"
 
     if dry_run:

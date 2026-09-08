@@ -173,8 +173,10 @@ TIER_PRESETS: dict[str, dict] = {
 
 _DEFAULT_TIER = "standard"
 
-# All guests resolve from this one users-v2 doc; set its tier to "suspended"
-# to stop every guest create at once.
+# All guests resolve from this one users-v2 doc and share a single cache entry
+# (the guest id is fixed before the cache boundary), so setting its tier to
+# "suspended" stops every guest's creates together once the shared entry
+# refreshes — no per-uid entries drift out of sync.
 GUEST_OWNER_ID = "guest"
 
 
@@ -187,21 +189,15 @@ class OwnerQuotaConfig:
 
 
 @lru(force_asyncio=True, expire=300)
-async def resolve_owner_config(
-    owner_id: str, access: Access, is_guest: bool = False
+async def _resolve_owner_config_cached(
+    owner_id: str, access: Access, default_tier: str
 ) -> OwnerQuotaConfig:
-    """Resolve an owner's tier and quotas from its owner document.
+    """Read ``owner_id``'s doc and resolve its tier and quotas (cached).
 
-    Applies the owner's tier preset and any ``quota_overrides`` on top of the
-    defaults. A missing or malformed document resolves to the default tier. The
-    reported ``tier`` is always a known preset — an unrecognized stored value
-    reports (and applies) the default tier, so ``tier`` and ``quotas`` never
-    disagree. Guests resolve from the shared ``GUEST_OWNER_ID`` doc and default
-    to the ``guest`` tier.
+    Keyed on the *effective* owner id: guests have already collapsed to
+    ``GUEST_OWNER_ID`` here, so they share one entry rather than one per uid.
+    See :func:`resolve_owner_config`.
     """
-    default_tier = _DEFAULT_TIER
-    if is_guest:
-        owner_id, default_tier = GUEST_OWNER_ID, "guest"
     collection = (
         USERS_COLLECTION if access == Access.PERSONAL else APPLICATIONS_COLLECTION
     )
@@ -221,6 +217,26 @@ async def resolve_owner_config(
         )
         quotas = Quotas(**preset)
     return OwnerQuotaConfig(tier=tier, quotas=quotas)
+
+
+async def resolve_owner_config(
+    owner_id: str, access: Access, is_guest: bool = False
+) -> OwnerQuotaConfig:
+    """Resolve an owner's tier and quotas from its owner document.
+
+    Applies the owner's tier preset and any ``quota_overrides`` on top of the
+    defaults. A missing or malformed document resolves to the default tier. The
+    reported ``tier`` is always a known preset — an unrecognized stored value
+    reports (and applies) the default tier, so ``tier`` and ``quotas`` never
+    disagree. Guests resolve from the shared ``GUEST_OWNER_ID`` doc and default
+    to the ``guest`` tier; the guest reassignment happens *before* the cache
+    boundary, so all guests collapse to one cache entry and the kill switch
+    (suspending that doc) reaches every guest without per-uid caches to churn.
+    """
+    default_tier = _DEFAULT_TIER
+    if is_guest:
+        owner_id, default_tier = GUEST_OWNER_ID, "guest"
+    return await _resolve_owner_config_cached(owner_id, access, default_tier)
 
 
 async def resolve_quotas(

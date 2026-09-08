@@ -26,6 +26,7 @@ from pyproj.exceptions import CRSError
 
 # Maximum domain area in square meters (16 square kilometers)
 MAX_DOMAIN_AREA_SQ_METERS = 1.6e7
+GUEST_MAX_DOMAIN_AREA_SQ_METERS = 4.0e6
 
 # Default CRS if not specified
 DEFAULT_CRS = "EPSG:4326"

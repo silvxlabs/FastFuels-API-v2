@@ -23,7 +23,9 @@ router = APIRouter()
 )
 async def get_me(request: Request) -> UserMeResponse:
     """Return the authenticated owner's identity, tier, and resolved quotas."""
-    cfg = await resolve_owner_config(request.state.id, request.state.access)
+    cfg = await resolve_owner_config(
+        request.state.id, request.state.access, request.state.is_guest
+    )
     kind = "user" if request.state.access == Access.PERSONAL else "application"
     return UserMeResponse(
         id=request.state.id, kind=kind, tier=cfg.tier, quotas=cfg.quotas
@@ -38,4 +40,8 @@ async def get_me(request: Request) -> UserMeResponse:
 )
 async def get_me_usage(request: Request) -> Usage:
     """Return current usage against the owner's resolved limits, per resource type."""
-    return Usage(**await get_usage(request.state.id, request.state.access))
+    return Usage(
+        **await get_usage(
+            request.state.id, request.state.access, request.state.is_guest
+        )
+    )

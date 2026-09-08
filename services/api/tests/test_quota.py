@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from api.quota import (
     _RESOURCE_QUOTAS,
+    GUEST_OWNER_ID,
     RETRY_AFTER_SECONDS,
     TIER_PRESETS,
     OwnerQuotaConfig,
@@ -22,6 +23,7 @@ from api.quota import (
     Quotas,
     _increment_budget,
     _raise_quota_exceeded,
+    _resolve_owner_config_cached,
     _WeeklyBudget,
     enforce_create_quotas,
     iso_week_id,
@@ -103,6 +105,17 @@ class TestTierPresets:
         # Suspension blocks creates but does not change retention.
         assert q.resource_ttl_days == 180
         assert q.failed_resource_ttl_days == 14
+
+    def test_guest_preset(self):
+        q = Quotas(**TIER_PRESETS["guest"])
+        assert q.max_domains == 2
+        assert q.max_grids == 8
+        assert q.max_active_grids == 2
+        assert q.max_pointclouds == 0
+        assert q.max_api_keys == 0
+        assert q.max_applications == 0
+        assert q.max_weekly_grid_dispatches == 10
+        assert q.resource_ttl_days == 1
 
 
 def _fake_firestore(*, exists: bool, data: dict | None = None) -> MagicMock:
@@ -191,7 +204,13 @@ class TestResolveOwnerConfig:
     pytestmark = pytest.mark.anyio
 
     # resolve_owner_config surfaces the effective tier alongside the quotas.
-    # Each test uses a unique owner id because it is @lru-cached.
+    # Non-guest tests use a unique owner id because it is @lru-cached; guests all
+    # collapse to the shared GUEST_OWNER_ID key, so this clears that one entry.
+    @pytest.fixture(autouse=True)
+    async def _clear_guest_cache(self):
+        for access in (Access.PERSONAL, Access.APPLICATION):
+            await _resolve_owner_config_cached.delete(GUEST_OWNER_ID, access, "guest")
+        yield
 
     async def test_reports_effective_tier_and_quotas(self):
         client = _fake_firestore(exists=True, data={"tier": "application"})
@@ -232,6 +251,44 @@ class TestResolveOwnerConfig:
             quotas = await resolve_quotas("cfg-wrap", Access.PERSONAL)
         assert isinstance(quotas, Quotas)
         assert quotas.max_active_grids == 3
+
+    async def test_guest_reads_shared_doc_and_defaults_to_guest_tier(self):
+        client = _fake_firestore(exists=False)
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("guest-uid-a", Access.PERSONAL, True)
+        assert cfg.tier == "guest"
+        assert cfg.quotas == Quotas(**TIER_PRESETS["guest"])
+        client.collection.assert_called_once_with(USERS_COLLECTION)
+        client.collection.return_value.document.assert_called_once_with(GUEST_OWNER_ID)
+
+    async def test_guest_kill_switch_via_shared_doc_tier(self):
+        client = _fake_firestore(exists=True, data={"tier": "suspended"})
+        with patch("api.quota.firestore_client", client):
+            cfg = await resolve_owner_config("guest-uid-b", Access.PERSONAL, True)
+        assert cfg.tier == "suspended"
+        assert cfg.quotas.max_domains == 0
+
+    async def test_distinct_guest_uids_share_one_cache_entry(self):
+        # The guest id is fixed before the cache boundary, so two different guest
+        # uids resolve through one shared entry — one doc read, one config object.
+        client = _fake_firestore(exists=True, data={})
+        with patch("api.quota.firestore_client", client):
+            cfg_a = await resolve_owner_config("guest-uid-1", Access.PERSONAL, True)
+            cfg_b = await resolve_owner_config("guest-uid-2", Access.PERSONAL, True)
+        assert cfg_a is cfg_b
+        assert cfg_a.tier == "guest"
+        client.collection.return_value.document.return_value.get.assert_awaited_once()
+
+    async def test_kill_switch_suspends_every_guest_through_shared_entry(self):
+        # Suspending the shared doc reaches all guests at once: distinct uids get
+        # the suspended tier from one entry, with no per-uid cache to go stale.
+        client = _fake_firestore(exists=True, data={"tier": "suspended"})
+        with patch("api.quota.firestore_client", client):
+            cfg_a = await resolve_owner_config("guest-uid-x", Access.PERSONAL, True)
+            cfg_b = await resolve_owner_config("guest-uid-y", Access.PERSONAL, True)
+        assert cfg_a.tier == cfg_b.tier == "suspended"
+        assert cfg_a.quotas.max_domains == 0
+        client.collection.return_value.document.return_value.get.assert_awaited_once()
 
 
 class TestQuotaExceededDetail:
@@ -423,7 +480,7 @@ def _fake_enforce_client(
 
 def _fake_request(owner_id: str = "owner-weekly") -> MagicMock:
     request = MagicMock()
-    request.state = SimpleNamespace(id=owner_id, access=Access.PERSONAL)
+    request.state = SimpleNamespace(id=owner_id, access=Access.PERSONAL, is_guest=False)
     return request
 
 

@@ -38,7 +38,9 @@ from api.resources.domains.schema import (
     UpdateDomainRequestBody,
 )
 from api.resources.domains.validate import (
+    GUEST_MAX_DOMAIN_AREA_SQ_METERS,
     reproject_features,
+    validate_area_within_limits,
     validate_crs,
     validate_domain,
 )
@@ -204,6 +206,10 @@ async def create_domain(
     # Validate domain geometry (parses GeoJSON, validates CRS, area, CONUS check)
     # Raises HTTPException if validation fails
     validation_result = validate_domain(body.model_dump())
+    if request.state.is_guest:
+        validate_area_within_limits(
+            validation_result.area, GUEST_MAX_DOMAIN_AREA_SQ_METERS
+        )
 
     # Build domain data from validated result
     domain_id = uuid.uuid4().hex

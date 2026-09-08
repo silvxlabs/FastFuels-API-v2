@@ -100,6 +100,7 @@ class TestApiKeyAuth:
             result = await _api_key_auth(request, "secret")
             assert result.state.id == "owner"
             assert result.state.access == Access.PERSONAL
+            assert result.state.is_guest is False
 
     @pytest.mark.asyncio
     async def test_expired_key_raises_401(self):
@@ -144,6 +145,36 @@ class TestTokenAuth:
             with pytest.raises(Exception) as exc_info:
                 _token_auth(request, "bad-token")
             assert exc_info.value.status_code == 401
+
+    def test_anonymous_token_is_guest(self):
+        from api.auth import _token_auth
+
+        request = MagicMock()
+        request.state = MagicMock()
+        decoded = {"uid": "guest-uid", "firebase": {"sign_in_provider": "anonymous"}}
+        with patch("api.auth.verify_id_token", return_value=decoded):
+            result = _token_auth(request, "anon-token")
+            assert result.state.id == "guest-uid"
+            assert result.state.is_guest is True
+
+    def test_password_token_is_not_guest(self):
+        from api.auth import _token_auth
+
+        request = MagicMock()
+        request.state = MagicMock()
+        decoded = {"uid": "u", "firebase": {"sign_in_provider": "password"}}
+        with patch("api.auth.verify_id_token", return_value=decoded):
+            result = _token_auth(request, "pw-token")
+            assert result.state.is_guest is False
+
+    def test_token_without_provider_is_not_guest(self):
+        from api.auth import _token_auth
+
+        request = MagicMock()
+        request.state = MagicMock()
+        with patch("api.auth.verify_id_token", return_value={"uid": "u"}):
+            result = _token_auth(request, "token")
+            assert result.state.is_guest is False
 
 
 class TestAuthenticateUser:

@@ -80,6 +80,11 @@ async def create_key(request: Request, body: CreateKeyRequest) -> CreateKeyRespo
     Returns the key secret exactly once. The secret cannot be retrieved again —
     only its SHA-256 hash (the key ID) is stored.
     """
+    if request.state.is_guest:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Guest accounts cannot create API keys.",
+        )
     if body.access == Access.APPLICATION:
         # Validate that the user owns the application
         await _get_application_for_ownership(

@@ -5,11 +5,27 @@ These tests make real HTTP requests to the API and interact with Firestore.
 Requires a running local API server (http://127.0.0.1:8080).
 """
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 from api.auth import hash_api_key
+from api.resources.keys.router import create_key
+from api.resources.keys.schema import CreateKeyRequest
+from fastapi import HTTPException
 
 from lib.config import APPLICATIONS_COLLECTION, KEYS_COLLECTION
 from tests.fixtures import make_application_data, make_key_data
+
+
+class TestGuestCreateKey:
+    @pytest.mark.anyio
+    async def test_guest_returns_403(self):
+        request = MagicMock()
+        request.state = SimpleNamespace(id="guest-uid", is_guest=True)
+        with pytest.raises(HTTPException) as exc:
+            await create_key(request, CreateKeyRequest(name="k"))
+        assert exc.value.status_code == 403
 
 
 class TestCreateKey:

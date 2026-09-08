@@ -74,7 +74,15 @@ def parse_modification_coordinates(modifications: list[dict]) -> list[dict]:
 
 
 class Operator(StrEnum):
-    """Comparison operators for attribute-based conditions."""
+    """Comparison operators for condition clauses.
+
+    A condition ``{attribute, operator, value}`` *tests* the attribute against
+    the value (e.g. ``le`` selects where attribute ≤ value) to choose which
+    cells/trees an action applies to. Conditions only select; they never
+    change data. These are relational operators; the arithmetic side of a
+    modification is spelled ``modifier`` (see :class:`Modifier`) so the two
+    clause roles stay distinct.
+    """
 
     eq = "eq"
     ne = "ne"
@@ -99,7 +107,17 @@ class SpatialOperator(StrEnum):
 
 
 class Modifier(StrEnum):
-    """Modifiers for modification actions."""
+    """Modifiers for action clauses: how a selected value is changed.
+
+    An action ``{attribute, modifier, value}`` mutates the attribute of every
+    selected cell/tree: ``add``/``subtract``/``multiply``/``divide`` apply the
+    arithmetic operation against ``value``; ``replace`` overwrites with
+    ``value``. ``add`` and friends are arithmetic operators, so they *are*
+    operators too — the field is named ``modifier`` rather than ``operator``
+    to keep it distinct from a condition's comparison operator (see
+    :class:`Operator`) and because ``replace`` is an assignment, not
+    arithmetic.
+    """
 
     multiply = "multiply"
     divide = "divide"
@@ -118,7 +136,13 @@ class BaseModificationCondition(BaseModel):
     """
 
     attribute: str = Field(..., description="The attribute to check")
-    operator: Operator = Field(..., description="The comparison operator")
+    operator: Operator = Field(
+        ...,
+        description=(
+            "The comparison operator that tests the attribute against `value` "
+            "(e.g. `le` selects where attribute ≤ value)."
+        ),
+    )
     value: int | float | str | list[int | float | str] = Field(
         ..., description="The value(s) to compare against"
     )
@@ -155,7 +179,11 @@ class BaseModificationAction(BaseModel):
     attribute: str = Field(..., description="The attribute to modify")
     modifier: Modifier = Field(
         ...,
-        description="How to modify the value: multiply, divide, add, subtract, or replace",
+        description=(
+            "How the action changes the selected attribute: `add`, `subtract`, "
+            "`multiply`, `divide` (arithmetic against `value`), or `replace` "
+            "(overwrite with `value`)."
+        ),
     )
     value: int | float | str = Field(
         ..., description="The value to use with the modifier"

@@ -405,6 +405,38 @@ def _agg(value):
     return obj
 
 
+class _FakeAsyncTransaction:
+    """A stand-in for an AsyncTransaction satisfying @firestore.async_transactional.
+
+    The decorator drives the transaction lifecycle (``_begin``/``_commit``/
+    ``_rollback``); these are inert here. Reads inside the wrapped coroutine go
+    straight to the mocked doc's ``get``; ``set`` records the write so tests can
+    assert the reservation happened (or didn't).
+    """
+
+    _read_only = False
+    _max_attempts = 1
+
+    def __init__(self):
+        self.writes: list[tuple] = []
+        self._id = b"fake-txn"
+
+    def _clean_up(self):
+        pass
+
+    async def _begin(self, retry_id=None):
+        self._id = b"fake-txn"
+
+    async def _commit(self):
+        return []
+
+    async def _rollback(self):
+        pass
+
+    def set(self, ref, data, merge=False):
+        self.writes.append((ref, data, merge))
+
+
 def _fake_enforce_client(
     *,
     count: int = 0,
@@ -413,13 +445,15 @@ def _fake_enforce_client(
     budget_data: dict | None = None,
     budget_error: Exception | None = None,
     guest_budget_data: dict | None = None,
+    guest_txn_error: Exception | None = None,
 ) -> MagicMock:
     """A firestore_client stand-in for enforce_create_quotas.
 
     Serves the three aggregation queries for the resource collection, the
     owner's weekly budget doc read (``budget_data=None`` means the doc doesn't
     exist; ``budget_error`` makes the read raise), and the shared guest
-    counter doc (``guest_budget_data``).
+    counter doc (``guest_budget_data``, read/written inside the reservation
+    transaction; ``guest_txn_error`` makes opening that transaction raise).
     """
     base = MagicMock()
     base.count.return_value = _agg(count)
@@ -460,6 +494,13 @@ def _fake_enforce_client(
     client.collection.side_effect = collection
     client._budget_doc = budget_doc
     client._guest_doc = guest_doc
+
+    txn = _FakeAsyncTransaction()
+    if guest_txn_error is not None:
+        client.transaction = MagicMock(side_effect=guest_txn_error)
+    else:
+        client.transaction = MagicMock(return_value=txn)
+    client._guest_txn = txn
     return client
 
 
@@ -549,14 +590,22 @@ class TestEnforceWeeklyBudget:
 
     # The shared guest cap (#567): one counter across every guest uid.
 
-    async def test_guest_under_shared_cap_passes_and_flags_stash(self):
+    async def test_guest_under_shared_cap_reserves_a_slot_and_flags_stash(self):
         client = _fake_enforce_client(
             budget_data={"grid_dispatches": 1}, guest_budget_data={"dispatches": 10}
         )
         request = _fake_request("guest-a", is_guest=True)
         await self._enforce(client, request)
         assert request.state.weekly_budget.guest is True
+        # The slot is reserved atomically: read the doc once inside the txn and
+        # write exactly one increment (10 -> 11) to the shared guest counter.
         client._guest_doc.get.assert_awaited_once()
+        assert len(client._guest_txn.writes) == 1
+        ref, data, merge = client._guest_txn.writes[0]
+        assert ref is client._guest_doc
+        assert data["dispatches"] == 11
+        assert data["owner_id"] == GUEST_OWNER_ID
+        assert merge is True
 
     async def test_guest_at_shared_cap_raises_even_with_fresh_uid(self):
         client = _fake_enforce_client(
@@ -568,12 +617,30 @@ class TestEnforceWeeklyBudget:
         assert exc.value.status_code == 429
         assert exc.value.detail["quota"] == "guest_weekly_dispatches"
         assert exc.value.detail["limit"] == GUEST_WEEKLY_DISPATCHES
+        assert exc.value.detail["current"] == GUEST_WEEKLY_DISPATCHES
         assert exc.value.detail["window_reset_on"]
         assert "Retry-After" not in exc.value.headers
         assert exc.value.headers["RateLimit"].startswith(
             '"guest_weekly_dispatches";r=0;t='
         )
         assert "your" not in exc.value.detail["message"].lower()
+        # A full week reserves nothing: the transaction rejects before writing.
+        assert client._guest_txn.writes == []
+
+    async def test_guest_reservation_fails_open_on_transaction_error(self, caplog):
+        client = _fake_enforce_client(
+            budget_data=None,
+            guest_budget_data={"dispatches": 10},
+            guest_txn_error=RuntimeError("firestore down"),
+        )
+        request = _fake_request("guest-open", is_guest=True)
+        with caplog.at_level(logging.WARNING):
+            await self._enforce(client, request)
+        # Infra error must not block a create; nothing is reserved, but the
+        # request proceeds and the fail-open is logged.
+        assert "failing open" in caplog.text
+        assert request.state.weekly_budget is not None
+        assert client._guest_txn.writes == []
 
     async def test_guest_per_uid_budget_checked_before_shared_cap(self):
         limit = Quotas().max_weekly_grid_dispatches
@@ -603,7 +670,10 @@ class TestEnforceWeeklyBudget:
         request = _fake_request()
         await self._enforce(client, request)
         assert request.state.weekly_budget.guest is False
+        # Non-guests never read, reserve, or contend on the shared guest doc.
         client._guest_doc.get.assert_not_awaited()
+        client.transaction.assert_not_called()
+        assert client._guest_txn.writes == []
 
 
 class TestRegisterDispatch:
@@ -655,14 +725,16 @@ class TestRegisterDispatch:
         assert "RateLimit" not in response.headers
         assert len(background_tasks.tasks) == 1
 
-    def test_guest_also_increments_shared_counter(self):
+    def test_guest_does_not_reincrement_shared_counter(self):
+        # The guest slot was already reserved atomically in enforce_create_quotas;
+        # register_dispatch must schedule ONLY the per-uid increment, never a
+        # second write to the shared guest doc (which would double-count).
         request = _fake_request()
         request.state.weekly_budget = self._budget(used=10, guest=True)
         background_tasks = BackgroundTasks()
         register_dispatch(request, Response(), background_tasks)
         assert [t.args for t in background_tasks.tasks] == [
             ("owner-rd", "grid_dispatches"),
-            (GUEST_OWNER_ID, "dispatches"),
         ]
 
     def test_noop_without_stashed_budget(self):

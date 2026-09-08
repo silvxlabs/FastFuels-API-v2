@@ -7,8 +7,8 @@ walle's own operational knobs, kept local per the per-service-tuning convention.
 import os
 
 
-def _flag(name: str) -> bool:
-    return os.getenv(name, "false").strip().lower() in ("1", "true", "yes", "on")
+def _flag(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _int(name: str, default: int) -> int:
@@ -39,6 +39,8 @@ ORPHAN_MIN_AGE_HOURS = _int("WALLE_ORPHAN_MIN_AGE_HOURS", 24)
 # never raced.
 TEST_TTL_DAYS = _int("WALLE_TEST_TTL_DAYS", 2)
 
+GUEST_TTL_HOURS = _int("WALLE_GUEST_TTL_HOURS", 24)
+
 # Per-category dry-run switches. Default enforce (delete); set true to log
 # candidates without deleting — used to validate a category locally before
 # shipping (deployed walle runs enforce).
@@ -46,3 +48,6 @@ ORPHAN_BLOBS_DRY_RUN = _flag("WALLE_ORPHAN_BLOBS_DRY_RUN")
 ORPHAN_DOCS_DRY_RUN = _flag("WALLE_ORPHAN_DOCS_DRY_RUN")
 TTL_DRY_RUN = _flag("WALLE_TTL_DRY_RUN")
 TEST_PURGE_DRY_RUN = _flag("WALLE_TEST_PURGE_DRY_RUN")
+
+# Defaults to dry-run: enforce only after validating candidates in prod.
+GUEST_REAP_DRY_RUN = _flag("WALLE_GUEST_REAP_DRY_RUN", default=True)

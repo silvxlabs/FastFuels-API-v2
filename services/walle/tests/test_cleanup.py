@@ -381,6 +381,15 @@ def test_anonymous_owners_chunks_and_dedupes(monkeypatch):
     assert calls == [2, 1]
 
 
+def test_anonymous_owners_probe_failure_is_soft(monkeypatch):
+    # A probe failure must not fail the run: return empty so guest is skipped.
+    def boom(ids):
+        raise RuntimeError("permission denied")
+
+    monkeypatch.setattr(cleanup.firebase_auth, "get_users", boom)
+    assert cleanup.anonymous_owners(["a", "b"]) == set()
+
+
 def test_guest_expired_reaps_old_anonymous_only():
     old = rec(doc_id="1", owner_id="anon", created_on=NOW - timedelta(hours=25))
     fresh = rec(doc_id="2", owner_id="anon", created_on=NOW - timedelta(hours=1))

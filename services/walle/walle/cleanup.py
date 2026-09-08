@@ -209,22 +209,31 @@ def anonymous_owners(owner_ids) -> set[str]:
 
     Anonymous means a Firebase user with no sign-in provider. Owners Auth does
     not know — application ids, test owners, deleted accounts — are not guests.
+
+    Best-effort: a probe failure (missing IAM, Auth outage) returns an empty set
+    so the guest category is skipped rather than failing the whole run.
     """
     ids = [o for o in dict.fromkeys(owner_ids) if o]
     if not ids:
         return set()
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app()
-    anonymous: set[str] = set()
-    for start in range(0, len(ids), _GET_USERS_CHUNK):
-        chunk = [
-            firebase_auth.UidIdentifier(u)
-            for u in ids[start : start + _GET_USERS_CHUNK]
-        ]
-        anonymous |= {
-            u.uid for u in firebase_auth.get_users(chunk).users if not u.provider_data
-        }
-    return anonymous
+    try:
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app()
+        anonymous: set[str] = set()
+        for start in range(0, len(ids), _GET_USERS_CHUNK):
+            chunk = [
+                firebase_auth.UidIdentifier(u)
+                for u in ids[start : start + _GET_USERS_CHUNK]
+            ]
+            anonymous |= {
+                u.uid
+                for u in firebase_auth.get_users(chunk).users
+                if not u.provider_data
+            }
+        return anonymous
+    except Exception:
+        logger.exception("guest owner probe failed; skipping guest category this run")
+        return set()
 
 
 # --- scanning -------------------------------------------------------------

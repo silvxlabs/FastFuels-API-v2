@@ -10,8 +10,6 @@ from standgen.handlers.pim import (
     raster_to_plots_gdf,
 )
 
-from lib.errors import ProcessingError
-
 
 @pytest.fixture
 def sample_dataset():
@@ -131,11 +129,6 @@ class TestFilterAndConvert:
         )
         for col in ["PLOT_ID", "SPCD", "STATUSCD", "DIA", "HT", "CR", "TPA"]:
             assert col in result.columns
-
-    def test_unsupported_version_raises(self, sample_tree_table):
-        with pytest.raises(ProcessingError) as exc_info:
-            filter_and_convert_tree_table(sample_tree_table, np.array([101]), "1999")
-        assert exc_info.value.code == "UNSUPPORTED_VERSION"
 
     def test_version_2016_column_names(self):
         df = pd.DataFrame(

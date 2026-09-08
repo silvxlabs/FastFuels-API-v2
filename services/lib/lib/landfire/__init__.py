@@ -9,6 +9,7 @@ from lib.landfire.config import (
     NB_CODE_MAP,
     SEASON_CODES,
     UnknownLandfireVersionError,
+    lfps_acronym,
     validate_landfire_version,
 )
 from lib.landfire.lfps import (
@@ -30,6 +31,7 @@ from lib.landfire.lfps import (
 
 __all__ = [
     "LANDFIRE_VERSIONS",
+    "lfps_acronym",
     "NB_CODE_MAP",
     "SEASON_CODES",
     "UnknownLandfireVersionError",

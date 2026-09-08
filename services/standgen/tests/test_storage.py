@@ -12,8 +12,11 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
+from standgen import storage
 from standgen.storage import _fused_compute, _write_parquet
 from standgen.summarize import _build_column_stats_graph
+
+from lib.errors import ProcessingError
 
 
 @pytest.fixture
@@ -129,3 +132,23 @@ class TestComputeWriteAndStats:
 
         assert stats["count"] == 3
         assert stats["std"] == pytest.approx(2.0)
+
+
+def test_load_tree_table_pushes_plot_filter(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        storage.pd,
+        "read_parquet",
+        lambda path, filters: calls.append((path, filters)) or pd.DataFrame(),
+    )
+    storage.load_tree_table("2016", np.array([3, 1]))
+    [(path, filters)] = calls
+    assert path.endswith("TreeMap2016_tree_table.parquet")
+    assert filters[0][:2] == ("tm_id", "in")
+    assert list(filters[0][2]) == [3, 1]
+
+
+def test_load_tree_table_unsupported_version():
+    with pytest.raises(ProcessingError) as exc_info:
+        storage.load_tree_table("1999", np.array([1]))
+    assert exc_info.value.code == "UNSUPPORTED_VERSION"

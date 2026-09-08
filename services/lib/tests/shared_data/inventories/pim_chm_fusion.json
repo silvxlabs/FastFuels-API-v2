@@ -1,0 +1,32 @@
+{
+  "description": "Integration test inventory fusing a TreeMap PIM with a CHM (reimputation)",
+  "columns": [
+    {"key": "x", "type": "continuous", "unit": "m"},
+    {"key": "y", "type": "continuous", "unit": "m"},
+    {"key": "fia_species_code", "type": "categorical"},
+    {"key": "fia_status_code", "type": "categorical"},
+    {"key": "dbh", "type": "continuous", "unit": "cm"},
+    {"key": "height", "type": "continuous", "unit": "m"},
+    {"key": "crown_ratio", "type": "continuous"}
+    ],
+  "type": "tree",
+  "name": "Test PIM-CHM Fusion Inventory",
+  "source": {
+    "name": "pim",
+    "fusion": ["chm"],
+    "point_process": "inhomogeneous_poisson",
+    "seed": 42,
+    "source_pim_grid_id": null,
+    "source_pim_grid_checksum": null,
+    "source_chm_grid_id": null,
+    "source_chm_grid_checksum": null,
+    "method": {
+      "name": "reimputation",
+      "resolution": 7.5,
+      "min_height": 2.0,
+      "cover_threshold": 0.2
+    }
+  },
+  "status": "pending",
+  "tags": []
+}

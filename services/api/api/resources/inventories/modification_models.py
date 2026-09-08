@@ -54,7 +54,14 @@ class InventoryModificationCondition(BaseModel):
     """
 
     attribute: InventoryAttribute
-    operator: Operator
+    operator: Operator = Field(
+        ...,
+        description=(
+            "The comparison operator that tests the attribute against `value` "
+            "(e.g. `le` selects trees where attribute ≤ value). Conditions only "
+            "select trees; they do not change data."
+        ),
+    )
     value: int | float | str | list[int | float | str] = Field(
         ..., description="The value(s) to compare against"
     )
@@ -170,7 +177,15 @@ class InventoryModificationAction(BaseModel):
     """
 
     attribute: InventoryAttribute
-    modifier: Modifier
+    modifier: Modifier = Field(
+        ...,
+        description=(
+            "How the action changes the selected attribute: `add`, `subtract`, "
+            "`multiply`, `divide` (arithmetic against `value`), or `replace` "
+            "(overwrite with `value`). To drop matching trees entirely, use a "
+            "remove action instead."
+        ),
+    )
     value: int | float | str = Field(
         ..., description="The value to use with the modifier"
     )

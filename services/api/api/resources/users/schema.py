@@ -31,8 +31,8 @@ class UserMeResponse(BaseModel):
         description=(
             "The quota tier in effect for this owner. Anonymous (guest) sign-ins "
             "resolve to the `guest` tier: reduced limits, and resources are "
-            "deleted about 24 hours after they were last modified. Convert to a "
-            "full account to keep them."
+            "deleted 24 hours after they are created. Convert to a full account "
+            "to keep them."
         ),
     )
     quotas: Quotas = Field(

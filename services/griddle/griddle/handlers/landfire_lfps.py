@@ -97,25 +97,31 @@ def _lfps_layer_name(product: str, version: str, season: str | None = None) -> s
     Because LFPS names them differently, FBFM40 seasonal layers and
     annual_disturbance come from the live LFPS catalog via resolve_lf_product().
     """
-    if product.lower() == "annual_disturbance":
-        match = resolve_lf_product("LDist", version)
-        if match is None:
-            raise ProcessingError(
-                code="ANNUAL_DISTURBANCE_NOT_AVAILABLE",
-                message=(
-                    "LANDFIRE Product Service isn't currently serving a "
-                    f"Limited Annual Disturbance layer for version {version}."
-                ),
-            )
-        return match.layer_name
+    if product == "annual_disturbance":
+        return _annual_disturbance_layer_name(version)
+    if season is not None:
+        return _seasonal_fbfm40_layer_name(product, version, season)
+    return f"LF{version}_{product.upper()}"
 
-    product = product.upper()
-    if season is None:
-        return f"LF{version}_{product}"
-    if product != "FBFM40":
+
+def _annual_disturbance_layer_name(version: str) -> str:
+    match = resolve_lf_product("annual_disturbance", version)
+    if match is None:
+        raise ProcessingError(
+            code="ANNUAL_DISTURBANCE_NOT_AVAILABLE",
+            message=(
+                "LANDFIRE Product Service isn't currently serving a "
+                f"Limited Annual Disturbance layer for version {version}."
+            ),
+        )
+    return match.layer_name
+
+
+def _seasonal_fbfm40_layer_name(product: str, version: str, season: str) -> str:
+    if product != "fbfm40":
         raise ProcessingError(
             code="SEASONAL_NOT_SUPPORTED",
-            message=f"LANDFIRE Seasonal Fuels only publishes FBFM40, not {product!r}.",
+            message=f"LANDFIRE Seasonal Fuels only publishes FBFM40, not {product.upper()!r}.",
         )
     if season not in SEASON_CODES:
         raise ProcessingError(

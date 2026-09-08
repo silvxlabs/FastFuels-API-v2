@@ -24,6 +24,7 @@ from api.quota import (
     Quotas,
     _increment_budget,
     _raise_quota_exceeded,
+    _resolve_owner_config_cached,
     _WeeklyBudget,
     enforce_create_quotas,
     iso_week_id,
@@ -204,7 +205,13 @@ class TestResolveOwnerConfig:
     pytestmark = pytest.mark.anyio
 
     # resolve_owner_config surfaces the effective tier alongside the quotas.
-    # Each test uses a unique owner id because it is @lru-cached.
+    # Non-guest tests use a unique owner id because it is @lru-cached; guests all
+    # collapse to the shared GUEST_OWNER_ID key, so this clears that one entry.
+    @pytest.fixture(autouse=True)
+    async def _clear_guest_cache(self):
+        for access in (Access.PERSONAL, Access.APPLICATION):
+            await _resolve_owner_config_cached.delete(GUEST_OWNER_ID, access, "guest")
+        yield
 
     async def test_reports_effective_tier_and_quotas(self):
         client = _fake_firestore(exists=True, data={"tier": "application"})
@@ -261,6 +268,28 @@ class TestResolveOwnerConfig:
             cfg = await resolve_owner_config("guest-uid-b", Access.PERSONAL, True)
         assert cfg.tier == "suspended"
         assert cfg.quotas.max_domains == 0
+
+    async def test_distinct_guest_uids_share_one_cache_entry(self):
+        # The guest id is fixed before the cache boundary, so two different guest
+        # uids resolve through one shared entry — one doc read, one config object.
+        client = _fake_firestore(exists=True, data={})
+        with patch("api.quota.firestore_client", client):
+            cfg_a = await resolve_owner_config("guest-uid-1", Access.PERSONAL, True)
+            cfg_b = await resolve_owner_config("guest-uid-2", Access.PERSONAL, True)
+        assert cfg_a is cfg_b
+        assert cfg_a.tier == "guest"
+        client.collection.return_value.document.return_value.get.assert_awaited_once()
+
+    async def test_kill_switch_suspends_every_guest_through_shared_entry(self):
+        # Suspending the shared doc reaches all guests at once: distinct uids get
+        # the suspended tier from one entry, with no per-uid cache to go stale.
+        client = _fake_firestore(exists=True, data={"tier": "suspended"})
+        with patch("api.quota.firestore_client", client):
+            cfg_a = await resolve_owner_config("guest-uid-x", Access.PERSONAL, True)
+            cfg_b = await resolve_owner_config("guest-uid-y", Access.PERSONAL, True)
+        assert cfg_a.tier == cfg_b.tier == "suspended"
+        assert cfg_a.quotas.max_domains == 0
+        client.collection.return_value.document.return_value.get.assert_awaited_once()
 
 
 class TestQuotaExceededDetail:

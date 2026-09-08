@@ -27,7 +27,12 @@ from standgen.modifications import (
     apply_modifications,
     resolve_spatial_conditions,
 )
-from standgen.storage import load_grid, load_tree_table, save_parquet_with_summary
+from standgen.storage import (
+    TREEMAP_COLUMNS,
+    load_grid,
+    load_tree_table,
+    save_parquet_with_summary,
+)
 from standgen.treatments import apply_treatments
 
 logger = logging.getLogger(__name__)
@@ -38,14 +43,6 @@ Q_ = ureg.Quantity
 # Product-to-required-band mapping for PIM inventory expansion
 PIM_PLOT_ID_BANDS = {
     "treemap": "tm_id",
-}
-
-# Column names vary by TreeMap version
-TREEMAP_COLUMNS = {
-    "2022": {"tree_id": "TM_ID", "plot_id": "TM_ID", "plt_cn": "PLT_CN"},
-    "2020": {"tree_id": "TM_ID", "plot_id": "TM_ID", "plt_cn": "PLT_CN"},
-    "2016": {"tree_id": "tm_id", "plot_id": "tm_id", "plt_cn": "CN"},
-    "2014": {"tree_id": "tl_id", "plot_id": "tl_id", "plt_cn": "CN"},
 }
 
 # Columns needed from the tree table (before version-specific renaming)
@@ -122,10 +119,57 @@ def handle_pim(
         extra={"inventory_id": inventory_id},
     )
 
+    return expand_plots(
+        inventory,
+        plots,
+        version,
+        domain_gdf,
+        progress,
+        seed=seed,
+        point_process=point_process,
+    )
+
+
+def expand_plots(
+    inventory: dict,
+    plots: gpd.GeoDataFrame,
+    version: str,
+    domain_gdf: gpd.GeoDataFrame,
+    progress,
+    *,
+    seed: int,
+    point_process: str,
+) -> dict:
+    """Expand a plots GeoDataFrame into a tree inventory and write it to GCS.
+
+    Shared tail of PIM expansion: given a GeoDataFrame of one PLOT_ID per pixel
+    center (with zero-density anchors at PLOT_ID == 0), load and filter the
+    TreeMap tree table, run the spatial point process, apply any modifications
+    and treatments, then write partitioned Parquet with per-column summaries.
+
+    Used by both ``handle_pim`` (plots read straight from the PIM raster) and the
+    PIM-CHM fusion handler (plots from ``sample_plots_from_hag`` with masked
+    cells set to 0). The PIM path is unchanged by this extraction.
+
+    Args:
+        inventory: Full inventory document from Firestore.
+        plots: GeoDataFrame with a PLOT_ID column and Point geometry per pixel.
+        version: TreeMap version year for tree-table selection.
+        domain_gdf: Domain geometry as GeoDataFrame.
+        progress: Callback for progress reporting.
+        seed: Random seed for the point process.
+        point_process: Spatial point process name.
+
+    Returns:
+        Dict with 'georeference', 'columns' with per-column summary statistics,
+        and 'forestry_metrics' with stand-level forestry scalars or None.
+    """
+    inventory_id = inventory["id"]
+
     # Load and prepare tree table
     progress("Loading tree table...", 20)
-    tree_table = load_tree_table(version)
     unique_plot_ids = plots["PLOT_ID"].unique()
+    tree_table = load_tree_table(version, unique_plot_ids)
     tree_df = filter_and_convert_tree_table(tree_table, unique_plot_ids, version)
     logger.info(
         f"Filtered tree table to {len(tree_df)} trees from {len(unique_plot_ids)} plots",
@@ -250,14 +294,7 @@ def filter_and_convert_tree_table(
         DataFrame ready for TreeSample construction with columns:
         TREE_ID, PLOT_ID, SPCD, STATUSCD, DIA (cm), HT (m), CR (fraction), TPA (trees/m²)
     """
-    col_map = TREEMAP_COLUMNS.get(version)
-    if col_map is None:
-        raise ProcessingError(
-            code="UNSUPPORTED_VERSION",
-            message=f"TreeMap version '{version}' is not supported.",
-            suggestion="Supported versions: 2014, 2016, 2020, 2022",
-        )
-
+    col_map = TREEMAP_COLUMNS[version]
     tree_id_col = col_map["tree_id"]
     plot_id_col = col_map["plot_id"]
 

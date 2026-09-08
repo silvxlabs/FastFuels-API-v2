@@ -10,10 +10,12 @@ The limits come from ``resolve_quotas()``, which layers an owner's tier and over
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 
 from fastapi import BackgroundTasks, HTTPException, Request, Response, status
+from google.cloud import firestore
 from google.cloud.firestore import AsyncDocumentReference, FieldFilter, Increment
 from pydantic import BaseModel, Field, ValidationError
 from ring import lru
@@ -178,6 +180,12 @@ _DEFAULT_TIER = "standard"
 # "suspended" stops every guest's creates together once the shared entry
 # refreshes — no per-uid entries drift out of sync.
 GUEST_OWNER_ID = "guest"
+
+# Anonymous uids are free to mint, so per-uid budgets alone don't bound guest
+# spend: one shared weekly dispatch cap across every guest and resource type
+# (#567), counted on create-budgets-v2/guest/weeks/{iso_week}.
+GUEST_WEEKLY_DISPATCHES = int(os.getenv("GUEST_WEEKLY_DISPATCHES", "500"))
+_GUEST_COUNTER_FIELD = "dispatches"
 
 
 @dataclass(frozen=True)
@@ -419,10 +427,20 @@ def _raise_quota_exceeded(
 # Weekly dispatch budgets (#431). One Firestore doc per owner per ISO week at
 # create-budgets-v2/{owner_id}/weeks/{iso_week} holds per-type dispatch
 # counters. A new week is a new doc id, so the reset is free. One doc per
-# owner-week is deliberate: Firestore sustains ~1 write/s/doc, far above any
-# owner's dispatch rate; sharding is the documented escalation if that ever
-# changes. The budget fails OPEN — an outage in the limiter must never block a
-# create — and every fail-open is logged at WARNING so it stays visible.
+# owner-week is fine for per-owner budgets: Firestore sustains ~1 write/s/doc,
+# far above any single owner's dispatch rate. The per-owner budget fails OPEN —
+# an outage in the limiter must never block a create — and every fail-open is
+# logged at WARNING so it stays visible.
+#
+# The shared guest doc (owner_id == GUEST_OWNER_ID, #567) is the exception: it
+# aggregates EVERY guest, so the per-owner write-rate argument above does not
+# apply to it. Because anonymous uids are free to mint, its cap is a hard cap,
+# reserved atomically with a transaction on the request path (see
+# _reserve_guest_slot), not the post-response increment used per owner. Under
+# very high global guest load that single doc could hit the ~1 write/s ceiling
+# and contend; sharding would be the escalation, but it is not required for the
+# current cap.
+#
 # Week docs are retained indefinitely: they are the only durable record of
 # per-owner weekly activity (resource docs vanish on delete).
 
@@ -460,6 +478,7 @@ class _WeeklyBudget:
     limit: int
     used: int | None  # None: the read failed open
     reset_at: datetime
+    guest: bool = False  # slot already reserved against the shared guest cap
 
 
 def _ratelimit_headers(
@@ -528,16 +547,76 @@ async def _increment_budget(owner_id: str, counter_field: str) -> None:
         )
 
 
+async def _reserve_guest_slot(week_id: str, reset_at: datetime) -> None:
+    """Atomically reserve one slot against the shared guest weekly cap (#567).
+
+    Read-modify-writes create-budgets-v2/guest/weeks/{week_id}.dispatches in a
+    Firestore transaction so a burst of concurrent guests (fresh anonymous uids
+    are free to mint) can't each read used<cap and all pass: the cap is a hard
+    cap, reserved inline on the request path before the job is dispatched.
+
+    Raises the guest 429 when the week is full. Fails OPEN on infra errors, the
+    same as the per-owner budget read — but the 429 is not an infra error and
+    must escape the fail-open guard.
+    """
+    ref = _budget_ref(GUEST_OWNER_ID, week_id)
+
+    @firestore.async_transactional
+    async def _reserve(transaction) -> None:
+        snapshot = await ref.get(transaction=transaction)
+        used = int((snapshot.to_dict() or {}).get(_GUEST_COUNTER_FIELD, 0) or 0)
+        if used >= GUEST_WEEKLY_DISPATCHES:
+            _raise_quota_exceeded(
+                quota="guest_weekly_dispatches",
+                current=used,
+                limit=GUEST_WEEKLY_DISPATCHES,
+                retry_after=False,
+                window_reset_on=reset_at,
+                headers=_ratelimit_headers(
+                    "guest_weekly_dispatches", 0, GUEST_WEEKLY_DISPATCHES, reset_at
+                ),
+                message=(
+                    f"Guest capacity for this week is used up ({used}/"
+                    f"{GUEST_WEEKLY_DISPATCHES} jobs across all guests). It "
+                    f"resets {reset_at:%Y-%m-%d} (UTC). Create an account to "
+                    f"keep working."
+                ),
+            )
+        transaction.set(
+            ref,
+            {
+                _GUEST_COUNTER_FIELD: used + 1,
+                "owner_id": GUEST_OWNER_ID,
+                "iso_week": week_id,
+            },
+            merge=True,
+        )
+
+    try:
+        await _reserve(firestore_client.transaction())
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning(
+            "Guest weekly cap reservation failed; failing open", exc_info=True
+        )
+
+
 def register_dispatch(
     request: Request, response: Response, background_tasks: BackgroundTasks
 ) -> None:
     """Record a worker-job dispatch against the owner's weekly budget.
 
     Called once, immediately after a job is dispatched — never before, so
-    requests that fail validation don't consume budget. Sets the IETF
-    ``RateLimit`` / ``RateLimit-Policy`` headers on the response (skipped when
-    the budget read failed open) and schedules the counter increment. No-op if
-    :func:`enforce_create_quotas` did not run a weekly check for this request.
+    requests that fail validation don't consume the per-owner budget. Sets the
+    IETF ``RateLimit`` / ``RateLimit-Policy`` headers on the response (skipped
+    when the budget read failed open) and schedules the per-owner counter
+    increment. No-op if :func:`enforce_create_quotas` did not run a weekly check
+    for this request.
+
+    The shared guest counter is NOT touched here: guests already reserved their
+    slot atomically in :func:`enforce_create_quotas` (see
+    :func:`_reserve_guest_slot`), so incrementing it again would double-count.
     """
     budget: _WeeklyBudget | None = getattr(request.state, "weekly_budget", None)
     if budget is None:
@@ -570,8 +649,10 @@ async def enforce_create_quotas(
     The weekly dispatch budget is read in the same gather and checked only when
     ``dispatch`` is true (the default) and the type has a budget. Endpoints that
     create a resource without commissioning a worker job (layerset features)
-    pass ``dispatch=False``. On pass, the budget state is stashed on
-    ``request.state.weekly_budget`` for :func:`register_dispatch`.
+    pass ``dispatch=False``. Guests then reserve a slot against the shared
+    ``GUEST_WEEKLY_DISPATCHES`` cap atomically (:func:`_reserve_guest_slot`), a
+    hard cap that holds under concurrent guests. On pass, the budget state is
+    stashed on ``request.state.weekly_budget`` for :func:`register_dispatch`.
     """
     spec = _RESOURCE_QUOTAS.get(collection)
     if spec is None:
@@ -580,6 +661,12 @@ async def enforce_create_quotas(
     owner_id = request.state.id
     quotas = await resolve_quotas(
         owner_id, request.state.access, request.state.is_guest
+    )
+    # Guests cannot ask for more; an account is their next step.
+    raise_limit = (
+        "Create an account for higher limits."
+        if request.state.is_guest
+        else f"To request a higher limit, contact {SUPPORT_EMAIL}."
     )
     base = firestore_client.collection(collection).where(
         filter=FieldFilter("owner_id", "==", owner_id)
@@ -599,14 +686,18 @@ async def enforce_create_quotas(
         aggregations["bytes"] = base.sum("size_bytes", alias="bytes")
 
     check_weekly = dispatch and spec.weekly_field is not None
+    check_guest = check_weekly and request.state.is_guest
     now = datetime.now(UTC)
+    week_id = iso_week_id(now)
 
     names = list(aggregations)
     coros = [aggregations[n].get() for n in names]
     if check_weekly:
         # _read_budget_used never raises (fails open to None), so appending it
-        # to the gather cannot break the aggregation checks.
-        coros.append(_read_budget_used(owner_id, iso_week_id(now), spec.counter_field))
+        # to the gather cannot break the aggregation checks. The shared guest
+        # cap is NOT read here: it is reserved atomically below so the cap holds
+        # under concurrent guests.
+        coros.append(_read_budget_used(owner_id, week_id, spec.counter_field))
     results = await asyncio.gather(*coros)
     values = {n: res[0][0].value for n, res in zip(names, results)}
 
@@ -625,8 +716,7 @@ async def enforce_create_quotas(
                 message=(
                     f"You have {active} {spec.label} jobs in progress (limit "
                     f"{limit}). Wait for jobs to complete or delete unneeded "
-                    f"{spec.label}s, then retry. To request a higher limit, "
-                    f"contact {SUPPORT_EMAIL}."
+                    f"{spec.label}s, then retry. {raise_limit}"
                 ),
             )
 
@@ -639,8 +729,7 @@ async def enforce_create_quotas(
             retry_after=False,
             message=(
                 f"You have {count} {spec.label}s (limit {limit}). Delete unneeded "
-                f"{spec.label}s, then retry. To request a higher limit, contact "
-                f"{SUPPORT_EMAIL}."
+                f"{spec.label}s, then retry. {raise_limit}"
             ),
         )
 
@@ -655,13 +744,12 @@ async def enforce_create_quotas(
                 message=(
                     f"Your {spec.label}s use {total_bytes / GiB:.1f} GiB of storage "
                     f"(limit {limit / GiB:.0f} GiB). Delete unneeded {spec.label}s "
-                    f"to free space, then retry. To request a higher limit, contact "
-                    f"{SUPPORT_EMAIL}."
+                    f"to free space, then retry. {raise_limit}"
                 ),
             )
 
     if check_weekly:
-        used = results[-1]
+        used = results[len(names)]
         limit = getattr(quotas, spec.weekly_field)
         reset_at = next_week_start(now)
         # Deleting resources refunds nothing: the budget counts dispatches, so
@@ -676,10 +764,16 @@ async def enforce_create_quotas(
                 headers=_ratelimit_headers(spec.weekly_field, 0, limit, reset_at),
                 message=(
                     f"Your weekly {spec.label} budget is spent ({used}/{limit} "
-                    f"jobs this week). It resets {reset_at:%Y-%m-%d} (UTC). To "
-                    f"request a higher limit, contact {SUPPORT_EMAIL}."
+                    f"jobs this week). It resets {reset_at:%Y-%m-%d} (UTC). "
+                    f"{raise_limit}"
                 ),
             )
+        if check_guest:
+            # Reserve the shared guest slot atomically (raises the guest 429 if
+            # the week is full). Done after the per-uid check so per-uid still
+            # takes precedence, and inline so the cap can't be overshot by a
+            # burst of guests. register_dispatch must NOT re-increment it.
+            await _reserve_guest_slot(week_id, reset_at)
         request.state.weekly_budget = _WeeklyBudget(
             owner_id=owner_id,
             quota_field=spec.weekly_field,
@@ -687,6 +781,7 @@ async def enforce_create_quotas(
             limit=limit,
             used=used,
             reset_at=reset_at,
+            guest=check_guest,
         )
 
 

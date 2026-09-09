@@ -163,7 +163,11 @@ class TestTokenAuth:
 
         request = MagicMock()
         request.state = MagicMock()
-        decoded = {"uid": "u", "firebase": {"sign_in_provider": "password"}}
+        decoded = {
+            "uid": "u",
+            "email_verified": True,
+            "firebase": {"sign_in_provider": "password"},
+        }
         with patch("api.auth.verify_id_token", return_value=decoded):
             result = _token_auth(request, "pw-token")
             assert result.state.is_guest is False
@@ -179,69 +183,56 @@ class TestTokenAuth:
 
 
 class TestEmailVerificationEnforcement:
-    def _run(self, decoded: dict, *, enforce: bool):
+    def _run(self, decoded: dict):
         from api.auth import _token_auth
 
         request = MagicMock()
         request.state = MagicMock()
-        with (
-            patch("api.auth.ENFORCE_EMAIL_VERIFICATION", enforce),
-            patch("api.auth.verify_id_token", return_value=decoded),
-        ):
+        with patch("api.auth.verify_id_token", return_value=decoded):
             return _token_auth(request, "token")
 
-    def test_flag_on_unverified_password_rejected(self):
+    def test_unverified_password_rejected(self):
         decoded = {
             "uid": "u",
             "email_verified": False,
             "firebase": {"sign_in_provider": "password"},
         }
         with pytest.raises(HTTPException) as exc_info:
-            self._run(decoded, enforce=True)
+            self._run(decoded)
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["reason"] == "EMAIL_NOT_VERIFIED"
 
-    def test_flag_on_missing_email_verified_rejected(self):
+    def test_missing_email_verified_rejected(self):
         decoded = {"uid": "u", "firebase": {"sign_in_provider": "password"}}
         with pytest.raises(HTTPException) as exc_info:
-            self._run(decoded, enforce=True)
+            self._run(decoded)
         assert exc_info.value.status_code == 403
 
-    def test_flag_on_verified_password_allowed(self):
+    def test_verified_password_allowed(self):
         decoded = {
             "uid": "u",
             "email_verified": True,
             "firebase": {"sign_in_provider": "password"},
         }
-        result = self._run(decoded, enforce=True)
+        result = self._run(decoded)
         assert result.state.id == "u"
         assert result.state.is_guest is False
 
-    def test_flag_on_google_unaffected(self):
+    def test_google_unaffected(self):
         decoded = {
             "uid": "g",
             "email_verified": False,
             "firebase": {"sign_in_provider": "google.com"},
         }
-        result = self._run(decoded, enforce=True)
+        result = self._run(decoded)
         assert result.state.id == "g"
         assert result.state.is_guest is False
 
-    def test_flag_on_anonymous_unaffected(self):
+    def test_anonymous_unaffected(self):
         decoded = {"uid": "guest", "firebase": {"sign_in_provider": "anonymous"}}
-        result = self._run(decoded, enforce=True)
+        result = self._run(decoded)
         assert result.state.id == "guest"
         assert result.state.is_guest is True
-
-    def test_flag_off_unverified_password_allowed(self):
-        decoded = {
-            "uid": "u",
-            "email_verified": False,
-            "firebase": {"sign_in_provider": "password"},
-        }
-        result = self._run(decoded, enforce=False)
-        assert result.state.id == "u"
-        assert result.state.is_guest is False
 
 
 class TestAuthenticateUser:

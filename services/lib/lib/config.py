@@ -21,12 +21,6 @@ GCP_REGION = os.getenv("GCP_REGION", "us-west1")
 DEPLOYMENT_ENV = os.getenv("DEPLOYMENT_ENV", "local")
 INFRA_ENV = os.getenv("INFRA_ENV", "dev")
 
-# Reject unverified password-provider bearer tokens with 403 (#570). Default off:
-# enabling is a per-environment step gated on the unverified-user count.
-ENFORCE_EMAIL_VERIFICATION = (
-    os.getenv("ENFORCE_EMAIL_VERIFICATION", "false").lower() == "true"
-)
-
 # Bucket names
 GRIDS_BUCKET = os.getenv("GRIDS_BUCKET", "placeholder-bucket-name")
 EXPORTS_BUCKET = os.getenv("EXPORTS_BUCKET", "placeholder-bucket-name")

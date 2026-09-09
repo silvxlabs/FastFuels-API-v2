@@ -15,42 +15,14 @@ from fastapi import HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.api_key import APIKeyHeader
 from firebase_admin.auth import verify_id_token
-from pydantic import BaseModel, Field
 from ring import lru
 
 from api.db.documents import firestore_client
 from api.resources.keys.schema import Access, Key
-from lib.config import ENFORCE_EMAIL_VERIFICATION, KEYS_COLLECTION
+from lib.config import KEYS_COLLECTION
 
 API_KEY_HEADER = APIKeyHeader(name="api-key", auto_error=False)
 AUTH_BEARER = HTTPBearer(auto_error=False)
-
-
-class EmailNotVerifiedDetail(BaseModel):
-    """Structured ``detail`` for a 403 unverified-email rejection (#570).
-
-    The webapp branches on ``reason`` to show its verify-email screen, so the
-    code is a fixed contract — do not rename without updating FastFuels-Web#312.
-    """
-
-    reason: str = Field(
-        "EMAIL_NOT_VERIFIED", description="Machine-readable error code."
-    )
-    message: str = Field(..., description="Human-readable explanation and next steps.")
-
-
-# Documented once on the global auth dependency in api/app.py, so it lands on
-# every route at once.
-EMAIL_NOT_VERIFIED_403_RESPONSE: dict = {
-    status.HTTP_403_FORBIDDEN: {
-        "model": EmailNotVerifiedDetail,
-        "description": (
-            "The password-provider account's email address is not verified. "
-            "Only raised when email-verification enforcement is enabled; the "
-            "`detail.reason` is `EMAIL_NOT_VERIFIED`."
-        ),
-    }
-}
 
 
 def hash_api_key(raw_secret: str) -> str:
@@ -126,16 +98,13 @@ def _token_auth(request: Request, token: str | None) -> Request:
         )
 
     provider = decoded.get("firebase", {}).get("sign_in_provider")
-    if (
-        ENFORCE_EMAIL_VERIFICATION
-        and provider == "password"
-        and not decoded.get("email_verified", False)
-    ):
+    if provider == "password" and not decoded.get("email_verified", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=EmailNotVerifiedDetail(
-                message="Verify your email address to continue."
-            ).model_dump(),
+            detail={
+                "reason": "EMAIL_NOT_VERIFIED",
+                "message": "Verify your email address to continue.",
+            },
         )
 
     request.state.id = decoded["uid"]

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
-from api.auth import authenticate_user
+from api.auth import EMAIL_NOT_VERIFIED_403_RESPONSE, authenticate_user
 from api.resources.applications.router import router as applications_router
 from api.resources.domains.router import router as domain_router
 from api.resources.exports.router import router as exports_router
@@ -268,7 +268,11 @@ api_router.include_router(
 )
 
 # Include router with authentication middleware
-app.include_router(api_router, dependencies=[Depends(authenticate_user)])
+app.include_router(
+    api_router,
+    dependencies=[Depends(authenticate_user)],
+    responses=EMAIL_NOT_VERIFIED_403_RESPONSE,
+)
 
 
 # Simplify operation IDs

@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from ring import lru
 
+from api.access import get_readable_document_async
 from api.db.documents import get_document_async
 from lib.config import DOMAINS_COLLECTION
 
@@ -26,6 +27,10 @@ async def get_verified_domain(request: Request, domain_id: str) -> dict:
     Resolves domain_id from the URL path, verifies the domain exists and
     is owned by the authenticated user, and returns the domain data dict.
     Results are cached with a 5-minute TTL.
+
+    Owner-strict: use this for any endpoint that writes to the domain or its
+    children. Read-only endpoints that should also serve the shared example
+    domain use :data:`ReadableDomain` instead.
     """
     return await _get_domain(domain_id, request.state.id)
 
@@ -35,4 +40,24 @@ async def invalidate_domain_cache(domain_id: str, owner_id: str):
     await _get_domain.delete(domain_id, owner_id)
 
 
+@lru(force_asyncio=True, expire=300)
+async def _get_readable_domain(domain_id: str, viewer_id: str) -> dict:
+    """Cached read-scoped domain lookup (owner OR flagged example)."""
+    _, snapshot = await get_readable_document_async(
+        DOMAINS_COLLECTION, domain_id, viewer_id
+    )
+    return snapshot.to_dict()
+
+
+async def get_readable_domain(request: Request, domain_id: str) -> dict:
+    """FastAPI dependency that resolves a domain the caller may READ.
+
+    Like :func:`get_verified_domain`, but also admits the shared example domain
+    (owned by the example owner and flagged ``is_example``) so guests can view
+    it without owning it. Read-only; never gate a write on this.
+    """
+    return await _get_readable_domain(domain_id, request.state.id)
+
+
 VerifiedDomain = Annotated[dict, Depends(get_verified_domain)]
+ReadableDomain = Annotated[dict, Depends(get_readable_domain)]

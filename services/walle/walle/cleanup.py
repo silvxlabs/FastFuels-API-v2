@@ -34,6 +34,7 @@ from firebase_admin import auth as firebase_auth
 from lib.config import (
     APPLICATIONS_COLLECTION,
     DOMAINS_COLLECTION,
+    EXAMPLE_OWNER_ID,
     USERS_COLLECTION,
 )
 from lib.firestore.documents import firestore_client
@@ -317,6 +318,18 @@ def _is_protected(doc_id: str) -> bool:
     return doc_id.startswith(_PROTECTED_ID_PREFIXES)
 
 
+def _is_example_owned(rec: Record) -> bool:
+    """Whether ``rec`` belongs to the shared example owner (#582).
+
+    The prebuilt example (domain + grid) is permanent and must survive every
+    doc-reap category — TTL above all, since the example owner has no owner doc
+    and would otherwise resolve to the standard 180-day retention. Guarded here
+    rather than by filtering records, because an example doc must stay in the
+    live-id set so its GCS artifact is never mistaken for an orphan blob.
+    """
+    return rec.owner_id == EXAMPLE_OWNER_ID
+
+
 def _is_test_record(rec: Record) -> bool:
     """Whether ``rec`` is an ephemeral integration-test artifact.
 
@@ -346,7 +359,7 @@ def find_orphan_docs(
     cutoff = now - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
     out = []
     for rec in records:
-        if _is_protected(rec.doc_id):
+        if _is_protected(rec.doc_id) or _is_example_owned(rec):
             continue
         if rec.domain_id is None or rec.domain_id in domain_ids:
             continue
@@ -378,7 +391,7 @@ def find_expired(
     """Docs older than their owner's resolved TTL."""
     out = []
     for rec in records:
-        if _is_protected(rec.doc_id):
+        if _is_protected(rec.doc_id) or _is_example_owned(rec):
             continue
         ttl_days = _effective_ttl_days(rec, owner_ttls)
         if ttl_days is None:
@@ -399,6 +412,7 @@ def find_guest_expired(
         rec
         for rec in records
         if not _is_protected(rec.doc_id)
+        and not _is_example_owned(rec)
         and rec.owner_id in anonymous
         and _older_than(rec.created_on, cutoff)
     ]
@@ -416,6 +430,7 @@ def find_stale_test(records: list[Record], now: datetime) -> list[Record]:
         rec
         for rec in records
         if not _is_protected(rec.doc_id)
+        and not _is_example_owned(rec)
         and _is_test_record(rec)
         and _older_than(rec.modified_on, cutoff)
     ]

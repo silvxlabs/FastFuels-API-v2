@@ -50,6 +50,14 @@ USERS_COLLECTION = os.getenv("USERS_COLLECTION", "users-v2")
 POINT_CLOUDS_COLLECTION = os.getenv("POINT_CLOUDS_COLLECTION", "pointclouds-v2")
 CREATE_BUDGETS_COLLECTION = os.getenv("CREATE_BUDGETS_COLLECTION", "create-budgets-v2")
 
+# Owner id of the canonical, prebuilt example resources (#582). These are seeded
+# once, are permanent (walle exempts this owner from every reap category), and
+# their read access is opened to any authenticated caller via the `is_example`
+# flag. This is NOT a real Firebase/API owner — nothing authenticates as it; it
+# is only a stable ownership tag for the shared example. Never use it for quota
+# resolution of real callers (see GUEST_OWNER_ID for that).
+EXAMPLE_OWNER_ID = os.getenv("EXAMPLE_OWNER_ID", "example")
+
 # Queue names
 GRIDDLE_QUEUE = os.getenv("GRIDDLE_QUEUE", "griddle-v2-queue")
 EXPORTER_QUEUE = os.getenv("EXPORTER_QUEUE", "exporter-v2-queue")

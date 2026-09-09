@@ -18,13 +18,14 @@ from fastapi import (
     status,
 )
 
+from api.access import get_readable_document_async
 from api.db.documents import (
     delete_document_async,
     get_document_async,
     list_documents_async,
     update_document_async,
 )
-from api.dependencies import VerifiedDomain
+from api.dependencies import ReadableDomain, VerifiedDomain
 from api.resources.grids.cache import get_grid_array
 from api.resources.grids.canopy.router import router as canopy_router
 from api.resources.grids.compose.router import router as compose_router
@@ -349,7 +350,7 @@ async def list_grids(
 )
 async def get_grid(
     request: Request,
-    domain: VerifiedDomain,
+    domain: ReadableDomain,
     grid_id: str,
 ):
     """
@@ -369,9 +370,16 @@ async def get_grid(
     ## Error Responses
 
     - **404 Not Found**: The grid does not exist or the user does not have access.
+
+    ## Shared Example
+
+    The example domain's grid(s) (owned by the example owner and flagged
+    ``is_example``, discoverable via ``GET /examples``) are readable by any
+    authenticated caller, guests included. Every other grid stays private to
+    its owner.
     """
-    _, snapshot = await get_document_async(
-        COLLECTION, grid_id, owner_id=request.state.id, domain_id=domain["id"]
+    _, snapshot = await get_readable_document_async(
+        COLLECTION, grid_id, viewer_id=request.state.id, domain_id=domain["id"]
     )
     return Grid(**snapshot.to_dict())
 
@@ -493,7 +501,7 @@ async def delete_grid(
 )
 async def get_chunk_metadata(
     request: Request,
-    domain: VerifiedDomain,
+    domain: ReadableDomain,
     grid_id: str,
     chunk_index: int,
 ):
@@ -529,10 +537,10 @@ async def get_chunk_metadata(
       does not have access.
     - **422 Unprocessable Entity**: The chunk index is out of range.
     """
-    _, snapshot = await get_document_async(
+    _, snapshot = await get_readable_document_async(
         COLLECTION,
         grid_id,
-        owner_id=request.state.id,
+        viewer_id=request.state.id,
         domain_id=domain["id"],
         document_status="completed",
     )
@@ -569,15 +577,15 @@ def _chunk_metadata_headers(meta: GridDataChunkMetadata) -> dict[str, str]:
 
 async def _read_grid_chunk(
     request: Request,
-    domain: VerifiedDomain,
+    domain: ReadableDomain,
     grid_id: str,
     band: str,
     chunk_index: int,
 ):
-    _, snapshot = await get_document_async(
+    _, snapshot = await get_readable_document_async(
         COLLECTION,
         grid_id,
-        owner_id=request.state.id,
+        viewer_id=request.state.id,
         domain_id=domain["id"],
         document_status="completed",
     )
@@ -614,7 +622,7 @@ async def _read_grid_chunk(
 )
 async def get_grid_data_json(
     request: Request,
-    domain: VerifiedDomain,
+    domain: ReadableDomain,
     grid_id: str,
     chunk_index: int,
     band: str,
@@ -753,7 +761,7 @@ class BinaryResponse(Response):
 )
 async def get_grid_data_binary(
     request: Request,
-    domain: VerifiedDomain,
+    domain: ReadableDomain,
     grid_id: str,
     chunk_index: int,
     band: str,

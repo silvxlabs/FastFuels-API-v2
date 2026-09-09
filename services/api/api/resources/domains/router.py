@@ -17,6 +17,7 @@ from fastapi import (
 )
 from google.cloud.firestore import FieldFilter
 
+from api.access import get_readable_document_async
 from api.db.documents import (
     delete_document_async,
     firestore_client,
@@ -560,14 +561,19 @@ async def get_domain(
     - **404 Not Found**: The domain does not exist or the user does not have access.
       - Returns 404 for both missing documents and ownership mismatches to avoid
         leaking information about document existence.
-    """
-    owner_id = request.state.id
 
-    # Fetch the domain document from Firestore with ownership validation
-    _, document_snapshot = await get_document_async(
+    ## Shared Example
+
+    The one canonical example domain (owned by the example owner and flagged
+    ``is_example``, discoverable via ``GET /examples``) is readable by any
+    authenticated caller, guests included, without owning it. Every other
+    domain remains private to its owner.
+    """
+    # Read-scoped: the caller's own domains plus the shared example domain.
+    _, document_snapshot = await get_readable_document_async(
         collection=DOMAINS_COLLECTION,
         document_id=domain_id,
-        owner_id=owner_id,
+        viewer_id=request.state.id,
     )
 
     # Convert Firestore document to Domain model

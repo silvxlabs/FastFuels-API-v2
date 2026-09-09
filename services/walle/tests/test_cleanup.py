@@ -12,11 +12,15 @@ from walle import cleanup, layouts
 from walle.cleanup import (
     Record,
     find_expired,
+    find_guest_expired,
     find_orphan_blobs,
     find_orphan_docs,
+    find_stale_test,
 )
 from walle.config import TEST_TTL_DAYS, TTL_FLOOR_DAYS
 from walle.layouts import RESOURCE_LAYOUTS
+
+from lib.config import EXAMPLE_OWNER_ID
 
 NOW = datetime(2026, 7, 6, tzinfo=UTC)
 STD = {"o1": (180, 14)}  # standard TTLs for rec()'s default owner "o1"
@@ -106,6 +110,42 @@ def test_ttl_clamped_to_floor():
     assert cleanup._effective_ttl_days(rec(), ttls) == TTL_FLOOR_DAYS
     just_inside = rec(modified_on=NOW - timedelta(days=TTL_FLOOR_DAYS - 1))
     assert find_expired([just_inside], NOW, ttls) == []
+
+
+# --- shared example owner (#582): permanent, exempt from every doc reap ----
+
+
+def test_example_owner_never_ttl_expires():
+    # The example owner has no owner doc, so it resolves to the standard 180-day
+    # TTL and an ancient example grid would be reaped without the exemption.
+    ancient = rec(owner_id=EXAMPLE_OWNER_ID, modified_on=NOW - timedelta(days=9999))
+    assert find_expired([ancient], NOW, {}) == []
+
+
+def test_example_owner_never_orphan_reaped():
+    # Even if the domain-id set momentarily misses the example domain, an
+    # example-owned grid is never treated as an orphaned child.
+    r = rec(
+        owner_id=EXAMPLE_OWNER_ID, domain_id="gone", modified_on=NOW - timedelta(days=5)
+    )
+    assert find_orphan_docs([r], {"d1"}, NOW) == []
+
+
+def test_example_owner_never_guest_reaped():
+    # An example resource must never be swept by the guest window even if the
+    # example owner were (wrongly) reported anonymous by the Auth probe.
+    old = rec(owner_id=EXAMPLE_OWNER_ID, created_on=NOW - timedelta(days=30))
+    assert find_guest_expired([old], NOW, {EXAMPLE_OWNER_ID}) == []
+
+
+def test_example_owner_never_test_reaped():
+    # A test-prefixed doc owned by the example owner is still spared.
+    old = rec(
+        doc_id="test-example",
+        owner_id=EXAMPLE_OWNER_ID,
+        modified_on=NOW - timedelta(days=TEST_TTL_DAYS + 1),
+    )
+    assert find_stale_test([old], NOW) == []
 
 
 # --- stale test resources -------------------------------------------------

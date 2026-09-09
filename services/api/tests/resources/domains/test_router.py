@@ -21,12 +21,12 @@ from api.resources.domains.examples import (
     EXAMPLE_PADDED,
     EXAMPLE_WGS84_DEFAULT,
 )
-from api.resources.domains.router import create_domain
+from api.resources.domains.router import create_domain, get_domain
 from api.resources.domains.schema import CreateDomainRequestBody
 from fastapi import HTTPException
 from google.cloud import firestore
 
-from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
+from lib.config import DOMAINS_COLLECTION, EXAMPLE_OWNER_ID, GRIDS_COLLECTION
 from tests.fixtures import make_domain_data, make_grid_data
 
 # Path to v2 test data directory
@@ -112,6 +112,54 @@ class TestGuestAreaCap:
             await create_domain(request, self._body(3000))  # 9 sq km
         assert exc.value.status_code == 422
         assert "4 square kilometers" in exc.value.detail
+
+
+class TestGetDomainExampleAccess:
+    """GET /domains/{id} serves the shared example to guests but no one else's
+    private domain (#582). Direct-handler calls with the read path mocked."""
+
+    @staticmethod
+    def _request(viewer_id: str, is_guest: bool = True):
+        request = MagicMock()
+        request.state = SimpleNamespace(
+            id=viewer_id, access="personal", is_guest=is_guest
+        )
+        return request
+
+    @pytest.mark.anyio
+    async def test_guest_reads_flagged_example_domain(self):
+        example_doc = {
+            "type": "FeatureCollection",
+            "id": "ex-domain",
+            "owner_id": EXAMPLE_OWNER_ID,
+            "is_example": True,
+            "features": [],
+            "crs": {"type": "name", "properties": {"name": "EPSG:32611"}},
+        }
+        snap = MagicMock()
+        snap.to_dict.return_value = example_doc
+        with patch(
+            "api.resources.domains.router.get_readable_document_async",
+            AsyncMock(return_value=(MagicMock(), snap)),
+        ) as mock_read:
+            domain = await get_domain(self._request("guest-uid"), "ex-domain")
+
+        assert domain.id == "ex-domain"
+        # Wired to the read-scoped path with the guest's own id as viewer.
+        _, kwargs = mock_read.call_args
+        assert kwargs["viewer_id"] == "guest-uid"
+
+    @pytest.mark.anyio
+    async def test_guest_denied_other_owner_domain_404(self):
+        # The read path raises 404 for a non-owned, non-example domain; the
+        # endpoint must propagate it unchanged.
+        with patch(
+            "api.resources.domains.router.get_readable_document_async",
+            AsyncMock(side_effect=HTTPException(status_code=404)),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await get_domain(self._request("guest-uid"), "someone-elses")
+        assert exc.value.status_code == 404
 
 
 class TestCreateDomainExamples:

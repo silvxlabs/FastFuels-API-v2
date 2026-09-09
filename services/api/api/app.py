@@ -5,6 +5,7 @@ from fastapi.routing import APIRoute
 from api.auth import authenticate_user
 from api.resources.applications.router import router as applications_router
 from api.resources.domains.router import router as domain_router
+from api.resources.examples.router import router as examples_router
 from api.resources.exports.router import router as exports_router
 from api.resources.features.router import router as features_router
 from api.resources.features.router import wildcard_router as features_wildcard_router
@@ -110,6 +111,11 @@ OPENAPI_TAGS = [
     {
         "name": "Users",
         "description": "The authenticated owner's identity, tier, quotas, and current usage.",
+    },
+    {
+        "name": "Examples",
+        "description": "Discover the shared, prebuilt example domain and grid "
+        "any authenticated caller can read.",
     },
 ]
 
@@ -258,6 +264,7 @@ api_router.include_router(
     applications_router, prefix="/applications", tags=["Applications"]
 )
 api_router.include_router(users_router, prefix="/users", tags=["Users"])
+api_router.include_router(examples_router, prefix="/examples", tags=["Examples"])
 
 # Features
 api_router.include_router(

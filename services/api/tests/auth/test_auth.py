@@ -21,6 +21,7 @@ from api.auth import (
     resolve_api_key,
 )
 from api.resources.keys.schema import Access, Key, Scope
+from fastapi import HTTPException
 from ring import lru
 
 
@@ -162,7 +163,11 @@ class TestTokenAuth:
 
         request = MagicMock()
         request.state = MagicMock()
-        decoded = {"uid": "u", "firebase": {"sign_in_provider": "password"}}
+        decoded = {
+            "uid": "u",
+            "email_verified": True,
+            "firebase": {"sign_in_provider": "password"},
+        }
         with patch("api.auth.verify_id_token", return_value=decoded):
             result = _token_auth(request, "pw-token")
             assert result.state.is_guest is False
@@ -175,6 +180,59 @@ class TestTokenAuth:
         with patch("api.auth.verify_id_token", return_value={"uid": "u"}):
             result = _token_auth(request, "token")
             assert result.state.is_guest is False
+
+
+class TestEmailVerificationEnforcement:
+    def _run(self, decoded: dict):
+        from api.auth import _token_auth
+
+        request = MagicMock()
+        request.state = MagicMock()
+        with patch("api.auth.verify_id_token", return_value=decoded):
+            return _token_auth(request, "token")
+
+    def test_unverified_password_rejected(self):
+        decoded = {
+            "uid": "u",
+            "email_verified": False,
+            "firebase": {"sign_in_provider": "password"},
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            self._run(decoded)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["reason"] == "EMAIL_NOT_VERIFIED"
+
+    def test_missing_email_verified_rejected(self):
+        decoded = {"uid": "u", "firebase": {"sign_in_provider": "password"}}
+        with pytest.raises(HTTPException) as exc_info:
+            self._run(decoded)
+        assert exc_info.value.status_code == 403
+
+    def test_verified_password_allowed(self):
+        decoded = {
+            "uid": "u",
+            "email_verified": True,
+            "firebase": {"sign_in_provider": "password"},
+        }
+        result = self._run(decoded)
+        assert result.state.id == "u"
+        assert result.state.is_guest is False
+
+    def test_google_unaffected(self):
+        decoded = {
+            "uid": "g",
+            "email_verified": False,
+            "firebase": {"sign_in_provider": "google.com"},
+        }
+        result = self._run(decoded)
+        assert result.state.id == "g"
+        assert result.state.is_guest is False
+
+    def test_anonymous_unaffected(self):
+        decoded = {"uid": "guest", "firebase": {"sign_in_provider": "anonymous"}}
+        result = self._run(decoded)
+        assert result.state.id == "guest"
+        assert result.state.is_guest is True
 
 
 class TestAuthenticateUser:

@@ -42,12 +42,20 @@ naturally — no special-casing.
   verification link **and the client force-refreshes the ID token**. That token
   refresh is #312's responsibility — note it there.
 
-## Rollout gate (before enabling)
+## Rollout: grandfather existing users, gate new ones
 
-Count existing password-provider users with `email_verified == false` via Firebase
-Admin `list_users`. Post the number on #570. That count decides whether enabling
-needs a grace window or a one-time verification-email campaign. The code ships
-with the flag off regardless; enabling is a separate, later, per-environment step.
+Enforcement applies to **new accounts only**. Existing password users are trusted
+and grandfathered rather than forced to re-verify. There is no account-creation
+timestamp in a Firebase ID token, so "old vs new" is not decidable at auth time —
+instead a one-time **backfill** marks every existing unverified password user
+`email_verified: true` in Firebase Auth. After it runs, only new signups start
+`false`, so the unchanged token check gates them alone. No grace window, no
+verification-email campaign.
+
+Order: run `scripts/grandfather_password_users.py` (dry run), review the count,
+re-run with `--apply`, **then** enable `ENFORCE_EMAIL_VERIFICATION`. The code ships
+with the flag off regardless; the backfill and enabling are separate, credentialed,
+per-environment steps. Google and anonymous users are never touched by the backfill.
 
 ## Acceptance
 
@@ -60,4 +68,4 @@ with the flag off regardless; enabling is a separate, later, per-environment ste
 ## Out of scope
 
 - Sending verification emails and the verify-your-email screen (FastFuels-Web #312).
-- Actually enabling the flag in any environment (gated on the count).
+- Running the backfill and enabling the flag in any environment (credentialed, run-once steps).

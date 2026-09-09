@@ -69,20 +69,23 @@ the flag):
 
 **Acceptance:** `uv run pytest tests/auth/test_auth.py` green; ruff clean.
 
-### [ ] 5. Counting script (deliverable; run by a credentialed operator)
-`scripts/count_unverified_password_users.py`: paginate `firebase_admin.auth.list_users()`,
-count users whose provider set includes `password` and whose `email_verified` is
-false; print the total (and the grand total of password users for context). Header
-comment: needs Firebase Admin credentials; output goes on issue #570 before the flag
-is enabled. Not wired into CI or the app.
+### [ ] 5. Grandfather backfill script (deliverable; run by a credentialed operator)
+`scripts/grandfather_password_users.py`: paginate `firebase_admin.auth.list_users()`,
+select users whose provider set includes `password` and whose `email_verified` is
+false. Dry run by default (prints the count); `--apply` calls
+`auth.update_user(uid, email_verified=True)` on each. This grandfathers existing
+password accounts so enforcement applies to new signups only. Header comment: needs
+Firebase Admin credentials; run once (dry run → review → `--apply`) **before**
+enabling the flag. Google/anonymous users untouched. Not wired into CI or the app.
 
-**Acceptance:** script imports and is runnable (`python scripts/... --help` or a dry
-structure check); it is not imported by app code.
+**Acceptance:** script imports and parses; dry run is the default and `--apply` is
+required to write; it is not imported by app code.
 
 ## Close-out
 
 `/cross-check` the whole diff against the `main` merge-base, fix findings, then delete
 this spec and plan in the final commit. Mark the PR ready with `Closes #570`. The
-PR description must note: flag defaults off, enabling is gated on the unverified-user
-count, and the `EMAIL_NOT_VERIFIED` contract pairs with FastFuels-Web#312. **Never
-merge** — the human reviews and merges.
+PR description must note: flag defaults off, existing users are grandfathered by a
+one-time backfill (`scripts/grandfather_password_users.py`) run before enabling, and
+the `EMAIL_NOT_VERIFIED` contract pairs with FastFuels-Web#312. **Never merge** — the
+human reviews and merges.

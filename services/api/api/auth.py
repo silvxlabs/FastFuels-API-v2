@@ -97,11 +97,19 @@ def _token_auth(request: Request, token: str | None) -> Request:
             detail="Invalid token",
         )
 
+    provider = decoded.get("firebase", {}).get("sign_in_provider")
+    if provider == "password" and not decoded.get("email_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "reason": "EMAIL_NOT_VERIFIED",
+                "message": "Verify your email address to continue.",
+            },
+        )
+
     request.state.id = decoded["uid"]
     request.state.access = Access.PERSONAL
-    request.state.is_guest = (
-        decoded.get("firebase", {}).get("sign_in_provider") == "anonymous"
-    )
+    request.state.is_guest = provider == "anonymous"
     return request
 
 

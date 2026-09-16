@@ -29,7 +29,6 @@ from api.resources.features.schema import (
     FeaturePartitionInfo,
 )
 from lib.config import FEATURES_BUCKET
-from lib.gcs import get_gcsfs_client
 
 MAX_RESPONSE_BYTES = 30 * 1024 * 1024
 GEOJSON_MEDIA_TYPE = "application/geo+json"
@@ -71,7 +70,7 @@ class PartitionTooLarge(Exception):
 
 
 def _blob_path(domain_id: str, feature_id: str) -> str:
-    return f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+    return f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
 
 
 @functools.lru_cache(maxsize=_PARQUET_FILE_CACHE_SIZE)
@@ -85,17 +84,23 @@ def _open_parquet_file(domain_id: str, feature_id: str) -> pq.ParquetFile:
     error) re-try on the next call.
 
     Only ``FileNotFoundError`` (missing blob) and ``pyarrow.lib.ArrowInvalid``
-    (corrupt Parquet) are mapped to typed exceptions; transient gcsfs / auth /
+    (corrupt Parquet) are mapped to typed exceptions; transient GCS / auth /
     network failures propagate untouched so they surface as 500s rather than a
     misleading "malformed blob" 422.
+
+    The ``gs://`` source is resolved by pyarrow's native (Arrow C++) GCS
+    filesystem — never a synchronous ``gcsfs``/``fsspec`` filesystem. A sync
+    ``fsspec`` client spins up its own daemon-thread event loop, which trips
+    grpcio's ``PollerCompletionQueue`` race and floods the logs with
+    ``BlockingIOError`` on every subsequent Firestore RPC (#265). Mirrors
+    ``inventories/cache.py``.
 
     Raises:
         FileNotFoundError: blob is missing on GCS.
         InvalidFeatureParquet: blob exists but is not parseable as GeoParquet.
     """
-    fs = get_gcsfs_client()
     try:
-        return pq.ParquetFile(_blob_path(domain_id, feature_id), filesystem=fs)
+        return pq.ParquetFile(_blob_path(domain_id, feature_id))
     except pa.lib.ArrowInvalid as exc:
         raise InvalidFeatureParquet(str(exc)) from exc
 

@@ -54,11 +54,34 @@ class TestValidateUnit:
 
     @pytest.mark.parametrize(
         "garbage",
-        ["not_a_unit", "kg/widget", "asdf"],
+        ["not_a_unit", "kg/widget", "asdf", "(", "kg/", "@#$", "kg**"],
     )
     def test_unrecognized_unit_rejected(self, garbage: str) -> None:
+        """Every malformed string raises ValueError (not TokenError /
+        AssertionError from pint's parser), so callers surface a 422. See #579."""
         with pytest.raises(ValueError):
             validate_unit(garbage)
+
+    @pytest.mark.parametrize(
+        "dimensionless",
+        ["1", "100", "kg/kg", "m/m", ""],
+    )
+    def test_dimensionless_canonicalizes_to_empty(self, dimensionless: str) -> None:
+        """A dimensionless input (bare number, a ratio like kg/kg, or "") is a
+        valid unit that pint canonicalizes to the empty string — not an
+        AttributeError (HTTP 500) or a rejection. See #579."""
+        assert canonicalize_unit(dimensionless) == ""
+
+    def test_canonical_dimensionless_passes_validate(self) -> None:
+        """The canonical dimensionless form ("") and an absent unit (None)
+        pass validate_unit; non-canonical spellings like "1" or "kg/kg" fail
+        the ordinary "not canonical; expected ''" rule."""
+        assert validate_unit("") is None
+        assert validate_unit(None) is None
+        with pytest.raises(ValueError):
+            validate_unit("1")
+        with pytest.raises(ValueError):
+            validate_unit("kg/kg")
 
 
 class TestCanonicalizeUnit:

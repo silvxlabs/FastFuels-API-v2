@@ -32,6 +32,34 @@ class TestUploadBandDefinition:
         with pytest.raises(ValidationError):
             UploadBandDefinition(key="x", type="nominal")
 
+    @pytest.mark.parametrize("unit", ["1", "100", "2*3"])
+    def test_non_canonical_dimensionless_unit_raises(self, unit):
+        """A bare-number / dimensionless spelling canonicalizes to "", so it is
+        not its own canonical form and is rejected with a ValidationError (HTTP
+        422) — not an AttributeError (HTTP 500). See #579. This is the ordinary
+        "not canonical" rule, not a special dimensionless policy; unitless bands
+        should omit the unit (or send the canonical "")."""
+        with pytest.raises(ValidationError):
+            UploadBandDefinition(
+                key="irradiance.surface.relative", type="continuous", unit=unit
+            )
+
+    @pytest.mark.parametrize("unit", [None, ""])
+    def test_absent_or_canonical_dimensionless_unit_accepted(self, unit):
+        """An absent unit (None) and the canonical dimensionless form ("") both
+        pass validation, since "" is the canonical spelling pint emits for a
+        dimensionless quantity. See #579."""
+        band = UploadBandDefinition(
+            key="irradiance.surface.relative", type="continuous", unit=unit
+        )
+        assert band.unit == unit
+
+    def test_non_canonical_unit_raises(self):
+        with pytest.raises(ValidationError):
+            UploadBandDefinition(
+                key="bulk_density.foliage", type="continuous", unit="kg/m^3"
+            )
+
 
 class TestCreateGeoTIFFUploadRequest:
     def test_minimal_request(self):

@@ -32,6 +32,8 @@ import xarray as xr
 from leaflux import Environment, LeafArea, SolarPosition, Terrain, attenuate_all
 
 from treevox import storage
+from treevox.errors import ProcessingError
+from treevox.firestore_io import load_grid
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,31 @@ def _open(grid_id: str) -> xr.Dataset:
     return xr.open_zarr(
         storage.gcs_path(grid_id), consolidated=True, decode_coords="all"
     )
+
+
+_LATTICE_FIELDS = ("crs", "transform", "z_resolution", "z_origin")
+
+
+def _lattice(grid_id: str) -> dict:
+    """The LAD grid's lattice, read from its resource `georeference`, not zarr
+    attrs. The API validates these at request time and every writer populates
+    them; grids from the netCDF upload path carry no zarr lattice attrs, so
+    trusting attrs crashed on them (issue #580)."""
+    georeference = load_grid(grid_id).get("georeference") or {}
+    missing = [k for k in _LATTICE_FIELDS if k not in georeference]
+    if missing:
+        raise ProcessingError(
+            code="MISSING_GEOREFERENCE",
+            message=(
+                f"Source LAD grid {grid_id} is missing georeference lattice "
+                f"fields: {', '.join(missing)}."
+            ),
+            suggestion=(
+                "The source must be a 3D grid carrying crs, transform, "
+                "z_resolution, and z_origin in its georeference."
+            ),
+        )
+    return georeference
 
 
 def _domain_centroid_lat_lon(domain_gdf) -> tuple[float, float]:
@@ -343,7 +370,15 @@ def _write_tiles(
 
 
 def _init_output(
-    out_path: str, lad_ds: xr.Dataset, bands: list[str], core: int, is_3d: bool
+    out_path: str,
+    lad_ds: xr.Dataset,
+    bands: list[str],
+    core: int,
+    is_3d: bool,
+    crs: str,
+    transform: list,
+    z_origin: float,
+    vr: float,
 ) -> None:
     """Write the output-zarr skeleton: metadata, coords, CRS and per-band attrs,
     but no data (compute=False). Chunked at the tile size so each per-tile region
@@ -372,13 +407,13 @@ def _init_output(
         }
         coords = {"y": lad_ds.y, "x": lad_ds.x}
 
-    skeleton = xr.Dataset(data_vars, coords=coords).rio.write_crs(str(lad_ds.rio.crs))
+    skeleton = xr.Dataset(data_vars, coords=coords).rio.write_crs(str(crs))
     for b in bands:
         skeleton[b].attrs["grid_mapping"] = "spatial_ref"
-    skeleton.attrs["transform"] = list(lad_ds.attrs["transform"])
+    skeleton.attrs["transform"] = list(transform)
     if is_3d:
-        skeleton.attrs["z_origin"] = float(lad_ds.attrs["z_origin"])
-        skeleton.attrs["z_resolution"] = float(lad_ds.attrs["z_resolution"])
+        skeleton.attrs["z_origin"] = float(z_origin)
+        skeleton.attrs["z_resolution"] = float(vr)
     skeleton.to_zarr(
         out_path,
         mode="w",
@@ -399,10 +434,13 @@ def run_leaflux(
 
     progress("Opening source grids...", 10)
     lad_ds = _open(source["source_lad_grid_id"])
+    lattice = _lattice(source["source_lad_grid_id"])
     nz, ny, nx = lad_ds.sizes["z"], lad_ds.sizes["y"], lad_ds.sizes["x"]
-    hr = float(lad_ds.attrs["transform"][0])
-    vr = float(lad_ds.attrs["z_resolution"])
-    z_origin = float(lad_ds.attrs["z_origin"])
+    crs = lattice["crs"]
+    transform = list(lattice["transform"])
+    hr = float(transform[0])
+    vr = float(lattice["z_resolution"])
+    z_origin = float(lattice["z_origin"])
 
     sol, night = _sun(source, domain_gdf)
     halo = 0 if night else math.ceil((nz * vr * math.tan(sol.zenith)) / hr)
@@ -415,7 +453,7 @@ def run_leaflux(
     is_3d = CANOPY_BAND in requested
 
     progress("Writing irradiance grid...", 20)
-    _init_output(out_path, lad_ds, bands, core, is_3d)
+    _init_output(out_path, lad_ds, bands, core, is_3d, crs, transform, z_origin, vr)
 
     job = _WriteJob(
         lad_grid_id=source["source_lad_grid_id"],
@@ -444,8 +482,8 @@ def run_leaflux(
     progress("Finalizing...", 98)
     if is_3d:
         georeference = {
-            "crs": str(lad_ds.rio.crs),
-            "transform": list(lad_ds.attrs["transform"]),
+            "crs": str(crs),
+            "transform": list(transform),
             "shape": [nz, ny, nx],
             "z_resolution": vr,
             "z_origin": z_origin,
@@ -453,8 +491,8 @@ def run_leaflux(
         chunk_shape = [nz, core, core]
     else:
         georeference = {
-            "crs": str(lad_ds.rio.crs),
-            "transform": list(lad_ds.attrs["transform"]),
+            "crs": str(crs),
+            "transform": list(transform),
             "shape": [ny, nx],
         }
         chunk_shape = [core, core]

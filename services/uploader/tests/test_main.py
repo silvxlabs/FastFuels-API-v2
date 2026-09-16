@@ -13,7 +13,6 @@ from cloudevents.http import CloudEvent
 from uploader.main import process_upload, update_resource
 
 from lib.errors import CancelledException, ProcessingError
-from lib.firestore import DocumentNotFoundError
 from tests.integration.staging import staged_object_name
 
 
@@ -32,7 +31,7 @@ def _make_doc(status: str = "pending") -> dict:
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_processing_error_writes_failed_status(mock_get, mock_update, mock_dispatch):
     """ProcessingError from handler → status=failed + error dict in Firestore."""
@@ -52,7 +51,7 @@ def test_processing_error_writes_failed_status(mock_get, mock_update, mock_dispa
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_already_completed_skips_dispatch(mock_get, mock_update, mock_dispatch):
     """Resource already completed → dispatch never called."""
@@ -66,7 +65,7 @@ def test_already_completed_skips_dispatch(mock_get, mock_update, mock_dispatch):
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_already_failed_skips_dispatch(mock_get, mock_update, mock_dispatch):
     """Resource already failed → dispatch never called."""
@@ -80,7 +79,7 @@ def test_already_failed_skips_dispatch(mock_get, mock_update, mock_dispatch):
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_malformed_path_returns_early(mock_get, mock_update, mock_dispatch):
     """Object path with wrong number of segments → no Firestore access."""
@@ -92,7 +91,7 @@ def test_malformed_path_returns_early(mock_get, mock_update, mock_dispatch):
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_unknown_resource_type_returns_early(mock_get, mock_update, mock_dispatch):
     """Object path with unrecognised resource type → no Firestore access."""
@@ -104,7 +103,7 @@ def test_unknown_resource_type_returns_early(mock_get, mock_update, mock_dispatc
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_staged_test_upload_is_ignored(mock_get, mock_update, mock_dispatch):
     """A name from the integration suite's staging helper is inert here (#349).
@@ -124,7 +123,7 @@ def test_staged_test_upload_is_ignored(mock_get, mock_update, mock_dispatch):
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_unexpected_exception_reraises(mock_get, mock_update, mock_dispatch):
     """Unexpected (non-ProcessingError) exception propagates for Eventarc retry."""
@@ -137,7 +136,7 @@ def test_unexpected_exception_reraises(mock_get, mock_update, mock_dispatch):
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_cancelled_during_processing_is_swallowed(mock_get, mock_update, mock_dispatch):
     """A mid-run delete (own-doc write-back → CancelledException) ends the job
@@ -157,7 +156,7 @@ def test_cancelled_during_processing_is_swallowed(mock_get, mock_update, mock_di
 
 
 @patch("uploader.dispatch.dispatch_handler")
-@patch("uploader.main.update_document")
+@patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.get_document")
 def test_missing_input_writes_source_not_found_without_retry(
     mock_get, mock_update, mock_dispatch
@@ -179,15 +178,15 @@ def test_missing_input_writes_source_not_found_without_retry(
 class TestUpdateResource:
     """The guarded own-doc write-back helper (#593)."""
 
-    @patch("uploader.main.update_document")
+    @patch("uploader.main.update_document_or_cancel")
     def test_success_writes_through(self, mock_update):
         update_resource("inventories", "inv-1", {"status": "completed"})
         mock_update.assert_called_once_with(
             "inventories", "inv-1", {"status": "completed"}
         )
 
-    @patch("uploader.main.update_document")
+    @patch("uploader.main.update_document_or_cancel")
     def test_deleted_doc_raises_cancelled(self, mock_update):
-        mock_update.side_effect = DocumentNotFoundError("inventories", "inv-1")
+        mock_update.side_effect = CancelledException("Resource inv-1 was cancelled")
         with pytest.raises(CancelledException):
             update_resource("inventories", "inv-1", {"status": "completed"})

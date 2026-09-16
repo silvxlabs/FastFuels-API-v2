@@ -18,7 +18,11 @@ from flask import Request
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.errors import CancelledException, ProcessingError
-from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.firestore import (
+    DocumentNotFoundError,
+    get_document,
+    update_document_or_cancel,
+)
 from standgen.dispatch import dispatch_handler
 from standgen.handlers.modifications import apply_in_place_modifications
 from standgen.handlers.treatments import apply_in_place_treatments
@@ -73,14 +77,11 @@ def update_progress(inventory_id, message, percent=None):
     progress = {"message": message}
     if percent is not None:
         progress["percent"] = percent
-    try:
-        update_document(
-            INVENTORIES_COLLECTION,
-            inventory_id,
-            {"progress": progress, "modified_on": datetime.now(UTC)},
-        )
-    except DocumentNotFoundError:
-        raise CancelledException(f"Inventory {inventory_id} was cancelled")
+    update_document_or_cancel(
+        INVENTORIES_COLLECTION,
+        inventory_id,
+        {"progress": progress, "modified_on": datetime.now(UTC)},
+    )
 
 
 def update_status(
@@ -126,10 +127,7 @@ def update_status(
         data["error"] = error
     if extra:
         data.update(extra)
-    try:
-        update_document(INVENTORIES_COLLECTION, inventory_id, data)
-    except DocumentNotFoundError:
-        raise CancelledException(f"Inventory {inventory_id} was cancelled")
+    update_document_or_cancel(INVENTORIES_COLLECTION, inventory_id, data)
 
 
 def make_progress_callback(inventory_id):

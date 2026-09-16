@@ -25,8 +25,12 @@ from griddle.handlers import (
     uniform,
 )
 from lib.config import GRIDS_COLLECTION, POINT_CLOUDS_COLLECTION
-from lib.errors import CancelledException, ProcessingError
-from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.errors import ProcessingError
+from lib.firestore import (
+    DocumentNotFoundError,
+    get_document,
+    update_document_or_cancel,
+)
 from lib.landfire import LANDFIRE_VERSIONS
 
 META_CHM_ATTRIBUTION = {
@@ -65,10 +69,7 @@ def update_grid_metadata(grid_id: str, data: dict) -> None:
     worker cleans up and returns 200, instead of escaping as an unhandled
     DocumentNotFoundError (→ HTTP 500 + Cloud Tasks retry) (#593).
     """
-    try:
-        update_document(GRIDS_COLLECTION, grid_id, data)
-    except DocumentNotFoundError:
-        raise CancelledException(f"Grid {grid_id} was cancelled")
+    update_document_or_cancel(GRIDS_COLLECTION, grid_id, data)
 
 
 def _load_target_grid_doc(alignment: dict | None) -> dict | None:

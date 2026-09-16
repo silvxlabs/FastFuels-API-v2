@@ -20,7 +20,11 @@ from lakitu.storage import delete_cloud
 from lib.config import DOMAINS_COLLECTION, POINT_CLOUDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.errors import CancelledException, ProcessingError
-from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.firestore import (
+    DocumentNotFoundError,
+    get_document,
+    update_document_or_cancel,
+)
 
 
 class StructuredLogHandler(logging.Handler):
@@ -96,14 +100,11 @@ def update_progress(
     if percent is not None:
         progress["percent"] = percent
 
-    try:
-        update_document(
-            POINT_CLOUDS_COLLECTION,
-            point_cloud_id,
-            {"progress": progress, "modified_on": datetime.now(UTC)},
-        )
-    except DocumentNotFoundError:
-        raise CancelledException(f"Point cloud {point_cloud_id} was cancelled")
+    update_document_or_cancel(
+        POINT_CLOUDS_COLLECTION,
+        point_cloud_id,
+        {"progress": progress, "modified_on": datetime.now(UTC)},
+    )
 
 
 def update_status(
@@ -155,10 +156,7 @@ def update_status(
     if error is not None:
         data["error"] = error
 
-    try:
-        update_document(POINT_CLOUDS_COLLECTION, point_cloud_id, data)
-    except DocumentNotFoundError:
-        raise CancelledException(f"Point cloud {point_cloud_id} was cancelled")
+    update_document_or_cancel(POINT_CLOUDS_COLLECTION, point_cloud_id, data)
 
 
 def make_progress_callback(point_cloud_id: str):

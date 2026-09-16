@@ -28,17 +28,17 @@ from lib.firestore import DocumentNotFoundError
 class TestUpdateGridMetadata:
     """The guarded own-doc write-back helper (#593)."""
 
-    @patch("griddle.dispatch.update_document")
+    @patch("griddle.dispatch.update_document_or_cancel")
     def test_success_writes_to_grids_collection(self, mock_update):
         update_grid_metadata("g1", {"bands": [{"key": "fbfm"}]})
         mock_update.assert_called_once_with(
             GRIDS_COLLECTION, "g1", {"bands": [{"key": "fbfm"}]}
         )
 
-    @patch("griddle.dispatch.update_document")
+    @patch("griddle.dispatch.update_document_or_cancel")
     def test_deleted_doc_raises_cancelled(self, mock_update):
         """A mid-run delete becomes CancelledException, not an unhandled 500."""
-        mock_update.side_effect = DocumentNotFoundError("grids", "g1")
+        mock_update.side_effect = CancelledException("Resource g1 was cancelled")
         with pytest.raises(CancelledException):
             update_grid_metadata("g1", {"bands": []})
 

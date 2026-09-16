@@ -54,6 +54,11 @@ E2E_CREATE_TIMEOUT_SECONDS = 240.0
 # deploy, so each poll GET gets a generous budget and transient transport
 # errors are retried (see _poll_for_completion).
 POLL_REQUEST_TIMEOUT_SECONDS = 60.0
+# Per-request read timeout for fixture-cleanup DELETEs, and the overall
+# budget for retrying one that hits a transient transport error (see
+# _delete_with_retry).
+DELETE_REQUEST_TIMEOUT_SECONDS = 30.0
+DELETE_RETRY_TIMEOUT_SECONDS = 90.0
 
 
 @dataclass(frozen=True)
@@ -144,6 +149,38 @@ def _poll_for_completion(
             )
 
         time.sleep(interval)
+
+
+def _delete_with_retry(
+    client,
+    url: str,
+    params: dict | None = None,
+    timeout: float = DELETE_RETRY_TIMEOUT_SECONDS,
+    interval: float = 1,
+):
+    """DELETE a resource, retrying transient transport errors.
+
+    Mirrors _poll_for_completion: each attempt uses a generous per-request
+    read timeout, and transient transport errors (read timeouts, dropped
+    connections) are logged and retried within the overall ``timeout``
+    budget rather than failing the test.
+    """
+    start = time.time()
+    while True:
+        elapsed = time.time() - start
+        if elapsed > timeout:
+            pytest.fail(f"DELETE {url} did not succeed within {timeout}s")
+
+        try:
+            return client.delete(
+                url, params=params, timeout=DELETE_REQUEST_TIMEOUT_SECONDS
+            )
+        except httpx.TransportError as exc:
+            logger.warning(
+                f"Transient error deleting {url} (elapsed={elapsed:.0f}s); "
+                f"retrying: {type(exc).__name__}: {exc}"
+            )
+            time.sleep(interval)
 
 
 def _save_json_file(path: Path, template: dict) -> None:
@@ -318,7 +355,7 @@ def create_static_fixture(firestore_client, test_owner_id):
 
             # Clean up the temporary grid via the API
             delete_url = f"/domains/{domain_id}/grids/{grid_id}"
-            del_response = client.delete(delete_url, timeout=30.0)
+            del_response = _delete_with_retry(client, delete_url)
             logger.info(f"Deleted grid {grid_id}: {del_response.status_code}")
 
             return completed_grid
@@ -397,7 +434,7 @@ def create_static_inventory_fixture(firestore_client, test_owner_id):
 
             # Clean up the temporary inventory via the API
             delete_url = f"/domains/{domain_id}/inventories/{inventory_id}"
-            del_response = client.delete(delete_url, timeout=30.0)
+            del_response = _delete_with_retry(client, delete_url)
             logger.info(f"Deleted inventory {inventory_id}: {del_response.status_code}")
 
             return completed_inventory
@@ -473,7 +510,7 @@ def create_static_point_cloud_fixture(firestore_client, test_owner_id):
             _save_point_cloud_json_template(completed, static_name)
 
             delete_url = f"/domains/{domain_id}/pointclouds/{point_cloud_id}"
-            del_response = client.delete(delete_url, timeout=30.0)
+            del_response = _delete_with_retry(client, delete_url)
             logger.info(
                 f"Deleted point cloud {point_cloud_id}: {del_response.status_code}"
             )
@@ -562,7 +599,7 @@ def create_static_feature_fixture(firestore_client, test_owner_id):
 
             # Clean up the temporary feature via the API
             delete_url = f"/domains/{domain_id}/features/{feature_id}"
-            del_response = client.delete(delete_url, timeout=30.0)
+            del_response = _delete_with_retry(client, delete_url)
             logger.info(f"Deleted feature {feature_id}: {del_response.status_code}")
 
         finally:
@@ -609,9 +646,8 @@ def blackfoot_domain(client):
 
     yield domain
 
-    del_response = client.delete(
-        f"/domains/{domain['id']}", params={"force": True}, timeout=30.0
-    )
+    delete_url = f"/domains/{domain['id']}"
+    del_response = _delete_with_retry(client, delete_url, params={"force": True})
     logger.info(f"Deleted Blackfoot domain {domain['id']}: {del_response.status_code}")
 
 
@@ -634,9 +670,8 @@ def blue_mountain_domain(client):
 
     yield domain
 
-    del_response = client.delete(
-        f"/domains/{domain['id']}", params={"force": True}, timeout=30.0
-    )
+    delete_url = f"/domains/{domain['id']}"
+    del_response = _delete_with_retry(client, delete_url, params={"force": True})
     logger.info(
         f"Deleted Blue Mountain domain {domain['id']}: {del_response.status_code}"
     )

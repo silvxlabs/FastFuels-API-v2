@@ -281,20 +281,47 @@ def test_tiled_assembly_matches_whole_domain():
 # --- run_leaflux orchestration wiring (mocked I/O, no GCS) ---
 
 
-def test_run_leaflux_wires_job_and_tiles(monkeypatch):
-    fake_lad = SimpleNamespace(
-        sizes={"z": 6, "y": 40, "x": 40},
-        attrs={
-            "transform": [2.0, 0, 0, 0, -2.0, 0],
-            "z_resolution": 1.0,
-            "z_origin": 100.0,
-        },
-        z=np.arange(6),
-        y=np.arange(40),
-        x=np.arange(40),
+def _lad_georeference(nz=6, ny=40, nx=40):
+    """A LAD source grid's resource georeference block (what the API validates
+    and every writer populates)."""
+    return {
+        "crs": "EPSG:32611",
+        "transform": [2.0, 0, 0, 0, -2.0, 0],
+        "shape": [nz, ny, nx],
+        "z_resolution": 1.0,
+        "z_origin": 100.0,
+    }
+
+
+def _fake_lad(nz, ny, nx, attrs=None):
+    """A source LAD dataset. `attrs` defaults to empty — the uploaded-3D-grid
+    case, which carries coords/sizes but no lattice attrs."""
+    return SimpleNamespace(
+        sizes={"z": nz, "y": ny, "x": nx},
+        attrs=attrs or {},
+        z=np.arange(nz),
+        y=np.arange(ny),
+        x=np.arange(nx),
         rio=SimpleNamespace(crs="EPSG:32611"),
     )
-    monkeypatch.setattr(handler, "_open", lambda gid: fake_lad)
+
+
+def _leaflux_grid(bands, with_terrain=True):
+    source = {
+        "source_lad_grid_id": "src-lad",
+        "date_time": datetime(2023, 6, 21, 19, 0, 0),
+        "extinction_coefficient": 0.5,
+    }
+    if with_terrain:
+        source["source_terrain_grid_id"] = "src-dem"
+    return {"id": "test-out", "bands": [{"key": b} for b in bands], "source": source}
+
+
+def test_run_leaflux_wires_job_and_tiles(monkeypatch):
+    monkeypatch.setattr(handler, "_open", lambda gid: _fake_lad(6, 40, 40))
+    monkeypatch.setattr(
+        handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 40, 40)}
+    )
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
     monkeypatch.setattr(handler, "WINDOW_TARGET_CELLS", 24)  # shrink to force >1 tile
     captured = {}
@@ -304,16 +331,7 @@ def test_run_leaflux_wires_job_and_tiles(monkeypatch):
 
     monkeypatch.setattr(handler, "_write_tiles", fake_write)
 
-    grid = {
-        "id": "test-out",
-        "bands": [{"key": CANOPY_BAND}, {"key": SURFACE_BAND}],
-        "source": {
-            "source_lad_grid_id": "src-lad",
-            "source_terrain_grid_id": "src-dem",
-            "date_time": datetime(2023, 6, 21, 19, 0, 0),
-            "extinction_coefficient": 0.5,
-        },
-    }
+    grid = _leaflux_grid([CANOPY_BAND, SURFACE_BAND])
     result = handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
 
     job = captured["job"]
@@ -330,43 +348,77 @@ def test_run_leaflux_wires_job_and_tiles(monkeypatch):
     # Canopy requested -> 3D grid with z metadata.
     assert job.is_3d is True
     assert result.georeference["shape"] == [6, 40, 40]
+    assert result.georeference["crs"] == "EPSG:32611"
     assert "z_resolution" in result.georeference
     assert "z_origin" in result.georeference
     assert result.chunk_shape[0] == 6
 
 
-def test_run_leaflux_surface_only_is_2d(monkeypatch):
-    """A surface-only request yields a 2D (y, x) grid, not a 3D grid with NaN
-    padding layers."""
-    fake_lad = SimpleNamespace(
-        sizes={"z": 6, "y": 30, "x": 30},
-        attrs={
-            "transform": [2.0, 0, 0, 0, -2.0, 0],
-            "z_resolution": 1.0,
-            "z_origin": 100.0,
-        },
-        z=np.arange(6),
-        y=np.arange(30),
-        x=np.arange(30),
-        rio=SimpleNamespace(crs="EPSG:32611"),
+def test_run_leaflux_reads_lattice_from_resource_not_attrs(monkeypatch):
+    """Uploaded 3D grids carry no zarr lattice attrs (issue #580). The handler
+    must take the lattice from the source grid resource's georeference; a
+    dataset with empty attrs must not crash."""
+    monkeypatch.setattr(handler, "_open", lambda gid: _fake_lad(6, 40, 40, attrs={}))
+    monkeypatch.setattr(
+        handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 40, 40)}
     )
-    monkeypatch.setattr(handler, "_open", lambda gid: fake_lad)
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
     captured = {}
     monkeypatch.setattr(
         handler, "_write_tiles", lambda tiles, job, progress: captured.update(job=job)
     )
 
-    grid = {
-        "id": "test-out",
-        "bands": [{"key": SURFACE_BAND}],
-        "source": {
-            "source_lad_grid_id": "src-lad",
-            "source_terrain_grid_id": "src-dem",
-            "date_time": datetime(2023, 6, 21, 19, 0, 0),
-            "extinction_coefficient": 0.5,
+    grid = _leaflux_grid([CANOPY_BAND, SURFACE_BAND])
+    result = handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
+
+    job = captured["job"]
+    # Lattice values come from the resource georeference (transform[0], vr, z0).
+    assert job.voxel == (2.0, 2.0, 1.0)
+    assert job.vr == 1.0
+    assert job.z_origin == 100.0
+    assert result.georeference["z_resolution"] == 1.0
+    assert result.georeference["z_origin"] == 100.0
+    assert result.georeference["transform"] == [2.0, 0, 0, 0, -2.0, 0]
+    assert result.georeference["crs"] == "EPSG:32611"
+
+
+def test_run_leaflux_missing_georeference_raises_processing_error(monkeypatch):
+    """A source grid whose resource lacks lattice fields fails cleanly with a
+    ProcessingError, not a bare KeyError."""
+    monkeypatch.setattr(handler, "_open", lambda gid: _fake_lad(6, 40, 40))
+    # Resource carries crs/transform but no z lattice (e.g. a 2D grid).
+    monkeypatch.setattr(
+        handler,
+        "load_grid",
+        lambda gid: {
+            "georeference": {"crs": "EPSG:32611", "transform": [2.0, 0, 0, 0, -2.0, 0]}
         },
-    }
+    )
+    monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    monkeypatch.setattr(handler, "_write_tiles", lambda *a, **k: None)
+
+    grid = _leaflux_grid([CANOPY_BAND])
+    with pytest.raises(handler.ProcessingError) as exc:
+        handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
+    assert exc.value.code == "MISSING_GEOREFERENCE"
+    assert "z_resolution" in exc.value.message
+    assert "z_origin" in exc.value.message
+
+
+def test_run_leaflux_surface_only_is_2d(monkeypatch):
+    """A surface-only request yields a 2D (y, x) grid, not a 3D grid with NaN
+    padding layers."""
+    monkeypatch.setattr(handler, "_open", lambda gid: _fake_lad(6, 30, 30))
+    monkeypatch.setattr(
+        handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 30, 30)}
+    )
+    monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(
+        handler, "_write_tiles", lambda tiles, job, progress: captured.update(job=job)
+    )
+
+    grid = _leaflux_grid([SURFACE_BAND])
     result = handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
 
     job = captured["job"]
@@ -381,35 +433,17 @@ def test_run_leaflux_surface_only_is_2d(monkeypatch):
 
 
 def test_run_leaflux_no_surface_band_skips_terrain(monkeypatch):
-    fake_lad = SimpleNamespace(
-        sizes={"z": 6, "y": 20, "x": 20},
-        attrs={
-            "transform": [2.0, 0, 0, 0, -2.0, 0],
-            "z_resolution": 1.0,
-            "z_origin": 100.0,
-        },
-        z=np.arange(6),
-        y=np.arange(20),
-        x=np.arange(20),
-        rio=SimpleNamespace(crs="EPSG:32611"),
+    monkeypatch.setattr(handler, "_open", lambda gid: _fake_lad(6, 20, 20))
+    monkeypatch.setattr(
+        handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 20, 20)}
     )
-    monkeypatch.setattr(handler, "_open", lambda gid: fake_lad)
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
     captured = {}
     monkeypatch.setattr(
         handler, "_write_tiles", lambda tiles, job, progress: captured.update(job=job)
     )
 
-    grid = {
-        "id": "test-out",
-        "bands": [{"key": CANOPY_BAND}],
-        "source": {
-            "source_lad_grid_id": "src-lad",
-            "source_terrain_grid_id": "src-dem",  # present but not requested
-            "date_time": datetime(2023, 6, 21, 19, 0, 0),
-            "extinction_coefficient": 0.5,
-        },
-    }
+    grid = _leaflux_grid([CANOPY_BAND])  # terrain present in source but not requested
     handler.run_leaflux(grid, _domain_at(46.9, -114.0), lambda *a, **k: None)
     job = captured["job"]
     assert job.want_canopy and not job.want_surface

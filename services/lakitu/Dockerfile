@@ -10,7 +10,7 @@ COPY services/lakitu/ /app/lakitu/
 
 WORKDIR /app/lakitu
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/lakitu
 ENV FUNCTION_TARGET=process_point_cloud_request

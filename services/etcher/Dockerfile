@@ -10,7 +10,7 @@ COPY services/etcher/ /app/etcher/
 
 WORKDIR /app/etcher
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/etcher
 ENV FUNCTION_TARGET=process_feature_request

@@ -848,7 +848,7 @@ COPY lib/lib /griddle/lib
 WORKDIR /griddle
 
 # Install project dependencies with uv
-RUN uv sync --frozen
+RUN uv sync --locked
 
 # Environment variables for functions-framework
 ENV PYTHONPATH=/griddle

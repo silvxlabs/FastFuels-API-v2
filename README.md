@@ -59,7 +59,7 @@ uv lock
 
 - `pyproject.toml` declares direct dependencies with minimum versions.
 - `uv.lock` pins the full dependency tree for reproducible installs. This file is committed to the repo.
-- `uv sync --frozen` installs from the lockfile exactly (used in Dockerfiles).
+- `uv sync --locked` installs from the lockfile exactly, first asserting it is in sync with `pyproject.toml` (used in Dockerfiles).
 - Each service has its own `.venv/` directory (git-ignored).
 
 ### Shared library

@@ -10,7 +10,7 @@ COPY services/standgen/ /app/standgen/
 
 WORKDIR /app/standgen
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/standgen
 ENV FUNCTION_TARGET=process_inventory_request

@@ -10,7 +10,7 @@ COPY services/uploader/ /app/uploader/
 
 WORKDIR /app/uploader
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/uploader
 ENV FUNCTION_TARGET=process_upload

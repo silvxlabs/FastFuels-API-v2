@@ -81,7 +81,7 @@ In Dockerfiles, lib is copied as a sibling directory and installed via `uv sync`
 COPY services/lib/ /app/lib/
 COPY services/<service>/ /app/<service>/
 WORKDIR /app/<service>
-RUN uv sync --frozen
+RUN uv sync --locked
 ```
 
 The `[tool.uv.sources]` path (`../lib`) resolves to `/app/lib/` inside the container.

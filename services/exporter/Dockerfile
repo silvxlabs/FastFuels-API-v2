@@ -10,7 +10,7 @@ COPY services/exporter/ /app/exporter/
 
 WORKDIR /app/exporter
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/exporter
 ENV FUNCTION_TARGET=process_export_request

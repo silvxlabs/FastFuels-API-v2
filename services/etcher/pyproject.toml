@@ -23,7 +23,7 @@ test = [
 ]
 # Only for the manual live-Overpass parity test
 # (tests/integration/handlers/test_osm_parity.py). Not installed in the prod
-# image (uv sync --frozen) or the default CI test run. See README.md.
+# image (uv sync --locked) or the default CI test run. See README.md.
 parity = [
     "osmnx>=2.1.0",
 ]

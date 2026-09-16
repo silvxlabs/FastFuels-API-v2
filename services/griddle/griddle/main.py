@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 import functions_framework
 from flask import Request
 
-from griddle.dispatch import dispatch_handler
+from griddle.dispatch import dispatch_handler, update_grid_metadata
 from griddle.modifications import apply_modifications
 from griddle.storage import delete_zarr, load_zarr, save_zarr
 from griddle.summarize import summarize_dataset
@@ -347,7 +347,7 @@ def process_grid_request(request: Request):
             result = dispatch_handler(grid, domain_gdf, progress_callback)
 
             # Write back enriched source metadata (e.g., 3DEP tile provenance)
-            update_document(GRIDS_COLLECTION, grid_id, {"source": grid["source"]})
+            update_grid_metadata(grid_id, {"source": grid["source"]})
 
             # Apply modifications if present
             if grid.get("modifications"):
@@ -365,7 +365,7 @@ def process_grid_request(request: Request):
         ]
         for band in bands_with_summaries:
             band["nodata"] = _band_nodata(result, band["key"])
-        update_document(GRIDS_COLLECTION, grid_id, {"bands": bands_with_summaries})
+        update_grid_metadata(grid_id, {"bands": bands_with_summaries})
 
         # Save to Zarr
         update_progress(grid_id, "Saving...", 90)

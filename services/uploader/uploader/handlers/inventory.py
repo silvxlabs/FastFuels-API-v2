@@ -18,8 +18,9 @@ from pandera.typing import Series
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_BUCKET, INVENTORIES_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import ProcessingError
-from lib.firestore import get_document, update_document
+from lib.firestore import get_document
 from lib.gcs import delete_file, download_file, storage_size
+from uploader.main import update_resource
 
 _V2_COLUMNS = {
     "x",
@@ -135,7 +136,7 @@ def handle_inventory(
             for key, (col_type, unit) in _COLUMN_METADATA.items()
             if key in provided_columns
         ]
-        update_document(
+        update_resource(
             INVENTORIES_COLLECTION,
             resource_id,
             {

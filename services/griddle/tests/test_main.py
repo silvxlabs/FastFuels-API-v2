@@ -116,7 +116,7 @@ class TestProcessGridRequest:
 
     @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
-    @patch("griddle.main.update_document")
+    @patch("griddle.main.update_grid_metadata")
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main._load_domain")
@@ -131,7 +131,7 @@ class TestProcessGridRequest:
         mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
-        mock_update_document,
+        mock_update_grid_metadata,
         mock_summarize,
         mock_storage_size,
     ):
@@ -175,7 +175,7 @@ class TestProcessGridRequest:
 
     @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
-    @patch("griddle.main.update_document")
+    @patch("griddle.main.update_grid_metadata")
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main._load_domain")
@@ -190,7 +190,7 @@ class TestProcessGridRequest:
         mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
-        mock_update_document,
+        mock_update_grid_metadata,
         mock_summarize,
         mock_storage_size,
     ):
@@ -238,7 +238,7 @@ class TestProcessGridRequest:
 
     @patch("griddle.main.storage_size")
     @patch("griddle.main.summarize_dataset")
-    @patch("griddle.main.update_document")
+    @patch("griddle.main.update_grid_metadata")
     @patch("griddle.main.save_zarr")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main._load_domain")
@@ -253,7 +253,7 @@ class TestProcessGridRequest:
         mock_load_domain,
         mock_dispatch,
         mock_save_zarr,
-        mock_update_document,
+        mock_update_grid_metadata,
         mock_summarize,
         mock_storage_size,
     ):
@@ -341,6 +341,48 @@ class TestProcessGridRequest:
         assert status_code == 200
         last_call = mock_update_status.call_args_list[-1]
         assert last_call[0][1] == "failed"
+
+    @patch("griddle.main.delete_zarr")
+    @patch("griddle.main.update_grid_metadata")
+    @patch("griddle.main._load_domain")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main.update_progress")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.load_grid")
+    def test_own_doc_deleted_midrun_cancels_gracefully(
+        self,
+        mock_load_grid,
+        mock_update_status,
+        mock_update_progress,
+        mock_dispatch,
+        mock_load_domain,
+        mock_update_grid_metadata,
+        mock_delete_zarr,
+    ):
+        """Deleting the grid mid-run makes the own-doc write-back surface as
+        CancelledException — the job ends at 200 and cleans up its zarr, with
+        no unhandled 500 / Cloud Tasks retry (#593)."""
+        from lib.errors import CancelledException
+
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": {"name": "landfire", "product": "fbfm40"},
+            "domain_id": "test-domain-id",
+            "bands": [{"key": "fbfm", "type": "categorical"}],
+        }
+        mock_load_domain.return_value = MagicMock()
+        # The source write-back (first own-doc metadata write) hits a deleted doc.
+        mock_update_grid_metadata.side_effect = CancelledException("cancelled")
+
+        request = MockRequest(json_data={"id": "test-grid-id"})
+        response, status_code = process_grid_request(request)
+
+        assert status_code == 200
+        mock_delete_zarr.assert_called_once_with("test-grid-id")
+        # Never reaches the completed transition.
+        assert not any(
+            c[0][1] == "completed" for c in mock_update_status.call_args_list
+        )
 
     @patch("griddle.main._load_domain")
     @patch("griddle.main.dispatch_handler")

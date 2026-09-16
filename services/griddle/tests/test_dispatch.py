@@ -17,10 +17,30 @@ from griddle.dispatch import (
     handle_pim,
     handle_resample,
     handle_uniform,
+    update_grid_metadata,
 )
 
-from lib.errors import ProcessingError
+from lib.config import GRIDS_COLLECTION
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError
+
+
+class TestUpdateGridMetadata:
+    """The guarded own-doc write-back helper (#593)."""
+
+    @patch("griddle.dispatch.update_document")
+    def test_success_writes_to_grids_collection(self, mock_update):
+        update_grid_metadata("g1", {"bands": [{"key": "fbfm"}]})
+        mock_update.assert_called_once_with(
+            GRIDS_COLLECTION, "g1", {"bands": [{"key": "fbfm"}]}
+        )
+
+    @patch("griddle.dispatch.update_document")
+    def test_deleted_doc_raises_cancelled(self, mock_update):
+        """A mid-run delete becomes CancelledException, not an unhandled 500."""
+        mock_update.side_effect = DocumentNotFoundError("grids", "g1")
+        with pytest.raises(CancelledException):
+            update_grid_metadata("g1", {"bands": []})
 
 
 class TestHandleLandfire:
@@ -752,11 +772,11 @@ class TestDispatchHandlerResample:
 class TestHandleResample:
     """Tests for handle_resample function."""
 
-    @patch("griddle.dispatch.update_document")
+    @patch("griddle.dispatch.update_grid_metadata")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
     def test_routes_to_resample_handler(
-        self, mock_resample_grid, mock_get_doc, mock_update_doc
+        self, mock_resample_grid, mock_get_doc, mock_update_metadata
     ):
         """handle_resample calls resample.resample_grid with correct params."""
         mock_result = MagicMock()
@@ -789,11 +809,11 @@ class TestHandleResample:
         )
         assert result == mock_result
 
-    @patch("griddle.dispatch.update_document")
+    @patch("griddle.dispatch.update_grid_metadata")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
     def test_calls_progress_callback(
-        self, mock_resample_grid, mock_get_doc, mock_update_doc
+        self, mock_resample_grid, mock_get_doc, mock_update_metadata
     ):
         """handle_resample reports progress."""
         progress = MagicMock()
@@ -810,11 +830,11 @@ class TestHandleResample:
 
         progress.assert_called()
 
-    @patch("griddle.dispatch.update_document")
+    @patch("griddle.dispatch.update_grid_metadata")
     @patch("griddle.dispatch.get_document")
     @patch("griddle.dispatch.resample.resample_grid")
     def test_passes_empty_overrides_when_missing(
-        self, mock_resample_grid, mock_get_doc, mock_update_doc
+        self, mock_resample_grid, mock_get_doc, mock_update_metadata
     ):
         """When source has no method_overrides key, passes empty dict."""
         progress = MagicMock()

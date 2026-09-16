@@ -87,6 +87,21 @@ def update_status(
         raise CancelledException(f"Resource {resource_id} was cancelled")
 
 
+def update_resource(collection: str, resource_id: str, data: dict) -> None:
+    """Guarded write-back of result/metadata to a resource's own document.
+
+    Handlers write their completion payload (status, georeference, summary, …)
+    through this guard so a mid-run delete surfaces as CancelledException —
+    handled as graceful cancellation — instead of escaping as an unhandled
+    DocumentNotFoundError that makes Eventarc retry a permanently-missing
+    resource for 24h (#441, #593).
+    """
+    try:
+        update_document(collection, resource_id, data)
+    except DocumentNotFoundError:
+        raise CancelledException(f"Resource {resource_id} was cancelled")
+
+
 @functions_framework.cloud_event
 def process_upload(cloud_event: CloudEvent) -> None:
     """Main entry point. Triggered by Eventarc GCS object finalization.

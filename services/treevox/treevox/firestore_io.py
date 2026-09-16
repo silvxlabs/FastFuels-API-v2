@@ -64,6 +64,19 @@ def update_status(
         raise CancelledException(f"Grid {grid_id} was cancelled")
 
 
+def update_metadata(grid_id: str, data: dict) -> None:
+    """Guarded write-back of result/metadata to the grid's own document.
+
+    Same cancellation guard as `update_status` / `update_progress`: a mid-run
+    delete surfaces as `CancelledException` instead of escaping as an unhandled
+    `DocumentNotFoundError` (→ HTTP 500 + Cloud Tasks retry) (#593).
+    """
+    try:
+        update_document(GRIDS_COLLECTION, grid_id, data)
+    except DocumentNotFoundError:
+        raise CancelledException(f"Grid {grid_id} was cancelled")
+
+
 def make_progress_callback(grid_id: str) -> Callable[[str, int | None], None]:
     def callback(message: str, percent: int | None = None):
         update_progress(grid_id, message, percent)

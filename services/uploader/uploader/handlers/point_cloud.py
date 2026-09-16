@@ -39,7 +39,7 @@ from lib.config import (
     POINT_CLOUDS_COLLECTION,
 )
 from lib.errors import ProcessingError
-from lib.firestore import get_document, update_document
+from lib.firestore import get_document
 from lib.gcs import delete_file, get_gcsfs_client
 from lib.laz import (
     build_output_header,
@@ -48,6 +48,7 @@ from lib.laz import (
 )
 from lib.pointcloud.schema import cloud_location, point_dtype
 from lib.pointcloud.writer import write_parquet
+from uploader.main import update_resource
 
 # ~2M points/chunk keeps the streaming passes around 100 MB of working memory.
 _CHUNK_POINTS = 2_000_000
@@ -85,7 +86,7 @@ def handle_point_cloud(
                     reader, domain_crs, transformer, resource_id
                 )
 
-        update_document(
+        update_resource(
             POINT_CLOUDS_COLLECTION,
             resource_id,
             {

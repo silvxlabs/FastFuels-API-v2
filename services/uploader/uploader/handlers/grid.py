@@ -23,11 +23,12 @@ from lib.config import DOMAINS_COLLECTION, GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import ProcessingError
-from lib.firestore import get_document, update_document
+from lib.firestore import get_document
 from lib.gcs import get_gcsfs_client, storage_size
 from lib.grids import compute_chunks_doc
 from lib.units import validate_unit
 from lib.zarr_utils import save_zarr
+from uploader.main import update_resource
 
 _CHUNK_SHAPE = (512, 512)
 _ALLOWED_NETCDF_DIMS = {("y", "x"), ("z", "y", "x")}
@@ -70,7 +71,7 @@ def handle_grid_geotiff(
     transform = dataset.rio.transform()
     grid_shape = (dataset.rio.height, dataset.rio.width)
 
-    update_document(
+    update_resource(
         GRIDS_COLLECTION,
         resource_id,
         {
@@ -271,7 +272,7 @@ def handle_grid_netcdf(
                 }
             )
 
-        update_document(
+        update_resource(
             GRIDS_COLLECTION,
             resource_id,
             {

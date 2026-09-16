@@ -25,7 +25,7 @@ from griddle.handlers import (
     uniform,
 )
 from lib.config import GRIDS_COLLECTION, POINT_CLOUDS_COLLECTION
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document, update_document
 from lib.landfire import LANDFIRE_VERSIONS
 
@@ -55,6 +55,20 @@ META_CHM_ATTRIBUTION = {
         "access_url": "https://registry.opendata.aws/dataforgood-fb-forests",
     },
 }
+
+
+def update_grid_metadata(grid_id: str, data: dict) -> None:
+    """Guarded write-back of result/metadata to a grid's own document.
+
+    Routes own-doc writes through the same cancellation guard as
+    status/progress: a mid-run delete surfaces as CancelledException so the
+    worker cleans up and returns 200, instead of escaping as an unhandled
+    DocumentNotFoundError (→ HTTP 500 + Cloud Tasks retry) (#593).
+    """
+    try:
+        update_document(GRIDS_COLLECTION, grid_id, data)
+    except DocumentNotFoundError:
+        raise CancelledException(f"Grid {grid_id} was cancelled")
 
 
 def _load_target_grid_doc(alignment: dict | None) -> dict | None:
@@ -291,7 +305,7 @@ def handle_layerset(
 
     # Persist the real bands list — see docstring above.
     bands = layerset.build_layerset_bands(ds)
-    update_document(GRIDS_COLLECTION, grid["id"], {"bands": bands})
+    update_grid_metadata(grid["id"], {"bands": bands})
     grid["bands"] = bands  # keep the in-memory dict consistent for the caller
 
     return ds
@@ -365,7 +379,7 @@ def handle_resample(
         {"key": b["key"], "type": b["type"], "unit": b.get("unit"), "index": b["index"]}
         for b in source_bands
     ]
-    update_document(GRIDS_COLLECTION, grid["id"], {"bands": bands})
+    update_grid_metadata(grid["id"], {"bands": bands})
     grid["bands"] = bands
 
     return resample.resample_grid(

@@ -10,9 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from cloudevents.http import CloudEvent
-from uploader.main import process_upload
+from uploader.main import process_upload, update_resource
 
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
+from lib.firestore import DocumentNotFoundError
 from tests.integration.staging import staged_object_name
 
 
@@ -133,3 +134,60 @@ def test_unexpected_exception_reraises(mock_get, mock_update, mock_dispatch):
     event = _make_event("uploads-bucket", "inventories/inv-123/upload.csv")
     with pytest.raises(RuntimeError, match="disk full"):
         process_upload(event)
+
+
+@patch("uploader.dispatch.dispatch_handler")
+@patch("uploader.main.update_document")
+@patch("uploader.main.get_document")
+def test_cancelled_during_processing_is_swallowed(mock_get, mock_update, mock_dispatch):
+    """A mid-run delete (own-doc write-back → CancelledException) ends the job
+    gracefully: no re-raise, so Eventarc does not retry a deleted resource
+    (#441, #593). The completion write is what raises in production; here the
+    guarded handler's CancelledException stands in for it."""
+    mock_get.return_value = (None, MagicMock(to_dict=lambda: _make_doc("pending")))
+    mock_dispatch.side_effect = CancelledException("resource deleted")
+
+    event = _make_event("uploads-bucket", "inventories/inv-123/upload.csv")
+    result = process_upload(event)  # must not raise
+
+    assert result is None
+    assert not any(
+        c[0][2].get("status") == "failed" for c in mock_update.call_args_list
+    )
+
+
+@patch("uploader.dispatch.dispatch_handler")
+@patch("uploader.main.update_document")
+@patch("uploader.main.get_document")
+def test_missing_input_writes_source_not_found_without_retry(
+    mock_get, mock_update, mock_dispatch
+):
+    """A missing INPUT resource stays a terminal SOURCE_NOT_FOUND failure and is
+    not re-raised — no #420 regression from the own-doc cancellation guard."""
+    mock_get.return_value = (None, MagicMock(to_dict=lambda: _make_doc("pending")))
+    mock_dispatch.side_effect = FileNotFoundError("gs://uploads/inventories/x/y 404")
+
+    event = _make_event("uploads-bucket", "inventories/inv-123/upload.csv")
+    result = process_upload(event)  # terminal, not re-raised
+
+    assert result is None
+    update_data = mock_update.call_args_list[-1][0][2]
+    assert update_data["status"] == "failed"
+    assert update_data["error"]["code"] == "SOURCE_NOT_FOUND"
+
+
+class TestUpdateResource:
+    """The guarded own-doc write-back helper (#593)."""
+
+    @patch("uploader.main.update_document")
+    def test_success_writes_through(self, mock_update):
+        update_resource("inventories", "inv-1", {"status": "completed"})
+        mock_update.assert_called_once_with(
+            "inventories", "inv-1", {"status": "completed"}
+        )
+
+    @patch("uploader.main.update_document")
+    def test_deleted_doc_raises_cancelled(self, mock_update):
+        mock_update.side_effect = DocumentNotFoundError("inventories", "inv-1")
+        with pytest.raises(CancelledException):
+            update_resource("inventories", "inv-1", {"status": "completed"})

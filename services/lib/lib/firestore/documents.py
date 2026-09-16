@@ -11,6 +11,8 @@ from google.cloud import firestore
 from google.cloud.firestore import DocumentReference, DocumentSnapshot, FieldFilter
 from google.cloud.firestore import Query as FirestoreQuery
 
+from lib.errors import CancelledException
+
 firestore_client: firestore.Client = firestore.Client()
 
 
@@ -144,6 +146,17 @@ def update_document(
     except NotFound:
         raise DocumentNotFoundError(f"Document not found: {collection}/{document_id}")
     return document_ref
+
+
+def update_document_or_cancel(collection: str, doc_id: str, data: dict) -> None:
+    """update_document, but a missing target doc means the resource was
+    deleted mid-run: surface CancelledException so the worker cleans up
+    and returns 200 instead of escaping as an unhandled DocumentNotFoundError
+    (-> HTTP 500 + Cloud Tasks retry / -> Eventarc 24h retry). See #593/#597."""
+    try:
+        update_document(collection, doc_id, data)
+    except DocumentNotFoundError:
+        raise CancelledException(f"Resource {doc_id} was cancelled")
 
 
 def delete_document(

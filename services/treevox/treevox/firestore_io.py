@@ -17,8 +17,12 @@ from datetime import UTC, datetime
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
-from lib.firestore import DocumentNotFoundError, get_document, update_document
-from treevox.errors import CancelledException, ProcessingError
+from lib.firestore import (
+    DocumentNotFoundError,
+    get_document,
+    update_document_or_cancel,
+)
+from treevox.errors import ProcessingError
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +37,11 @@ def update_progress(grid_id: str, message: str, percent: int | None = None) -> N
     progress: dict = {"message": message}
     if percent is not None:
         progress["percent"] = percent
-    try:
-        update_document(
-            GRIDS_COLLECTION,
-            grid_id,
-            {"progress": progress, "modified_on": datetime.now(UTC)},
-        )
-    except DocumentNotFoundError:
-        raise CancelledException(f"Grid {grid_id} was cancelled")
+    update_document_or_cancel(
+        GRIDS_COLLECTION,
+        grid_id,
+        {"progress": progress, "modified_on": datetime.now(UTC)},
+    )
 
 
 def update_status(
@@ -58,10 +59,7 @@ def update_status(
         data["georeference"] = georeference
     if error is not None:
         data["error"] = error
-    try:
-        update_document(GRIDS_COLLECTION, grid_id, data)
-    except DocumentNotFoundError:
-        raise CancelledException(f"Grid {grid_id} was cancelled")
+    update_document_or_cancel(GRIDS_COLLECTION, grid_id, data)
 
 
 def update_metadata(grid_id: str, data: dict) -> None:
@@ -71,10 +69,7 @@ def update_metadata(grid_id: str, data: dict) -> None:
     delete surfaces as `CancelledException` instead of escaping as an unhandled
     `DocumentNotFoundError` (→ HTTP 500 + Cloud Tasks retry) (#593).
     """
-    try:
-        update_document(GRIDS_COLLECTION, grid_id, data)
-    except DocumentNotFoundError:
-        raise CancelledException(f"Grid {grid_id} was cancelled")
+    update_document_or_cancel(GRIDS_COLLECTION, grid_id, data)
 
 
 def make_progress_callback(grid_id: str) -> Callable[[str, int | None], None]:

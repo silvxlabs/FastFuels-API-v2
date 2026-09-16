@@ -26,7 +26,11 @@ from lib.config import (
     POINT_CLOUDS_COLLECTION,
 )
 from lib.errors import CancelledException, ProcessingError
-from lib.firestore import DocumentNotFoundError, get_document, update_document
+from lib.firestore import (
+    DocumentNotFoundError,
+    get_document,
+    update_document_or_cancel,
+)
 
 _RESOURCE_COLLECTIONS = {
     "inventories": INVENTORIES_COLLECTION,
@@ -81,10 +85,7 @@ def update_status(
     if error is not None:
         data["error"] = error
 
-    try:
-        update_document(collection, resource_id, data)
-    except DocumentNotFoundError:
-        raise CancelledException(f"Resource {resource_id} was cancelled")
+    update_document_or_cancel(collection, resource_id, data)
 
 
 def update_resource(collection: str, resource_id: str, data: dict) -> None:
@@ -96,10 +97,7 @@ def update_resource(collection: str, resource_id: str, data: dict) -> None:
     DocumentNotFoundError that makes Eventarc retry a permanently-missing
     resource for 24h (#441, #593).
     """
-    try:
-        update_document(collection, resource_id, data)
-    except DocumentNotFoundError:
-        raise CancelledException(f"Resource {resource_id} was cancelled")
+    update_document_or_cancel(collection, resource_id, data)
 
 
 @functions_framework.cloud_event

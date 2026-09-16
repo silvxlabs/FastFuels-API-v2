@@ -195,7 +195,7 @@ class TestProcessGridRequest:
 class TestUpdateMetadata:
     """The guarded own-doc write-back helper in firestore_io (#593)."""
 
-    @patch("treevox.firestore_io.update_document")
+    @patch("treevox.firestore_io.update_document_or_cancel")
     def test_success_writes_to_grids_collection(self, mock_update):
         from treevox.firestore_io import update_metadata
 
@@ -206,13 +206,11 @@ class TestUpdateMetadata:
             GRIDS_COLLECTION, "g1", {"chunks": {"count": 1}}
         )
 
-    @patch("treevox.firestore_io.update_document")
+    @patch("treevox.firestore_io.update_document_or_cancel")
     def test_deleted_doc_raises_cancelled(self, mock_update):
         from treevox.firestore_io import update_metadata
 
-        from lib.firestore import DocumentNotFoundError
-
-        mock_update.side_effect = DocumentNotFoundError("grids", "g1")
+        mock_update.side_effect = CancelledException("Resource g1 was cancelled")
         with pytest.raises(CancelledException):
             update_metadata("g1", {"chunks": {}})
 

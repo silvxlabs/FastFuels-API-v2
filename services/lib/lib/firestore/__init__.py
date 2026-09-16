@@ -13,6 +13,7 @@ from lib.firestore.documents import (
     list_documents,
     set_document,
     update_document,
+    update_document_or_cancel,
 )
 from lib.firestore.serializers import (
     deserialize_coordinates,
@@ -24,6 +25,7 @@ __all__ = [
     "get_document",
     "set_document",
     "update_document",
+    "update_document_or_cancel",
     "delete_document",
     "list_documents",
     "DocumentNotFoundError",

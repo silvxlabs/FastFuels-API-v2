@@ -10,7 +10,7 @@ COPY services/griddle/ /app/griddle/
 
 WORKDIR /app/griddle
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/griddle
 ENV FUNCTION_TARGET=process_grid_request

@@ -7,7 +7,7 @@ COPY services/walle/ /app/walle/
 
 WORKDIR /app/walle
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/walle
 

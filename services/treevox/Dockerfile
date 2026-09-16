@@ -13,7 +13,7 @@ COPY services/treevox/ /app/treevox/
 
 WORKDIR /app/treevox
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENV PYTHONPATH=/app/treevox
 ENV FUNCTION_TARGET=process_grid_request

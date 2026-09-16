@@ -7,6 +7,6 @@ COPY services/api/ /app/api/
 
 WORKDIR /app/api
 
-RUN uv sync --frozen
+RUN uv sync --locked
 
 ENTRYPOINT ["uv", "run", "gunicorn", "-w", "8", "-k", "uvicorn.workers.UvicornWorker", "api.main:app"]

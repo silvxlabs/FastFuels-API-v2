@@ -483,6 +483,20 @@ class TestEstimateUtmCrs:
         assert isinstance(result, CRS)
         assert result.to_epsg() == 32618
 
+    def test_empty_geometry_raises_422(self):
+        """Empty geometry yields NaN bounds; should be a 422, not a 500."""
+        gdf = GeoDataFrame(geometry=[Polygon()], crs="EPSG:4326")
+        with pytest.raises(HTTPException) as exc_info:
+            estimate_utm_crs(gdf)
+        assert exc_info.value.status_code == 422
+
+    def test_empty_geodataframe_raises_422(self):
+        """A GeoDataFrame with no features has NaN bounds; should be a 422."""
+        gdf = GeoDataFrame(geometry=[], crs="EPSG:4326")
+        with pytest.raises(HTTPException) as exc_info:
+            estimate_utm_crs(gdf)
+        assert exc_info.value.status_code == 422
+
 
 # =============================================================================
 # is_crs_geographic Tests

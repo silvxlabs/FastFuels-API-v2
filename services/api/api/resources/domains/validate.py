@@ -162,9 +162,12 @@ def estimate_utm_crs(gdf: GeoDataFrame) -> CRS:
     Raises:
         HTTPException: 422 if UTM CRS cannot be estimated.
     """
+    # ValueError covers degenerate/empty geometry, whose NaN centroid/bounds
+    # make pyproj reject the area of interest; RuntimeError covers pyproj
+    # failing to resolve a UTM zone.
     try:
         return gdf.estimate_utm_crs()
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Unable to determine UTM CRS. Please provide a valid projected CRS.",

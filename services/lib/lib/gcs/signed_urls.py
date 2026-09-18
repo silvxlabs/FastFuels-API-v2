@@ -84,10 +84,8 @@ def generate_download_signed_url(
         bucket_name: Name of the GCS bucket.
         blob_path: Path to the file in the bucket.
         expiration_days: URL validity period in days. Default 7.
-        response_disposition: When set, signs a ``response-content-disposition``
-            query parameter into the URL so GCS returns that Content-Disposition
-            header on the download (e.g. ``attachment; filename="foo.csv"`` to
-            force a download instead of inline browser rendering).
+        response_disposition: When set, signed as the ``response-content-disposition``
+            query param so GCS returns that Content-Disposition header on download.
 
     Returns:
         Signed URL string for GET request.

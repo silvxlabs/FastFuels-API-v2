@@ -6,11 +6,9 @@ from exporter.storage import generate_signed_download
 
 
 class TestGenerateSignedDownload:
-    """generate_signed_download must force an attachment download (#603).
+    """generate_signed_download signs an attachment Content-Disposition (#603).
 
-    Browser-renderable formats (CSV, GeoJSON) otherwise open inline in the tab
-    instead of downloading. The signer is mocked so no GCS/credentials are
-    touched; the assertions are on the parameters passed to it.
+    The signer is mocked; assertions are on the params passed to it.
     """
 
     @patch("exporter.storage.generate_download_signed_url")

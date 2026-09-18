@@ -46,11 +46,10 @@ def load_inventory_parquet(inventory_id: str) -> pd.DataFrame:
 def generate_signed_download(gcs_path: str, expiration_days: int) -> str:
     """Generate a signed download URL for an export file.
 
-    The URL forces a download (rather than inline browser rendering) by signing
-    a ``Content-Disposition: attachment`` response header with the export's
-    filename. Without it, browser-renderable formats (CSV, GeoJSON) open in the
-    tab instead of downloading. The filename is the export object's own basename,
-    which already carries the correct per-format extension (see #603).
+    Signs a ``Content-Disposition: attachment`` header so the file downloads
+    instead of opening inline; without it, CSV and GeoJSON render in the browser
+    tab (#603). The filename is the object basename, which already carries the
+    correct per-format extension.
 
     Args:
         gcs_path: Full GCS path (gs://bucket/path/to/file)

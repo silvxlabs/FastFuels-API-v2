@@ -55,11 +55,7 @@ class Export(BaseModel):
 
     signed_url: str | None = Field(
         default=None,
-        description=(
-            "Signed URL for downloading the exported file. Populated on "
-            "completion. Serves the file as an attachment, so all formats "
-            "download rather than rendering inline in the browser."
-        ),
+        description="Signed URL for downloading the exported file. Populated on completion.",
     )
     expires_on: datetime | None = Field(
         default=None,

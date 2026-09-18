@@ -46,6 +46,11 @@ def load_inventory_parquet(inventory_id: str) -> pd.DataFrame:
 def generate_signed_download(gcs_path: str, expiration_days: int) -> str:
     """Generate a signed download URL for an export file.
 
+    Signs a ``Content-Disposition: attachment`` header so the file downloads
+    instead of opening inline; without it, CSV and GeoJSON render in the browser
+    tab (#603). The filename is the object basename, which already carries the
+    correct per-format extension.
+
     Args:
         gcs_path: Full GCS path (gs://bucket/path/to/file)
         expiration_days: Number of days until the URL expires
@@ -56,7 +61,14 @@ def generate_signed_download(gcs_path: str, expiration_days: int) -> str:
     # Parse "gs://bucket-name/blob/path" into bucket and blob
     without_scheme = gcs_path.removeprefix("gs://")
     bucket_name, blob_path = without_scheme.split("/", 1)
-    return generate_download_signed_url(bucket_name, blob_path, expiration_days)
+    filename = blob_path.rsplit("/", 1)[-1]
+    disposition = f'attachment; filename="{filename}"'
+    return generate_download_signed_url(
+        bucket_name,
+        blob_path,
+        expiration_days,
+        response_disposition=disposition,
+    )
 
 
 def delete_export_files(export_id: str) -> None:

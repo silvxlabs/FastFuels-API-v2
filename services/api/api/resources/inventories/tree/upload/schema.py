@@ -29,14 +29,30 @@ class InventoryColumnMapping(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    x: str | None = None
-    y: str | None = None
-    height: str | None = None
-    fia_species_code: str | None = None
-    fia_status_code: str | None = None
-    fia_crown_class_code: str | None = None
-    dbh: str | None = None
-    crown_ratio: str | None = None
+    x: str | None = Field(
+        None, description="Tree position in the domain's projected CRS (m)."
+    )
+    y: str | None = Field(
+        None, description="Tree position in the domain's projected CRS (m)."
+    )
+    height: str | None = Field(None, description="Total tree height (m).")
+    fia_species_code: str | None = Field(None, description="FIA species code (SPCD).")
+    fia_status_code: str | None = Field(
+        None,
+        description="FIA tree status code (STATUSCD): 1 live, 2 dead, 3 removed.",
+    )
+    fia_crown_class_code: str | None = Field(
+        None,
+        description=(
+            "FIA crown class code (CCLCD): 1 open-grown, 2 dominant, "
+            "3 codominant, 4 intermediate, 5 overtopped."
+        ),
+    )
+    dbh: str | None = Field(None, description="Diameter at breast height (cm).")
+    crown_ratio: str | None = Field(
+        None,
+        description="Live crown ratio: fraction of total height with live crown (0-1).",
+    )
 
 
 class CreateInventoryUploadRequest(BaseModel):

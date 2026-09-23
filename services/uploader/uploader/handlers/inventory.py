@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import dask.dataframe as dd
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import Series
@@ -23,6 +24,7 @@ from lib.gcs import delete_file, download_file, storage_size
 from uploader.main import update_resource
 
 _V2_COLUMNS = {
+    "tree_id",
     "x",
     "y",
     "height",
@@ -39,6 +41,7 @@ _V2_COLUMNS = {
 # the optional ones with nulls) — the API's treatments endpoint relies on it to
 # tell whether an inventory has a `dbh` column to thin against.
 _COLUMN_METADATA = {
+    "tree_id": ("categorical", None),
     "x": ("continuous", "m"),
     "y": ("continuous", "m"),
     "fia_species_code": ("categorical", None),
@@ -50,7 +53,15 @@ _COLUMN_METADATA = {
 }
 
 
+# Largest tree_id: the int32 maximum (the voxel `tree_id` band uses -1 as nodata).
+MAX_TREE_ID = 2_147_483_647
+
+# How many offending rows a tree_id error lists.
+_TREE_ID_ERROR_EXAMPLES = 10
+
+
 class _InventorySchema(pa.DataFrameModel):
+    tree_id: Series[np.int32] | None = pa.Field(ge=0, le=MAX_TREE_ID)
     x: Series[float]
     y: Series[float]
     height: Series[float] = pa.Field(ge=0, le=116)
@@ -108,6 +119,13 @@ def handle_inventory(
                     "For GeoJSON/GeoPackage, verify features overlap the domain's geographic extent."
                 ),
             )
+
+        # Without a user-supplied tree_id, number the trees kept in the domain
+        # 0 … N-1 in file row order.
+        if "tree_id" not in df.columns:
+            df = df.reset_index(drop=True)
+            df.insert(0, "tree_id", np.arange(len(df), dtype="int32"))
+            provided_columns.append("tree_id")
 
         path = f"gs://{INVENTORIES_BUCKET}/{resource_id}"
         _write_parquet(df, path)
@@ -193,7 +211,8 @@ def _column_summary(series: pd.Series, col_type: str) -> dict:
         "type": "categorical",
         "count": count,
         "null_count": null_count,
-        "unique_count": int(series.nunique()),
+        # tree_id is unique by construction; skip the distinct count.
+        "unique_count": count if series.name == "tree_id" else int(series.nunique()),
     }
 
 
@@ -261,9 +280,76 @@ def _parse(
     return df
 
 
+def _check_tree_ids(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate a user-supplied ``tree_id`` column and cast it to int32.
+
+    Values must be non-null integers in ``0 … MAX_TREE_ID`` (integral floats
+    such as ``12.0`` count as integers) and unique across the file. Fails with
+    ``INVALID_TREE_ID`` or ``DUPLICATE_TREE_ID``, listing example rows by their
+    0-based data-row index.
+    """
+    raw = df["tree_id"]
+    is_bool = raw.map(lambda v: isinstance(v, bool | np.bool_))
+    numeric = pd.to_numeric(raw.where(~is_bool), errors="coerce").astype("float64")
+    valid = (
+        numeric.notna() & (numeric % 1 == 0) & (numeric >= 0) & (numeric <= MAX_TREE_ID)
+    )
+    if not valid.all():
+        bad = raw[~valid].head(_TREE_ID_ERROR_EXAMPLES)
+        examples = [{"row": int(i), "tree_id": _jsonable(v)} for i, v in bad.items()]
+        raise ProcessingError(
+            code="INVALID_TREE_ID",
+            message=(
+                f"{int((~valid).sum())} row(s) have an invalid tree_id. Examples: "
+                f"{examples}"
+            ),
+            suggestion=(
+                f"tree_id values must be non-null integers in 0 … {MAX_TREE_ID}. "
+                "Fix the listed rows, or remove the tree_id column (and its "
+                "mapping) to have IDs generated."
+            ),
+        )
+
+    duplicated = numeric.duplicated(keep=False)
+    if duplicated.any():
+        bad = numeric[duplicated].head(_TREE_ID_ERROR_EXAMPLES)
+        examples = [{"row": int(i), "tree_id": int(v)} for i, v in bad.items()]
+        raise ProcessingError(
+            code="DUPLICATE_TREE_ID",
+            message=(
+                f"{int(duplicated.sum())} row(s) share a tree_id with another "
+                f"row. Examples: {examples}"
+            ),
+            suggestion=(
+                "tree_id values must be unique across the file. Fix the listed "
+                "rows, or remove the tree_id column (and its mapping) to have "
+                "IDs generated."
+            ),
+        )
+
+    df["tree_id"] = numeric.astype("int32")
+    return df
+
+
+def _jsonable(value):
+    """A scalar safe to show in an error message (NaN/None → None)."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 def _validate(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate the parsed DataFrame against the inventory schema."""
-    for col in _V2_COLUMNS - {"x", "y", "height"}:
+    """Validate the parsed DataFrame against the inventory schema.
+
+    A ``tree_id`` column, when present, is checked first so a bad ID fails with
+    a typed error. When absent it is left out (not padded): the caller
+    generates IDs after filtering to the domain.
+    """
+    if "tree_id" in df.columns:
+        df = _check_tree_ids(df)
+    for col in _V2_COLUMNS - {"tree_id", "x", "y", "height"}:
         if col not in df.columns:
             df[col] = None
 

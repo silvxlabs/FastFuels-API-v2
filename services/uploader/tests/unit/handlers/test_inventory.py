@@ -6,12 +6,15 @@ No GCP I/O — all file operations use local /tmp paths.
 """
 
 import math
+import shutil
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
-from shapely.geometry import MultiPoint, Point
+from shapely.geometry import MultiPoint, Point, box
+from uploader.handlers import inventory
 from uploader.handlers.inventory import (
     _column_summary,
     _parse,
@@ -409,3 +412,161 @@ class TestWriteParquet:
 
         result = pd.read_parquet(path)
         pd.testing.assert_frame_equal(result, df)
+
+
+class TestTreeIdValidation:
+    """A user-supplied tree_id is kept exactly; bad values fail with typed
+    errors (#611)."""
+
+    def _df(self, tree_id):
+        return pd.DataFrame(
+            {"tree_id": tree_id, "x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT}
+        )
+
+    def _error(self, tree_id) -> ProcessingError:
+        with pytest.raises(ProcessingError) as exc_info:
+            _validate(self._df(tree_id))
+        return exc_info.value
+
+    def test_valid_ids_preserved_exactly_as_int32(self):
+        result = _validate(self._df([7, 2_147_483_647, 0]))
+        assert list(result["tree_id"]) == [7, 2_147_483_647, 0]
+        assert result["tree_id"].dtype == np.int32
+
+    def test_integral_floats_accepted(self):
+        result = _validate(self._df([7.0, 8.0, 9.0]))
+        assert list(result["tree_id"]) == [7, 8, 9]
+        assert result["tree_id"].dtype == np.int32
+
+    @pytest.mark.parametrize(
+        "tree_id",
+        [
+            [1, None, 3],
+            [1, 2.5, 3],
+            [1, "abc", 3],
+            [1, -1, 3],
+            [1, 2_147_483_648, 3],
+            [1, True, 3],
+        ],
+        ids=["null", "fractional", "string", "negative", "over_int32", "bool"],
+    )
+    def test_invalid_ids_rejected(self, tree_id):
+        err = self._error(tree_id)
+        assert err.code == "INVALID_TREE_ID"
+        assert "'row': 1" in err.message
+
+    def test_duplicates_rejected(self):
+        err = self._error([5, 9, 5])
+        assert err.code == "DUPLICATE_TREE_ID"
+        assert "'row': 0" in err.message and "'row': 2" in err.message
+
+    def test_absent_tree_id_not_padded(self):
+        """Without a tree_id column _validate leaves it out; handle_inventory
+        generates IDs after the domain filter."""
+        result = _validate(
+            pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
+        )
+        assert "tree_id" not in result.columns
+
+    def test_tree_id_mapping_from_csv(self, tmp_path):
+        path = str(tmp_path / "trees.csv")
+        _write_csv(
+            {
+                "TreeNum": [40, 10, 30],
+                "x": SAMPLE_X,
+                "y": SAMPLE_Y,
+                "height": SAMPLE_HEIGHT,
+            },
+            path,
+        )
+        df = _validate(_parse("csv", path, {"tree_id": "TreeNum"}, DOMAIN_CRS))
+        assert list(df["tree_id"]) == [40, 10, 30]
+
+    def test_tree_id_summary_skips_distinct_count(self):
+        summary = _column_summary(
+            pd.Series([3, 1, 2], name="tree_id", dtype="int32"), "categorical"
+        )
+        assert summary["unique_count"] == summary["count"] == 3
+
+
+class TestHandleInventoryTreeIds:
+    """tree_id end to end through handle_inventory, with GCS/Firestore stubbed."""
+
+    def _run(self, tmp_path, monkeypatch, data: dict, col_map: dict | None = None):
+        csv_path = tmp_path / "upload.csv"
+        pd.DataFrame(data).to_csv(csv_path, index=False)
+        out = str(tmp_path / "inv")
+        updates = {}
+
+        class _Snap:
+            def to_dict(self):
+                return {"crs": DOMAIN_CRS}
+
+        # Covers the first two sample trees; the third lies outside.
+        domain_gdf = gpd.GeoDataFrame(
+            geometry=[box(499_950.0, 4_199_950.0, 500_150.0, 4_200_150.0)],
+            crs=DOMAIN_CRS,
+        )
+        monkeypatch.setattr(
+            inventory, "download_file", lambda src, dst: shutil.copy(csv_path, dst)
+        )
+        monkeypatch.setattr(inventory, "get_document", lambda c, i: (None, _Snap()))
+        monkeypatch.setattr(inventory, "parse_domain_gdf", lambda d: domain_gdf)
+        monkeypatch.setattr(
+            inventory, "_write_parquet", lambda df, p: _write_parquet(df, out)
+        )
+        monkeypatch.setattr(inventory, "storage_size", lambda p: 0)
+        monkeypatch.setattr(inventory, "delete_file", lambda p: None)
+        monkeypatch.setattr(
+            inventory, "update_resource", lambda c, i, u: updates.update(u)
+        )
+
+        doc = {"domain_id": "d", "source": {"format": "csv", "columns": col_map or {}}}
+        inventory.handle_inventory(
+            f"inv-{tmp_path.name}", "bucket", f"inventories/{tmp_path.name}.csv", doc
+        )
+        return pd.read_parquet(out), updates
+
+    def test_unmapped_upload_generates_contiguous_ids(self, tmp_path, monkeypatch):
+        """IDs are 0 … N-1 over the trees kept in the domain, in file order."""
+        df, updates = self._run(
+            tmp_path,
+            monkeypatch,
+            {"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT},
+        )
+        assert list(df["tree_id"]) == [0, 1]
+        assert df["tree_id"].dtype == np.int32
+        assert list(df["height"]) == SAMPLE_HEIGHT[:2]
+        [tree_id_col] = [c for c in updates["columns"] if c["key"] == "tree_id"]
+        assert tree_id_col["type"] == "categorical"
+        assert tree_id_col["summary"]["null_count"] == 0
+
+    def test_mapped_upload_preserves_ids(self, tmp_path, monkeypatch):
+        df, updates = self._run(
+            tmp_path,
+            monkeypatch,
+            {
+                "TreeNum": [900, 17, 5],
+                "x": SAMPLE_X,
+                "y": SAMPLE_Y,
+                "height": SAMPLE_HEIGHT,
+            },
+            {"tree_id": "TreeNum"},
+        )
+        assert list(df["tree_id"]) == [900, 17]
+        assert "tree_id" in [c["key"] for c in updates["columns"]]
+
+    def test_duplicate_mapped_ids_fail(self, tmp_path, monkeypatch):
+        with pytest.raises(ProcessingError) as exc_info:
+            self._run(
+                tmp_path,
+                monkeypatch,
+                {
+                    "TreeNum": [1, 1, 2],
+                    "x": SAMPLE_X,
+                    "y": SAMPLE_Y,
+                    "height": SAMPLE_HEIGHT,
+                },
+                {"tree_id": "TreeNum"},
+            )
+        assert exc_info.value.code == "DUPLICATE_TREE_ID"

@@ -8,7 +8,9 @@ from fastapi import HTTPException, status
 
 from api.db.documents import firestore_client
 from api.resources.inventories.modification_models import (
+    InventoryAttribute,
     InventoryFeatureSpatialCondition,
+    InventoryModificationCondition,
 )
 from lib.config import FEATURES_COLLECTION, SUPPORT_EMAIL
 
@@ -50,6 +52,37 @@ def validate_inventory_wide_treatment_area(domain: dict, treatments: list) -> No
             f"{MAX_TREATMENT_AREA_SQ_KM:.0f} km² limit. Scope the treatment "
             f"to a smaller area with a spatial condition, or contact "
             f"{SUPPORT_EMAIL} to process a larger area."
+        ),
+    )
+
+
+def validate_tree_id_conditions(modifications: list, columns: list[dict]) -> None:
+    """Reject a ``tree_id`` condition on an inventory without a ``tree_id`` column.
+
+    Inventories created before ``tree_id`` was introduced carry no such column,
+    so an ID-based selection has nothing to match.
+
+    Raises:
+        HTTPException(422): If any condition tests ``tree_id`` and ``columns``
+            has no ``tree_id`` entry.
+    """
+    uses_tree_id = any(
+        isinstance(condition, InventoryModificationCondition)
+        and condition.attribute == InventoryAttribute.tree_id
+        for modification in modifications
+        for condition in modification.conditions
+    )
+    if not uses_tree_id:
+        return
+    if any(column.get("key") == "tree_id" for column in columns):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=(
+            "A modification condition selects trees by `tree_id`, but this "
+            "inventory has no `tree_id` column. Inventories created before "
+            "tree IDs were introduced cannot be modified by tree ID; recreate "
+            "the inventory to get one."
         ),
     )
 

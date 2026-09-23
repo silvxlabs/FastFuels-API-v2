@@ -30,7 +30,10 @@ from api.resources.inventories.modifications.examples import (
 )
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
 from api.resources.inventories.schema import Inventory
-from api.resources.inventories.utils import validate_feature_conditions
+from api.resources.inventories.utils import (
+    validate_feature_conditions,
+    validate_tree_id_conditions,
+)
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -80,11 +83,17 @@ async def apply_modifications(
     clears the inventory of all trees; use it deliberately.
 
     **Attribute conditions** compare a single tree attribute against a value:
-    - `attribute`: one of `dbh`, `height`, `crown_ratio`, `fia_species_code`
+    - `attribute`: one of `dbh`, `height`, `crown_ratio`, `fia_species_code`,
+      `tree_id`
     - `operator`: `eq`, `ne`, `gt`, `lt`, `ge`, `le`
-      (`fia_species_code` only supports `eq`/`ne`)
+      (`fia_species_code` and `tree_id` only support `eq`/`ne`)
     - `value`: number, string, or list for `eq`/`ne`
     - `unit`: (optional) pint-compatible unit string (e.g., `"in"`, `"ft"`)
+
+    To select individual trees, test `tree_id` against a list of IDs: with
+    `eq` the rule applies to exactly the listed trees; with `ne`, to every
+    other tree. `tree_id` values are integers and take no `unit`. `tree_id`
+    can only be tested, not changed by an action.
 
     **Expression conditions** use a boolean expression:
     - `expression`: e.g., `"dbh < 5 and height < 2"`
@@ -140,8 +149,10 @@ async def apply_modifications(
     - **404 Not Found**: The inventory does not exist, is not owned by the
       caller, or is not in this domain.
     - **422 Unprocessable Content**: The inventory is not in `completed` status
-      (and is not a retryable failed modification); or a referenced `feature_id`
-      is missing, cross-domain, or not completed.
+      (and is not a retryable failed modification); a condition tests
+      `tree_id` but the inventory has no `tree_id` column (it was created
+      before tree IDs were introduced); or a referenced `feature_id` is
+      missing, cross-domain, or not completed.
     - **429 Too Many Requests**: You have too many active inventory jobs in
       progress (your `max_active_inventories` quota). Wait for jobs to complete
       or delete unneeded inventories, then retry. The response detail names the
@@ -176,6 +187,10 @@ async def apply_modifications(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Document not found: inventories/{inventory_id}",
             )
+
+        validate_tree_id_conditions(
+            body.modifications, inventory_data.get("columns", [])
+        )
 
         pending = inventory_data.get("pending_modifications") or []
         inventory_status = inventory_data.get("status")

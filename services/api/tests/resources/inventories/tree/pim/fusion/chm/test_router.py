@@ -149,6 +149,7 @@ class TestCreatePimChmFusionInventory:
 
         # Reimputation is a conditioned tree/pim expansion: full PIM column set.
         assert [c["key"] for c in data["columns"]] == [
+            "tree_id",
             "x",
             "y",
             "fia_species_code",

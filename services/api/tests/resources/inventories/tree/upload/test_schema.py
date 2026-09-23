@@ -69,6 +69,16 @@ class TestInventoryColumnMapping:
         dumped = mapping.model_dump(exclude_none=True)
         assert dumped == {"height": "HT"}
 
+    def test_tree_id_mapping(self):
+        """The uploader receives the tree_id mapping via source.columns."""
+        req = CreateInventoryUploadRequest(
+            format="csv", columns={"tree_id": "TreeNum", "height": "HT_m"}
+        )
+        assert req.columns.model_dump(exclude_none=True) == {
+            "tree_id": "TreeNum",
+            "height": "HT_m",
+        }
+
 
 class TestCreateInventoryUploadRequest:
     def test_minimal_csv_request(self):

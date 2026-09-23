@@ -192,3 +192,14 @@ class TestResolveGdamColumns:
         dbh = next(c for c in result if c["key"] == "dbh")
         assert dbh["type"] == "continuous"
         assert dbh["unit"] == "cm"
+
+    def test_source_tree_id_carried(self):
+        """GDAM preserves the source tree_id column (#611)."""
+        source = [{"key": "tree_id", "type": "categorical"}, *self.CHM_COLUMNS]
+        result = resolve_gdam_columns(source, ["dbh"])
+        assert self._keys(result) == ["tree_id", "x", "y", "height", "dbh"]
+
+    def test_legacy_source_does_not_gain_tree_id(self):
+        """A source without tree_id doesn't gain one: GDAM never writes it."""
+        result = resolve_gdam_columns(self.CHM_COLUMNS, ["dbh"])
+        assert "tree_id" not in self._keys(result)

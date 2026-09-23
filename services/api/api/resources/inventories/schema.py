@@ -119,10 +119,17 @@ class Column(BaseModel):
     summary: ColumnSummary | None = None
 
 
+# Stable per-tree identifier: an int32 unique within the inventory, assigned at
+# creation and never renumbered (removed trees leave gaps). Categorical — it is
+# an opaque identifier, not a quantity. Inventories created before it existed
+# lack the column.
+TREE_ID_COLUMN = Column(key="tree_id", type=ColumnType.categorical)
+
 # Full column set of a PIM-expanded tree inventory. Other sources carry a
 # subset: CHM produces CHM_INVENTORY_COLUMNS; uploads carry whichever optional
 # columns the file contains (the uploader records the actual set on completion).
 BASE_INVENTORY_COLUMNS = [
+    TREE_ID_COLUMN,
     Column(key="x", type=ColumnType.continuous, unit="m"),
     Column(key="y", type=ColumnType.continuous, unit="m"),
     Column(key="fia_species_code", type=ColumnType.categorical),
@@ -136,6 +143,7 @@ BASE_INVENTORY_COLUMNS = [
 # species, or crown ratio. Treatments thin against dbh, so they cannot be
 # applied to a CHM-derived inventory.
 CHM_INVENTORY_COLUMNS = [
+    TREE_ID_COLUMN,
     Column(key="x", type=ColumnType.continuous, unit="m"),
     Column(key="y", type=ColumnType.continuous, unit="m"),
     Column(key="height", type=ColumnType.continuous, unit="m"),
@@ -227,7 +235,18 @@ class Inventory(BaseModel):
     source: dict
     modifications: list[InventoryModification] = Field(default_factory=list)
     treatments: list[InventoryTreatment] = Field(default_factory=list)
-    columns: list[Column] = Field(default_factory=list)
+    columns: list[Column] = Field(
+        default_factory=list,
+        description=(
+            "Columns of the inventory's tree data, with per-column summaries. "
+            "`tree_id` is a stable per-tree integer (0 … 2,147,483,647), unique "
+            "within the inventory. It is assigned when the inventory is created "
+            "and never renumbered: removing trees leaves gaps, and inventories "
+            "derived from this one (duplicates, allometry, modifications, "
+            "treatments) keep the IDs of the trees they retain. Inventories "
+            "created before `tree_id` was introduced have no such column."
+        ),
+    )
     forestry_metrics: ForestryMetrics | None = None
     georeference: InventoryGeoreference | None = Field(
         default=None,

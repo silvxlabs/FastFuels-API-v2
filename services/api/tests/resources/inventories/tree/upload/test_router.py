@@ -116,7 +116,11 @@ class TestCreateInventoryUpload:
             self.route(domain_for_testing["id"]),
             json={
                 "format": "csv",
-                "columns": {"height": "HT", "fia_species_code": "SPCD"},
+                "columns": {
+                    "height": "HT",
+                    "fia_species_code": "SPCD",
+                    "tree_id": "TreeNum",
+                },
             },
         )
         assert response.status_code == 201
@@ -124,6 +128,7 @@ class TestCreateInventoryUpload:
         source = response.json()["inventory"]["source"]
         assert source["columns"]["height"] == "HT"
         assert source["columns"]["fia_species_code"] == "SPCD"
+        assert source["columns"]["tree_id"] == "TreeNum"
 
         firestore_client.collection(INVENTORIES_COLLECTION).document(
             response.json()["inventory"]["id"]

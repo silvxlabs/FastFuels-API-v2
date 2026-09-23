@@ -62,6 +62,8 @@ V1 pre-computes every tree's biomass realizations before touching zarr. Memory g
 
 V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed unique, so distinct trees accidentally shared biomass realizations. V2 inventories have no `tree_id` column; treevox assigns `tree_id = np.arange(len(df))` (unique per row) and computes a separate cache key by binning `(fia_species_code, dbh_bin, height_bin, cr_bin)` at `DBH_BIN_CM = 2.75`, `HEIGHT_BIN_M = 1.0`, `CR_BIN = 0.1`.
 
+The geometric crown profiles (`cone`, `cylinder`, `single_/dual_ellipsoid`, `single_/dual_paraboloid`) need no extra key field: with the allometric radius source their maximum radius is the Purves radius, a function of the already-binned species, DBH, height, and crown ratio. A per-tree `max_crown_radius` inventory column is appended to the key, as for `purves`/`beta`.
+
 ## Chunk padding model
 
 Two primitives together ensure crowns near chunk boundaries render correctly:

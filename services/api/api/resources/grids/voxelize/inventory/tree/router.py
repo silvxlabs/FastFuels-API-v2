@@ -95,14 +95,32 @@ async def create_tree_inventory_grid(
       duplicates. Branchwood and fine bands are accepted by the API, but
       Treevox currently fails those jobs with a not-implemented processing
       error.
-    - **crown_profile_model**: (optional) Crown geometry model. One of
-      `purves` (default) or `beta`.
+    - **crown_profile_model**: (optional) Crown shape. Every crown runs from
+      the crown base, height × (1 − crown_ratio), to the tree height.
+      - `purves` (default): Purves et al. (2007), species-specific; widest at
+        the crown base.
+      - `beta`: species-group beta distribution; widest within the crown, per
+        species group.
+      - `cone`: right circular cone; widest at the crown base.
+      - `cylinder`: right circular cylinder; uniform radius.
+      - `single_ellipsoid`: one half-ellipsoid of revolution; widest at the
+        crown base.
+      - `dual_ellipsoid`: two half-ellipsoids joined at the crown midpoint;
+        widest there.
+      - `single_paraboloid`: one paraboloid of revolution; widest at the crown
+        base.
+      - `dual_paraboloid`: two paraboloids joined at the crown midpoint;
+        widest there (the LANL Trees crown envelope).
     - **biomass_source**: (optional) Biomass source and requested components. The
       default uses NSVB allometry for foliage. Inventory-column sources must
       provide per-tree kg values for each requested direct component.
     - **max_crown_radius_source**: (optional) Source of each tree's maximum
-      crown radius. Defaults to the crown profile model's allometric value;
-      pass `{"type": "inventory_column", "column": <name>}` to read a per-tree
+      crown radius. The default, `{"type": "allometry"}`, uses the Purves et
+      al. (2007) maximum crown radius for `purves` and every geometric shape
+      (`cone`, `cylinder`, ellipsoids, paraboloids), so a tree's crown is
+      equally wide under each of them and only the shape changes; `beta` uses
+      its own allometric radius. Pass
+      `{"type": "inventory_column", "column": <name>}` to read a per-tree
       maximum radius (m) from an inventory column (e.g. derived from LiDAR).
       The crown profile model still controls the crown shape — only the peak
       radius is rescaled.

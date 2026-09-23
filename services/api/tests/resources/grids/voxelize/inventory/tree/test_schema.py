@@ -409,9 +409,59 @@ class TestCreateTreeInventoryRequest:
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(**self._minimal(resolution=resolution))
 
-    def test_invalid_crown_profile_model_rejected(self):
+    @pytest.mark.parametrize(
+        "profile",
+        [
+            "purves",
+            "beta",
+            "cone",
+            "cylinder",
+            "single_ellipsoid",
+            "dual_ellipsoid",
+            "single_paraboloid",
+            "dual_paraboloid",
+        ],
+    )
+    def test_crown_profile_models_accepted(self, profile):
+        req = CreateTreeInventoryRequest(**self._minimal(crown_profile_model=profile))
+        assert req.crown_profile_model == CrownProfileModel(profile)
+        source = TreeInventoryVoxelizationSource(
+            source_inventory_id="abc123",
+            resolution=req.resolution,
+            bands=req.bands,
+            crown_profile_model=req.crown_profile_model,
+            biomass_source=req.biomass_source,
+            seed=1,
+        )
+        assert source.model_dump(mode="json")["crown_profile_model"] == profile
+
+    def test_crown_profile_model_enum_values(self):
+        assert {m.value for m in CrownProfileModel} == {
+            "purves",
+            "beta",
+            "cone",
+            "cylinder",
+            "single_ellipsoid",
+            "dual_ellipsoid",
+            "single_paraboloid",
+            "dual_paraboloid",
+        }
+
+    @pytest.mark.parametrize(
+        "profile", ["watershed", "ellipsoid", "paraboloid", "Cone", ""]
+    )
+    def test_invalid_crown_profile_model_rejected(self, profile):
         with pytest.raises(ValidationError):
-            CreateTreeInventoryRequest(**self._minimal(crown_profile_model="watershed"))
+            CreateTreeInventoryRequest(**self._minimal(crown_profile_model=profile))
+
+    def test_crown_profile_descriptions_document_every_shape(self):
+        fields = CreateTreeInventoryRequest.model_json_schema()["properties"]
+        crown = fields["crown_profile_model"]["description"]
+        for profile in CrownProfileModel:
+            assert f"`{profile.value}`" in crown
+        radius = fields["max_crown_radius_source"]["description"]
+        assert "Purves" in radius
+        assert "inventory_column" in radius
 
     def test_invalid_biomass_source_rejected(self):
         with pytest.raises(ValidationError):

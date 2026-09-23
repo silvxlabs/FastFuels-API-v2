@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from fastfuels_core.allometry import jenkins, nsvb
 from fastfuels_core.voxelization import (
     compute_crown_probability_field,
     sample_occupancy,
@@ -232,6 +233,33 @@ class TestBuildTree:
         row = self._row()
         tree = voxelize.build_tree(row, cfg)
         assert tree._max_crown_radius_override is None
+
+    @pytest.mark.parametrize(
+        "equations,species,dbh,height,expected_kg",
+        [
+            # core < 0.13: Jenkins group-4 sign bug gave pines ~0 kg (#615).
+            ("jenkins", 131, 30.0, 20.0, 18.855),
+            # nsvb < 0.3: planted-stand rows for loblolly and slash pine (#615).
+            ("nsvb", 131, 30.0, 20.0, 13.600),
+            ("nsvb", 111, 30.0, 20.0, 16.471),
+        ],
+    )
+    def test_allometric_foliage_matches_griddle(
+        self, equations, species, dbh, height, expected_kg
+    ):
+        """Treevox foliage matches griddle's inventory-canopy allometry."""
+        cfg = base_source_config()
+        cfg["biomass_source"]["equations"] = equations
+        row = self._row(fia_species_code=species, dbh=dbh, height=height)
+        foliage = voxelize.build_tree(row, cfg).foliage_biomass
+
+        spcd = np.array([species])
+        if equations == "jenkins":
+            griddle = jenkins.foliage_biomass(spcd, np.array([dbh]))[0]
+        else:
+            griddle = nsvb.foliage_biomass(spcd, np.array([dbh]), np.array([height]))[0]
+        assert foliage == pytest.approx(expected_kg, rel=1e-3)
+        assert foliage == pytest.approx(griddle, rel=1e-5)
 
 
 class TestBiomassComponentDistribution:

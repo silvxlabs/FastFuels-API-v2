@@ -75,7 +75,7 @@ class TestBandSpecs:
             ("fuel_moisture.live", "float32", 0.0),
             ("fuel_moisture.dead", "float32", 0.0),
             ("spcd", "uint16", 0),
-            ("tree_id", "int32", -1),
+            ("tree_id", "int32", 0),
         ],
     )
     def test_per_band_dtype_and_fill(self, key, dtype, fill):
@@ -100,7 +100,7 @@ class TestInitStore:
         assert ds["spcd"].dtype == np.uint16
 
         assert np.all(ds["volume_fraction"].values == 0.0)
-        assert np.all(ds["tree_id"].values == -1)
+        assert np.all(ds["tree_id"].values == 0)
         assert np.all(ds["spcd"].values == 0)
 
     def test_shape_matches_dimensions(self, tmp_path):
@@ -242,11 +242,11 @@ class TestMaskedMerge:
             )
         return xr.Dataset(data_vars)
 
-    def test_tree_id_fill_minus_one_does_not_overwrite_real_zero(self):
-        """v1 used `data > 0` which misclassifies tree_id=0 as fill."""
+    def test_tree_id_written_over_fill(self):
+        """A real tree_id overwrites the 0 fill; untouched cells stay 0."""
         union = self._union_ds(keys=("tree_id",))
-        buffer = np.full((2, 5, 5), -1, dtype="int32")
-        buffer[:, 0, 0] = 0
+        buffer = np.full((2, 5, 5), 0, dtype="int32")
+        buffer[:, 0, 0] = 5
 
         result = {
             "chunk_location": (0, 0),
@@ -256,8 +256,8 @@ class TestMaskedMerge:
         }
         merged = storage.masked_merge(union, [result], slice(0, 10), slice(0, 10))
 
-        assert merged["tree_id"].values[0, 0, 0] == 0
-        assert merged["tree_id"].values[0, 0, 1] == -1
+        assert merged["tree_id"].values[0, 0, 0] == 5
+        assert merged["tree_id"].values[0, 0, 1] == 0
 
     def test_spcd_fill_zero_does_not_get_overwritten_by_real_spcd_zero(self):
         """With `data != fill_value` mask, spcd=0 (real) is distinguishable.

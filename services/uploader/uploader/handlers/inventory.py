@@ -53,13 +53,13 @@ _COLUMN_METADATA = {
 }
 
 
-# Largest tree_id: the int32 maximum (the voxel `tree_id` band uses -1 as nodata).
+# tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
 MAX_TREE_ID = 2_147_483_647
 
 
 class _InventorySchema(pa.DataFrameModel):
     # int64 so out-of-range IDs reach the `le` check before the int32 cast.
-    tree_id: Series[np.int64] | None = pa.Field(ge=0, le=MAX_TREE_ID, unique=True)
+    tree_id: Series[np.int64] | None = pa.Field(ge=1, le=MAX_TREE_ID, unique=True)
     x: Series[float]
     y: Series[float]
     height: Series[float] = pa.Field(ge=0, le=116)
@@ -119,10 +119,10 @@ def handle_inventory(
             )
 
         # Without a user-supplied tree_id, number the trees kept in the domain
-        # 0 … N-1 in file row order.
+        # 1 … N in file row order.
         if "tree_id" not in df.columns:
             df = df.reset_index(drop=True)
-            df.insert(0, "tree_id", np.arange(len(df), dtype="int32"))
+            df.insert(0, "tree_id", np.arange(1, len(df) + 1, dtype="int32"))
             provided_columns.append("tree_id")
 
         path = f"gs://{INVENTORIES_BUCKET}/{resource_id}"

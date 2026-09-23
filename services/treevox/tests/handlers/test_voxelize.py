@@ -389,7 +389,7 @@ class TestMaterializeChunkBuffer:
         assert (buf == -1).all()
 
     def test_fill_values_preserved_on_slice(self):
-        """tree_id cells carry fill=-1 after slice/copy."""
+        """tree_id cells carry fill=0 after slice/copy."""
         union = self._union(keys=("tree_id",))
         buf = handler._materialize_chunk_buffer(
             union,
@@ -398,7 +398,7 @@ class TestMaterializeChunkBuffer:
             rel_x=slice(0, 5),
             expected_shape=(2, 5, 5),
         )
-        assert (buf == -1).all()
+        assert (buf == 0).all()
 
     def test_smaller_slice_pads_with_fill_and_warns(self):
         """Union slice smaller than expected → trailing cells filled, warning logged.
@@ -424,17 +424,18 @@ class TestMaterializeChunkBuffer:
         assert "smaller than expected" in mock_logger.warning.call_args[0][0]
 
     def test_padding_uses_band_specific_fill(self):
-        """tree_id pads with -1, not 0."""
-        union = self._union(shape=(2, 10, 10), keys=("tree_id",))
+        """Irradiance pads with NaN, not 0."""
+        key = "irradiance.canopy.relative"
+        union = self._union(shape=(2, 10, 10), keys=(key,))
         buf = handler._materialize_chunk_buffer(
             union,
-            "tree_id",
+            key,
             rel_y=slice(0, 10),
             rel_x=slice(0, 10),
             expected_shape=(2, 12, 12),
         )
-        assert (buf[:, 10:, :] == -1).all()
-        assert (buf[:, :, 10:] == -1).all()
+        assert np.isnan(buf[:, 10:, :]).all()
+        assert np.isnan(buf[:, :, 10:]).all()
 
     def test_larger_slice_raises_union_shape_mismatch(self):
         """Union slice larger than expected → refuse to truncate."""

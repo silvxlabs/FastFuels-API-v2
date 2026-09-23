@@ -91,7 +91,7 @@ class TestGenerateTreeIds:
 
         assert out.columns[0] == "tree_id"
         assert out["tree_id"].dtype == np.int32
-        assert list(out["tree_id"]) == list(range(9))
+        assert list(out["tree_id"]) == list(range(1, 10))
         # Row order is unchanged: IDs follow the source rows.
         assert list(out["height"]) == [float(i) + 2.0 for i in range(9)]
 
@@ -106,7 +106,7 @@ class TestGenerateTreeIds:
         _local_saver(tmp_path, saved)("inv", ddf, CHM_COLUMNS)
 
         assert sorted(calls) == [0, 1, 2]
-        assert list(saved["df"]["tree_id"]) == list(range(7))
+        assert list(saved["df"]["tree_id"]) == list(range(1, 8))
 
     def test_forestry_metrics_fused_with_tree_ids(self, tmp_path):
         """Regression: with dask 2026.1.2 a Delayed in the fused compute
@@ -127,7 +127,7 @@ class TestGenerateTreeIds:
         assert stats["tree_id"]["count"] == 6
         assert stats["dbh"]["max"] == 60.0
         assert forestry["tree_count"] == 6
-        assert list(pd.read_parquet(tmp_path / "inv")["tree_id"]) == list(range(6))
+        assert list(pd.read_parquet(tmp_path / "inv")["tree_id"]) == list(range(1, 7))
 
     def test_summary_is_categorical_with_unique_equal_to_count(self, tmp_path):
         saved = {}
@@ -182,9 +182,9 @@ class TestChmHandler:
 
         return _run
 
-    def test_ids_are_zero_to_n_minus_one(self, run):
+    def test_ids_are_one_to_n(self, run):
         df, _ = run()
-        assert list(df["tree_id"]) == list(range(8))
+        assert list(df["tree_id"]) == list(range(1, 9))
         assert df["tree_id"].is_unique and df["tree_id"].notna().all()
 
     def test_detection_graph_computed_once(self, run):
@@ -207,11 +207,11 @@ class TestChmHandler:
         thinned, calls = run(mods)
 
         assert sorted(calls) == [0, 1, 2]
-        # Heights 2, 3, 4 (IDs 0-2) are removed; survivors keep their IDs.
-        assert list(thinned["tree_id"]) == [3, 4, 5, 6, 7]
+        # Heights 2, 3, 4 (IDs 1-3) are removed; survivors keep their IDs.
+        assert list(thinned["tree_id"]) == [4, 5, 6, 7, 8]
         pd.testing.assert_frame_equal(
             thinned.reset_index(drop=True),
-            full[full["tree_id"] >= 3].reset_index(drop=True),
+            full[full["tree_id"] >= 4].reset_index(drop=True),
         )
 
 
@@ -294,13 +294,13 @@ class TestExpandPlots:
 
         return _run
 
-    def test_ids_are_zero_to_n_minus_one(self, run):
+    def test_ids_are_one_to_n(self, run):
         saved, _ = run()
         df = saved["df"]
         assert len(df) > 10
         assert df.columns[0] == "tree_id"
         assert df["tree_id"].dtype == np.int32
-        assert list(df["tree_id"]) == list(range(len(df)))
+        assert list(df["tree_id"]) == list(range(1, len(df) + 1))
         assert saved["stats"]["tree_id"]["unique_count"] == len(df)
 
     def test_expansion_graph_computed_once(self, run):
@@ -326,11 +326,11 @@ class TestExpandPlots:
         expected = full[full["dbh"] >= 10.0].reset_index(drop=True)
         assert 0 < len(thinned) < len(full)
         pd.testing.assert_frame_equal(thinned.reset_index(drop=True), expected)
-        assert list(thinned["tree_id"]) != list(range(len(thinned)))
+        assert list(thinned["tree_id"]) != list(range(1, len(thinned) + 1))
 
     def test_create_time_tree_id_condition(self, run):
         full = run()[0]["df"]
-        listed = [0, 3, 5]
+        listed = [1, 3, 5]
         mods = [
             {
                 "conditions": [

@@ -30,7 +30,7 @@ TREE_ID_COLUMN = "tree_id"
 
 
 def generate_tree_ids(ddf: dd.DataFrame) -> dd.DataFrame:
-    """Prepend an int32 ``tree_id`` numbering the rows ``0 … N-1`` in row order.
+    """Prepend an int32 ``tree_id`` numbering the rows ``1 … N`` in row order.
 
     Lazy: a cumulative sum over a constant column, so dask computes each
     partition's local sum and carries only a scalar between partitions. The
@@ -39,7 +39,5 @@ def generate_tree_ids(ddf: dd.DataFrame) -> dd.DataFrame:
     modification or treatment, so a tree removed at creation leaves a gap.
     """
     ddf = ddf.assign(**{TREE_ID_COLUMN: 1})
-    ddf = ddf.assign(
-        **{TREE_ID_COLUMN: (ddf[TREE_ID_COLUMN].cumsum() - 1).astype("int32")}
-    )
+    ddf = ddf.assign(**{TREE_ID_COLUMN: ddf[TREE_ID_COLUMN].cumsum().astype("int32")})
     return ddf[[TREE_ID_COLUMN, *(c for c in ddf.columns if c != TREE_ID_COLUMN)]]

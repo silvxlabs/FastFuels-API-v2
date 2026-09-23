@@ -429,8 +429,8 @@ class TestTreeIdValidation:
         return exc_info.value
 
     def test_valid_ids_preserved_exactly_as_int32(self):
-        result = _validate(self._df([7, 2_147_483_647, 0]))
-        assert list(result["tree_id"]) == [7, 2_147_483_647, 0]
+        result = _validate(self._df([7, 2_147_483_647, 1]))
+        assert list(result["tree_id"]) == [7, 2_147_483_647, 1]
         assert result["tree_id"].dtype == np.int32
 
     def test_floats_cast_to_int(self):
@@ -448,10 +448,11 @@ class TestTreeIdValidation:
         [
             [1, None, 3],
             [1, "abc", 3],
+            [1, 0, 3],
             [1, -1, 3],
             [1, 2_147_483_648, 3],
         ],
-        ids=["null", "string", "negative", "over_int32"],
+        ids=["null", "string", "zero", "negative", "over_int32"],
     )
     def test_invalid_ids_rejected(self, tree_id):
         err = self._error(tree_id)
@@ -532,13 +533,13 @@ class TestHandleInventoryTreeIds:
         return pd.read_parquet(out), updates
 
     def test_unmapped_upload_generates_contiguous_ids(self, tmp_path, monkeypatch):
-        """IDs are 0 … N-1 over the trees kept in the domain, in file order."""
+        """IDs are 1 … N over the trees kept in the domain, in file order."""
         df, updates = self._run(
             tmp_path,
             monkeypatch,
             {"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT},
         )
-        assert list(df["tree_id"]) == [0, 1]
+        assert list(df["tree_id"]) == [1, 2]
         assert df["tree_id"].dtype == np.int32
         assert list(df["height"]) == SAMPLE_HEIGHT[:2]
         [tree_id_col] = [c for c in updates["columns"] if c["key"] == "tree_id"]

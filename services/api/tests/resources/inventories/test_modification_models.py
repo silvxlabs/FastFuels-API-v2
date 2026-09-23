@@ -578,10 +578,18 @@ class TestTreeIdAttribute:
 
     @pytest.mark.parametrize(
         "value",
-        [1.5, "12", [1, 2.5], [1, "x"], -1, [0, 2_147_483_648]],
-        ids=["float", "string", "list_float", "list_string", "negative", "over_int32"],
+        [1.5, "12", [1, 2.5], [1, "x"], -1, 0, [1, 2_147_483_648]],
+        ids=[
+            "float",
+            "string",
+            "list_float",
+            "list_string",
+            "negative",
+            "zero",
+            "over_int32",
+        ],
     )
-    def test_non_int32_values_rejected(self, value):
+    def test_out_of_range_values_rejected(self, value):
         with pytest.raises(ValidationError, match="tree_id values"):
             InventoryModificationCondition(
                 attribute="tree_id", operator="eq", value=value
@@ -589,7 +597,7 @@ class TestTreeIdAttribute:
 
     def test_bounds_accepted(self):
         InventoryModificationCondition(
-            attribute="tree_id", operator="eq", value=[0, 2_147_483_647]
+            attribute="tree_id", operator="eq", value=[1, 2_147_483_647]
         )
 
     def test_unit_rejected(self):

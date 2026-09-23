@@ -1507,7 +1507,7 @@ class TestApplyBands:
         assert bufs["tree_id"][0, 1, 1] == 7
         # fill values preserved elsewhere
         assert bufs["spcd"].sum() == 131
-        assert (bufs["tree_id"] == -1).sum() == biomass.size - 1
+        assert (bufs["tree_id"] == 0).sum() == biomass.size - 1
 
     def test_overwrite_second_tree_replaces_first(self):
         """Last-writer-wins semantics for overwrite bands."""

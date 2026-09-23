@@ -90,7 +90,6 @@ Ten constraints must be respected. See the implementation plan for full details;
 ## Correctness fix vs v1
 
 V1's `write_combined_chunks` uses `mask = chunk.data > 0`. This breaks for:
-- `tree_id` with fill=-1 (any value > -1 should win, including -1 → 0 transitions).
 - `spcd` with fill=0 (legitimate species code 0 would be indistinguishable from fill).
 
 V2's `masked_merge` uses `mask = data != BAND_SPECS[key].fill_value` per band, so each band's merge respects its actual fill value.

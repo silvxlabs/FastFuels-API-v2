@@ -44,7 +44,7 @@ BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "fuel_moisture.live": ("float32", 0.0),
     "fuel_moisture.dead": ("float32", 0.0),
     "spcd": ("uint16", 0),
-    "tree_id": ("int32", -1),
+    "tree_id": ("int32", 0),
     "irradiance.canopy.relative": ("float32", np.nan),
     "irradiance.surface.relative": ("float32", np.nan),
 }
@@ -182,7 +182,7 @@ def masked_merge(
 
     Like the previous fill-value mask, comparing against the original union
     cannot distinguish a real write whose value exactly equals the baseline.
-    That is acceptable for current bands: real `tree_id` never equals -1, and
+    That is acceptable for current bands: real `tree_id` is never 0, and
     species code / moisture / SAV writes equal to the baseline are no-ops.
     """
     merged = union_ds.copy(deep=True)

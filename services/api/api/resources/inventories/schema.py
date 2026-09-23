@@ -238,7 +238,7 @@ class Inventory(BaseModel):
         default_factory=list,
         description=(
             "Columns of the inventory's tree data, with per-column summaries. "
-            "`tree_id` is a stable per-tree integer (0 … 2,147,483,647), unique "
+            "`tree_id` is a stable per-tree integer (1 … 2,147,483,647), unique "
             "within the inventory. It is assigned when the inventory is created "
             "and never renumbered: removing trees leaves gaps, and inventories "
             "derived from this one (duplicates, allometry, modifications, "

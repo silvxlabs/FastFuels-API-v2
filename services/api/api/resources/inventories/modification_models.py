@@ -53,7 +53,7 @@ EQUALITY_ONLY_ATTRIBUTES = {
     InventoryAttribute.tree_id,
 }
 
-# Largest tree_id: the int32 maximum (the voxel `tree_id` band uses -1 as nodata).
+# tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
 MAX_TREE_ID = 2_147_483_647
 
 
@@ -109,16 +109,16 @@ class InventoryModificationCondition(BaseModel):
 
     @model_validator(mode="after")
     def validate_tree_id_value(self):
-        """tree_id values are integers in 0 … 2,147,483,647."""
+        """tree_id values are integers in 1 … 2,147,483,647."""
         if self.attribute != InventoryAttribute.tree_id:
             return self
         values = self.value if isinstance(self.value, list) else [self.value]
         for v in values:
             if isinstance(v, bool) or not isinstance(v, int):
                 raise ValueError(f"tree_id values must be integers, got {v!r}")
-            if not 0 <= v <= MAX_TREE_ID:
+            if not 1 <= v <= MAX_TREE_ID:
                 raise ValueError(
-                    f"tree_id values must be in 0 … {MAX_TREE_ID}, got {v}"
+                    f"tree_id values must be in 1 … {MAX_TREE_ID}, got {v}"
                 )
         return self
 

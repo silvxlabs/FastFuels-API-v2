@@ -415,8 +415,8 @@ class TestWriteParquet:
 
 
 class TestTreeIdValidation:
-    """A user-supplied tree_id is kept exactly; bad values fail with typed
-    errors (#611)."""
+    """A user-supplied tree_id is cast to int32 and kept; bad values fail
+    schema validation (#611)."""
 
     def _df(self, tree_id):
         return pd.DataFrame(
@@ -439,7 +439,9 @@ class TestTreeIdValidation:
         assert result["tree_id"].dtype == np.int32
 
     def test_duplicates_after_cast_rejected(self):
-        assert self._error([2.0, 2.5, 3.0]).code == "DUPLICATE_TREE_ID"
+        err = self._error([2.0, 2.5, 3.0])
+        assert err.code == "SCHEMA_VALIDATION_ERROR"
+        assert "field_uniqueness" in err.suggestion
 
     @pytest.mark.parametrize(
         "tree_id",
@@ -453,13 +455,14 @@ class TestTreeIdValidation:
     )
     def test_invalid_ids_rejected(self, tree_id):
         err = self._error(tree_id)
-        assert err.code == "INVALID_TREE_ID"
-        assert "'row': 1" in err.message
+        assert err.code == "SCHEMA_VALIDATION_ERROR"
+        assert "'column': 'tree_id'" in err.suggestion
+        assert "'index': 1" in err.suggestion
 
     def test_duplicates_rejected(self):
         err = self._error([5, 9, 5])
-        assert err.code == "DUPLICATE_TREE_ID"
-        assert "'row': 0" in err.message and "'row': 2" in err.message
+        assert err.code == "SCHEMA_VALIDATION_ERROR"
+        assert "field_uniqueness" in err.suggestion
 
     def test_absent_tree_id_not_padded(self):
         """Without a tree_id column _validate leaves it out; handle_inventory
@@ -570,4 +573,5 @@ class TestHandleInventoryTreeIds:
                 },
                 {"tree_id": "TreeNum"},
             )
-        assert exc_info.value.code == "DUPLICATE_TREE_ID"
+        assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
+        assert "field_uniqueness" in exc_info.value.suggestion

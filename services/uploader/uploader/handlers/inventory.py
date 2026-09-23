@@ -56,12 +56,10 @@ _COLUMN_METADATA = {
 # Largest tree_id: the int32 maximum (the voxel `tree_id` band uses -1 as nodata).
 MAX_TREE_ID = 2_147_483_647
 
-# How many offending rows a tree_id error lists.
-_TREE_ID_ERROR_EXAMPLES = 10
-
 
 class _InventorySchema(pa.DataFrameModel):
-    tree_id: Series[np.int32] | None = pa.Field(ge=0, le=MAX_TREE_ID)
+    # int64 so out-of-range IDs reach the `le` check before the int32 cast.
+    tree_id: Series[np.int64] | None = pa.Field(ge=0, le=MAX_TREE_ID, unique=True)
     x: Series[float]
     y: Series[float]
     height: Series[float] = pa.Field(ge=0, le=116)
@@ -280,78 +278,18 @@ def _parse(
     return df
 
 
-def _check_tree_ids(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate a user-supplied ``tree_id`` column and cast it to int32.
-
-    Values must be non-null numbers in ``0 … MAX_TREE_ID``; they are cast to
-    int, then must be unique across the file. Fails with ``INVALID_TREE_ID`` or
-    ``DUPLICATE_TREE_ID``, listing example rows by their 0-based data-row index.
-    """
-    raw = df["tree_id"]
-    numeric = pd.to_numeric(raw, errors="coerce").astype("float64")
-    valid = numeric.notna() & (numeric >= 0) & (numeric <= MAX_TREE_ID)
-    if not valid.all():
-        bad = raw[~valid].head(_TREE_ID_ERROR_EXAMPLES)
-        examples = [{"row": int(i), "tree_id": _jsonable(v)} for i, v in bad.items()]
-        raise ProcessingError(
-            code="INVALID_TREE_ID",
-            message=(
-                f"{int((~valid).sum())} row(s) have an invalid tree_id. Examples: "
-                f"{examples}"
-            ),
-            suggestion=(
-                f"tree_id values must be non-null numbers in 0 … {MAX_TREE_ID}. "
-                "Fix the listed rows, or remove the tree_id column (and its "
-                "mapping) to have IDs generated."
-            ),
-        )
-
-    ids = numeric.astype("int32")
-    duplicated = ids.duplicated(keep=False)
-    if duplicated.any():
-        bad = ids[duplicated].head(_TREE_ID_ERROR_EXAMPLES)
-        examples = [{"row": int(i), "tree_id": int(v)} for i, v in bad.items()]
-        raise ProcessingError(
-            code="DUPLICATE_TREE_ID",
-            message=(
-                f"{int(duplicated.sum())} row(s) share a tree_id with another "
-                f"row. Examples: {examples}"
-            ),
-            suggestion=(
-                "tree_id values must be unique across the file. Fix the listed "
-                "rows, or remove the tree_id column (and its mapping) to have "
-                "IDs generated."
-            ),
-        )
-
-    df["tree_id"] = ids
-    return df
-
-
-def _jsonable(value):
-    """A scalar safe to show in an error message (NaN/None → None)."""
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return None
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
-
-
 def _validate(df: pd.DataFrame) -> pd.DataFrame:
     """Validate the parsed DataFrame against the inventory schema.
 
-    A ``tree_id`` column, when present, is checked first so a bad ID fails with
-    a typed error. When absent it is left out (not padded): the caller
+    A ``tree_id`` column, when absent, is left out (not padded): the caller
     generates IDs after filtering to the domain.
     """
-    if "tree_id" in df.columns:
-        df = _check_tree_ids(df)
     for col in _V2_COLUMNS - {"tree_id", "x", "y", "height"}:
         if col not in df.columns:
             df[col] = None
 
     try:
-        return _InventorySchema.validate(df, lazy=True)
+        df = _InventorySchema.validate(df, lazy=True)
     except pa.errors.SchemaErrors as e:
         cases = e.failure_cases.head(100).to_dict("records")
         raise ProcessingError(
@@ -359,6 +297,9 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
             message=f"Schema validation failed with {len(e.failure_cases)} error(s).",
             suggestion=str(cases),
         )
+    if "tree_id" in df.columns:
+        df["tree_id"] = df["tree_id"].astype("int32")
+    return df
 
 
 def _extract_crs_string(domain_data: dict) -> str:

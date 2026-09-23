@@ -319,6 +319,74 @@ class TestCreateTreeInventoryGrid:
         finally:
             doc_ref.delete()
 
+    def _inventory_with_nulls(self, domain_id, null_counts, extra_columns=()):
+        """A completed inventory whose column summaries report `null_counts`."""
+        inv = make_inventory_data(
+            domain_id=domain_id,
+            name="Inventory with missing values",
+            status="completed",
+            inventory_type="tree",
+        )
+        inv["columns"] += [
+            {"key": key, "type": "continuous", "unit": None} for key in extra_columns
+        ]
+        for column in inv["columns"]:
+            column["summary"] = {
+                "type": "continuous",
+                "count": 100,
+                "null_count": null_counts.get(column["key"], 0),
+                "min": 0.0,
+                "max": 1.0,
+                "mean": 0.5,
+                "std": 0.1,
+            }
+        return inv
+
+    def test_inventory_with_null_morphology_returns_422_pointing_to_allometry(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """Trees missing dbh would be silently left out of the grid; the 422
+        names the column and count and points to the allometry endpoint."""
+        inv = self._inventory_with_nulls(domain_for_testing["id"], {"dbh": 12})
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inv["id"]
+        )
+        doc_ref.set(inv)
+        try:
+            body = {"source_inventory_id": inv["id"]}
+            response = client.post(self.route(domain_for_testing["id"]), json=body)
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "dbh: 12 missing" in detail
+            assert "allometry/gdam" in detail
+        finally:
+            doc_ref.delete()
+
+    def test_inventory_with_null_biomass_column_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        inv = self._inventory_with_nulls(
+            domain_for_testing["id"], {"foliage_kg": 3}, extra_columns=["foliage_kg"]
+        )
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inv["id"]
+        )
+        doc_ref.set(inv)
+        try:
+            body = {
+                "source_inventory_id": inv["id"],
+                "biomass_source": {
+                    "type": "inventory_columns",
+                    "columns": {"foliage": {"column": "foliage_kg"}},
+                },
+            }
+            response = client.post(self.route(domain_for_testing["id"]), json=body)
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "Biomass column 'foliage_kg' is missing 3 value(s)" in detail
+        finally:
+            doc_ref.delete()
+
     # --- Request body validation ---
 
     def test_missing_source_inventory_id_returns_422(self, client, domain_for_testing):

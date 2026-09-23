@@ -601,3 +601,96 @@ def compute_chunk_slices(
     row_end = row_start + meta.shape[0]
     col_end = col_start + meta.shape[1]
     return slice(row_start, row_end), slice(col_start, col_end)
+
+
+# Morphology the allometry endpoint (POST .../inventories/tree/allometry/gdam)
+# imputes from position + height, filling only missing values. Position and
+# height themselves cannot be imputed.
+ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
+
+
+def inventory_null_counts(inventory_data: dict) -> dict[str, int]:
+    """Columns with missing values, per the inventory's column summaries.
+
+    Maps column key to `null_count` for every column whose summary reports at
+    least one null. A column without a summary is omitted: its completeness is
+    unknown at request time, and the worker records any trees it has to leave
+    out (`source.tree_usage`).
+    """
+    counts: dict[str, int] = {}
+    for column in inventory_data.get("columns", []):
+        if not isinstance(column, dict):
+            continue
+        null_count = (column.get("summary") or {}).get("null_count")
+        if null_count:
+            counts[column["key"]] = int(null_count)
+    return counts
+
+
+def validate_inventory_values_complete(
+    inventory_data: dict,
+    inventory_id: str,
+    domain_id: str,
+    required_columns: set[str],
+    biomass_columns: set[str],
+) -> None:
+    """Reject a request whose inventory has missing values the operation needs.
+
+    Reads the inventory's column summaries, so no data is scanned. A tree
+    missing a required morphology value or a supplied biomass value cannot be
+    modeled, and building the grid without it would silently under-predict
+    fuel. Missing `dbh` / `crown_ratio` / `fia_species_code` values point to the
+    allometry endpoint, which fills exactly those; missing position or height
+    values cannot be imputed; a partially supplied biomass column has no
+    fallback.
+
+    Raises:
+        HTTPException: 422 naming each incomplete column and its null count.
+    """
+    nulls = inventory_null_counts(inventory_data)
+    incomplete = {c: nulls[c] for c in sorted(required_columns) if c in nulls}
+    incomplete_biomass = {
+        c: nulls[c] for c in sorted(biomass_columns - required_columns) if c in nulls
+    }
+    if not incomplete and not incomplete_biomass:
+        return
+
+    guidance = []
+    imputable = {
+        c: n for c, n in incomplete.items() if c in ALLOMETRY_IMPUTABLE_COLUMNS
+    }
+    source_only = {
+        c: n for c, n in incomplete.items() if c not in ALLOMETRY_IMPUTABLE_COLUMNS
+    }
+    if imputable:
+        guidance.append(
+            f"Column(s) {sorted(imputable)} are missing values "
+            f"({_format_null_counts(imputable)}). Fill them with the allometry "
+            f"endpoint (POST /domains/{domain_id}/inventories/tree/allometry/gdam "
+            f"with source_tree_inventory_id='{inventory_id}'), which imputes only "
+            f"the missing values, then repeat this request with the resulting "
+            f"inventory."
+        )
+    if source_only:
+        guidance.append(
+            f"Column(s) {sorted(source_only)} are missing values "
+            f"({_format_null_counts(source_only)}) that cannot be imputed; "
+            f"supply them for every tree in the inventory's source data."
+        )
+    for column, count in incomplete_biomass.items():
+        guidance.append(
+            f"Biomass column '{column}' is missing {count} value(s). A partially "
+            f"supplied fuel load has no fallback: supply a value for every tree, "
+            f"or use allometric biomass (biomass_source type 'allometry')."
+        )
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=(
+            f"Inventory '{inventory_id}' has trees with missing values this "
+            f"request needs. " + " ".join(guidance)
+        ),
+    )
+
+
+def _format_null_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"{column}: {count} missing" for column, count in counts.items())

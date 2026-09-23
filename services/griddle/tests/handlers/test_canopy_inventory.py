@@ -483,6 +483,7 @@ class TestPartialNulls:
             "trees_excluded": 3,
             "excluded_null_counts": {column: 3},
             "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
         }
 
     def test_partial_null_fuel_column_is_reported(self):
@@ -493,13 +494,23 @@ class TestPartialNulls:
         assert src["tree_usage"]["trees_used"] == 38
         assert src["tree_usage"]["excluded_null_counts"] == {"acf_kg": 2}
 
-    def test_partial_null_status_is_reported(self):
+    def test_partial_null_status_is_live_and_reported(self):
         df = _trees(n=40)
         df["fia_status_code"] = pd.array([None] * 4 + [1] * 36, dtype="Int64")
         src = _source()
-        _run(src, df)
-        assert src["tree_usage"]["trees_used"] == 36
-        assert src["tree_usage"]["excluded_null_counts"] == {"fia_status_code": 4}
+        seen: dict = {}
+        real_compute = ci.compute_canopy_metrics
+
+        def capture(frame, dataset, **kwargs):
+            seen["frame"] = frame.copy()
+            return real_compute(frame, dataset, **kwargs)
+
+        with patch.object(ci, "compute_canopy_metrics", side_effect=capture):
+            _run(src, df)
+        assert (seen["frame"]["fia_status_code"] == 1).all()
+        assert src["tree_usage"]["trees_used"] == 40
+        assert src["tree_usage"]["excluded_null_counts"] == {}
+        assert src["tree_usage"]["null_status_treated_as_live"] == 4
 
     def test_null_crown_radius_uses_purves_and_keeps_tree(self):
         df = _trees(n=40, acf_kg=6.0, crad_m=2.0)

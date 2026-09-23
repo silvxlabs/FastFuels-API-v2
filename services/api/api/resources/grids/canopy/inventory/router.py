@@ -202,7 +202,7 @@ async def create_inventory_canopy_grid(
     A tree with no value in the `max_crown_radius_source` column uses the
     `purves` allometric radius instead, which needs that tree's `dbh` and
     `fia_species_code`; a request whose inventory cannot supply them returns
-    422. A tree with no `fia_status_code` value is left out of the grid.
+    422. A tree with no `fia_status_code` value is treated as live.
 
     ## Response
 
@@ -210,8 +210,9 @@ async def create_inventory_canopy_grid(
     `georeference: null`. Griddle computes the canopy metrics asynchronously
     and updates the grid to `"completed"` with a 2D `Georeference` when done.
     The completed grid's `source.tree_usage` records how many trees were read
-    and used, how many were left out for missing values (per column), and how
-    many used an allometric crown radius in place of a missing column value.
+    and used, how many were left out for missing values (per column), how many
+    used an allometric crown radius in place of a missing column value, and
+    how many had no status and were treated as live.
     """
     owner_id = request.state.id
     domain_id = domain["id"]

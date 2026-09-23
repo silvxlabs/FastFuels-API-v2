@@ -708,7 +708,8 @@ def voxelize_inventory(
     logger.info(
         f"Inventory loaded: {usage['trees_used']} of {usage['trees_read']} trees "
         f"used; excluded for null values: {usage['excluded_null_counts']}; "
-        f"crown radius fallbacks: {usage['crown_radius_fallbacks']}",
+        f"crown radius fallbacks: {usage['crown_radius_fallbacks']}; "
+        f"null status treated as live: {usage['null_status_treated_as_live']}",
         extra={"grid_id": grid_id},
     )
 

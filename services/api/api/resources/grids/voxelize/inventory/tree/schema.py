@@ -364,8 +364,8 @@ class InventoryTreeUsage(BaseModel):
         ge=0,
         description=(
             "Trees read from the source inventory: every live tree "
-            "(`fia_status_code` 1), plus every tree with no `fia_status_code` "
-            "value. Trees with any other status are not live and are not read."
+            "(`fia_status_code` 1, or no `fia_status_code` value). Trees with "
+            "any other status are not live and are not read."
         ),
     )
     trees_used: int = Field(ge=0, description="Trees the grid was built from.")
@@ -378,8 +378,7 @@ class InventoryTreeUsage(BaseModel):
         description=(
             "Excluded trees per column holding the missing value. A tree missing "
             "values in several columns counts under each, so the counts can sum "
-            "to more than `trees_excluded`. A tree with no `fia_status_code` "
-            "value is counted under `fia_status_code`."
+            "to more than `trees_excluded`."
         ),
     )
     crown_radius_fallbacks: int = Field(
@@ -388,6 +387,15 @@ class InventoryTreeUsage(BaseModel):
             "Trees with no value in the `max_crown_radius_source` column that "
             "used their allometric maximum crown radius instead. Always 0 unless "
             "`max_crown_radius_source.type` is `inventory_column`."
+        ),
+    )
+    null_status_treated_as_live: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Trees used with no `fia_status_code` value. No recorded status "
+            "means live, the same as an inventory with no `fia_status_code` "
+            "column."
         ),
     )
 

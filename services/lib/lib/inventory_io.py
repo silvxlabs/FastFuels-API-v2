@@ -48,9 +48,9 @@ STATUS_COLUMN = "fia_status_code"
 CROWN_RADIUS_FALLBACK_COLUMNS = frozenset({"dbh", "fia_species_code"})
 
 # Rows kept by the read: live trees (status 1), plus trees with no status value,
-# which the read must return so `exclude_null_rows` can count them instead of
-# letting them vanish inside the parquet predicate. Every other status is not a
-# live tree and is skipped by the read.
+# which count as live (like an absent status column, #415); `exclude_null_rows`
+# sets them to 1 and counts them. Every other status is not a live tree and is
+# skipped by the read.
 _status = pc.field(STATUS_COLUMN)
 _LIVE_OR_NULL_STATUS = (_status == 1) | _status.is_null()
 
@@ -113,8 +113,8 @@ def read_inventory(
     morphology an allometric crown-radius fallback reads).
 
     Trees whose `fia_status_code` is null are returned alongside the live trees
-    rather than filtered out by the pushdown, so `exclude_null_rows` can decide
-    what to do with them and count them.
+    rather than filtered out by the pushdown: a null status means live, and
+    `exclude_null_rows` sets it to 1 and counts those trees.
 
     `fia_status_code` is treated as optional and live-by-default. Inventories
     built by CHM extraction or GDAM allometry never record it (GDAM imputes
@@ -222,10 +222,14 @@ def exclude_null_rows(
     """Exclude trees missing a value the computation needs, and account for them.
 
     A tree is excluded when it has a null in any required column (defaults to
-    `REQUIRED_COLUMNS`), in `biomass_column` when set, or in `fia_status_code`.
-    The API rejects inventories whose column summaries report nulls in required
-    or biomass columns, so on those paths this is a backstop for inventories
-    without summaries; a null `fia_status_code` is always handled here.
+    `REQUIRED_COLUMNS`) or in `biomass_column` when set. The API rejects
+    inventories whose column summaries report nulls in required or biomass
+    columns, so on those paths this is a backstop for inventories without
+    summaries.
+
+    A null `fia_status_code` never excludes a tree: like an inventory with no
+    status column at all (#415), no recorded status means live. Those trees
+    are kept with status set to 1 and counted as `null_status_treated_as_live`.
 
     A null in `crown_radius_column` never excludes a tree: it means the radius
     was not measured, and the consumer substitutes the allometric radius. Those
@@ -244,6 +248,8 @@ def exclude_null_rows(
     - `excluded_null_counts`: excluded rows per column holding a null; a tree
       with nulls in several columns counts under each.
     - `crown_radius_fallbacks`: kept rows with a null in `crown_radius_column`.
+    - `null_status_treated_as_live`: kept rows whose null `fia_status_code` was
+      taken as live.
     """
     required = [
         c
@@ -254,9 +260,6 @@ def exclude_null_rows(
     ]
     if biomass_column and biomass_column not in required:
         required.append(biomass_column)
-    # A null status is excluded pending the status-semantics decision (#612,
-    # #320), and reported like any other null.
-    required.append(STATUS_COLUMN)
 
     null_masks = {col: df[col].isna() for col in required}
     excluded = pd.Series(False, index=df.index)
@@ -264,6 +267,12 @@ def exclude_null_rows(
         excluded |= mask
 
     kept = df.loc[~excluded].reset_index(drop=True)
+    null_status = 0
+    if STATUS_COLUMN in kept.columns:
+        status_missing = kept[STATUS_COLUMN].isna()
+        null_status = int(status_missing.sum())
+        if null_status:
+            kept[STATUS_COLUMN] = kept[STATUS_COLUMN].fillna(1).astype("int64")
     fallbacks = 0
     if crown_radius_column and crown_radius_column not in required:
         fallbacks = int(kept[crown_radius_column].isna().sum())
@@ -276,6 +285,7 @@ def exclude_null_rows(
             col: int(mask.sum()) for col, mask in null_masks.items() if mask.any()
         },
         "crown_radius_fallbacks": fallbacks,
+        "null_status_treated_as_live": null_status,
     }
     return kept, usage
 

@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from treevox import voxelize as vox
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
 from treevox.handlers import voxelize as handler
@@ -147,6 +148,7 @@ class TestLoadInventoryDataframe:
             "trees_excluded": 1,
             "excluded_null_counts": {column: 1},
             "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
         }
 
     @patch("treevox.handlers.voxelize.read_inventory")
@@ -166,15 +168,19 @@ class TestLoadInventoryDataframe:
         assert usage["excluded_null_counts"] == {"foliage_kg": 1}
 
     @patch("treevox.handlers.voxelize.read_inventory")
-    def test_partial_null_status_is_reported(self, mock_read):
+    def test_partial_null_status_is_live_and_reported(self, mock_read):
         df_in = _sample_df(n=3)
         df_in["fia_status_code"] = pd.array([1, None, 1], dtype="Int64")
         mock_read.return_value = df_in
         df, usage = handler._load_inventory_dataframe(
             _base_grid()["source"], lambda *a, **k: None
         )
-        assert len(df) == 2
-        assert usage["excluded_null_counts"] == {"fia_status_code": 1}
+        assert len(df) == 3
+        assert usage["trees_excluded"] == 0
+        assert usage["null_status_treated_as_live"] == 1
+        # The tree builds as live.
+        tree = vox.build_tree(df.iloc[1], _base_grid()["source"])
+        assert tree.status_code == 1
 
     @patch("treevox.handlers.voxelize.read_inventory")
     def test_partial_null_crown_radius_keeps_every_tree(self, mock_read):
@@ -752,6 +758,7 @@ class TestVoxelizeInventoryFlow:
             "trees_excluded": 1,
             "excluded_null_counts": {"dbh": 1},
             "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
         }
 
     @patch("treevox.handlers.voxelize.read_inventory")

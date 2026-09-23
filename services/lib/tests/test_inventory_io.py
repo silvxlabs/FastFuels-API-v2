@@ -341,6 +341,7 @@ class TestExcludeNullRows:
             "trees_excluded": 0,
             "excluded_null_counts": {},
             "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
         }
 
     @pytest.mark.parametrize(
@@ -356,22 +357,32 @@ class TestExcludeNullRows:
         assert usage["trees_excluded"] == 1
         assert usage["excluded_null_counts"] == {column: 1}
 
-    def test_null_status_is_excluded_and_counted(self):
+    def test_null_status_is_live_and_counted(self):
+        """No recorded status means live, as for an absent status column."""
         df = self._df(fia_status_code=pd.array([1, None, None], dtype="Int64"))
         out, usage = exclude_null_rows(df)
-        assert len(out) == 1
-        assert usage["trees_excluded"] == 2
-        assert usage["excluded_null_counts"] == {"fia_status_code": 2}
+        assert len(out) == 3
+        assert list(out["fia_status_code"]) == [1, 1, 1]
+        assert usage["trees_excluded"] == 0
+        assert usage["excluded_null_counts"] == {}
+        assert usage["null_status_treated_as_live"] == 2
 
-    def test_null_status_counted_even_when_request_omits_status(self):
-        """A canopy request's required set never names status; a null status is
-        still accounted for, not silently kept or dropped."""
+    def test_null_status_live_with_reduced_required_columns(self):
         df = self._df(fia_status_code=pd.array([1, None, 1], dtype="Int64"))
         out, usage = exclude_null_rows(
             df, required_columns=["x", "y", "height", "crown_ratio"]
         )
+        assert len(out) == 3
+        assert not out["fia_status_code"].isna().any()
+        assert usage["null_status_treated_as_live"] == 1
+
+    def test_null_status_on_excluded_tree_is_not_counted_as_live(self):
+        df = self._df(fia_status_code=pd.array([None, None, 1], dtype="Int64"))
+        df.loc[0, "dbh"] = None
+        out, usage = exclude_null_rows(df)
         assert len(out) == 2
-        assert usage["excluded_null_counts"] == {"fia_status_code": 1}
+        assert usage["excluded_null_counts"] == {"dbh": 1}
+        assert usage["null_status_treated_as_live"] == 1
 
     def test_null_biomass_is_excluded_and_counted(self):
         df = self._df()

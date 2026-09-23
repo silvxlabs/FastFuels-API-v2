@@ -125,7 +125,7 @@ async def create_tree_inventory_grid(
 
     A tree with no value in the `max_crown_radius_source` column uses its
     allometric maximum crown radius instead. A tree with no `fia_status_code`
-    value is left out of the grid.
+    value is treated as live.
 
     ## Response
 
@@ -134,8 +134,9 @@ async def create_tree_inventory_grid(
     asynchronously and updates the grid to `"completed"` with a
     `Georeference3D` when done. The completed grid's `source.tree_usage`
     records how many trees were read and used, how many were left out for
-    missing values (per column), and how many used an allometric crown
-    radius in place of a missing column value.
+    missing values (per column), how many used an allometric crown radius
+    in place of a missing column value, and how many had no status and were
+    treated as live.
     """
     owner_id = request.state.id
     domain_id = domain["id"]

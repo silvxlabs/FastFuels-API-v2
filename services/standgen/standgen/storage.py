@@ -14,7 +14,11 @@ from lib.config import GRIDS_BUCKET, INVENTORIES_BUCKET, TABLES_BUCKET
 from lib.errors import ProcessingError
 from lib.gcs import delete_directory, exists, get_gcsfs_client, storage_size
 from lib.zarr_utils import load_zarr
-from standgen.summarize import _build_column_stats_graph, _build_tree_forestry_graph
+from standgen.summarize import (
+    ForestryGraph,
+    _build_column_stats_graph,
+    _build_tree_forestry_graph,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +78,7 @@ def load_inventory_parquet(inventory_id: str) -> dd.DataFrame:
 def _fused_compute(
     write_delayed,
     stats_graph: dict[str, dict],
-    forestry_delayed=None,
+    forestry_graph: ForestryGraph | None = None,
 ) -> tuple[dict[str, dict], dict | None]:
     """Flatten lazy reductions and a deferred parquet write into a single
     dask.compute call, then reassemble the stats dict.
@@ -85,7 +89,7 @@ def _fused_compute(
     Args:
         write_delayed: Deferred parquet write from ``ddf.to_parquet(..., compute=False)``.
         stats_graph: Dict of lazy reductions from ``_build_column_stats_graph``.
-        forestry_delayed: Optional dask.delayed from ``_build_tree_forestry_graph``.
+        forestry_graph: Optional reductions from ``_build_tree_forestry_graph``.
 
     Returns:
         Tuple of (stats dict, forestry metrics dict or None).
@@ -100,13 +104,14 @@ def _fused_compute(
             flat_lazy.append(val)
             flat_keys.append((k, s))
 
-    to_compute = [write_delayed, *flat_lazy]
-    if forestry_delayed is not None:
-        to_compute.append(forestry_delayed)
-
-    results = dask.compute(*to_compute)
+    forestry_parts = forestry_graph.parts if forestry_graph is not None else ()
+    results = dask.compute(write_delayed, *flat_lazy, *forestry_parts)
     computed_values = results[1 : 1 + len(flat_lazy)]
-    forestry_metrics = results[-1] if forestry_delayed is not None else None
+    forestry_metrics = (
+        forestry_graph.finalize(*results[1 + len(flat_lazy) :])
+        if forestry_graph is not None
+        else None
+    )
 
     stats = {}
     for i, (k, s) in enumerate(flat_keys):
@@ -146,7 +151,7 @@ def _build_delayed_graph(
 ):
     write_delayed = _write_parquet(ddf, path)
     stats_graph = _build_column_stats_graph(ddf, columns)
-    forestry_delayed = (
+    forestry_graph = (
         _build_tree_forestry_graph(ddf, domain_gdf, top_species_groups)
         if inventory_type == "tree"
         and domain_gdf is not None
@@ -154,7 +159,7 @@ def _build_delayed_graph(
         and "fia_species_code" in ddf.columns
         else None
     )
-    return _fused_compute(write_delayed, stats_graph, forestry_delayed)
+    return _fused_compute(write_delayed, stats_graph, forestry_graph)
 
 
 def save_parquet_with_summary(

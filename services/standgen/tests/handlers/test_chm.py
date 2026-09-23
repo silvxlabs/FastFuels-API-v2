@@ -124,7 +124,7 @@ class TestHandleChm:
         saved_columns = args[2]
 
         assert isinstance(saved_ddf, dd.DataFrame)
-        assert sorted(saved_ddf.columns.tolist()) == ["height", "x", "y"]
+        assert saved_ddf.columns.tolist() == ["tree_id", "x", "y", "height"]
         assert result["georeference"]["crs"] == "EPSG:32610"
         assert "columns" in result
         assert saved_columns == mock_inventory_lmf["columns"]

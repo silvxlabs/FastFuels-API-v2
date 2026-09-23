@@ -19,6 +19,7 @@ from fastfuels_core.itd.local_maxima_filter import (
 from lib.config import GRIDS_COLLECTION
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
+from standgen.columns import generate_tree_ids
 from standgen.modifications import (
     _has_spatial_condition,
     apply_modifications,
@@ -178,6 +179,10 @@ def handle_chm(
         )
 
     # --- 4. FORMATTING & STORAGE ---
+    # Number the trees before modifications, so a tree removed at creation
+    # leaves a gap in tree_id like one removed later.
+    ddf = generate_tree_ids(ddf)
+
     # Apply modifications (lazily) before the single write. Resolve spatial-condition
     # geometries once here, off the per-partition path, when any are present.
     modifications = inventory.get("modifications", [])

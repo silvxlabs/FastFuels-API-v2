@@ -109,27 +109,9 @@ class TestLoadInventoryDataframe:
     so the mocked return values here already contain only live trees."""
 
     @patch("treevox.handlers.voxelize.read_inventory")
-    def test_drops_null_rows_and_assigns_tree_ids(self, mock_read):
-        mock_read.return_value = pd.DataFrame(
-            {
-                "x": [1.0, 2.0],
-                "y": [1.0, 2.0],
-                "fia_species_code": [131, 131],
-                "fia_status_code": [1, 1],
-                "dbh": [20.0, None],  # second row dropped by drop_null_rows
-                "height": [15.0, 15.0],
-                "crown_ratio": [0.4, 0.4],
-            }
-        )
-        source = _base_grid()["source"]
-        df = handler._load_inventory_dataframe(source, lambda *a, **k: None)
-        assert len(df) == 1
-        assert list(df["tree_id"]) == [0]
-
-    @patch("treevox.handlers.voxelize.read_inventory")
     def test_keeps_inventory_tree_ids(self, mock_read):
-        """The inventory's tree_id (projected on request) survives null-row
-        dropping unchanged instead of being renumbered (#611)."""
+        """The inventory's tree_id survives null-row dropping unchanged
+        instead of being renumbered (#611)."""
         mock_read.return_value = pd.DataFrame(
             {
                 "tree_id": np.array([3, 17, 42], dtype="int32"),
@@ -568,9 +550,8 @@ class TestBuildPayloadsZeroTrees:
         df = _sample_df(n=1, height=5.0)
         grid = _base_grid()
         layout = handler._plan_grid_layout(grid, _fake_domain(), df)
-        # Mirror _load_inventory_dataframe's tree_id assignment so the test
-        # frame has the same schema real workers receive.
-        df = handler.assign_tree_ids(df)
+        # Real inventories carry tree_id; give the test frame the same schema.
+        df = df.assign(tree_id=np.arange(len(df), dtype="int32"))
         df_prepared = handler._prepare_tree_chunks(df, layout)
 
         batch = [layout.chunk_locations[0]]
@@ -992,7 +973,7 @@ class TestHaloMergeAcrossChunks:
         assert layout.chunk_xy == 20
         assert len(layout.chunk_locations) == 2  # (0,0) and (0,1)
 
-        df = handler.assign_tree_ids(df)
+        df = df.assign(tree_id=np.arange(len(df), dtype="int32"))
         df = handler._prepare_tree_chunks(df, layout)
         assert df["col_chunk"].iloc[0] == 0  # stem firmly in chunk (0,0)
 
@@ -1075,7 +1056,7 @@ class TestHaloMergeAcrossChunks:
         )
         grid = self._grid(bands=["spcd"])
         layout = handler._plan_grid_layout(grid, self._tiny_domain(), df)
-        df = handler.assign_tree_ids(df)
+        df = df.assign(tree_id=np.arange(len(df), dtype="int32"))
         df = handler._prepare_tree_chunks(df, layout)
 
         batch = [(0, 0), (0, 1)]

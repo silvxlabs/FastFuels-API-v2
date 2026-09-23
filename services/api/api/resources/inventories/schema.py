@@ -121,8 +121,7 @@ class Column(BaseModel):
 
 # Stable per-tree identifier: an int32 unique within the inventory, assigned at
 # creation and never renumbered (removed trees leave gaps). Categorical — it is
-# an opaque identifier, not a quantity. Inventories created before it existed
-# lack the column.
+# an opaque identifier, not a quantity.
 TREE_ID_COLUMN = Column(key="tree_id", type=ColumnType.categorical)
 
 # Full column set of a PIM-expanded tree inventory. Other sources carry a
@@ -243,8 +242,7 @@ class Inventory(BaseModel):
             "within the inventory. It is assigned when the inventory is created "
             "and never renumbered: removing trees leaves gaps, and inventories "
             "derived from this one (duplicates, allometry, modifications, "
-            "treatments) keep the IDs of the trees they retain. Inventories "
-            "created before `tree_id` was introduced have no such column."
+            "treatments) keep the IDs of the trees they retain."
         ),
     )
     forestry_metrics: ForestryMetrics | None = None

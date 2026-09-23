@@ -13,8 +13,6 @@ import numpy as np
 import pandas as pd
 from treevox import _worker, voxelize
 
-from lib.inventory_io import assign_tree_ids
-
 # Payload fixture
 
 
@@ -224,13 +222,12 @@ class TestDeterminism:
 
 
 class TestTreeIdBand:
-    """The `tree_id` band holds the inventory's tree_id when it has one, and
-    the row ordinal otherwise (#611)."""
+    """The `tree_id` band holds the inventory's tree_id (#611)."""
 
     def _band_values(self, monkeypatch, trees: pd.DataFrame) -> set[int]:
         _patch_fastfuels(monkeypatch)
         payload = _make_payload(trees_n=2)
-        payload["trees"] = assign_tree_ids(trees).assign(_cache_key=0)
+        payload["trees"] = trees.assign(_cache_key=0)
         result = _worker.run(payload)
         assert "error" not in result, result.get("error")
         return set(np.unique(result["buffers"]["tree_id"]).tolist())
@@ -253,9 +250,6 @@ class TestTreeIdBand:
         """IDs left after removals (gaps, large values) pass through verbatim."""
         trees = self._trees(tree_id=np.array([5, 2_000_000_000], dtype="int32"))
         assert self._band_values(monkeypatch, trees) == {-1, 5, 2_000_000_000}
-
-    def test_band_falls_back_to_ordinals_without_column(self, monkeypatch):
-        assert self._band_values(monkeypatch, self._trees()) == {-1, 0, 1}
 
 
 class TestPickleRoundtrip:

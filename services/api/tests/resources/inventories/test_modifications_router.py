@@ -657,46 +657,16 @@ REMOVE_BY_TREE_ID_BODY = {
 
 
 class TestTreeIdConditions:
-    """A tree_id condition needs a tree_id column on the inventory (#611)."""
+    """Modifications select trees by tree_id (#611)."""
 
     def route(self, domain_id, inventory_id):
         return f"/domains/{domain_id}/inventories/{inventory_id}/modifications"
 
-    def test_rejected_on_inventory_without_tree_id(
-        self, client, domain_for_testing, source_inventory, firestore_client
-    ):
-        """An inventory created before tree IDs has no tree_id column: 422, and
-        nothing is queued."""
-        assert "tree_id" not in [c["key"] for c in source_inventory["columns"]]
-        response = client.post(
-            self.route(domain_for_testing["id"], source_inventory["id"]),
-            json=REMOVE_BY_TREE_ID_BODY,
-        )
-        assert response.status_code == 422, response.json()
-        assert "tree_id" in response.json()["detail"]
-
-        doc = (
-            firestore_client.collection(INVENTORIES_COLLECTION)
-            .document(source_inventory["id"])
-            .get()
-            .to_dict()
-        )
-        assert doc["status"] == "completed"
-        assert "pending_modifications" not in doc
-
-    def test_accepted_on_inventory_with_tree_id(
+    def test_tree_id_condition_accepted(
         self, client, domain_for_testing, source_inventory, firestore_client
     ):
         ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
             source_inventory["id"]
-        )
-        ref.update(
-            {
-                "columns": [
-                    {"key": "tree_id", "type": "categorical", "unit": None},
-                    *source_inventory["columns"],
-                ]
-            }
         )
         response = client.post(
             self.route(domain_for_testing["id"], source_inventory["id"]),

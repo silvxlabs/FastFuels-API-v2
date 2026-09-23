@@ -129,9 +129,7 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
         "name": "Tree ID",
         "description": (
             "The source inventory's `tree_id` of the dominant tree contributing "
-            "to the voxel; -1 where no tree. For an inventory without a "
-            "`tree_id` column (created before tree IDs existed), the tree's "
-            "row position instead."
+            "to the voxel; -1 where no tree."
         ),
         "type": BandType.categorical,
         "unit": None,

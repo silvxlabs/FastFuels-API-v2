@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from lib.inventory_io import assign_tree_ids, drop_null_rows, read_inventory
+from lib.inventory_io import drop_null_rows, read_inventory
 from treevox import storage, voxelize
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
@@ -111,7 +111,7 @@ def _pick_worker_count() -> int:
 def _load_inventory_dataframe(
     source: dict, progress: Callable[[str, int | None], None]
 ) -> pd.DataFrame:
-    """Read the parquet from GCS, filter to live trees, and assign tree IDs.
+    """Read the parquet from GCS, filter to live trees, and drop incomplete rows.
 
     Reads directly from GCS (no tmpfile staging) with column projection and a
     `fia_status_code == 1` predicate pushdown — see `read_inventory`.
@@ -126,7 +126,6 @@ def _load_inventory_dataframe(
         include_tree_id=True,
     )
     df = drop_null_rows(df, biomass_column, crown_radius_column)
-    df = assign_tree_ids(df)
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",

@@ -97,9 +97,9 @@ async def create_inventory_upload(
     Every tree gets a `tree_id`. To keep your own IDs, provide a `tree_id`
     column (or map one): its values must be non-null numbers in
     0 … 2,147,483,647, cast to integers and then unique across the file, or
-    processing fails with
-    `INVALID_TREE_ID` or `DUPLICATE_TREE_ID`. Without one, IDs 0 … N-1 are
-    generated in file row order over the trees inside the domain.
+    processing fails with `INVALID_TREE_ID` or `DUPLICATE_TREE_ID`. Without
+    one, IDs 0 … N-1 are generated in file row order over the trees inside
+    the domain.
     """
     owner_id = request.state.id
     domain_id = domain["id"]

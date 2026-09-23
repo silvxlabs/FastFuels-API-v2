@@ -220,6 +220,21 @@ class TestBuildTree:
         tree = voxelize.build_tree(row, cfg)
         assert tree._max_crown_radius_override == 3.5
 
+    def test_null_crown_radius_falls_back_to_allometric(self):
+        """A null radius means "not measured": no override, so the crown
+        profile model's allometric radius is used."""
+        cfg = base_source_config()
+        cfg["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "lidar_max_radius",
+            "unit": "m",
+        }
+        row = self._row(lidar_max_radius=np.nan)
+        tree = voxelize.build_tree(row, cfg)
+        assert tree._max_crown_radius_override is None
+        allometric = voxelize.build_tree(self._row(), base_source_config())
+        assert tree.max_crown_radius == pytest.approx(allometric.max_crown_radius)
+
     def test_default_crown_radius_source_does_not_set_override(self):
         cfg = base_source_config()  # no max_crown_radius_source
         row = self._row()
@@ -349,6 +364,26 @@ class TestComputeCacheKeys:
         keys = voxelize.compute_cache_keys(df, cfg)
 
         assert keys.nunique() == 2
+
+    def test_null_crown_radius_keeps_morphology_keys(self):
+        """Fallback-radius trees are keyed by morphology like any other tree,
+        not lumped into one group because their radius key is null."""
+        df = fake_tree_df(n=4, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df.loc[2:, "dbh"] = 60.0
+        df["lidar_max_radius"] = [np.nan, np.nan, np.nan, 3.0]
+        cfg = base_source_config()
+        cfg["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "lidar_max_radius",
+            "unit": "m",
+        }
+
+        keys = voxelize.compute_cache_keys(df, cfg)
+
+        assert (keys >= 0).all()
+        assert keys[0] == keys[1]
+        assert keys[1] != keys[2]
+        assert keys[2] != keys[3]
 
     def test_allometry_crown_radius_source_does_not_split(self):
         df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)

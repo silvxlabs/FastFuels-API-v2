@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from lib.config import INVENTORIES_BUCKET
@@ -37,6 +38,21 @@ REQUIRED_COLUMNS = [
 # class is still a valid tree — the canopy handler folds a missing code onto
 # FuelCalc's Other/none column rather than discarding the stem.
 CROWN_CLASS_COLUMN = "fia_crown_class_code"
+
+STATUS_COLUMN = "fia_status_code"
+
+# Morphology the allometric crown radius reads for a canopy tree with no value
+# in the selected radius column, beyond the `height` and `crown_ratio` every
+# canopy request requires. Shared by the API (request-time check) and griddle
+# (what to project), like `canopy_required_columns`.
+CROWN_RADIUS_FALLBACK_COLUMNS = frozenset({"dbh", "fia_species_code"})
+
+# Rows kept by the read: live trees (status 1), plus trees with no status value,
+# which the read must return so `exclude_null_rows` can count them instead of
+# letting them vanish inside the parquet predicate. Every other status is not a
+# live tree and is skipped by the read.
+_status = pc.field(STATUS_COLUMN)
+_LIVE_OR_NULL_STATUS = (_status == 1) | _status.is_null()
 
 
 def _inventory_column_names(inventory_id: str) -> set[str] | None:
@@ -64,9 +80,11 @@ def read_inventory(
     crown_radius_column: str | None = None,
     include_crown_class: bool = False,
     required_columns: list[str] | None = None,
+    optional_columns: list[str] | None = None,
 ) -> pd.DataFrame:
     """Read a tree-inventory parquet directly from GCS with column projection
-    and, when the column is present, a `fia_status_code == 1` predicate pushdown.
+    and, when the column is present, a live-or-null `fia_status_code` predicate
+    pushdown.
 
     Only the required columns (plus `biomass_column` and `crown_radius_column`
     if supplied) are decoded; parquet row groups containing only dead trees
@@ -88,6 +106,15 @@ def read_inventory(
     output, older uploads) or when the schema can't be read, and it never joins
     the live-tree filter. The column is optional, so absence is not an error —
     the consumer decides what a missing crown class means.
+
+    `optional_columns` are projected on the same terms: only when the inventory
+    positively carries them, never required, and never a reason to exclude a
+    tree. A consumer uses them for values it needs for some trees only (e.g. the
+    morphology an allometric crown-radius fallback reads).
+
+    Trees whose `fia_status_code` is null are returned alongside the live trees
+    rather than filtered out by the pushdown, so `exclude_null_rows` can decide
+    what to do with them and count them.
 
     `fia_status_code` is treated as optional and live-by-default. Inventories
     built by CHM extraction or GDAM allometry never record it (GDAM imputes
@@ -149,19 +176,19 @@ def read_inventory(
         if optional and optional not in columns:
             columns.append(optional)
 
-    # Project the crown-class column only when the inventory positively has it
-    # (a readable schema listing it). A failed schema probe or a missing column
-    # both fall through to "no crown class" rather than raising a projection
-    # error mid-read; the consumer treats that as every tree unclassified.
-    if (
-        include_crown_class
-        and available is not None
-        and CROWN_CLASS_COLUMN in available
-        and CROWN_CLASS_COLUMN not in columns
-    ):
-        columns.append(CROWN_CLASS_COLUMN)
+    # Project optional columns (crown class included) only when the inventory
+    # positively has them (a readable schema listing them). A failed schema
+    # probe or a missing column both fall through to "not projected" rather than
+    # raising a projection error mid-read; for crown class the consumer treats
+    # that as every tree unclassified.
+    wanted_optional = list(optional_columns or [])
+    if include_crown_class:
+        wanted_optional.append(CROWN_CLASS_COLUMN)
+    for optional in wanted_optional:
+        if available is not None and optional in available and optional not in columns:
+            columns.append(optional)
 
-    filters = None if status_absent else [("fia_status_code", "=", 1)]
+    filters = None if status_absent else _LIVE_OR_NULL_STATUS
 
     try:
         df = pd.read_parquet(gcs_path, columns=columns, filters=filters)
@@ -186,32 +213,71 @@ def read_inventory(
     return df
 
 
-def drop_null_rows(
+def exclude_null_rows(
     df: pd.DataFrame,
     biomass_column: str | None = None,
     crown_radius_column: str | None = None,
     required_columns: list[str] | None = None,
-) -> pd.DataFrame:
-    """Drop rows with nulls in any required column (plus `biomass_column` and
-    `crown_radius_column` when set).
+) -> tuple[pd.DataFrame, dict]:
+    """Exclude trees missing a value the computation needs, and account for them.
 
-    Parquet's row-group statistics can skip dead-tree groups (the
-    `fia_status_code == 1` pushdown lives in `read_inventory`), but can't
-    drop individual rows missing `dbh` / `height` / `crown_ratio`. That's
-    this function's job.
+    A tree is excluded when it has a null in any required column (defaults to
+    `REQUIRED_COLUMNS`), in `biomass_column` when set, or in `fia_status_code`.
+    The API rejects inventories whose column summaries report nulls in required
+    or biomass columns, so on those paths this is a backstop for inventories
+    without summaries; a null `fia_status_code` is always handled here.
 
-    `required_columns` must match the set the paired `read_inventory` call used
-    (defaults to `REQUIRED_COLUMNS`). Dropping on a column the request does not
-    read would silently discard trees — and their canopy fuel — over a value
-    that never enters the computation.
+    A null in `crown_radius_column` never excludes a tree: it means the radius
+    was not measured, and the consumer substitutes the allometric radius. Those
+    trees are counted as `crown_radius_fallbacks`.
+
+    `required_columns` must match the set the paired `read_inventory` call used.
+    Excluding on a column the request does not read would discard trees — and
+    their canopy fuel — over a value that never enters the computation.
+
+    Returns the kept trees (index reset) and a usage record, persisted on the
+    grid as `source.tree_usage`:
+
+    - `trees_read`: rows returned by `read_inventory`.
+    - `trees_used`: rows kept.
+    - `trees_excluded`: rows excluded.
+    - `excluded_null_counts`: excluded rows per column holding a null; a tree
+      with nulls in several columns counts under each.
+    - `crown_radius_fallbacks`: kept rows with a null in `crown_radius_column`.
     """
-    required = list(
-        required_columns if required_columns is not None else REQUIRED_COLUMNS
-    )
-    for optional in (biomass_column, crown_radius_column):
-        if optional and optional not in required:
-            required.append(optional)
-    return df.dropna(subset=required).reset_index(drop=True)
+    required = [
+        c
+        for c in (
+            required_columns if required_columns is not None else REQUIRED_COLUMNS
+        )
+        if c != STATUS_COLUMN
+    ]
+    if biomass_column and biomass_column not in required:
+        required.append(biomass_column)
+    # A null status is excluded pending the status-semantics decision (#612,
+    # #320), and reported like any other null.
+    required.append(STATUS_COLUMN)
+
+    null_masks = {col: df[col].isna() for col in required}
+    excluded = pd.Series(False, index=df.index)
+    for mask in null_masks.values():
+        excluded |= mask
+
+    kept = df.loc[~excluded].reset_index(drop=True)
+    fallbacks = 0
+    if crown_radius_column and crown_radius_column not in required:
+        fallbacks = int(kept[crown_radius_column].isna().sum())
+
+    usage = {
+        "trees_read": len(df),
+        "trees_used": len(kept),
+        "trees_excluded": int(excluded.sum()),
+        "excluded_null_counts": {
+            col: int(mask.sum()) for col, mask in null_masks.items() if mask.any()
+        },
+        "crown_radius_fallbacks": fallbacks,
+    }
+    return kept, usage
 
 
 def canopy_required_columns(source: dict) -> set[str]:

@@ -22,16 +22,24 @@ import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
 from affine import Affine
 from fastfuels_core.canopy_fuel import compute_canopy_metrics
+from fastfuels_core.canopy_fuel.crown_radius import (
+    max_crown_radius as allometric_max_crown_radius,
+)
 
 from lib.alignment import resolve_alignment_destination
 from lib.crs import crs_equal
 from lib.errors import ProcessingError
 from lib.inventory_io import (
     CROWN_CLASS_COLUMN,
+    CROWN_RADIUS_FALLBACK_COLUMNS,
     canopy_required_columns,
-    drop_null_rows,
+    exclude_null_rows,
     read_inventory,
 )
+
+# Allometry for a tree with no value in the selected crown-radius column: the
+# schema's default allometric radius, and the one tree voxelization uses.
+CROWN_RADIUS_FALLBACK_EQUATIONS = "purves"
 
 # An inventory has no native raster cell size. The API resolves the
 # domain-target default (30 m) before persisting, and a grid target inherits
@@ -284,6 +292,52 @@ def _crown_class_letters(df: pd.DataFrame) -> "pd.Series | str":
     return letters.where(letters.notna(), _CROWN_CLASS_FILL)
 
 
+def _fill_crown_radius_fallback(df: pd.DataFrame, radius_column: str) -> None:
+    """Fill null values in the radius column with the allometric radius, in place.
+
+    A null means the radius was not measured, so the tree keeps its place in
+    the grid with the `CROWN_RADIUS_FALLBACK_EQUATIONS` radius instead of being
+    dropped.
+
+    Raises:
+        ProcessingError: If a tree needing the fallback lacks the morphology the
+            allometry reads (`CROWN_RADIUS_FALLBACK_COLUMNS`).
+    """
+    missing = df[radius_column].isna()
+    if not missing.any():
+        return
+
+    needed = sorted(CROWN_RADIUS_FALLBACK_COLUMNS)
+    absent = [c for c in needed if c not in df.columns]
+    incomplete = (
+        int(df.loc[missing, needed].isna().any(axis=1).sum()) if not absent else 0
+    )
+    if absent or incomplete:
+        raise ProcessingError(
+            code="CROWN_RADIUS_FALLBACK_UNAVAILABLE",
+            message=(
+                f"{int(missing.sum())} trees have no value in crown radius column "
+                f"'{radius_column}', and the allometric radius used in its place "
+                f"needs {needed}, which "
+                + (
+                    f"the inventory does not have ({absent})."
+                    if absent
+                    else f"{incomplete} of those trees are missing."
+                )
+            ),
+            suggestion=(
+                "Supply a radius for every tree, or supply dbh and "
+                "fia_species_code (e.g. via POST /inventories/tree/allometry/gdam)."
+            ),
+        )
+
+    fallback = df.loc[missing]
+    df.loc[missing, radius_column] = allometric_max_crown_radius(
+        fallback.assign(fia_species_code=fallback["fia_species_code"].astype("int64")),
+        equations=CROWN_RADIUS_FALLBACK_EQUATIONS,
+    )
+
+
 def fetch_canopy_inventory(
     roi: gpd.GeoDataFrame,
     source: dict,
@@ -298,6 +352,10 @@ def fetch_canopy_inventory(
     the persisted ``source`` into the science kwargs, and fills a band Dataset
     via ``fastfuels_core.canopy_fuel.compute_canopy_metrics``. Non-forest cells
     are written as 0 to match the LANDFIRE canopy source.
+
+    Records how many trees were read, used, and excluded (and why), and how
+    many took the allometric crown-radius fallback, on ``source["tree_usage"]``
+    for the caller to persist.
 
     Raises:
         ProcessingError: For a lattice this handler cannot rasterize onto, an
@@ -323,23 +381,39 @@ def fetch_canopy_inventory(
     # The FuelCalc crown-class adjustment reads each tree's crown class; project
     # it from the inventory when that arm is selected (and the inventory has it).
     use_crown_class = source["crown_class_adjustment"]["method"] == "fuelcalc_table"
+    # A tree with no value in the radius column falls back to the allometric
+    # radius, which reads morphology the request may not otherwise need.
+    fallback_columns = (
+        sorted(CROWN_RADIUS_FALLBACK_COLUMNS - set(required)) if radius_column else []
+    )
     df = read_inventory(
         inventory_id,
         fuel_column,
         radius_column,
         include_crown_class=use_crown_class,
         required_columns=required,
+        optional_columns=fallback_columns,
     )
-    df = drop_null_rows(df, fuel_column, radius_column, required_columns=required)
+    df, usage = exclude_null_rows(
+        df, fuel_column, radius_column, required_columns=required
+    )
+    # Persisted with the grid by griddle's source write-back after dispatch.
+    source["tree_usage"] = usage
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",
-            message="Inventory has no live trees with complete measurements.",
+            message=(
+                "Inventory has no live trees with complete measurements: "
+                f"{usage['trees_read']} trees read, all excluded for null values "
+                f"{usage['excluded_null_counts']}."
+            ),
             suggestion=(
                 "Verify the inventory contains live trees (fia_status_code == 1) "
                 "with non-null dbh / height / crown_ratio."
             ),
         )
+    if radius_column:
+        _fill_crown_radius_fallback(df, radius_column)
 
     dataset = _init_dataset(bands, transform, str(roi.crs), shape)
     kwargs = _core_kwargs(source)

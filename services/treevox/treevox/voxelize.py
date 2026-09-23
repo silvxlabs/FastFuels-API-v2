@@ -268,10 +268,10 @@ def build_tree(row, source_config: dict) -> Tree:
     biomass is computed allometrically via NSVB or Jenkins.
 
     `max_crown_radius` is only supplied when `max_crown_radius_source.type`
-    is `inventory_column`; otherwise the crown profile model's allometric
-    radius is used. When supplied, fastfuels-core preserves the crown
-    profile shape and rescales it so the maximum radius matches the
-    per-tree value.
+    is `inventory_column` and the tree has a value there; otherwise, including
+    a null ("not measured"), the crown profile model's allometric radius is
+    used. When supplied, fastfuels-core preserves the crown profile shape and
+    rescales it so the maximum radius matches the per-tree value.
     """
     crown_fuel_load = None
     column = foliage_inventory_column(source_config)
@@ -280,7 +280,7 @@ def build_tree(row, source_config: dict) -> Tree:
 
     max_crown_radius = None
     radius_column = max_crown_radius_inventory_column(source_config)
-    if radius_column is not None:
+    if radius_column is not None and not pd.isna(row[radius_column]):
         max_crown_radius = float(row[radius_column])
 
     return Tree(
@@ -310,8 +310,10 @@ def compute_cache_keys(
     key so rows with the same morphology but different supplied biomass do not
     reuse the first row's cached density arrays. The same applies to a
     per-tree max_crown_radius column: it changes the crown geometry and
-    must split otherwise-identical bins. Returns integer codes via
-    `groupby().ngroup()`.
+    must split otherwise-identical bins. A null radius (allometric fallback)
+    is a key value of its own: `dropna=False` keeps those trees keyed by
+    their morphology rather than collapsing them all into ngroup's -1.
+    Returns integer codes via `groupby().ngroup()`.
 
     See TREEVOX.md for rationale and bin widths.
     """
@@ -329,7 +331,7 @@ def compute_cache_keys(
             groupers.append(df[column].astype("float64"))
         if column := max_crown_radius_inventory_column(source_config):
             groupers.append(df[column].astype("float64"))
-    return df.groupby(groupers, sort=False).ngroup()
+    return df.groupby(groupers, sort=False, dropna=False).ngroup()
 
 
 def calculate_arrays_to_cache(

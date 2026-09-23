@@ -16,9 +16,15 @@ from lib.inventory_io import (
     REQUIRED_COLUMNS,
     assign_tree_ids,
     canopy_required_columns,
-    drop_null_rows,
+    exclude_null_rows,
     read_inventory,
 )
+
+
+def _is_live_or_null_status_filter(filters) -> bool:
+    """The status pushdown keeps live trees and trees with no status."""
+    status = inventory_io.pc.field("fia_status_code")
+    return filters is not None and filters.equals((status == 1) | status.is_null())
 
 
 class TestReadInventory:
@@ -63,7 +69,7 @@ class TestReadInventory:
         assert captured["path"].endswith("inv123")
         # Column projection and status pushdown both make it to parquet.
         assert captured["columns"] == REQUIRED_COLUMNS
-        assert captured["filters"] == [("fia_status_code", "=", 1)]
+        assert _is_live_or_null_status_filter(captured["filters"])
 
     def test_biomass_column_appended_to_projection(self, monkeypatch):
         df_in = pd.DataFrame(
@@ -177,7 +183,7 @@ class TestReadInventory:
 
         read_inventory("inv")
         assert captured["columns"] == REQUIRED_COLUMNS
-        assert captured["filters"] == [("fia_status_code", "=", 1)]
+        assert _is_live_or_null_status_filter(captured["filters"])
 
     def test_missing_morphology_columns_raises_actionable_error(self, monkeypatch):
         """A CHM-only inventory (position + height, no morphology) raises a clear
@@ -232,6 +238,27 @@ class TestReadInventory:
         assert "acf_kg" in captured["columns"]
         assert "fia_status_code" in captured["columns"]
 
+    def test_optional_columns_projected_only_when_present(self, monkeypatch):
+        present = {"x", "y", "height", "crown_ratio", "fia_status_code", "dbh"}
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: present
+        )
+        captured: dict = {}
+
+        def fake_read_parquet(path, columns=None, filters=None, **kwargs):
+            captured["columns"] = columns
+            return pd.DataFrame({c: [1.0] for c in columns})
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+
+        read_inventory(
+            "inv",
+            required_columns=["x", "y", "height", "crown_ratio"],
+            optional_columns=["dbh", "fia_species_code"],
+        )
+        assert "dbh" in captured["columns"]
+        assert "fia_species_code" not in captured["columns"]
+
     def test_missing_inventory_raises_processing_error(self, monkeypatch):
         def raising(path, **kwargs):
             raise FileNotFoundError(path)
@@ -255,9 +282,42 @@ class TestReadInventory:
         assert exc.value.code == "INVENTORY_NOT_FOUND"
 
 
-class TestDropNullRows:
-    """`drop_null_rows` sees post-pushdown input — all rows are already live —
-    so fixtures use `fia_status_code == 1` throughout."""
+class TestStatusPushdownOnParquet:
+    """The status predicate against a real parquet dataset: dead trees are
+    skipped, and trees with no status reach the caller to be counted."""
+
+    def test_null_status_rows_are_read_dead_rows_are_not(self, monkeypatch, tmp_path):
+        df = pd.DataFrame(
+            {
+                "x": [1.0, 2.0, 3.0, 4.0],
+                "y": [1.0, 2.0, 3.0, 4.0],
+                "fia_species_code": [131, 131, 131, 131],
+                "fia_status_code": pd.array([1, None, 2, 1], dtype="Int64"),
+                "dbh": [20.0, 20.0, 20.0, 20.0],
+                "height": [15.0, 15.0, 15.0, 15.0],
+                "crown_ratio": [0.4, 0.4, 0.4, 0.4],
+            }
+        )
+        df.to_parquet(tmp_path / "part.0.parquet", index=False)
+        monkeypatch.setattr(inventory_io, "INVENTORIES_BUCKET", "unused")
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: set(df.columns)
+        )
+        real_read_parquet = pd.read_parquet
+
+        def local_read_parquet(path, **kwargs):
+            return real_read_parquet(tmp_path, **kwargs)
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", local_read_parquet)
+
+        out = read_inventory("inv")
+        assert list(out["x"]) == [1.0, 2.0, 4.0]
+        assert out["fia_status_code"].isna().tolist() == [False, True, False]
+
+
+class TestExcludeNullRows:
+    """`exclude_null_rows` sees the read's output: live trees plus trees with
+    no status value."""
 
     def _df(self, **overrides):
         data = {
@@ -272,53 +332,107 @@ class TestDropNullRows:
         data.update(overrides)
         return pd.DataFrame(data)
 
-    def test_drops_rows_with_null_required_columns(self):
-        df = self._df()
-        df.loc[0, "dbh"] = None
-        out = drop_null_rows(df)
-        assert len(out) == 2
+    def test_complete_inventory_uses_every_tree(self):
+        out, usage = exclude_null_rows(self._df())
+        assert len(out) == 3
+        assert usage == {
+            "trees_read": 3,
+            "trees_used": 3,
+            "trees_excluded": 0,
+            "excluded_null_counts": {},
+            "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
+        }
 
-    def test_biomass_column_non_null_required_when_specified(self):
+    @pytest.mark.parametrize(
+        "column", ["x", "y", "fia_species_code", "dbh", "height", "crown_ratio"]
+    )
+    def test_null_required_column_is_excluded_and_counted(self, column):
+        df = self._df()
+        df.loc[0, column] = None
+        out, usage = exclude_null_rows(df)
+        assert len(out) == 2
+        assert usage["trees_read"] == 3
+        assert usage["trees_used"] == 2
+        assert usage["trees_excluded"] == 1
+        assert usage["excluded_null_counts"] == {column: 1}
+
+    def test_null_status_is_live_and_counted(self):
+        """No recorded status means live, as for an absent status column."""
+        df = self._df(fia_status_code=pd.array([1, None, None], dtype="Int64"))
+        out, usage = exclude_null_rows(df)
+        assert len(out) == 3
+        assert list(out["fia_status_code"]) == [1, 1, 1]
+        assert usage["trees_excluded"] == 0
+        assert usage["excluded_null_counts"] == {}
+        assert usage["null_status_treated_as_live"] == 2
+
+    def test_null_status_live_with_reduced_required_columns(self):
+        df = self._df(fia_status_code=pd.array([1, None, 1], dtype="Int64"))
+        out, usage = exclude_null_rows(
+            df, required_columns=["x", "y", "height", "crown_ratio"]
+        )
+        assert len(out) == 3
+        assert not out["fia_status_code"].isna().any()
+        assert usage["null_status_treated_as_live"] == 1
+
+    def test_null_status_on_excluded_tree_is_not_counted_as_live(self):
+        df = self._df(fia_status_code=pd.array([None, None, 1], dtype="Int64"))
+        df.loc[0, "dbh"] = None
+        out, usage = exclude_null_rows(df)
+        assert len(out) == 2
+        assert usage["excluded_null_counts"] == {"dbh": 1}
+        assert usage["null_status_treated_as_live"] == 1
+
+    def test_null_biomass_is_excluded_and_counted(self):
         df = self._df()
         df["fuel_load"] = [10.0, 20.0, None]
-        out = drop_null_rows(df, biomass_column="fuel_load")
-        assert len(out) == 2
+        out, usage = exclude_null_rows(df, biomass_column="fuel_load")
         assert list(out["fuel_load"]) == [10.0, 20.0]
+        assert usage["excluded_null_counts"] == {"fuel_load": 1}
 
-    def test_crown_radius_column_non_null_required_when_specified(self):
+    def test_null_crown_radius_is_kept_as_fallback(self):
         df = self._df()
         df["lidar_max_radius"] = [2.5, None, 4.0]
-        out = drop_null_rows(df, crown_radius_column="lidar_max_radius")
-        assert len(out) == 2
-        assert list(out["lidar_max_radius"]) == [2.5, 4.0]
+        out, usage = exclude_null_rows(df, crown_radius_column="lidar_max_radius")
+        assert len(out) == 3
+        assert out["lidar_max_radius"].isna().tolist() == [False, True, False]
+        assert usage["trees_excluded"] == 0
+        assert usage["crown_radius_fallbacks"] == 1
 
-    def test_biomass_and_crown_radius_columns_drop_independently(self):
+    def test_fallback_counts_only_trees_used(self):
         df = self._df()
-        df["fuel_load"] = [10.0, 20.0, 30.0]
-        df["lidar_max_radius"] = [2.5, None, 4.0]
-        out = drop_null_rows(
-            df,
-            biomass_column="fuel_load",
-            crown_radius_column="lidar_max_radius",
-        )
+        df["lidar_max_radius"] = [None, None, 4.0]
+        df.loc[0, "dbh"] = None
+        out, usage = exclude_null_rows(df, crown_radius_column="lidar_max_radius")
         assert len(out) == 2
-        assert list(out["fuel_load"]) == [10.0, 30.0]
-        assert list(out["lidar_max_radius"]) == [2.5, 4.0]
+        assert usage["crown_radius_fallbacks"] == 1
+
+    def test_tree_with_several_nulls_counts_under_each_column(self):
+        df = self._df()
+        df.loc[0, "dbh"] = None
+        df.loc[0, "crown_ratio"] = None
+        _, usage = exclude_null_rows(df)
+        assert usage["trees_excluded"] == 1
+        assert usage["excluded_null_counts"] == {"dbh": 1, "crown_ratio": 1}
 
     def test_resets_index(self):
         df = self._df()
-        df.loc[0, "dbh"] = None  # drop the first row
-        out = drop_null_rows(df)
+        df.loc[0, "dbh"] = None
+        out, _ = exclude_null_rows(df)
         assert list(out.index) == [0, 1]
 
-    def test_required_columns_restricts_dropna(self):
+    def test_required_columns_restricts_exclusion(self):
         """When a request does not read dbh / species, a null in them must not
-        drop the tree — its available fuel would be silently omitted."""
+        exclude the tree — its available fuel would be silently omitted."""
         df = self._df()
         df.loc[0, "dbh"] = None
         df.loc[1, "fia_species_code"] = None
-        out = drop_null_rows(df, required_columns=["x", "y", "height", "crown_ratio"])
+        out, usage = exclude_null_rows(
+            df, required_columns=["x", "y", "height", "crown_ratio"]
+        )
         assert len(out) == 3
+        assert usage["excluded_null_counts"] == {}
 
 
 class TestCanopyRequiredColumns:

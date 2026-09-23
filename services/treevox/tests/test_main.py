@@ -90,9 +90,50 @@ class TestProcessGridRequest:
                     "shape": [5, 10, 10],
                     "count": 1,
                     "count_by_axis": {"z": 1, "y": 1, "x": 1},
-                }
+                },
+                "source": {"name": "inventory"},
             },
         )
+
+    @patch("treevox.main.update_metadata")
+    @patch("treevox.main.dispatch_handler")
+    @patch("treevox.main.load_domain")
+    @patch("treevox.main.update_status")
+    @patch("treevox.main.load_grid")
+    def test_handler_source_metadata_written_back(
+        self,
+        mock_load_grid,
+        mock_status,
+        mock_load_domain,
+        mock_dispatch,
+        mock_update_metadata,
+    ):
+        """What the handler records on the source (voxelize's tree_usage) is
+        persisted with the grid."""
+        grid = {
+            "id": "g1",
+            "domain_id": "d1",
+            "source": {"name": "inventory"},
+            "bands": [{"key": "volume_fraction"}],
+        }
+        mock_load_grid.return_value = grid
+        mock_load_domain.return_value = MagicMock()
+        usage = {"trees_read": 3, "trees_used": 2}
+
+        def dispatch(grid_doc, *_):
+            grid_doc["source"]["tree_usage"] = usage
+            return VoxelizationResult(
+                gcs_path="gs://bucket/g1",
+                georeference={"shape": [5, 10, 10]},
+                chunk_shape=[5, 10, 10],
+            )
+
+        mock_dispatch.side_effect = dispatch
+
+        process_grid_request(MockRequest(data={"id": "g1"}))
+
+        written = mock_update_metadata.call_args.args[1]
+        assert written["source"]["tree_usage"] == usage
 
     @patch("treevox.main.storage.delete_zarr")
     @patch("treevox.main.dispatch_handler")

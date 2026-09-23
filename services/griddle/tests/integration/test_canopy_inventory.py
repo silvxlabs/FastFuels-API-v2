@@ -16,6 +16,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from lib.config import GRIDS_COLLECTION
+from lib.firestore.documents import get_document
+
 pytestmark = pytest.mark.integration
 
 
@@ -41,3 +44,9 @@ def test_canopy_from_pim_inventory_all_bands(griddle_runner):
     # cbh <= chm wherever there is canopy (both zero elsewhere).
     canopy = ds["chm"].values > 0
     assert (ds["cbh"].values[canopy] <= ds["chm"].values[canopy]).all()
+
+    # Tree accounting persisted on the source (#612).
+    _, snapshot = get_document(GRIDS_COLLECTION, result.grid_id)
+    usage = snapshot.to_dict()["source"]["tree_usage"]
+    assert usage["trees_used"] > 0
+    assert usage["trees_read"] == usage["trees_used"] + usage["trees_excluded"]

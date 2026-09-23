@@ -87,6 +87,12 @@ def test_voxelize_pim_inventory_all_bands(treevox_runner):
         * chunks["count_by_axis"]["x"]
     )
 
+    # Tree accounting persisted on the source (#612).
+    usage = result.grid["source"]["tree_usage"]
+    assert usage["trees_used"] > 10
+    assert usage["trees_read"] == usage["trees_used"] + usage["trees_excluded"]
+    assert usage["crown_radius_fallbacks"] == 0
+
 
 def test_inventory_not_found_fails_gracefully(treevox_runner):
     """Bad source_inventory_id → grid status 'failed' with INVENTORY_NOT_FOUND.

@@ -45,6 +45,7 @@ from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassUnit,
     InventoryColumnMaxCrownRadiusSource,
+    InventoryTreeUsage,
 )
 
 # Cell size applied when the request's domain-target alignment omits
@@ -778,7 +779,9 @@ class InventoryCanopySourceBase(BaseModel):
             '`{"type": "allometry", "equations": "crookston_stage"}` for '
             "the crown widths FuelCalc uses, or "
             '`{"type": "inventory_column", "column": ...}` to read a '
-            "per-tree radius in meters (e.g. derived from LiDAR)."
+            "per-tree radius in meters (e.g. derived from LiDAR). With a "
+            "column, a tree with no value in it uses the `purves` radius, "
+            "which needs `dbh` and `fia_species_code` for those trees."
         ),
     )
 
@@ -1032,3 +1035,12 @@ class InventoryCanopySource(CanopySource, InventoryCanopySourceBase):
         ),
     )
     bands: list[InventoryCanopyBand]
+    tree_usage: InventoryTreeUsage | None = Field(
+        default=None,
+        description=(
+            "How many inventory trees the grid was built from, how many were "
+            "left out for missing values and why, and how many used an "
+            "allometric crown radius in place of a missing column value. "
+            "Recorded when the grid finishes processing; `null` before then."
+        ),
+    )

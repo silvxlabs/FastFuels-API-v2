@@ -335,6 +335,8 @@ class InventoryColumnMaxCrownRadiusSource(BaseModel):
 
     The crown profile model still drives the crown shape — the supplied
     radius rescales it so the maximum radius matches the per-tree value.
+    A tree with no value in the column uses its allometric radius instead;
+    the grid's `source.tree_usage.crown_radius_fallbacks` counts those trees.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -348,6 +350,54 @@ MaxCrownRadiusSource = Annotated[
     AllometryMaxCrownRadiusSource | InventoryColumnMaxCrownRadiusSource,
     Field(discriminator="type"),
 ]
+
+
+class InventoryTreeUsage(BaseModel):
+    """How many of the source inventory's trees built the grid, and why any
+    were left out.
+
+    Written by the worker when the grid finishes processing. Shared by every
+    grid built from a tree inventory's rows.
+    """
+
+    trees_read: int = Field(
+        ge=0,
+        description=(
+            "Trees read from the source inventory: every live tree "
+            "(`fia_status_code` 1, or no `fia_status_code` value). Trees with "
+            "any other status are not live and are not read."
+        ),
+    )
+    trees_used: int = Field(ge=0, description="Trees the grid was built from.")
+    trees_excluded: int = Field(
+        ge=0,
+        description="Trees read but left out because a value they need is missing.",
+    )
+    excluded_null_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Excluded trees per column holding the missing value. A tree missing "
+            "values in several columns counts under each, so the counts can sum "
+            "to more than `trees_excluded`."
+        ),
+    )
+    crown_radius_fallbacks: int = Field(
+        ge=0,
+        description=(
+            "Trees with no value in the `max_crown_radius_source` column that "
+            "used their allometric maximum crown radius instead. Always 0 unless "
+            "`max_crown_radius_source.type` is `inventory_column`."
+        ),
+    )
+    null_status_treated_as_live: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Trees used with no `fia_status_code` value. No recorded status "
+            "means live, the same as an inventory with no `fia_status_code` "
+            "column."
+        ),
+    )
 
 
 class UniformMoistureValue(BaseModel):
@@ -481,6 +531,15 @@ class TreeInventoryVoxelizationSource(BaseModel):
         description=(
             "Random seed that drove stochastic sampling during voxelization. "
             "Persisted so the grid can be exactly reproduced."
+        ),
+    )
+    tree_usage: InventoryTreeUsage | None = Field(
+        default=None,
+        description=(
+            "How many inventory trees the grid was built from, how many were "
+            "left out for missing values and why, and how many used an "
+            "allometric crown radius in place of a missing column value. "
+            "Recorded when the grid finishes processing; `null` before then."
         ),
     )
 

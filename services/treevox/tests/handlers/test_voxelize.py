@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from treevox import voxelize as vox
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
 from treevox.handlers import voxelize as handler
@@ -105,8 +106,9 @@ class TestPickWorkerCount:
 
 
 class TestLoadInventoryDataframe:
-    """`read_inventory` pushes `fia_status_code == 1` into the parquet read,
-    so the mocked return values here already contain only live trees."""
+    """`read_inventory` pushes a live-or-null status filter into the parquet
+    read, so the mocked return values here hold live trees and trees with no
+    status value."""
 
     @patch("treevox.handlers.voxelize.read_inventory")
     def test_drops_null_rows_and_assigns_tree_ids(self, mock_read):
@@ -116,15 +118,85 @@ class TestLoadInventoryDataframe:
                 "y": [1.0, 2.0],
                 "fia_species_code": [131, 131],
                 "fia_status_code": [1, 1],
-                "dbh": [20.0, None],  # second row dropped by drop_null_rows
+                "dbh": [20.0, None],  # second row excluded
                 "height": [15.0, 15.0],
                 "crown_ratio": [0.4, 0.4],
             }
         )
         source = _base_grid()["source"]
-        df = handler._load_inventory_dataframe(source, lambda *a, **k: None)
+        df, usage = handler._load_inventory_dataframe(source, lambda *a, **k: None)
         assert len(df) == 1
         assert list(df["tree_id"]) == [0]
+        assert usage["excluded_null_counts"] == {"dbh": 1}
+
+    @pytest.mark.parametrize(
+        "column", ["fia_species_code", "dbh", "height", "crown_ratio", "x", "y"]
+    )
+    @patch("treevox.handlers.voxelize.read_inventory")
+    def test_partial_null_morphology_is_reported(self, mock_read, column):
+        df_in = _sample_df(n=4)
+        df_in[column] = df_in[column].astype("float64")
+        df_in.loc[1, column] = np.nan
+        mock_read.return_value = df_in
+        df, usage = handler._load_inventory_dataframe(
+            _base_grid()["source"], lambda *a, **k: None
+        )
+        assert len(df) == 3
+        assert usage == {
+            "trees_read": 4,
+            "trees_used": 3,
+            "trees_excluded": 1,
+            "excluded_null_counts": {column: 1},
+            "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
+        }
+
+    @patch("treevox.handlers.voxelize.read_inventory")
+    def test_partial_null_biomass_column_is_reported(self, mock_read):
+        df_in = _sample_df(n=3)
+        df_in["foliage_kg"] = [4.0, np.nan, 6.0]
+        mock_read.return_value = df_in
+        source = _base_grid()["source"]
+        source["biomass_source"] = {
+            "type": "inventory_columns",
+            "columns": {"foliage": {"column": "foliage_kg", "unit": "kg"}},
+            "components": ["foliage"],
+            "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
+        }
+        df, usage = handler._load_inventory_dataframe(source, lambda *a, **k: None)
+        assert list(df["foliage_kg"]) == [4.0, 6.0]
+        assert usage["excluded_null_counts"] == {"foliage_kg": 1}
+
+    @patch("treevox.handlers.voxelize.read_inventory")
+    def test_partial_null_status_is_live_and_reported(self, mock_read):
+        df_in = _sample_df(n=3)
+        df_in["fia_status_code"] = pd.array([1, None, 1], dtype="Int64")
+        mock_read.return_value = df_in
+        df, usage = handler._load_inventory_dataframe(
+            _base_grid()["source"], lambda *a, **k: None
+        )
+        assert len(df) == 3
+        assert usage["trees_excluded"] == 0
+        assert usage["null_status_treated_as_live"] == 1
+        # The tree builds as live.
+        tree = vox.build_tree(df.iloc[1], _base_grid()["source"])
+        assert tree.status_code == 1
+
+    @patch("treevox.handlers.voxelize.read_inventory")
+    def test_partial_null_crown_radius_keeps_every_tree(self, mock_read):
+        df_in = _sample_df(n=3)
+        df_in["lidar_radius"] = [2.0, np.nan, 3.0]
+        mock_read.return_value = df_in
+        source = _base_grid()["source"]
+        source["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "lidar_radius",
+            "unit": "m",
+        }
+        df, usage = handler._load_inventory_dataframe(source, lambda *a, **k: None)
+        assert len(df) == 3
+        assert usage["trees_excluded"] == 0
+        assert usage["crown_radius_fallbacks"] == 1
 
     @patch("treevox.handlers.voxelize.read_inventory")
     def test_empty_after_filter_raises_empty_inventory(self, mock_read):
@@ -668,6 +740,27 @@ class TestVoxelizeInventoryFlow:
         assert any("Initializing" in m for m in msgs)
         assert any("Finalizing" in m for m in msgs)
 
+    @patch("treevox.handlers.voxelize._run_voxelization_batches")
+    @patch("treevox.handlers.voxelize.storage.init_store")
+    @patch("treevox.handlers.voxelize.read_inventory")
+    def test_records_tree_usage_on_source(self, mock_read_inv, mock_init, mock_run):
+        df_in = _sample_df(n=3, height=5.0)
+        df_in["dbh"] = [20.0, np.nan, 20.0]
+        mock_read_inv.return_value = df_in
+        mock_run.return_value = handler.BatchStats()
+        grid = _base_grid()
+
+        voxelize_inventory(grid, _fake_domain(), lambda *a, **k: None)
+
+        assert grid["source"]["tree_usage"] == {
+            "trees_read": 3,
+            "trees_used": 2,
+            "trees_excluded": 1,
+            "excluded_null_counts": {"dbh": 1},
+            "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
+        }
+
     @patch("treevox.handlers.voxelize.read_inventory")
     def test_empty_inventory_raises(self, mock_read_inv):
         mock_read_inv.return_value = pd.DataFrame(
@@ -676,7 +769,7 @@ class TestVoxelizeInventoryFlow:
                 "y": [1.0],
                 "fia_species_code": [131],
                 "fia_status_code": [1],
-                "dbh": [None],  # null → dropped by drop_null_rows → empty
+                "dbh": [None],  # null → excluded → empty
                 "height": [15.0],
                 "crown_ratio": [0.4],
             }

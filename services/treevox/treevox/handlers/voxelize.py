@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from lib.inventory_io import assign_tree_ids, drop_null_rows, read_inventory
+from lib.inventory_io import assign_tree_ids, exclude_null_rows, read_inventory
 from treevox import storage, voxelize
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
@@ -110,11 +110,13 @@ def _pick_worker_count() -> int:
 
 def _load_inventory_dataframe(
     source: dict, progress: Callable[[str, int | None], None]
-) -> pd.DataFrame:
-    """Read the parquet from GCS, filter to live trees, and assign tree IDs.
+) -> tuple[pd.DataFrame, dict]:
+    """Read the parquet from GCS, exclude incomplete trees, and assign tree IDs.
 
     Reads directly from GCS (no tmpfile staging) with column projection and a
-    `fia_status_code == 1` predicate pushdown — see `read_inventory`.
+    live-tree predicate pushdown — see `read_inventory`. Returns the trees and
+    the usage record from `exclude_null_rows`, which the grid persists as
+    `source.tree_usage`.
     """
     progress("Loading inventory...", 5)
     biomass_column = voxelize.foliage_inventory_column(source)
@@ -122,16 +124,20 @@ def _load_inventory_dataframe(
     df = read_inventory(
         source["source_inventory_id"], biomass_column, crown_radius_column
     )
-    df = drop_null_rows(df, biomass_column, crown_radius_column)
+    df, usage = exclude_null_rows(df, biomass_column, crown_radius_column)
     df = assign_tree_ids(df)
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",
-            message="Inventory has no live trees with complete measurements.",
+            message=(
+                "Inventory has no live trees with complete measurements: "
+                f"{usage['trees_read']} trees read, all excluded for null values "
+                f"{usage['excluded_null_counts']}."
+            ),
             suggestion="Verify the inventory contains rows with fia_status_code == 1 "
             "and non-null dbh / height / crown_ratio.",
         )
-    return df
+    return df, usage
 
 
 def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
@@ -678,7 +684,8 @@ def voxelize_inventory(
     """Voxelize a tree inventory into a 3D zarr grid on GCS.
 
     Stages (each testable in isolation):
-      1. _load_inventory_dataframe — download + filter + id.
+      1. _load_inventory_dataframe — download + filter + id; records
+         `source.tree_usage`.
       2. _plan_grid_layout         — dims, chunk sizing, chunk order.
       3. storage.init_store        — write empty zarr metadata.
       4. _prepare_tree_chunks      — cache keys + per-chunk assignment + sort.
@@ -695,9 +702,14 @@ def voxelize_inventory(
         extra={"grid_id": grid_id},
     )
 
-    df = _load_inventory_dataframe(source, progress)
+    df, usage = _load_inventory_dataframe(source, progress)
+    # Persisted with the grid by main.py's source write-back.
+    source["tree_usage"] = usage
     logger.info(
-        f"Inventory loaded: {len(df)} trees",
+        f"Inventory loaded: {usage['trees_used']} of {usage['trees_read']} trees "
+        f"used; excluded for null values: {usage['excluded_null_counts']}; "
+        f"crown radius fallbacks: {usage['crown_radius_fallbacks']}; "
+        f"null status treated as live: {usage['null_status_treated_as_live']}",
         extra={"grid_id": grid_id},
     )
 

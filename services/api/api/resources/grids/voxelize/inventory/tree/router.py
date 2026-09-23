@@ -25,11 +25,16 @@ from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.schema import Grid
+from api.resources.grids.utils import (
+    ALLOMETRY_IMPUTABLE_COLUMNS,
+    validate_inventory_values_complete,
+)
 from api.resources.grids.voxelize.inventory.tree.examples import (
     CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES,
 )
 from api.resources.grids.voxelize.inventory.tree.schema import (
     CreateTreeInventoryRequest,
+    InventoryColumnsBiomassSource,
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
@@ -51,10 +56,6 @@ COLLECTION = GRIDS_COLLECTION
 VOXELIZE_REQUIRED_COLUMNS = frozenset(
     {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
 )
-
-# Of those, the allometry endpoint imputes species / diameter / crown ratio from
-# position + height; position and height themselves cannot be imputed.
-ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
 
 
 @router.post(
@@ -113,12 +114,29 @@ async def create_tree_inventory_grid(
       defaults to 100%; dead defaults to 10%.
     - **name**, **description**, **tags**: (optional) Standard metadata.
 
+    ## Missing values
+
+    Every tree must have `x`, `y`, `height`, `dbh`, `crown_ratio`, and
+    `fia_species_code`, plus a value in each biomass column when biomass
+    comes from the inventory. A request against an inventory whose column
+    summaries report missing values in any of these returns 422. Fill missing
+    `dbh`, `crown_ratio`, and `fia_species_code` values with the allometry
+    endpoint (`POST /domains/{domain_id}/inventories/tree/allometry/gdam`).
+
+    A tree with no value in the `max_crown_radius_source` column uses its
+    allometric maximum crown radius instead. A tree with no `fia_status_code`
+    value is treated as live.
+
     ## Response
 
     Returns the created Grid resource with status `"pending"` and
     `georeference: null`. The Treevox backend performs voxelization
     asynchronously and updates the grid to `"completed"` with a
-    `Georeference3D` when done.
+    `Georeference3D` when done. The completed grid's `source.tree_usage`
+    records how many trees were read and used, how many were left out for
+    missing values (per column), how many used an allometric crown radius
+    in place of a missing column value, and how many had no status and were
+    treated as live.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
@@ -180,6 +198,23 @@ async def create_tree_inventory_grid(
                 + " ".join(guidance)
             ),
         )
+
+    # Every tree needs complete morphology and, when biomass comes from the
+    # inventory, a biomass value; the column summaries say whether any are
+    # missing. A missing crown radius is not checked: that tree uses its
+    # allometric radius instead.
+    biomass_columns = (
+        {c.column for c in body.biomass_source.columns.values()}
+        if isinstance(body.biomass_source, InventoryColumnsBiomassSource)
+        else set()
+    )
+    validate_inventory_values_complete(
+        inventory_data,
+        body.source_inventory_id,
+        domain_id,
+        set(VOXELIZE_REQUIRED_COLUMNS),
+        biomass_columns,
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

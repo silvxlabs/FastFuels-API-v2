@@ -11,8 +11,10 @@ from unittest.mock import patch
 import pytest
 from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.utils import (
+    inventory_null_counts,
     validate_format_supports_grid,
     validate_grids_share_horizontal_lattice,
+    validate_inventory_values_complete,
     validate_lfps_coverage,
 )
 from fastapi import HTTPException
@@ -231,3 +233,95 @@ class TestValidateFormatSupportsGrid:
                     validate_lfps_coverage("fbfm40", "2024", self._domain())
             assert "doesn't currently cover this domain's location" in exc.value.detail
             assert "landfire.gov/data" in exc.value.detail
+
+
+def _inventory(null_counts: dict[str, int], without_summary: tuple = ()) -> dict:
+    """Inventory data whose column summaries report the given null counts."""
+    keys = ["x", "y", "fia_species_code", "fia_status_code", "dbh", "height"]
+    keys += ["crown_ratio", "foliage_kg", "crad_m"]
+    columns = []
+    for key in keys:
+        column = {"key": key, "type": "continuous", "unit": None}
+        if key not in without_summary:
+            column["summary"] = {
+                "type": "continuous",
+                "count": 100 - null_counts.get(key, 0),
+                "null_count": null_counts.get(key, 0),
+                "min": 0.0,
+                "max": 1.0,
+                "mean": 0.5,
+                "std": 0.1,
+            }
+        columns.append(column)
+    return {"columns": columns}
+
+
+_MORPHOLOGY = {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
+
+
+class TestInventoryNullCounts:
+    def test_reports_only_columns_with_nulls(self):
+        assert inventory_null_counts(_inventory({"dbh": 3, "crad_m": 1})) == {
+            "dbh": 3,
+            "crad_m": 1,
+        }
+
+    def test_columns_without_summary_are_unknown_not_complete(self):
+        inv = _inventory({"dbh": 3}, without_summary=("dbh",))
+        assert inventory_null_counts(inv) == {}
+
+    def test_bare_string_columns_are_ignored(self):
+        assert inventory_null_counts({"columns": ["x", "y"]}) == {}
+
+
+class TestValidateInventoryValuesComplete:
+    def _validate(self, inventory, required=_MORPHOLOGY, biomass=frozenset()):
+        validate_inventory_values_complete(
+            inventory, "inv-1", "dom-1", set(required), set(biomass)
+        )
+
+    def test_complete_inventory_passes(self):
+        self._validate(_inventory({}))
+
+    @pytest.mark.parametrize("column", ["dbh", "crown_ratio", "fia_species_code"])
+    def test_null_imputable_morphology_points_to_gdam(self, column):
+        with pytest.raises(HTTPException) as exc:
+            self._validate(_inventory({column: 7}))
+        assert exc.value.status_code == 422
+        detail = exc.value.detail
+        assert f"{column}: 7 missing" in detail
+        assert "/domains/dom-1/inventories/tree/allometry/gdam" in detail
+        assert "source_tree_inventory_id='inv-1'" in detail
+
+    @pytest.mark.parametrize("column", ["x", "y", "height"])
+    def test_null_position_or_height_cannot_be_imputed(self, column):
+        with pytest.raises(HTTPException) as exc:
+            self._validate(_inventory({column: 2}))
+        assert exc.value.status_code == 422
+        assert "cannot be imputed" in exc.value.detail
+        assert "allometry/gdam" not in exc.value.detail
+
+    def test_null_biomass_column_names_the_column(self):
+        with pytest.raises(HTTPException) as exc:
+            self._validate(_inventory({"foliage_kg": 4}), biomass={"foliage_kg"})
+        assert exc.value.status_code == 422
+        detail = exc.value.detail
+        assert "Biomass column 'foliage_kg' is missing 4 value(s)" in detail
+        assert "allometry/gdam" not in detail
+
+    def test_null_crown_radius_is_not_rejected(self):
+        """A missing radius falls back to the allometric radius."""
+        self._validate(_inventory({"crad_m": 5}))
+
+    def test_null_status_is_not_rejected(self):
+        self._validate(_inventory({"fia_status_code": 5}))
+
+    def test_nulls_in_columns_the_request_does_not_read_pass(self):
+        self._validate(
+            _inventory({"dbh": 3, "fia_species_code": 1}),
+            required={"x", "y", "height", "crown_ratio"},
+        )
+
+    def test_column_without_summary_passes(self):
+        """Completeness unknown at request time; the worker accounts for it."""
+        self._validate(_inventory({"dbh": 3}, without_summary=("dbh",)))

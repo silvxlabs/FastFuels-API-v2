@@ -306,6 +306,115 @@ class TestInventoryCanopyValidation:
         assert "dbh" in detail
         assert "allometry" in detail
 
+    def _seed_with_nulls(self, firestore_client, domain_id, null_counts, drop=()):
+        """Seed an inventory whose column summaries report `null_counts`, with
+        the example extra columns and without the `drop` columns."""
+        data = make_inventory_data(
+            domain_id=domain_id,
+            name="Tree inventory with missing values",
+            status="completed",
+            inventory_type="tree",
+        )
+        data["checksum"] = uuid.uuid4().hex
+        data["columns"] = [
+            dict(c) for c in data["columns"] + _EXTRA_COLUMNS if c["key"] not in drop
+        ]
+        for column in data["columns"]:
+            column["summary"] = {
+                "type": "continuous",
+                "count": 100,
+                "null_count": null_counts.get(column["key"], 0),
+                "min": 0.0,
+                "max": 1.0,
+                "mean": 0.5,
+                "std": 0.1,
+            }
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            data["id"]
+        )
+        doc_ref.set(data)
+        return data, doc_ref
+
+    def test_rejects_inventory_with_null_morphology(
+        self, client, firestore_client, domain_for_testing
+    ):
+        data, doc_ref = self._seed_with_nulls(
+            firestore_client, domain_for_testing["id"], {"crown_ratio": 9}
+        )
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"source_inventory_id": data["id"]},
+            )
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "crown_ratio: 9 missing" in detail
+            assert "allometry/gdam" in detail
+        finally:
+            doc_ref.delete()
+
+    def test_rejects_inventory_with_null_fuel_column(
+        self, client, firestore_client, domain_for_testing
+    ):
+        data, doc_ref = self._seed_with_nulls(
+            firestore_client,
+            domain_for_testing["id"],
+            {"available_canopy_fuel_kg": 2},
+        )
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={
+                    "source_inventory_id": data["id"],
+                    "biomass_source": {
+                        "type": "inventory_column",
+                        "column": "available_canopy_fuel_kg",
+                    },
+                },
+            )
+            assert response.status_code == 422
+            assert (
+                "Biomass column 'available_canopy_fuel_kg' is missing 2 value(s)"
+                in response.json()["detail"]
+            )
+        finally:
+            doc_ref.delete()
+
+    def test_rejects_null_radius_when_fallback_morphology_is_absent(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A tree with no radius needs dbh and species for the allometric
+        fallback; a fuel-and-radius-from-columns inventory may lack them."""
+        data, doc_ref = self._seed_with_nulls(
+            firestore_client,
+            domain_for_testing["id"],
+            {"crown_radius_m": 4},
+            drop=("dbh", "fia_species_code"),
+        )
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={
+                    "source_inventory_id": data["id"],
+                    "biomass_source": {
+                        "type": "inventory_column",
+                        "column": "available_canopy_fuel_kg",
+                    },
+                    "max_crown_radius_source": {
+                        "type": "inventory_column",
+                        "column": "crown_radius_m",
+                    },
+                    "vertical_distribution": "uniform",
+                    "species_inclusion": "all_species",
+                },
+            )
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "crown_radius_m" in detail
+            assert "dbh" in detail
+        finally:
+            doc_ref.delete()
+
     def test_rejects_native_alignment(
         self, client, domain_for_testing, tree_inventory_for_canopy
     ):

@@ -36,7 +36,12 @@ from api.resources.grids.canopy.inventory.schema import (
     build_inventory_canopy_bands,
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
-from api.resources.grids.utils import validate_target_grid_alignment
+from api.resources.grids.utils import (
+    ALLOMETRY_IMPUTABLE_COLUMNS,
+    inventory_null_counts,
+    validate_inventory_values_complete,
+    validate_target_grid_alignment,
+)
 from api.resources.grids.voxelize.inventory.tree.schema import (
     InventoryColumnMaxCrownRadiusSource,
 )
@@ -48,15 +53,11 @@ from lib.config import (
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,
 )
-from lib.inventory_io import canopy_required_columns
+from lib.inventory_io import CROWN_RADIUS_FALLBACK_COLUMNS, canopy_required_columns
 
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
-
-# Columns the allometry endpoint can impute from position + height; position
-# and height themselves cannot be imputed.
-ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
 
 
 def _required_columns(body: CreateInventoryCanopyRequest) -> set[str]:
@@ -75,6 +76,44 @@ def _required_columns(body: CreateInventoryCanopyRequest) -> set[str]:
     if isinstance(body.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource):
         required.add(body.max_crown_radius_source.column)
     return required
+
+
+def _validate_crown_radius_fallback(
+    body: CreateInventoryCanopyRequest,
+    inventory_data: dict,
+    have_columns: set[str],
+    domain_id: str,
+) -> None:
+    """Reject a crown-radius column with missing values the fallback can't fill.
+
+    A tree with no value in the radius column uses the allometric radius, which
+    reads `CROWN_RADIUS_FALLBACK_COLUMNS` — morphology a request taking fuel and
+    radius from columns does not otherwise need. When the column summaries show
+    missing radii, those columns must be present and complete.
+    """
+    radius = body.max_crown_radius_source
+    if not isinstance(radius, InventoryColumnMaxCrownRadiusSource):
+        return
+    nulls = inventory_null_counts(inventory_data)
+    missing_radii = nulls.get(radius.column, 0)
+    if not missing_radii:
+        return
+    unusable = sorted(
+        c for c in CROWN_RADIUS_FALLBACK_COLUMNS if c not in have_columns or c in nulls
+    )
+    if unusable:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Crown radius column '{radius.column}' is missing "
+                f"{missing_radii} value(s). A tree with no radius uses its "
+                f"allometric radius, which needs {sorted(CROWN_RADIUS_FALLBACK_COLUMNS)}"
+                f", but {unusable} are missing or incomplete in inventory "
+                f"'{body.source_inventory_id}'. Supply a radius for every tree, "
+                f"or fill {unusable} with the allometry endpoint (POST "
+                f"/domains/{domain_id}/inventories/tree/allometry/gdam)."
+            ),
+        )
 
 
 @router.post(
@@ -151,11 +190,29 @@ async def create_inventory_canopy_grid(
     The stored grid `source` records every resolved choice, including
     defaults, so the grid is exactly reproducible from the resource alone.
 
+    ## Missing values
+
+    Every tree must have a value in each column the selected methods read,
+    plus the `biomass_source` column when fuel comes from the inventory. A
+    request against an inventory whose column summaries report missing
+    values in any of these returns 422. Fill missing `dbh`, `crown_ratio`,
+    and `fia_species_code` values with the allometry endpoint
+    (`POST /domains/{domain_id}/inventories/tree/allometry/gdam`).
+
+    A tree with no value in the `max_crown_radius_source` column uses the
+    `purves` allometric radius instead, which needs that tree's `dbh` and
+    `fia_species_code`; a request whose inventory cannot supply them returns
+    422. A tree with no `fia_status_code` value is treated as live.
+
     ## Response
 
     Returns the created Grid with status `"pending"` and
     `georeference: null`. Griddle computes the canopy metrics asynchronously
     and updates the grid to `"completed"` with a 2D `Georeference` when done.
+    The completed grid's `source.tree_usage` records how many trees were read
+    and used, how many were left out for missing values (per column), how many
+    used an allometric crown radius in place of a missing column value, and
+    how many had no status and were treated as live.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
@@ -216,6 +273,23 @@ async def create_inventory_canopy_grid(
                 f"methods. " + " ".join(guidance)
             ),
         )
+
+    # Every tree needs complete values in the morphology the selected methods
+    # read and, when fuel comes from the inventory, a fuel value; the column
+    # summaries say whether any are missing.
+    biomass_columns = (
+        set()
+        if isinstance(body.biomass_source, AllometryCanopyBiomassSource)
+        else {body.biomass_source.column}
+    )
+    validate_inventory_values_complete(
+        inventory_data,
+        body.source_inventory_id,
+        domain_id,
+        canopy_required_columns(body.model_dump(mode="json")),
+        biomass_columns,
+    )
+    _validate_crown_radius_fallback(body, inventory_data, have_columns, domain_id)
 
     # An inventory has no source raster whose pixel anchor could be preserved.
     if body.alignment.target == "native":

@@ -380,21 +380,22 @@ class TestRequiredColumns:
 
     def _capture(self, source, df):
         """Run the handler, returning the required_columns passed to the reader
-        and the null-row drop."""
+        and the null-row exclusion."""
         captured: dict = {}
-        real_drop = ci.drop_null_rows
+        real_exclude = ci.exclude_null_rows
 
         def cap_read(*args, **kwargs):
             captured["read"] = kwargs.get("required_columns")
+            captured["optional"] = kwargs.get("optional_columns")
             return df
 
-        def cap_drop(frame, *args, **kwargs):
+        def cap_exclude(frame, *args, **kwargs):
             captured["drop"] = kwargs.get("required_columns")
-            return real_drop(frame, *args, **kwargs)
+            return real_exclude(frame, *args, **kwargs)
 
         with (
             patch.object(ci, "read_inventory", side_effect=cap_read),
-            patch.object(ci, "drop_null_rows", side_effect=cap_drop),
+            patch.object(ci, "exclude_null_rows", side_effect=cap_exclude),
         ):
             ci.fetch_canopy_inventory(
                 roi=_roi(),
@@ -438,8 +439,121 @@ class TestRequiredColumns:
         captured = self._capture(src, df)
         assert set(captured["read"]) == {"x", "y", "height", "crown_ratio"}
         assert set(captured["drop"]) == {"x", "y", "height", "crown_ratio"}
+        # The radius fallback's morphology is projected when present, never
+        # required.
+        assert set(captured["optional"]) == {"dbh", "fia_species_code"}
 
     def test_allometry_source_requires_dbh_and_species(self):
         captured = self._capture(_source(), _trees())
         assert {"dbh", "fia_species_code"} <= set(captured["read"])
         assert {"dbh", "fia_species_code"} <= set(captured["drop"])
+        assert captured["optional"] == []
+
+
+def _column_source(**overrides) -> dict:
+    """A source taking fuel and crown radius from inventory columns."""
+    return _source(
+        biomass_source={"type": "inventory_column", "column": "acf_kg", "unit": "kg"},
+        max_crown_radius_source={
+            "type": "inventory_column",
+            "column": "crad_m",
+            "unit": "m",
+        },
+        **overrides,
+    )
+
+
+class TestPartialNulls:
+    """Trees with a missing value are accounted for on ``source["tree_usage"]``
+    — never silently dropped — and a missing crown radius falls back to the
+    allometric radius instead of excluding the tree."""
+
+    @pytest.mark.parametrize(
+        "column", ["x", "y", "height", "crown_ratio", "dbh", "fia_species_code"]
+    )
+    def test_partial_null_morphology_is_reported(self, column):
+        df = _trees(n=40)
+        df[column] = df[column].astype("float64")
+        df.loc[[0, 1, 2], column] = np.nan
+        src = _source()
+        _run(src, df)
+        assert src["tree_usage"] == {
+            "trees_read": 40,
+            "trees_used": 37,
+            "trees_excluded": 3,
+            "excluded_null_counts": {column: 3},
+            "crown_radius_fallbacks": 0,
+            "null_status_treated_as_live": 0,
+        }
+
+    def test_partial_null_fuel_column_is_reported(self):
+        df = _trees(n=40, acf_kg=6.0, crad_m=2.0)
+        df.loc[[5, 6], "acf_kg"] = np.nan
+        src = _column_source()
+        _run(src, df)
+        assert src["tree_usage"]["trees_used"] == 38
+        assert src["tree_usage"]["excluded_null_counts"] == {"acf_kg": 2}
+
+    def test_partial_null_status_is_live_and_reported(self):
+        df = _trees(n=40)
+        df["fia_status_code"] = pd.array([None] * 4 + [1] * 36, dtype="Int64")
+        src = _source()
+        seen: dict = {}
+        real_compute = ci.compute_canopy_metrics
+
+        def capture(frame, dataset, **kwargs):
+            seen["frame"] = frame.copy()
+            return real_compute(frame, dataset, **kwargs)
+
+        with patch.object(ci, "compute_canopy_metrics", side_effect=capture):
+            _run(src, df)
+        assert (seen["frame"]["fia_status_code"] == 1).all()
+        assert src["tree_usage"]["trees_used"] == 40
+        assert src["tree_usage"]["excluded_null_counts"] == {}
+        assert src["tree_usage"]["null_status_treated_as_live"] == 4
+
+    def test_null_crown_radius_uses_purves_and_keeps_tree(self):
+        df = _trees(n=40, acf_kg=6.0, crad_m=2.0)
+        df.loc[[0, 1], "crad_m"] = np.nan
+        src = _column_source()
+        seen: dict = {}
+        real_compute = ci.compute_canopy_metrics
+
+        def capture(frame, dataset, **kwargs):
+            seen["frame"] = frame.copy()
+            return real_compute(frame, dataset, **kwargs)
+
+        with patch.object(ci, "compute_canopy_metrics", side_effect=capture):
+            _run(src, df)
+
+        frame = seen["frame"]
+        assert len(frame) == 40
+        assert not frame["crad_m"].isna().any()
+        expected = ci.allometric_max_crown_radius(df.loc[[0, 1]], equations="purves")
+        np.testing.assert_allclose(frame.loc[[0, 1], "crad_m"], expected)
+        np.testing.assert_allclose(frame.loc[2:, "crad_m"], 2.0)
+        assert src["tree_usage"]["trees_excluded"] == 0
+        assert src["tree_usage"]["crown_radius_fallbacks"] == 2
+
+    def test_null_crown_radius_without_fallback_morphology_fails(self):
+        df = _trees(n=40, acf_kg=6.0, crad_m=2.0).drop(
+            columns=["dbh", "fia_species_code"]
+        )
+        df.loc[0, "crad_m"] = np.nan
+        src = _column_source(
+            vertical_distribution="uniform", species_inclusion="all_species"
+        )
+        with pytest.raises(ProcessingError) as exc:
+            _run(src, df)
+        assert exc.value.code == "CROWN_RADIUS_FALLBACK_UNAVAILABLE"
+
+    def test_null_crown_radius_with_null_fallback_morphology_fails(self):
+        df = _trees(n=40, acf_kg=6.0, crad_m=2.0)
+        df.loc[0, "crad_m"] = np.nan
+        df.loc[0, "dbh"] = np.nan
+        src = _column_source(
+            vertical_distribution="uniform", species_inclusion="all_species"
+        )
+        with pytest.raises(ProcessingError) as exc:
+            _run(src, df)
+        assert exc.value.code == "CROWN_RADIUS_FALLBACK_UNAVAILABLE"

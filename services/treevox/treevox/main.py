@@ -139,7 +139,9 @@ def process_grid_request(request: Request):
         chunks_doc = compute_chunks_doc(
             result.georeference["shape"], result.chunk_shape
         )
-        update_metadata(grid_id, {"chunks": chunks_doc})
+        # Write back source metadata the handler recorded (voxelize's
+        # `tree_usage`) alongside the chunk layout.
+        update_metadata(grid_id, {"chunks": chunks_doc, "source": grid["source"]})
         update_status(grid_id, "completed", georeference=result.georeference)
 
         logger.info("Processing complete", extra=ids)

@@ -127,6 +127,28 @@ class TestLoadInventoryDataframe:
         assert list(df["tree_id"]) == [0]
 
     @patch("treevox.handlers.voxelize.read_inventory")
+    def test_keeps_inventory_tree_ids(self, mock_read):
+        """The inventory's tree_id (projected on request) survives null-row
+        dropping unchanged instead of being renumbered (#611)."""
+        mock_read.return_value = pd.DataFrame(
+            {
+                "tree_id": np.array([3, 17, 42], dtype="int32"),
+                "x": [1.0, 2.0, 3.0],
+                "y": [1.0, 2.0, 3.0],
+                "fia_species_code": [131, 131, 131],
+                "fia_status_code": [1, 1, 1],
+                "dbh": [20.0, None, 25.0],
+                "height": [15.0, 15.0, 15.0],
+                "crown_ratio": [0.4, 0.4, 0.4],
+            }
+        )
+        source = _base_grid()["source"]
+        df = handler._load_inventory_dataframe(source, lambda *a, **k: None)
+        assert mock_read.call_args.kwargs["include_tree_id"] is True
+        assert list(df["tree_id"]) == [3, 42]
+        assert df["tree_id"].dtype == np.int32
+
+    @patch("treevox.handlers.voxelize.read_inventory")
     def test_empty_after_filter_raises_empty_inventory(self, mock_read):
         mock_read.return_value = pd.DataFrame(
             {

@@ -120,7 +120,10 @@ def _load_inventory_dataframe(
     biomass_column = voxelize.foliage_inventory_column(source)
     crown_radius_column = voxelize.max_crown_radius_inventory_column(source)
     df = read_inventory(
-        source["source_inventory_id"], biomass_column, crown_radius_column
+        source["source_inventory_id"],
+        biomass_column,
+        crown_radius_column,
+        include_tree_id=True,
     )
     df = drop_null_rows(df, biomass_column, crown_radius_column)
     df = assign_tree_ids(df)

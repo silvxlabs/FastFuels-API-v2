@@ -38,6 +38,10 @@ REQUIRED_COLUMNS = [
 # FuelCalc's Other/none column rather than discarding the stem.
 CROWN_CLASS_COLUMN = "fia_crown_class_code"
 
+# Stable per-tree identifier (int32, unique within an inventory, never
+# renumbered). Inventories created before it was introduced lack the column.
+TREE_ID_COLUMN = "tree_id"
+
 
 def _inventory_column_names(inventory_id: str) -> set[str] | None:
     """Column names in an inventory parquet, or None if the schema can't be read.
@@ -64,6 +68,7 @@ def read_inventory(
     crown_radius_column: str | None = None,
     include_crown_class: bool = False,
     required_columns: list[str] | None = None,
+    include_tree_id: bool = False,
 ) -> pd.DataFrame:
     """Read a tree-inventory parquet directly from GCS with column projection
     and, when the column is present, a `fia_status_code == 1` predicate pushdown.
@@ -88,6 +93,10 @@ def read_inventory(
     output, older uploads) or when the schema can't be read, and it never joins
     the live-tree filter. The column is optional, so absence is not an error —
     the consumer decides what a missing crown class means.
+
+    `include_tree_id` projects `TREE_ID_COLUMN` the same way: only when the
+    inventory positively has it. Inventories created before tree IDs existed
+    lack it; `assign_tree_ids` then falls back to row ordinals.
 
     `fia_status_code` is treated as optional and live-by-default. Inventories
     built by CHM extraction or GDAM allometry never record it (GDAM imputes
@@ -160,6 +169,14 @@ def read_inventory(
         and CROWN_CLASS_COLUMN not in columns
     ):
         columns.append(CROWN_CLASS_COLUMN)
+
+    if (
+        include_tree_id
+        and available is not None
+        and TREE_ID_COLUMN in available
+        and TREE_ID_COLUMN not in columns
+    ):
+        columns.append(TREE_ID_COLUMN)
 
     filters = None if status_absent else [("fia_status_code", "=", 1)]
 
@@ -246,8 +263,14 @@ def assign_tree_ids(df: pd.DataFrame) -> pd.DataFrame:
     """Return a DataFrame with a unique int32 `tree_id` column, without
     deep-copying the input.
 
+    An inventory `tree_id` column (see `read_inventory(include_tree_id=True)`)
+    is kept as the ID, cast to int32. Only when it is absent — an inventory
+    created before tree IDs existed — are row ordinals assigned instead.
+
     `DataFrame.assign` returns a new frame that shares underlying column
     arrays with the caller — so we get non-mutation for free without paying
     for a full block-manager copy of every existing column.
     """
+    if TREE_ID_COLUMN in df.columns:
+        return df.assign(tree_id=df[TREE_ID_COLUMN].astype("int32"))
     return df.assign(tree_id=np.arange(len(df), dtype="int32"))

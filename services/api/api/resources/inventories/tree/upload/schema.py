@@ -33,8 +33,8 @@ class InventoryColumnMapping(BaseModel):
         None,
         description=(
             "Per-tree identifier to keep as the inventory's `tree_id`. Values "
-            "must be non-null integers in 0 … 2,147,483,647, unique across the "
-            "file; otherwise the upload fails with `INVALID_TREE_ID` or "
+            "must be non-null numbers in 0 … 2,147,483,647; they are cast to "
+            "integers and must then be unique across the file; otherwise the upload fails with `INVALID_TREE_ID` or "
             "`DUPLICATE_TREE_ID`. If the file has no `tree_id` column and none "
             "is mapped, IDs 0 … N-1 are generated."
         ),

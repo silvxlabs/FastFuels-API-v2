@@ -283,17 +283,13 @@ def _parse(
 def _check_tree_ids(df: pd.DataFrame) -> pd.DataFrame:
     """Validate a user-supplied ``tree_id`` column and cast it to int32.
 
-    Values must be non-null integers in ``0 … MAX_TREE_ID`` (integral floats
-    such as ``12.0`` count as integers) and unique across the file. Fails with
-    ``INVALID_TREE_ID`` or ``DUPLICATE_TREE_ID``, listing example rows by their
-    0-based data-row index.
+    Values must be non-null numbers in ``0 … MAX_TREE_ID``; they are cast to
+    int, then must be unique across the file. Fails with ``INVALID_TREE_ID`` or
+    ``DUPLICATE_TREE_ID``, listing example rows by their 0-based data-row index.
     """
     raw = df["tree_id"]
-    is_bool = raw.map(lambda v: isinstance(v, bool | np.bool_))
-    numeric = pd.to_numeric(raw.where(~is_bool), errors="coerce").astype("float64")
-    valid = (
-        numeric.notna() & (numeric % 1 == 0) & (numeric >= 0) & (numeric <= MAX_TREE_ID)
-    )
+    numeric = pd.to_numeric(raw, errors="coerce").astype("float64")
+    valid = numeric.notna() & (numeric >= 0) & (numeric <= MAX_TREE_ID)
     if not valid.all():
         bad = raw[~valid].head(_TREE_ID_ERROR_EXAMPLES)
         examples = [{"row": int(i), "tree_id": _jsonable(v)} for i, v in bad.items()]
@@ -304,15 +300,16 @@ def _check_tree_ids(df: pd.DataFrame) -> pd.DataFrame:
                 f"{examples}"
             ),
             suggestion=(
-                f"tree_id values must be non-null integers in 0 … {MAX_TREE_ID}. "
+                f"tree_id values must be non-null numbers in 0 … {MAX_TREE_ID}. "
                 "Fix the listed rows, or remove the tree_id column (and its "
                 "mapping) to have IDs generated."
             ),
         )
 
-    duplicated = numeric.duplicated(keep=False)
+    ids = numeric.astype("int32")
+    duplicated = ids.duplicated(keep=False)
     if duplicated.any():
-        bad = numeric[duplicated].head(_TREE_ID_ERROR_EXAMPLES)
+        bad = ids[duplicated].head(_TREE_ID_ERROR_EXAMPLES)
         examples = [{"row": int(i), "tree_id": int(v)} for i, v in bad.items()]
         raise ProcessingError(
             code="DUPLICATE_TREE_ID",
@@ -327,7 +324,7 @@ def _check_tree_ids(df: pd.DataFrame) -> pd.DataFrame:
             ),
         )
 
-    df["tree_id"] = numeric.astype("int32")
+    df["tree_id"] = ids
     return df
 
 

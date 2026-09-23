@@ -69,7 +69,7 @@ class InventoryModificationCondition(BaseModel):
         description=(
             "The tree attribute to test. `fia_species_code` and `tree_id` support "
             "only `eq`/`ne`. `tree_id` selects individual trees by their "
-            "inventory ID; the inventory must have a `tree_id` column."
+            "inventory ID."
         ),
     )
     operator: Operator = Field(

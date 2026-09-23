@@ -433,22 +433,23 @@ class TestTreeIdValidation:
         assert list(result["tree_id"]) == [7, 2_147_483_647, 0]
         assert result["tree_id"].dtype == np.int32
 
-    def test_integral_floats_accepted(self):
-        result = _validate(self._df([7.0, 8.0, 9.0]))
+    def test_floats_cast_to_int(self):
+        result = _validate(self._df([7.0, 8.9, 9.0]))
         assert list(result["tree_id"]) == [7, 8, 9]
         assert result["tree_id"].dtype == np.int32
+
+    def test_duplicates_after_cast_rejected(self):
+        assert self._error([2.0, 2.5, 3.0]).code == "DUPLICATE_TREE_ID"
 
     @pytest.mark.parametrize(
         "tree_id",
         [
             [1, None, 3],
-            [1, 2.5, 3],
             [1, "abc", 3],
             [1, -1, 3],
             [1, 2_147_483_648, 3],
-            [1, True, 3],
         ],
-        ids=["null", "fractional", "string", "negative", "over_int32", "bool"],
+        ids=["null", "string", "negative", "over_int32"],
     )
     def test_invalid_ids_rejected(self, tree_id):
         err = self._error(tree_id)

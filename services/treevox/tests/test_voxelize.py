@@ -378,6 +378,22 @@ class TestComputeCacheKeys:
 
         assert keys.nunique() == 2
 
+    def test_inventory_max_crown_radius_is_binned(self):
+        """Radii within one CROWN_RADIUS_BIN_M bin share a key."""
+        df = fake_tree_df(n=4, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df["crown_radius"] = [2.40, 2.55, 2.60, 3.05]
+        cfg = base_source_config()
+        cfg["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+            "unit": "m",
+        }
+
+        keys = voxelize.compute_cache_keys(df, cfg)
+
+        assert keys[0] == keys[1] == keys[2]
+        assert keys.nunique() == 2
+
     def test_allometry_crown_radius_source_does_not_split(self):
         df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
         df["lidar_max_radius"] = [2.5, 4.0]

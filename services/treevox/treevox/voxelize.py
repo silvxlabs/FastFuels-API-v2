@@ -89,6 +89,7 @@ MAX_BIOMASS_ARRAY_CACHE = 100  # v1 line 42
 HEIGHT_BIN_M = 1.0
 DBH_BIN_CM = 2.75
 CR_BIN = 0.1
+CROWN_RADIUS_BIN_M = 0.25
 
 # Map API allometry equation names to fastfuels-core model names.
 BIOMASS_EQUATION_MAP = {"nsvb": "NSVB", "jenkins": "jenkins"}
@@ -308,9 +309,9 @@ def compute_cache_keys(
     indistinguishable within the chosen bin widths. When foliage biomass comes
     from an inventory column, that per-row biomass value is also part of the
     key so rows with the same morphology but different supplied biomass do not
-    reuse the first row's cached density arrays. The same applies to a
-    per-tree max_crown_radius column: it changes the crown geometry and
-    must split otherwise-identical bins. Returns integer codes via
+    reuse the first row's cached density arrays. A per-tree max_crown_radius
+    column changes the crown geometry, so it splits bins too, binned at
+    `CROWN_RADIUS_BIN_M`. Returns integer codes via
     `groupby().ngroup()`.
 
     See TREEVOX.md for rationale and bin widths.
@@ -328,7 +329,8 @@ def compute_cache_keys(
         if column := foliage_inventory_column(source_config):
             groupers.append(df[column].astype("float64"))
         if column := max_crown_radius_inventory_column(source_config):
-            groupers.append(df[column].astype("float64"))
+            radius_bin = (df[column] / CROWN_RADIUS_BIN_M).round().astype("int64")
+            groupers.append(radius_bin)
     return df.groupby(groupers, sort=False).ngroup()
 
 

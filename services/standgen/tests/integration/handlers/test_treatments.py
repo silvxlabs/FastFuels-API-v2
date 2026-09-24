@@ -21,7 +21,7 @@ import dask.dataframe as dd
 import geopandas as gpd
 import pytest
 from shapely.geometry import box
-from standgen.columns import BASE_COLUMNS
+from standgen.columns import BASE_COLUMNS, TREE_ID_COLUMN
 
 from lib.config import (
     DEPLOYMENT_ENV,
@@ -273,7 +273,7 @@ def test_output_columns_unchanged(treatment_runner):
     treatments = [{"metric": "diameter", "method": "from_below", "value": 5.0}]
     _, treated = treatment_runner(treatments)
     ddf = dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{treated['id']}")
-    assert sorted(ddf.columns.tolist()) == sorted(BASE_COLUMNS)
+    assert sorted(ddf.columns.tolist()) == sorted([TREE_ID_COLUMN, *BASE_COLUMNS])
 
 
 def test_column_summaries_reflect_data(treatment_runner):

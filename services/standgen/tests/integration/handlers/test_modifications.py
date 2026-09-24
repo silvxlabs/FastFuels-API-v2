@@ -287,7 +287,7 @@ def test_unit_conversion_in_condition(modifications_runner):
 
 def test_parquet_has_correct_columns(modifications_runner):
     """Modified parquet should have same columns as source."""
-    from standgen.columns import BASE_COLUMNS
+    from standgen.columns import BASE_COLUMNS, TREE_ID_COLUMN
 
     modifications = [
         {
@@ -300,7 +300,7 @@ def test_parquet_has_correct_columns(modifications_runner):
     mod_path = f"gs://{INVENTORIES_BUCKET}/{mod_inventory['id']}"
     ddf = dd.read_parquet(mod_path)
 
-    assert sorted(ddf.columns.tolist()) == sorted(BASE_COLUMNS)
+    assert sorted(ddf.columns.tolist()) == sorted([TREE_ID_COLUMN, *BASE_COLUMNS])
 
 
 def test_parquet_schema_has_no_dask_index_artifact(modifications_runner):

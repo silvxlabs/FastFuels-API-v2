@@ -177,7 +177,12 @@ class TestCsvUpload:
             # The document records the columns actually present in the file —
             # x/y/height only here, no dbh (the API's treatments endpoint
             # relies on this to reject dbh-less inventories).
-            assert [c["key"] for c in result["columns"]] == ["x", "y", "height"]
+            assert [c["key"] for c in result["columns"]] == [
+                "tree_id",
+                "x",
+                "y",
+                "height",
+            ]
 
             assert exists(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
@@ -223,7 +228,13 @@ class TestCsvUpload:
             _, snap = get_document(INVENTORIES_COLLECTION, inventory_id)
             result = snap.to_dict()
             assert result["status"] == "completed"
-            assert [c["key"] for c in result["columns"]] == ["x", "y", "dbh", "height"]
+            assert [c["key"] for c in result["columns"]] == [
+                "tree_id",
+                "x",
+                "y",
+                "dbh",
+                "height",
+            ]
         finally:
             gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
             if exists(gcs_path):

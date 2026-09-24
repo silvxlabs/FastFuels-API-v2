@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import dask.dataframe as dd
 import numpy as np
+import pandas as pd
 import pytest
 import rioxarray  # noqa: F401 - registers .rio accessor
 import xarray as xr
@@ -402,3 +403,135 @@ class TestHandleChm:
 
         _, kwargs = mock_var_filter.call_args
         assert float(kwargs["chm_da"].max()) == 400.0
+
+
+def _cone_chm(size=21, peak=20.0, slope=1.0, chunks=None):
+    """A single cone on a 1 m CHM, apex at the center cell."""
+    rows, cols = np.mgrid[0:size, 0:size]
+    c = size // 2
+    values = peak - slope * np.hypot(rows - c, cols - c)
+    chm = xr.DataArray(
+        values,
+        dims=("y", "x"),
+        coords={"y": size - 0.5 - np.arange(size), "x": 0.5 + np.arange(size)},
+    )
+    chm = chm.rio.write_crs("EPSG:32610")
+    chm = chm.rio.write_transform(Affine(1.0, 0.0, 0.0, 0.0, -1.0, float(size)))
+    if chunks is not None:
+        chm = chm.chunk(chunks)
+    return chm
+
+
+class TestHandleChmCrownSegmentation:
+    SEGMENTATION = {
+        "method": "dalponte2016",
+        "radius_estimator": "area_equivalent",
+        "min_relative_height": 0.45,
+        "min_relative_crown_height": 0.55,
+        "max_crown_radius": 3.0,
+    }
+
+    def _inventory(self, crown_segmentation):
+        source = {
+            "name": "chm",
+            "source_chm_grid_id": "test-grid-id",
+            "algorithm": {
+                "name": "lmf",
+                "min_height": 2.0,
+                "max_height": 120.0,
+                "footprint_size": 3,
+            },
+            "crown_segmentation": crown_segmentation,
+        }
+        columns = list(CHM_INVENTORY_COLUMNS)
+        if crown_segmentation:
+            columns.append({"key": "crown_radius", "type": "continuous", "unit": "m"})
+        return {
+            "id": "test-inv-seg",
+            "domain_id": "test-domain",
+            "source": source,
+            "modifications": [],
+            "columns": columns,
+            "type": "tree",
+        }
+
+    def _run(self, chm, inventory, domain_gdf):
+        """Run the handler on `chm`; return the frame it would write."""
+        saved = {}
+
+        def fake_save(inventory_id, ddf, columns, *args, **kwargs):
+            saved["df"] = ddf.compute()
+            return "gs://test", {}, None
+
+        snapshot = MagicMock()
+        snapshot.to_dict.return_value = {"id": "grid"}
+        with (
+            patch("standgen.handlers.chm.get_document", return_value=(None, snapshot)),
+            patch(
+                "standgen.handlers.chm.load_grid",
+                return_value=xr.Dataset({"chm": chm}),
+            ),
+            patch("standgen.handlers.chm.save_parquet_with_summary", fake_save),
+            patch("standgen.handlers.chm.count_inventory_rows", return_value=None),
+        ):
+            handle_chm(inventory, inventory["source"], domain_gdf, MagicMock())
+        return saved["df"]
+
+    def test_without_segmentation_has_no_crown_radius(self, mock_domain_gdf):
+        with patch("standgen.handlers.chm.dalponte2016") as mock_segment:
+            df = self._run(_cone_chm(), self._inventory(None), mock_domain_gdf)
+        mock_segment.assert_not_called()
+        assert df.columns.tolist() == ["tree_id", "x", "y", "height"]
+
+    @pytest.mark.parametrize("chunks", [None, 8])
+    def test_isolated_cone_clipped_at_max_crown_radius(self, mock_domain_gdf, chunks):
+        """Every cell within 3 m of the apex qualifies, so the crown is the 29
+        lattice cells of a radius-3 disc."""
+        df = self._run(
+            _cone_chm(chunks=chunks),
+            self._inventory(self.SEGMENTATION),
+            mock_domain_gdf,
+        )
+        assert df.columns.tolist() == ["tree_id", "x", "y", "height", "crown_radius"]
+        assert len(df) == 1
+        assert df["crown_radius"].iloc[0] == pytest.approx(np.sqrt(29 / np.pi))
+
+    def test_every_tree_gets_at_least_one_cell(self, mock_domain_gdf):
+        """A treetop whose neighbours all fail the height tests keeps its own cell."""
+        chm = _cone_chm(slope=15.0)  # neighbours drop below 0.45 x apex at once
+        df = self._run(chm, self._inventory(self.SEGMENTATION), mock_domain_gdf)
+        assert len(df) == 1
+        assert df["crown_radius"].iloc[0] == pytest.approx(np.sqrt(1 / np.pi))
+
+    def test_crown_radius_survives_reprojection(self, mock_domain_gdf):
+        domain_gdf = mock_domain_gdf.to_crs("EPSG:32611")
+        df = self._run(_cone_chm(), self._inventory(self.SEGMENTATION), domain_gdf)
+        assert df.columns.tolist() == ["tree_id", "x", "y", "height", "crown_radius"]
+        assert df["crown_radius"].iloc[0] == pytest.approx(np.sqrt(29 / np.pi))
+
+    def test_detection_graph_computed_once(self, mock_domain_gdf):
+        calls = []
+
+        def partition(i):
+            calls.append(i)
+            return pd.DataFrame({"x": [10.5], "y": [10.5], "height": [20.0]})
+
+        meta = pd.DataFrame({"x": [], "y": [], "height": []})
+        ddf = dd.from_map(partition, [0], meta=meta)
+        with patch("standgen.handlers.chm.fixed_window_filter", return_value=ddf):
+            df = self._run(
+                _cone_chm(), self._inventory(self.SEGMENTATION), mock_domain_gdf
+            )
+        assert calls == [0]
+        assert len(df) == 1
+
+    def test_segmentation_value_error_is_processing_error(self, mock_domain_gdf):
+        with (
+            patch(
+                "standgen.handlers.chm.dalponte2016",
+                side_effect=ValueError("two treetops fall in the same CHM cell"),
+            ),
+            pytest.raises(ProcessingError) as exc_info,
+        ):
+            self._run(_cone_chm(), self._inventory(self.SEGMENTATION), mock_domain_gdf)
+        assert exc_info.value.code == "INVALID_CROWN_SEGMENTATION_PARAMS"

@@ -646,6 +646,62 @@ class TestFeatureConditions:
         assert condition["feature_id"] == feature_id
 
 
+REMOVE_BY_TREE_ID_BODY = {
+    "modifications": [
+        {
+            "conditions": {"attribute": "tree_id", "operator": "eq", "value": [1, 5]},
+            "actions": {"modifier": "remove"},
+        }
+    ],
+}
+
+
+class TestTreeIdConditions:
+    """Modifications select trees by tree_id (#611)."""
+
+    def route(self, domain_id, inventory_id):
+        return f"/domains/{domain_id}/inventories/{inventory_id}/modifications"
+
+    def test_tree_id_condition_accepted(
+        self, client, domain_for_testing, source_inventory, firestore_client
+    ):
+        ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            source_inventory["id"]
+        )
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]),
+            json=REMOVE_BY_TREE_ID_BODY,
+        )
+        assert response.status_code == 200, response.json()
+        condition = ref.get().to_dict()["pending_modifications"][-1]["conditions"][0]
+        assert condition == {
+            "attribute": "tree_id",
+            "operator": "eq",
+            "value": [1, 5],
+            "unit": None,
+        }
+
+    def test_action_on_tree_id_rejected(
+        self, client, domain_for_testing, source_inventory
+    ):
+        body = {
+            "modifications": [
+                {
+                    "conditions": [],
+                    "actions": {
+                        "attribute": "tree_id",
+                        "modifier": "replace",
+                        "value": 0,
+                    },
+                }
+            ],
+        }
+        response = client.post(
+            self.route(domain_for_testing["id"], source_inventory["id"]), json=body
+        )
+        assert response.status_code == 422
+
+
 class TestOpenApiExamples:
     """Every OpenAPI example body round-trips through ApplyModificationsRequest
     (issue #276, item 2)."""

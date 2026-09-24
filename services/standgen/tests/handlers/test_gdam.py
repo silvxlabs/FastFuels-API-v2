@@ -569,6 +569,28 @@ class TestHandleGdam:
             expected_dbh = row["height"] / 0.3048 * 2.54
             assert row["dbh"] == pytest.approx(expected_dbh, rel=1e-6)
 
+    def test_preserves_source_tree_ids(self, mock_domain_gdf):
+        """Every tree keeps its source tree_id, gaps included, across
+        partitions (#611)."""
+        frame = pd.DataFrame(
+            {
+                "tree_id": np.array([4, 900, 12, 7], dtype="int32"),
+                "x": [500000.0 + i for i in range(4)],
+                "y": [4500000.0] * 4,
+                "height": [10.0, 20.0, 30.0, 40.0],
+            }
+        )
+        with patch.object(gdam.config, "GDAM_BATCH_SIZE", 2):
+            with _patched(frame, _ok_post) as (saved, _):
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+
+        result = saved["df"].reset_index(drop=True)
+        assert result["tree_id"].dtype == np.int32
+        assert list(result["tree_id"]) == [4, 900, 12, 7]
+        assert list(result["height"]) == [10.0, 20.0, 30.0, 40.0]
+
     def test_reordered_response_aligns_by_returned_index(self, mock_domain_gdf):
         """GDAM may return rows out of order; predictions follow the returned index.
 

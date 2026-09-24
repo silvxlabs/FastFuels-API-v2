@@ -60,7 +60,7 @@ V1 pre-computes every tree's biomass realizations before touching zarr. Memory g
 
 ## Tree-binning cache key
 
-V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed unique, so distinct trees accidentally shared biomass realizations. V2 inventories have no `tree_id` column; treevox assigns `tree_id = np.arange(len(df))` (unique per row) and computes a separate cache key by binning `(fia_species_code, dbh_bin, height_bin, cr_bin)` at `DBH_BIN_CM = 2.75`, `HEIGHT_BIN_M = 1.0`, `CR_BIN = 0.1`.
+V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed unique, so distinct trees accidentally shared biomass realizations. V2 inventories carry a stable, unique `tree_id` column (#611), which treevox writes into the `tree_id` band; the cache key is computed separately by binning `(fia_species_code, dbh_bin, height_bin, cr_bin)` at `DBH_BIN_CM = 2.75`, `HEIGHT_BIN_M = 1.0`, `CR_BIN = 0.1`.
 
 ## Chunk padding model
 
@@ -90,7 +90,6 @@ Ten constraints must be respected. See the implementation plan for full details;
 ## Correctness fix vs v1
 
 V1's `write_combined_chunks` uses `mask = chunk.data > 0`. This breaks for:
-- `tree_id` with fill=-1 (any value > -1 should win, including -1 → 0 transitions).
 - `spcd` with fill=0 (legitimate species code 0 would be indistinguishable from fill).
 
 V2's `masked_merge` uses `mask = data != BAND_SPECS[key].fill_value` per band, so each band's merge respects its actual fill value.

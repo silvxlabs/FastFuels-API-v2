@@ -553,3 +553,71 @@ class TestInventorySpatialConditionDispatch:
         assert data["conditions"][0]["feature_id"] == "feat_road_abc"
         reparsed = InventoryModification.model_validate(data)
         assert isinstance(reparsed.conditions[0], InventoryFeatureSpatialCondition)
+
+
+class TestTreeIdAttribute:
+    """tree_id selects trees by ID in conditions only (#611)."""
+
+    def test_list_eq_condition(self):
+        cond = InventoryModificationCondition(
+            attribute="tree_id", operator="eq", value=[12, 57, 301]
+        )
+        assert cond.attribute == InventoryAttribute.tree_id
+        assert cond.value == [12, 57, 301]
+
+    @pytest.mark.parametrize("operator", ["eq", "ne"])
+    def test_eq_ne_accepted(self, operator):
+        InventoryModificationCondition(attribute="tree_id", operator=operator, value=7)
+
+    @pytest.mark.parametrize("operator", ["gt", "lt", "ge", "le"])
+    def test_ordering_operators_rejected(self, operator):
+        with pytest.raises(ValidationError, match="only supports 'eq' and 'ne'"):
+            InventoryModificationCondition(
+                attribute="tree_id", operator=operator, value=7
+            )
+
+    @pytest.mark.parametrize(
+        "value",
+        [1.5, "12", [1, 2.5], [1, "x"], -1, 0, [1, 2_147_483_648]],
+        ids=[
+            "float",
+            "string",
+            "list_float",
+            "list_string",
+            "negative",
+            "zero",
+            "over_int32",
+        ],
+    )
+    def test_out_of_range_values_rejected(self, value):
+        with pytest.raises(ValidationError, match="tree_id values"):
+            InventoryModificationCondition(
+                attribute="tree_id", operator="eq", value=value
+            )
+
+    def test_bounds_accepted(self):
+        InventoryModificationCondition(
+            attribute="tree_id", operator="eq", value=[1, 2_147_483_647]
+        )
+
+    def test_unit_rejected(self):
+        with pytest.raises(ValidationError, match="not supported"):
+            InventoryModificationCondition(
+                attribute="tree_id", operator="eq", value=1, unit="m"
+            )
+
+    def test_not_allowed_in_expressions(self):
+        with pytest.raises(ValidationError, match="disallowed name 'tree_id'"):
+            InventoryExpressionCondition(expression="tree_id == 3")
+
+    @pytest.mark.parametrize("modifier", ["replace", "add", "multiply"])
+    def test_actions_cannot_change_tree_id(self, modifier):
+        with pytest.raises(ValidationError, match="tree_id cannot be modified"):
+            InventoryModificationAction(attribute="tree_id", modifier=modifier, value=1)
+
+    def test_remove_by_tree_id_rule(self):
+        mod = InventoryModification(
+            conditions={"attribute": "tree_id", "operator": "eq", "value": [1, 2]},
+            actions={"modifier": "remove"},
+        )
+        assert isinstance(mod.actions[0], RemoveAction)

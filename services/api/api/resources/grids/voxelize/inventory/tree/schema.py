@@ -127,7 +127,10 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
     TreeBand.tree_id: {
         "key": "tree_id",
         "name": "Tree ID",
-        "description": "Identifier of the dominant tree contributing to the voxel.",
+        "description": (
+            "The source inventory's `tree_id` of the dominant tree contributing "
+            "to the voxel; 0 where no tree."
+        ),
         "type": BandType.categorical,
         "unit": None,
     },

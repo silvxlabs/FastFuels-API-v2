@@ -6,7 +6,6 @@ These tests don't hit GCS — they substitute `pd.read_parquet` (on the
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -14,7 +13,6 @@ from lib import inventory_io
 from lib.errors import ProcessingError
 from lib.inventory_io import (
     REQUIRED_COLUMNS,
-    assign_tree_ids,
     canopy_required_columns,
     drop_null_rows,
     read_inventory,
@@ -425,14 +423,27 @@ class TestCanopyRequiredColumns:
         assert "fia_species_code" in cols
 
 
-class TestAssignTreeIds:
-    def test_sequential_int32_tree_ids(self):
-        df = pd.DataFrame({"x": [1.0, 2.0, 3.0]})
-        out = assign_tree_ids(df)
-        assert out["tree_id"].dtype == np.int32
-        assert list(out["tree_id"]) == [0, 1, 2]
+class TestReadInventoryTreeId:
+    def _read(self, monkeypatch, available, **kwargs):
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: available
+        )
+        captured: dict = {}
 
-    def test_does_not_mutate_input(self):
-        df = pd.DataFrame({"x": [1.0]})
-        assign_tree_ids(df)
-        assert "tree_id" not in df.columns
+        def fake_read_parquet(path, columns=None, filters=None, **kw):
+            captured["columns"] = columns
+            return pd.DataFrame({c: [1] for c in columns})
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fake_read_parquet)
+        read_inventory("inv", **kwargs)
+        return captured["columns"]
+
+    def test_projected_when_requested(self, monkeypatch):
+        columns = self._read(
+            monkeypatch, {*REQUIRED_COLUMNS, "tree_id"}, include_tree_id=True
+        )
+        assert "tree_id" in columns
+
+    def test_not_projected_by_default(self, monkeypatch):
+        columns = self._read(monkeypatch, {*REQUIRED_COLUMNS, "tree_id"})
+        assert "tree_id" not in columns

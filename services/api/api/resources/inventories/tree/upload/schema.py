@@ -29,6 +29,16 @@ class InventoryColumnMapping(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    tree_id: str | None = Field(
+        None,
+        description=(
+            "Per-tree identifier to keep as the inventory's `tree_id`. Values "
+            "must be non-null numbers in 1 … 2,147,483,647; they are cast to "
+            "integers and must then be unique across the file; otherwise the upload fails with "
+            "`SCHEMA_VALIDATION_ERROR`. If the file has no `tree_id` column and none "
+            "is mapped, IDs 1 … N are generated."
+        ),
+    )
     x: str | None = Field(
         None, description="Tree position in the domain's projected CRS (m)."
     )

@@ -21,6 +21,7 @@ from standgen.columns import (
     BASE_COLUMNS,
     DROP_COLUMNS,
     RENAME_MAP,
+    generate_tree_ids,
 )
 from standgen.modifications import (
     _has_spatial_condition,
@@ -202,6 +203,10 @@ def expand_plots(
 
     # Select final column set
     ddf = ddf[BASE_COLUMNS]
+
+    # Number the trees before modifications and treatments, so a tree removed
+    # at creation leaves a gap in tree_id like one removed later.
+    ddf = generate_tree_ids(ddf)
 
     # Apply modifications if present. Resolve spatial-condition geometries once
     # here (off the per-partition path) when any are present.

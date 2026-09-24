@@ -7,6 +7,8 @@ materialized exactly once.
 """
 
 import math
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import dask
@@ -14,6 +16,8 @@ import dask.dataframe as dd
 import geopandas as gpd
 import pandas as pd
 import pint
+
+from standgen.columns import TREE_ID_COLUMN
 
 _FIA_SPECIES_GROUPS = pd.read_csv(
     Path(__file__).parent / "data" / "fia_species_groups.csv", index_col="SPCD"
@@ -57,27 +61,50 @@ def _build_column_stats_graph(
                 "std": series.std(),
             }
         else:
+            count = series.count()
             parts[key] = {
                 "type": "categorical",
-                "count": series.count(),
+                "count": count,
                 "null_count": series.isna().sum(),
-                "unique_count": series.nunique(),
+                # tree_id is unique by construction; a distinct count over
+                # millions of rows would only reproduce `count`.
+                "unique_count": count if key == TREE_ID_COLUMN else series.nunique(),
             }
     return parts
+
+
+@dataclass(frozen=True)
+class ForestryGraph:
+    """Stand-level forestry reductions, split into lazy parts and a finalizer.
+
+    ``parts`` are dask expression-backed scalars; ``finalize(*computed_parts)``
+    turns their computed values into the metrics dict. Kept expression-only
+    (no ``dask.delayed``) so the parts can join the Parquet write in one
+    ``dask.compute``: with dask 2026.1.2, mixing a Delayed into that call
+    misaligns the results when the graph holds a cumulative sum, as the
+    ``tree_id`` generation does.
+    """
+
+    parts: tuple
+    finalize: Callable[..., dict]
+
+    def compute(self) -> dict:
+        """Compute the metrics on their own (outside a fused write)."""
+        return self.finalize(*dask.compute(*self.parts))
 
 
 def _build_tree_forestry_graph(
     ddf: dd.DataFrame,
     domain_gdf: gpd.GeoDataFrame,
     top_species_groups: int = 5,
-) -> dask.delayed:
-    """ "Build a dask.delayed of stand-level forestry metric reductions.
+) -> ForestryGraph:
+    """Build the stand-level forestry metric reductions.
 
-    Returns a dask.delayed that resolves to a forestry metrics dict shaped like
-    TreeForestryMetrics. Because the internal reductions are dask expression-backed
-    scalars derived directly from ``ddf``, they share the same expression graph as a
-    concurrent ``to_parquet`` call and can be fused into a single ``dask.compute``
-    call, so each partition is materialized exactly once.
+    Returns a ``ForestryGraph`` whose finalized value is a forestry metrics dict
+    shaped like TreeForestryMetrics. Because the internal reductions are dask
+    expression-backed scalars derived directly from ``ddf``, they share the same
+    expression graph as a concurrent ``to_parquet`` call and can be fused into a
+    single ``dask.compute`` call, so each partition is materialized exactly once.
 
     Args:
         ddf: Lazy dask DataFrame with 'dbh' (cm) and 'fia_species_code' columns.
@@ -87,7 +114,7 @@ def _build_tree_forestry_graph(
             to include. Defaults to 5.
 
     Returns:
-        dask.delayed resolving to a forestry metrics dict, or a zero-tree dict
+        ForestryGraph finalizing to a forestry metrics dict, or a zero-tree dict
         if the inventory is empty.
     """
     ba_per_tree_m2 = math.pi * (ddf["dbh"] / 200.0) ** 2
@@ -96,7 +123,6 @@ def _build_tree_forestry_graph(
     sum_dbh_sq = (ddf["dbh"] ** 2).sum()
     ba_by_spcd = ba_per_tree_m2.groupby(ddf["fia_species_code"]).sum()
 
-    @dask.delayed
     def _compute(total_ba_m2, n_trees, sum_dbh_sq, ba_by_spcd):
         if n_trees == 0:
             return {
@@ -160,4 +186,6 @@ def _build_tree_forestry_graph(
             "dominant_species_groups": dominant_species_groups,
         }
 
-    return _compute(total_ba_m2, n_trees, sum_dbh_sq, ba_by_spcd)
+    return ForestryGraph(
+        parts=(total_ba_m2, n_trees, sum_dbh_sq, ba_by_spcd), finalize=_compute
+    )

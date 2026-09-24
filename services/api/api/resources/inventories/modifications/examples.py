@@ -49,6 +49,20 @@ EXAMPLE_REMOVE_BY_SPECIES = {
     ],
 }
 
+# Remove specific trees by tree_id
+EXAMPLE_REMOVE_BY_TREE_ID = {
+    "modifications": [
+        {
+            "conditions": {
+                "attribute": "tree_id",
+                "operator": "eq",
+                "value": [12, 57, 301],
+            },
+            "actions": {"modifier": "remove"},
+        }
+    ],
+}
+
 # Remove by expression
 EXAMPLE_REMOVE_BY_EXPRESSION = {
     "modifications": [
@@ -217,6 +231,14 @@ APPLY_MODIFICATIONS_OPENAPI_EXAMPLES = {
         "summary": "Remove by species code",
         "description": "Remove trees matching specific FIA species codes.",
     },
+    "remove_by_tree_id": {
+        "value": EXAMPLE_REMOVE_BY_TREE_ID,
+        "summary": "Remove specific trees by tree_id",
+        "description": (
+            "Remove exactly the listed trees. The other trees keep their "
+            "`tree_id`; the removed IDs leave gaps."
+        ),
+    },
     "remove_by_expression": {
         "value": EXAMPLE_REMOVE_BY_EXPRESSION,
         "summary": "Remove by expression",
@@ -277,6 +299,7 @@ ALL_MODIFICATIONS_EXAMPLE_VALUES = [
     ("remove_small_trees", EXAMPLE_REMOVE_SMALL_TREES),
     ("remove_small_trees_inches", EXAMPLE_REMOVE_SMALL_TREES_INCHES),
     ("remove_by_species", EXAMPLE_REMOVE_BY_SPECIES),
+    ("remove_by_tree_id", EXAMPLE_REMOVE_BY_TREE_ID),
     ("remove_by_expression", EXAMPLE_REMOVE_BY_EXPRESSION),
     ("reduce_tall_trees", EXAMPLE_REDUCE_TALL_TREES),
     ("combined_conditions", EXAMPLE_COMBINED_CONDITIONS),

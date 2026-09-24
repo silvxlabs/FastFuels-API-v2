@@ -221,6 +221,37 @@ class TestDeterminism:
 # Pickle roundtrip
 
 
+class TestTreeIdBand:
+    """The `tree_id` band holds the inventory's tree_id (#611)."""
+
+    def _band_values(self, monkeypatch, trees: pd.DataFrame) -> set[int]:
+        _patch_fastfuels(monkeypatch)
+        payload = _make_payload(trees_n=2)
+        payload["trees"] = trees.assign(_cache_key=0)
+        result = _worker.run(payload)
+        assert "error" not in result, result.get("error")
+        return set(np.unique(result["buffers"]["tree_id"]).tolist())
+
+    def _trees(self, **extra) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                **extra,
+                "x": [4.0, 15.0],
+                "y": [4.0, 15.0],
+                "fia_species_code": [131, 131],
+                "fia_status_code": [1, 1],
+                "dbh": [20.0, 20.0],
+                "height": [8.0, 8.0],
+                "crown_ratio": [0.5, 0.5],
+            }
+        )
+
+    def test_band_holds_inventory_tree_ids(self, monkeypatch):
+        """IDs left after removals (gaps, large values) pass through verbatim."""
+        trees = self._trees(tree_id=np.array([5, 2_000_000_000], dtype="int32"))
+        assert self._band_values(monkeypatch, trees) == {-1, 5, 2_000_000_000}
+
+
 class TestPickleRoundtrip:
     def test_payload_pickles(self, monkeypatch):
         _patch_fastfuels(monkeypatch)

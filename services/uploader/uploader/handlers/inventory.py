@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import dask.dataframe as dd
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import Series
@@ -23,6 +24,7 @@ from lib.gcs import delete_file, download_file, storage_size
 from uploader.main import update_resource
 
 _V2_COLUMNS = {
+    "tree_id",
     "x",
     "y",
     "height",
@@ -39,6 +41,7 @@ _V2_COLUMNS = {
 # the optional ones with nulls) — the API's treatments endpoint relies on it to
 # tell whether an inventory has a `dbh` column to thin against.
 _COLUMN_METADATA = {
+    "tree_id": ("categorical", None),
     "x": ("continuous", "m"),
     "y": ("continuous", "m"),
     "fia_species_code": ("categorical", None),
@@ -50,7 +53,13 @@ _COLUMN_METADATA = {
 }
 
 
+# tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
+MAX_TREE_ID = 2_147_483_647
+
+
 class _InventorySchema(pa.DataFrameModel):
+    # int64 so out-of-range IDs reach the `le` check before the int32 cast.
+    tree_id: Series[np.int64] | None = pa.Field(ge=1, le=MAX_TREE_ID, unique=True)
     x: Series[float]
     y: Series[float]
     height: Series[float] = pa.Field(ge=0, le=116)
@@ -108,6 +117,13 @@ def handle_inventory(
                     "For GeoJSON/GeoPackage, verify features overlap the domain's geographic extent."
                 ),
             )
+
+        # Without a user-supplied tree_id, number the trees kept in the domain
+        # 1 … N in file row order.
+        if "tree_id" not in df.columns:
+            df = df.reset_index(drop=True)
+            df.insert(0, "tree_id", np.arange(1, len(df) + 1, dtype="int32"))
+            provided_columns.append("tree_id")
 
         path = f"gs://{INVENTORIES_BUCKET}/{resource_id}"
         _write_parquet(df, path)
@@ -193,7 +209,8 @@ def _column_summary(series: pd.Series, col_type: str) -> dict:
         "type": "categorical",
         "count": count,
         "null_count": null_count,
-        "unique_count": int(series.nunique()),
+        # tree_id is unique by construction; skip the distinct count.
+        "unique_count": count if series.name == "tree_id" else int(series.nunique()),
     }
 
 
@@ -262,13 +279,17 @@ def _parse(
 
 
 def _validate(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate the parsed DataFrame against the inventory schema."""
-    for col in _V2_COLUMNS - {"x", "y", "height"}:
+    """Validate the parsed DataFrame against the inventory schema.
+
+    A ``tree_id`` column, when absent, is left out (not padded): the caller
+    generates IDs after filtering to the domain.
+    """
+    for col in _V2_COLUMNS - {"tree_id", "x", "y", "height"}:
         if col not in df.columns:
             df[col] = None
 
     try:
-        return _InventorySchema.validate(df, lazy=True)
+        df = _InventorySchema.validate(df, lazy=True)
     except pa.errors.SchemaErrors as e:
         cases = e.failure_cases.head(100).to_dict("records")
         raise ProcessingError(
@@ -276,6 +297,9 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
             message=f"Schema validation failed with {len(e.failure_cases)} error(s).",
             suggestion=str(cases),
         )
+    if "tree_id" in df.columns:
+        df["tree_id"] = df["tree_id"].astype("int32")
+    return df
 
 
 def _extract_crs_string(domain_data: dict) -> str:

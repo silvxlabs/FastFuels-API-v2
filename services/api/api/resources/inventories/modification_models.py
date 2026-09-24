@@ -4,8 +4,8 @@ api/v2/resources/inventories/modifications.py
 Modification schemas for tree inventories.
 
 Provides condition/action models for filtering and modifying tree attributes
-(dbh, height, crown_ratio, fia_species_code). Supports optional unit
-conversion via pint for conditions and actions.
+(dbh, height, crown_ratio, fia_species_code; tree_id in conditions only).
+Supports optional unit conversion via pint for conditions and actions.
 """
 
 import ast
@@ -32,6 +32,7 @@ class InventoryAttribute(StrEnum):
     height = "height"
     crown_ratio = "crown_ratio"
     fia_species_code = "fia_species_code"
+    tree_id = "tree_id"
 
 
 # Native units for each attribute (used for pint dimensional compatibility checks)
@@ -40,10 +41,20 @@ ATTRIBUTE_UNITS = {
     "height": "m",
     "crown_ratio": "dimensionless",
     "fia_species_code": None,
+    "tree_id": None,
 }
 
-# Attributes allowed in expressions (excludes categorical fia_species_code)
+# Attributes allowed in expressions (excludes categorical fia_species_code, tree_id)
 EXPRESSION_ALLOWED_NAMES = {"dbh", "height", "crown_ratio"}
+
+# Categorical attributes: conditions support only eq/ne.
+EQUALITY_ONLY_ATTRIBUTES = {
+    InventoryAttribute.fia_species_code,
+    InventoryAttribute.tree_id,
+}
+
+# tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
+MAX_TREE_ID = 2_147_483_647
 
 
 class InventoryModificationCondition(BaseModel):
@@ -53,7 +64,14 @@ class InventoryModificationCondition(BaseModel):
     to the attribute's native unit before comparison.
     """
 
-    attribute: InventoryAttribute
+    attribute: InventoryAttribute = Field(
+        ...,
+        description=(
+            "The tree attribute to test. `fia_species_code` and `tree_id` support "
+            "only `eq`/`ne`. `tree_id` selects individual trees by their "
+            "inventory ID."
+        ),
+    )
     operator: Operator = Field(
         ...,
         description=(
@@ -63,7 +81,11 @@ class InventoryModificationCondition(BaseModel):
         ),
     )
     value: int | float | str | list[int | float | str] = Field(
-        ..., description="The value(s) to compare against"
+        ...,
+        description=(
+            "The value(s) to compare against. A list with `eq` matches any of "
+            "its values; with `ne`, none of them."
+        ),
     )
     unit: str | None = Field(
         default=None,
@@ -74,16 +96,31 @@ class InventoryModificationCondition(BaseModel):
     @field_validator("operator")
     @classmethod
     def validate_species_operator(cls, v, info):
-        """fia_species_code only supports eq/ne operators."""
+        """fia_species_code and tree_id only support eq/ne operators."""
         attribute = info.data.get("attribute")
-        if attribute == InventoryAttribute.fia_species_code and v not in (
+        if attribute in EQUALITY_ONLY_ATTRIBUTES and v not in (
             Operator.eq,
             Operator.ne,
         ):
             raise ValueError(
-                f"fia_species_code only supports 'eq' and 'ne' operators, got '{v}'"
+                f"{attribute} only supports 'eq' and 'ne' operators, got '{v}'"
             )
         return v
+
+    @model_validator(mode="after")
+    def validate_tree_id_value(self):
+        """tree_id values are integers in 1 … 2,147,483,647."""
+        if self.attribute != InventoryAttribute.tree_id:
+            return self
+        values = self.value if isinstance(self.value, list) else [self.value]
+        for v in values:
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError(f"tree_id values must be integers, got {v!r}")
+            if not 1 <= v <= MAX_TREE_ID:
+                raise ValueError(
+                    f"tree_id values must be in 1 … {MAX_TREE_ID}, got {v}"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_list_value_operators(self):
@@ -176,7 +213,10 @@ class InventoryModificationAction(BaseModel):
     native unit before applying the modifier.
     """
 
-    attribute: InventoryAttribute
+    attribute: InventoryAttribute = Field(
+        ...,
+        description="The tree attribute to change. `tree_id` cannot be changed.",
+    )
     modifier: Modifier = Field(
         ...,
         description=(
@@ -193,6 +233,16 @@ class InventoryModificationAction(BaseModel):
         default=None,
         description="Optional pint-compatible unit for the value.",
     )
+
+    @field_validator("attribute")
+    @classmethod
+    def validate_not_tree_id(cls, v):
+        """tree_id never changes after creation, so actions cannot target it."""
+        if v == InventoryAttribute.tree_id:
+            raise ValueError(
+                "tree_id cannot be modified; it only selects trees in conditions"
+            )
+        return v
 
     @model_validator(mode="after")
     def validate_divide_by_zero(self):

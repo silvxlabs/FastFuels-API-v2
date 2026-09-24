@@ -4,10 +4,12 @@ api/v2/resources/inventories/tree/chm/schema.py
 Schema models for CHM extraction inventory creation.
 """
 
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from api.resources.crown_segmentation import CrownSegmentationBase
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
 from api.resources.inventories.treatment_models import InventoryTreatment
@@ -100,6 +102,23 @@ StemIsolationAlgorithm = Annotated[
 ]
 
 
+class CrownRadiusEstimator(StrEnum):
+    area_equivalent = "area_equivalent"
+
+
+class ChmCrownSegmentation(CrownSegmentationBase):
+    """Crown segmentation run after stem isolation. Each tree gets a
+    `crown_radius` column measured from its segmented crown."""
+
+    radius_estimator: CrownRadiusEstimator = Field(
+        default=CrownRadiusEstimator.area_equivalent,
+        description=(
+            "How a crown becomes one radius. `area_equivalent` is the radius of "
+            "a circle with the crown's area, sqrt(area / pi)."
+        ),
+    )
+
+
 class ChmInventorySource(BaseModel):
     """Source metadata stored on the inventory document."""
 
@@ -114,6 +133,7 @@ class ChmInventorySource(BaseModel):
         ),
     )
     algorithm: StemIsolationAlgorithm
+    crown_segmentation: ChmCrownSegmentation | None = None
 
 
 class CreateChmInventoryRequest(CreateInventoryRequestBase):
@@ -125,6 +145,18 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
     algorithm: StemIsolationAlgorithm = Field(
         default_factory=StemIsolationLmf,
         description="Stem isolation algorithm and its parameters.",
+    )
+    crown_segmentation: ChmCrownSegmentation | None = Field(
+        default=None,
+        description=(
+            "Segment each detected tree's crown on the CHM and add a "
+            "`crown_radius` column (m). Crowns grow outward from each treetop "
+            "over CHM cells within the detection height range and stop at the "
+            "crown's edge; each cell belongs to at most one tree. Every tree "
+            "gets a radius of at least one cell's area-equivalent radius. "
+            "Requires a CHM cell size of 2 m or finer. Omit to skip "
+            "segmentation."
+        ),
     )
     modifications: list[InventoryModification] = Field(
         default_factory=list,

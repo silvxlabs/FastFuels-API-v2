@@ -8,13 +8,26 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.crown_segmentation import MAX_CROWN_SEGMENTATION_RESOLUTION_M
 from api.resources.grids.utils import validate_band_unit, validate_grid_has_band
-from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS, Inventory
+from api.resources.inventories.schema import (
+    CHM_INVENTORY_COLUMNS,
+    CROWN_RADIUS_COLUMN,
+    Inventory,
+)
 from api.resources.inventories.tree.chm.examples import CREATE_CHM_OPENAPI_EXAMPLES
 from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
@@ -67,6 +80,10 @@ async def create_chm_inventory(
 
     - **source_chm_grid_id**: (required) ID of a completed CHM grid.
     - **algorithm**: (optional) Configuration for the stem isolation algorithm. Must specify `"name": "lmf"` or `"name": "vwf"`. Defaults to LMF.
+    - **crown_segmentation**: (optional) Segment each tree's crown on the CHM
+      (`dalponte2016` region growing) and add a `crown_radius` column (m).
+      Requires a CHM cell size of 2 m or finer. Default parameters are
+      provisional.
     - **type**: (optional) Entity type. Default: ``"tree"``.
     - **name**: (optional) Name for the inventory.
     - **description**: (optional) Description.
@@ -106,6 +123,21 @@ async def create_chm_inventory(
     validate_grid_has_band(source_grid_data, body.source_chm_grid_id, "chm")
     validate_band_unit(source_grid_data, body.source_chm_grid_id, "chm", "m")
 
+    columns = list(CHM_INVENTORY_COLUMNS)
+    if body.crown_segmentation is not None:
+        transform = source_grid_data["georeference"]["transform"]
+        cell_size = max(abs(transform[0]), abs(transform[4]))
+        if cell_size > MAX_CROWN_SEGMENTATION_RESOLUTION_M:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Crown segmentation needs a CHM cell size of "
+                    f"{MAX_CROWN_SEGMENTATION_RESOLUTION_M:g} m or finer; source "
+                    f"grid {body.source_chm_grid_id} has {cell_size:g} m cells."
+                ),
+            )
+        columns.append(CROWN_RADIUS_COLUMN)
+
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now()
 
@@ -113,6 +145,7 @@ async def create_chm_inventory(
         source_chm_grid_id=body.source_chm_grid_id,
         source_chm_grid_checksum=source_grid_data.get("checksum"),
         algorithm=body.algorithm,
+        crown_segmentation=body.crown_segmentation,
     )
 
     inventory_data = {
@@ -133,7 +166,7 @@ async def create_chm_inventory(
         "treatments": stringify_modification_coordinates(
             [t.model_dump() for t in body.treatments]
         ),
-        "columns": [c.model_dump() for c in CHM_INVENTORY_COLUMNS],
+        "columns": [c.model_dump() for c in columns],
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,

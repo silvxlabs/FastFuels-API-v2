@@ -576,3 +576,56 @@ class TestHandleInventoryTreeIds:
             )
         assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
         assert "field_uniqueness" in exc_info.value.suggestion
+
+
+class TestCrownRadius:
+    def _run(self, tmp_path, monkeypatch, radii, col_map=None, key="crown_radius"):
+        data = {"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT, key: radii}
+        return TestHandleInventoryTreeIds()._run(tmp_path, monkeypatch, data, col_map)
+
+    def test_mapped_values_preserved_exactly(self, tmp_path, monkeypatch):
+        df, updates = self._run(
+            tmp_path,
+            monkeypatch,
+            [1.2345678901, 3.0, 2.5],
+            {"crown_radius": "CrownRad_m"},
+            key="CrownRad_m",
+        )
+        assert list(df["crown_radius"]) == [1.2345678901, 3.0]
+        [col] = [c for c in updates["columns"] if c["key"] == "crown_radius"]
+        assert col["type"] == "continuous"
+        assert col["unit"] == "m"
+        assert col["summary"]["count"] == 2
+
+    def test_csv_floats_round_trip_exactly(self, tmp_path):
+        """Every CSV float parses to the double it was written from."""
+        radii = np.random.default_rng(0).uniform(0.1, 15.0, 10_000)
+        path = tmp_path / "trees.csv"
+        pd.DataFrame(
+            {"x": 0.0, "y": 0.0, "height": 10.0, "crown_radius": radii}
+        ).to_csv(path, index=False)
+        df = _parse("csv", str(path), {}, DOMAIN_CRS)
+        np.testing.assert_array_equal(df["crown_radius"].to_numpy(), radii)
+
+    def test_nulls_allowed(self, tmp_path, monkeypatch):
+        df, updates = self._run(tmp_path, monkeypatch, [None, 3.0, 2.5])
+        assert np.isnan(df["crown_radius"].iloc[0])
+        assert df["crown_radius"].iloc[1] == 3.0
+        [col] = [c for c in updates["columns"] if c["key"] == "crown_radius"]
+        assert col["summary"]["null_count"] == 1
+
+    @pytest.mark.parametrize("bad", [0.0, -1.0])
+    def test_non_positive_rejected(self, bad):
+        df = pd.DataFrame(
+            {"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT}
+        ).assign(crown_radius=[2.0, bad, 3.0])
+        with pytest.raises(ProcessingError) as exc_info:
+            _validate(df)
+        assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
+
+    def test_absent_column_not_recorded(self, tmp_path, monkeypatch):
+        df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
+        _, updates = TestHandleInventoryTreeIds()._run(
+            tmp_path, monkeypatch, df.to_dict("list")
+        )
+        assert "crown_radius" not in [c["key"] for c in updates["columns"]]

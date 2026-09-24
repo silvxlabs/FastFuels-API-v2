@@ -242,6 +242,57 @@ class TestCsvUpload:
             delete_document(INVENTORIES_COLLECTION, inventory_id)
             delete_document(DOMAINS_COLLECTION, domain_id)
 
+    def test_csv_with_crown_radius_preserves_values(self):
+        """A mapped crown_radius column is recorded and stored exactly, nulls kept."""
+        inventory_id = f"test-{uuid4().hex}"
+        domain_id = f"test-{uuid4().hex}"
+
+        domain_doc = _load_domain_doc(domain_id)
+        set_document(DOMAINS_COLLECTION, domain_id, domain_doc)
+
+        radii = [1.2345678901, None, 4.5]
+        object_name = _upload_csv(
+            inventory_id,
+            SAMPLE_X,
+            SAMPLE_Y,
+            SAMPLE_HEIGHT,
+            extra={"CrownRad_m": radii},
+        )
+        inv_doc = _make_inventory_doc(
+            inventory_id, domain_id, "csv", col_map={"crown_radius": "CrownRad_m"}
+        )
+        inv_doc["source"]["object_name"] = object_name
+        set_document(INVENTORIES_COLLECTION, inventory_id, inv_doc)
+
+        try:
+            handle_inventory(inventory_id, UPLOADS_BUCKET, object_name, inv_doc)
+            _, snap = get_document(INVENTORIES_COLLECTION, inventory_id)
+            result = snap.to_dict()
+            assert result["status"] == "completed"
+            assert [c["key"] for c in result["columns"]] == [
+                "tree_id",
+                "x",
+                "y",
+                "height",
+                "crown_radius",
+            ]
+
+            import dask.dataframe as dd
+
+            parquet_df = dd.read_parquet(
+                f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+            ).compute()
+            stored = parquet_df["crown_radius"].tolist()
+            assert stored[0] == radii[0]
+            assert pd.isna(stored[1])
+            assert stored[2] == radii[2]
+        finally:
+            gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
+            if exists(gcs_path):
+                delete_directory(gcs_path)
+            delete_document(INVENTORIES_COLLECTION, inventory_id)
+            delete_document(DOMAINS_COLLECTION, domain_id)
+
     def test_csv_with_column_mapping_completes(self):
         """CSV with custom column names and a mapping produces status=completed."""
         inventory_id = f"test-{uuid4().hex}"

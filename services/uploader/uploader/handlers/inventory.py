@@ -33,6 +33,7 @@ _V2_COLUMNS = {
     "fia_crown_class_code",
     "dbh",
     "crown_ratio",
+    "crown_radius",
 }
 
 # Doc metadata (type, unit) per v2 column, in canonical order. Only x, y, and
@@ -50,6 +51,7 @@ _COLUMN_METADATA = {
     "dbh": ("continuous", "cm"),
     "height": ("continuous", "m"),
     "crown_ratio": ("continuous", None),
+    "crown_radius": ("continuous", "m"),
 }
 
 
@@ -70,6 +72,7 @@ class _InventorySchema(pa.DataFrameModel):
     )
     dbh: Series[float] | None = pa.Field(ge=0, nullable=True)
     crown_ratio: Series[float] | None = pa.Field(ge=0, le=1, nullable=True)
+    crown_radius: Series[float] | None = pa.Field(gt=0, nullable=True)
 
     class Config:
         coerce = True
@@ -237,7 +240,8 @@ def _parse(
     rename = {user_col: v2_name for v2_name, user_col in col_map.items()}
 
     if fmt == "csv":
-        df = pd.read_csv(local_path)
+        # round_trip parses each float to the exact double it was written from.
+        df = pd.read_csv(local_path, float_precision="round_trip")
         df = df.rename(columns=rename)
         return df[[col for col in df.columns if col in _V2_COLUMNS]]
 

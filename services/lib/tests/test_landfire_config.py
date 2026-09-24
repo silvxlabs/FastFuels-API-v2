@@ -20,14 +20,16 @@ class TestLandfireVersionsTable:
             "fbfm40",
             "fccs",
             "annual_disturbance",
+            "fvt",
+            "fvc",
+            "fvh",
+            "bps",
         }
 
     def test_default_is_always_available(self):
         for product, info in LANDFIRE_VERSIONS.items():
-            if product == "annual_disturbance":
-                assert info["default"] in info["lfps_available"], product
-                continue
-            assert info["default"] in info["available"], product
+            versions = info.get("available", info["lfps_available"])
+            assert info["default"] in versions, product
 
     def test_fbfm13_versions(self):
         assert LANDFIRE_VERSIONS["fbfm13"]["available"] == ["2023", "2024"]
@@ -54,6 +56,17 @@ class TestLandfireVersionsTable:
         assert LANDFIRE_VERSIONS["annual_disturbance"]["lfps_available"] == ["2025"]
         assert LANDFIRE_VERSIONS["annual_disturbance"]["default"] == "2025"
         assert "available" not in LANDFIRE_VERSIONS["annual_disturbance"]
+
+    @pytest.mark.parametrize("product", ["fvt", "fvc", "fvh"])
+    def test_fuel_vegetation_versions(self, product):
+        assert LANDFIRE_VERSIONS[product]["lfps_available"] == ["2024"]
+        assert LANDFIRE_VERSIONS[product]["default"] == "2024"
+        assert "available" not in LANDFIRE_VERSIONS[product]
+
+    def test_bps_versions(self):
+        assert LANDFIRE_VERSIONS["bps"]["lfps_available"] == ["2020"]
+        assert LANDFIRE_VERSIONS["bps"]["default"] == "2020"
+        assert "available" not in LANDFIRE_VERSIONS["bps"]
 
 
 class TestValidateLandfireVersion:
@@ -102,6 +115,13 @@ class TestLfpsAcronym:
         assert lfps_acronym("fbfm13") == "FBFM13"
         assert lfps_acronym("fbfm40") == "FBFM40"
         assert lfps_acronym("fccs") == "FCCS"
+
+    @pytest.mark.parametrize(
+        ("product", "acronym"),
+        [("fvt", "FVT"), ("fvc", "FVC"), ("fvh", "FVH"), ("bps", "BPS")],
+    )
+    def test_vegetation_products_need_no_override(self, product, acronym):
+        assert lfps_acronym(product) == acronym
 
     def test_annual_disturbance_uses_the_override(self):
         """annual_disturbance's real LFPS acronym ("LDist") isn't derivable

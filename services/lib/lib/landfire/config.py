@@ -34,6 +34,22 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
         "lfps_available": ["2025"],
         "default": "2025",
     },
+    "fvt": {
+        "lfps_available": ["2024"],
+        "default": "2024",
+    },
+    "fvc": {
+        "lfps_available": ["2024"],
+        "default": "2024",
+    },
+    "fvh": {
+        "lfps_available": ["2024"],
+        "default": "2024",
+    },
+    "bps": {
+        "lfps_available": ["2020"],
+        "default": "2020",
+    },
 }
 
 # Most LANDFIRE_VERSIONS registry keys match their LFPS catalog acronym once

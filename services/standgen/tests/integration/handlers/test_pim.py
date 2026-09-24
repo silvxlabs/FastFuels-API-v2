@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import dask.dataframe as dd
 import pytest
-from standgen.columns import BASE_COLUMNS
+from standgen.columns import BASE_COLUMNS, TREE_ID_COLUMN
 
 from lib.config import (
     DEPLOYMENT_ENV,
@@ -116,7 +116,9 @@ def test_pipeline_completes(shared_pim_inventory):
 
 def test_parquet_has_correct_columns(shared_pim_df):
     """Output parquet should have exactly the base columns."""
-    assert sorted(shared_pim_df.columns.tolist()) == sorted(BASE_COLUMNS)
+    assert sorted(shared_pim_df.columns.tolist()) == sorted(
+        [TREE_ID_COLUMN, *BASE_COLUMNS]
+    )
 
 
 def test_parquet_values_are_sensible(shared_pim_df):

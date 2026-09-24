@@ -258,13 +258,13 @@ def test_unit_conversion_in_treatment(treatments_runner):
 
 def test_parquet_has_correct_columns(treatments_runner):
     """The in-place rewrite keeps the same schema columns as the source."""
-    from standgen.columns import BASE_COLUMNS
+    from standgen.columns import BASE_COLUMNS, TREE_ID_COLUMN
 
     treatments = [{"metric": "diameter", "method": "from_below", "value": 5.0}]
     _, treated = treatments_runner(treatments)
 
     ddf = dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{treated['id']}")
-    assert sorted(ddf.columns.tolist()) == sorted(BASE_COLUMNS)
+    assert sorted(ddf.columns.tolist()) == sorted([TREE_ID_COLUMN, *BASE_COLUMNS])
 
 
 def test_georeference_matches_source(treatments_runner):

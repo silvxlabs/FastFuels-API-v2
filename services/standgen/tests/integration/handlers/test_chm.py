@@ -116,7 +116,9 @@ def test_pipeline_completes(shared_chm_inventory):
 
 def test_parquet_has_correct_columns(shared_chm_df):
     """Output parquet should have exactly the ITD output columns."""
-    assert sorted(shared_chm_df.columns.tolist()) == sorted(["x", "y", "height"])
+    assert sorted(shared_chm_df.columns.tolist()) == sorted(
+        ["tree_id", "x", "y", "height"]
+    )
 
 
 def test_parquet_is_multipartition(shared_chm_inventory):

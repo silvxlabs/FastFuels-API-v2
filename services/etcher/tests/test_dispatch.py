@@ -41,6 +41,36 @@ def test_unknown_product_for_water_raises():
     assert exc_info.value.code == "UNKNOWN_PRODUCT"
 
 
+def test_unknown_product_for_crown_raises():
+    """Ensure an unsupported product for a crown feature raises an error."""
+    feature = {"type": "crown", "source": {"product": "lidar"}}
+    mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+
+    with pytest.raises(ProcessingError) as exc_info:
+        dispatch_handler(feature, mock_gdf, MagicMock())
+
+    assert exc_info.value.code == "UNKNOWN_PRODUCT"
+
+
+@patch("etcher.handlers.crown.handle_chm")
+def test_crown_chm_dispatch(mock_handle_chm):
+    """Ensure crown+chm correctly routes to the crown CHM handler."""
+    mock_handle_chm.return_value = {
+        "georeference": {"crs": "EPSG:32617", "bounds": [0, 0, 1, 1]}
+    }
+
+    feature = {"type": "crown", "source": {"product": "chm"}}
+    mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+    progress = MagicMock()
+
+    result = dispatch_handler(feature, mock_gdf, progress)
+
+    mock_handle_chm.assert_called_once_with(
+        feature, feature["source"], mock_gdf, progress
+    )
+    assert "georeference" in result
+
+
 @patch("etcher.handlers.road.handle_osm")
 def test_road_osm_dispatch(mock_handle_osm):
     """Ensure road+osm correctly routes to the road OSM handler."""

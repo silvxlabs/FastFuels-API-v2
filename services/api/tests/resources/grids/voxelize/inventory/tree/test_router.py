@@ -422,6 +422,41 @@ class TestCreateTreeInventoryGrid:
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 422
 
+    @pytest.mark.parametrize(
+        "profile",
+        [
+            "cone",
+            "cylinder",
+            "single_ellipsoid",
+            "dual_ellipsoid",
+            "single_paraboloid",
+            "dual_paraboloid",
+        ],
+    )
+    def test_geometric_crown_profile_creates_grid(
+        self, client, domain_for_testing, tree_inventory_for_voxelization, profile
+    ):
+        body = {
+            "source_inventory_id": tree_inventory_for_voxelization["id"],
+            "crown_profile_model": profile,
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201, response.json()
+        source = response.json()["source"]
+        assert source["crown_profile_model"] == profile
+        assert source["max_crown_radius_source"] == {"type": "allometry"}
+
+    @pytest.mark.parametrize("profile", ["ellipsoid", "paraboloid"])
+    def test_core_only_crown_profile_name_returns_422(
+        self, client, domain_for_testing, tree_inventory_for_voxelization, profile
+    ):
+        body = {
+            "source_inventory_id": tree_inventory_for_voxelization["id"],
+            "crown_profile_model": profile,
+        }
+        response = client.post(self.route(domain_for_testing["id"]), json=body)
+        assert response.status_code == 422
+
     def test_invalid_biomass_source_returns_422(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):

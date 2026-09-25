@@ -5,17 +5,8 @@ Tests the POST /domains/{domain_id}/features/road/osm endpoint.
 These tests make real HTTP requests to the API and interact with Firestore.
 """
 
-from unittest.mock import patch
-
 import pytest
 from api.resources.features.road.examples import ROAD_EXAMPLE_VALUES
-
-
-# Mock out Cloud Tasks so tests don't attempt to enqueue real background jobs
-@pytest.fixture(autouse=True)
-def mock_create_task():
-    with patch("api.resources.features.road.router.create_http_task_async") as mock:
-        yield mock
 
 
 class TestCreateOsmRoadFeature:

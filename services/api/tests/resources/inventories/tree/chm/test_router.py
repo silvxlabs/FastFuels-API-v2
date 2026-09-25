@@ -29,6 +29,11 @@ def chm_grid_for_inventory(firestore_client, domain_for_testing):
         bands=[
             {"key": "chm", "type": "continuous", "unit": "m", "index": 0},
         ],
+        georeference={
+            "crs": "EPSG:32611",
+            "transform": (1.0, 0.0, 500000.0, 0.0, -1.0, 5201000.0),
+            "shape": (1020, 1020),
+        },
     )
     doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid_data["id"])
     doc_ref.set(grid_data)
@@ -402,3 +407,97 @@ class TestCreateChmInventory:
             "discriminator" in str(error).lower() or "tag" in str(error).lower()
             for error in detail
         )
+
+
+class TestCreateChmInventoryCrownSegmentation:
+    """crown_segmentation on POST /domains/{domain_id}/inventories/tree/chm."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/inventories/tree/chm"
+
+    def test_records_resolved_settings_and_crown_radius_column(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_chm_grid_id": chm_grid_for_inventory["id"],
+                "crown_segmentation": {"max_crown_radius": 8.0},
+            },
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["source"]["crown_segmentation"] == {
+            "method": "dalponte2016",
+            "min_relative_height": 0.45,
+            "min_relative_crown_height": 0.55,
+            "max_crown_radius": 8.0,
+            "radius_estimator": "area_equivalent",
+        }
+        assert [c["key"] for c in data["columns"]] == [
+            "tree_id",
+            "x",
+            "y",
+            "height",
+            "crown_radius",
+        ]
+        assert data["columns"][-1]["unit"] == "m"
+
+    def test_omitted_records_null(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"source_chm_grid_id": chm_grid_for_inventory["id"]},
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["crown_segmentation"] is None
+
+    def test_coarse_chm_returns_422(self, client, firestore_client, domain_for_testing):
+        grid_data = make_grid_data(
+            domain_id=domain_for_testing["id"],
+            name="3 m CHM",
+            status="completed",
+            source={"name": "upload", "format": "geotiff"},
+            bands=[{"key": "chm", "type": "continuous", "unit": "m", "index": 0}],
+            georeference={
+                "crs": "EPSG:32611",
+                "transform": (3.0, 0.0, 500000.0, 0.0, -3.0, 5201000.0),
+                "shape": (340, 340),
+            },
+        )
+        doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+            grid_data["id"]
+        )
+        doc_ref.set(grid_data)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={
+                    "source_chm_grid_id": grid_data["id"],
+                    "crown_segmentation": {},
+                },
+            )
+            assert response.status_code == 422
+            assert "2 m" in response.json()["detail"]
+
+            # Without segmentation the same grid is accepted.
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"source_chm_grid_id": grid_data["id"]},
+            )
+            assert response.status_code == 201
+        finally:
+            doc_ref.delete()
+
+    def test_out_of_range_parameter_returns_422(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_chm_grid_id": chm_grid_for_inventory["id"],
+                "crown_segmentation": {"max_crown_radius": 50.0},
+            },
+        )
+        assert response.status_code == 422

@@ -63,6 +63,24 @@ EXAMPLE_CHM_WITH_MODIFICATIONS = {
     ],
 }
 
+# LMF detection followed by crown segmentation, adding a crown_radius column
+EXAMPLE_CHM_CROWN_SEGMENTATION = {
+    "source_chm_grid_id": "PLACEHOLDER_GRID_ID",
+    "algorithm": {
+        "name": "lmf",
+        "min_height": 5.0,
+        "footprint_size": 5,
+    },
+    "crown_segmentation": {
+        "method": "dalponte2016",
+        "radius_estimator": "area_equivalent",
+        "min_relative_height": 0.45,
+        "min_relative_crown_height": 0.55,
+        "max_crown_radius": 10.0,
+    },
+    "name": "CHM inventory with measured crown radii",
+}
+
 CREATE_CHM_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_CHM_MINIMAL,
@@ -97,6 +115,17 @@ CREATE_CHM_OPENAPI_EXAMPLES = {
             "any trees with height < 5.0 meters using the post-processing modifications array."
         ),
     },
+    "crown_segmentation": {
+        "value": EXAMPLE_CHM_CROWN_SEGMENTATION,
+        "summary": "With crown segmentation (measured crown radius)",
+        "description": (
+            "Detects treetops with LMF, then segments each tree's crown on the "
+            "CHM and records its area-equivalent radius in a `crown_radius` "
+            "column (m). Use it in voxelize or inventory canopy grids with "
+            "`max_crown_radius_source: {type: inventory_column, column: "
+            "crown_radius}`. Requires a CHM cell size of 2 m or finer."
+        ),
+    },
 }
 
 ALL_CHM_EXAMPLE_VALUES = [
@@ -104,4 +133,5 @@ ALL_CHM_EXAMPLE_VALUES = [
     ("lmf_full", EXAMPLE_CHM_LMF_FULL),
     ("vwf_extraction", EXAMPLE_CHM_VWF),
     ("with_modifications", EXAMPLE_CHM_WITH_MODIFICATIONS),
+    ("crown_segmentation", EXAMPLE_CHM_CROWN_SEGMENTATION),
 ]

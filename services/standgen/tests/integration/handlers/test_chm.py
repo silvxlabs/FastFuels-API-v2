@@ -17,6 +17,8 @@ from uuid import uuid4
 
 import dask.dataframe as dd
 import geopandas as gpd
+import numpy as np
+import pandas as pd
 import pytest
 from shapely.geometry import box
 from standgen.storage import load_grid
@@ -404,3 +406,43 @@ def test_column_summaries_reflect_data(shared_chm_inventory, shared_chm_df):
     assert (
         pytest.approx(cols["height"]["max"], rel=1e-4) == shared_chm_df["height"].max()
     )
+
+
+# --- Crown Segmentation ---
+
+
+def test_crown_segmentation_adds_crown_radius(
+    shared_chm_df, standgen_runner, module_chm_grid
+):
+    """Segmentation adds a non-null crown_radius of at least one cell, leaves the
+    detected trees unchanged, and repeats exactly."""
+    runs = [
+        standgen_runner(
+            "blackfoot.json",
+            "chm_lmf_crown_segmentation.json",
+            source_chm_grid_id=module_chm_grid,
+        )
+        for _ in range(2)
+    ]
+    dfs = [
+        dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{inv['id']}")
+        .compute()
+        .sort_values("tree_id", ignore_index=True)
+        for inv in runs
+    ]
+    df = dfs[0]
+    assert df.columns.tolist() == ["tree_id", "x", "y", "height", "crown_radius"]
+
+    cell_size = abs(load_grid(module_chm_grid)["chm"].rio.resolution()[0])
+    one_cell = cell_size / np.sqrt(np.pi)
+    assert df["crown_radius"].notna().all()
+    assert (df["crown_radius"] >= one_cell * (1 - 1e-9)).all()
+    assert df["crown_radius"].max() > one_cell
+
+    baseline = shared_chm_df.sort_values("tree_id", ignore_index=True)
+    pd.testing.assert_frame_equal(df[["tree_id", "x", "y", "height"]], baseline)
+    pd.testing.assert_series_equal(df["crown_radius"], dfs[1]["crown_radius"])
+
+    summary = {c["key"]: c["summary"] for c in runs[0]["columns"]}["crown_radius"]
+    assert summary["count"] == len(df)
+    assert summary["null_count"] == 0

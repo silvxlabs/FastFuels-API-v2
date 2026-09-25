@@ -2,15 +2,23 @@
 CHM (Canopy Height Model) extraction handler.
 
 Generates tree inventories by applying stem isolation algorithms (LMF or VWF)
-to Canopy Height Model grids.
+to Canopy Height Model grids, optionally followed by crown segmentation to
+measure each tree's crown radius.
 """
 
 import logging
+import math
 
+import dask
+import dask.array as da
+import dask.dataframe as dd
 import geopandas as gpd
+import numpy as np
 import pandas as pd
+import xarray as xr
 
 # --- FASTFUELS CORE IMPORTS ---
+from fastfuels_core.itd.crown_segmentation import dalponte2016
 from fastfuels_core.itd.local_maxima_filter import (
     fixed_window_filter,
     variable_window_filter,
@@ -85,6 +93,9 @@ def handle_chm(
         )
 
     chm_da = grid_ds["chm"]
+    # Crown segmentation reads the unfilled band: its own height range excludes
+    # NaN nodata and over-max returns.
+    raw_chm_da = chm_da
 
     # Neutralize invalid CHM pixels (nodata = NaN, the continuous-grid convention)
     # to a deterministic sub-min_height value before detection. scipy's maximum_filter
@@ -153,6 +164,13 @@ def handle_chm(
             message=f"Algorithm '{alg_name}' is not supported.",
         )
 
+    crown_segmentation = source.get("crown_segmentation")
+    if crown_segmentation:
+        progress("Segmenting crowns...", 50)
+        ddf = _measure_crown_radii(
+            ddf, raw_chm_da, algorithm_config, crown_segmentation
+        )
+
     # --- 3. DISTRIBUTED SPATIAL PROCESSING ---
     progress("Checking spatial reference systems...", 60)
     source_crs = chm_da.rio.crs
@@ -174,9 +192,10 @@ def handle_chm(
             df["x"], df["y"] = transformer.transform(df["x"].values, df["y"].values)
             return df
 
-        ddf = ddf.map_partitions(
-            reproject_partition, meta={"x": "f8", "y": "f8", "height": "f8"}
-        )
+        meta = {"x": "f8", "y": "f8", "height": "f8"}
+        if crown_segmentation:
+            meta["crown_radius"] = "f8"
+        ddf = ddf.map_partitions(reproject_partition, meta=meta)
 
     # --- 4. FORMATTING & STORAGE ---
     # Number the trees before modifications, so a tree removed at creation
@@ -229,3 +248,49 @@ def handle_chm(
         ],
         "forestry_metrics": forestry_metrics,
     }
+
+
+def _measure_crown_radii(
+    ddf: dd.DataFrame,
+    chm_da: xr.DataArray,
+    algorithm_config: dict,
+    crown_segmentation: dict,
+) -> dd.DataFrame:
+    """Segment crowns around the detected treetops and add ``crown_radius``.
+
+    Materializes the treetop table (the detection graph's only compute), grows
+    ``dalponte2016`` crowns on the CHM, and sets each tree's radius to
+    sqrt(area / pi) of its crown. Treetops stay in the CHM's CRS.
+    """
+    npartitions = ddf.npartitions
+    treetops = ddf.compute().reset_index(drop=True)
+
+    try:
+        labels = dalponte2016(
+            chm_da,
+            treetops,
+            min_height=algorithm_config.get("min_height", 2.0),
+            max_height=algorithm_config.get("max_height"),
+            min_relative_height=crown_segmentation["min_relative_height"],
+            min_relative_crown_height=crown_segmentation["min_relative_crown_height"],
+            max_crown_radius=crown_segmentation["max_crown_radius"],
+        )
+    except ValueError as e:
+        raise ProcessingError(code="INVALID_CROWN_SEGMENTATION_PARAMS", message=str(e))
+
+    cell_counts = _count_labels(labels.data, len(treetops))
+    a, b, _, d, e, _ = chm_da.rio.transform()[:6]
+    cell_area = abs(a * e - b * d)
+    treetops["crown_radius"] = np.sqrt(cell_counts[1:] * cell_area / math.pi)
+    return dd.from_pandas(treetops, npartitions=max(1, npartitions))
+
+
+def _count_labels(labels, n: int) -> np.ndarray:
+    """Cells per label 0 … n, counted block by block for dask arrays."""
+    if not isinstance(labels, da.Array):
+        return np.bincount(np.asarray(labels).ravel(), minlength=n + 1)
+    parts = [
+        dask.delayed(np.bincount)(block.ravel(), minlength=n + 1)
+        for block in labels.to_delayed().ravel()
+    ]
+    return np.sum(dask.compute(*parts), axis=0)

@@ -7,6 +7,7 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.inventories.tree.chm.schema import (
+    ChmCrownSegmentation,
     ChmInventorySource,
     CreateChmInventoryRequest,
     StemIsolationLmf,
@@ -200,3 +201,62 @@ class TestCreateChmInventoryRequest:
                     {"metric": "diameter", "method": "from_below", "value": 30.0}
                 ],
             )
+
+
+class TestChmCrownSegmentation:
+    """Tests for the crown_segmentation request object."""
+
+    def test_defaults(self):
+        seg = ChmCrownSegmentation()
+        assert seg.model_dump() == {
+            "method": "dalponte2016",
+            "min_relative_height": 0.45,
+            "min_relative_crown_height": 0.55,
+            "max_crown_radius": 10.0,
+            "radius_estimator": "area_equivalent",
+        }
+
+    def test_omitted_by_default(self):
+        request = CreateChmInventoryRequest(source_chm_grid_id="grid123")
+        assert request.crown_segmentation is None
+
+    def test_empty_object_resolves_defaults(self):
+        request = CreateChmInventoryRequest(
+            source_chm_grid_id="grid123", crown_segmentation={}
+        )
+        assert request.crown_segmentation == ChmCrownSegmentation()
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("min_relative_height", -0.1),
+            ("min_relative_height", 1.0),
+            ("min_relative_crown_height", -0.1),
+            ("min_relative_crown_height", 1.0),
+            ("max_crown_radius", 0.0),
+            ("max_crown_radius", 30.5),
+            ("method", "watershed"),
+            ("radius_estimator", "max_extent"),
+        ],
+    )
+    def test_out_of_range_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            ChmCrownSegmentation(**{field: value})
+
+    def test_bounds_accepted(self):
+        seg = ChmCrownSegmentation(
+            min_relative_height=0.0,
+            min_relative_crown_height=0.0,
+            max_crown_radius=30.0,
+        )
+        assert seg.max_crown_radius == 30.0
+
+    def test_source_records_resolved_settings(self):
+        source = ChmInventorySource(
+            source_chm_grid_id="grid123",
+            algorithm=StemIsolationLmf(),
+            crown_segmentation=ChmCrownSegmentation(max_crown_radius=8.0),
+        )
+        dumped = source.model_dump()["crown_segmentation"]
+        assert dumped["max_crown_radius"] == 8.0
+        assert dumped["radius_estimator"] == "area_equivalent"

@@ -60,7 +60,7 @@ V1 pre-computes every tree's biomass realizations before touching zarr. Memory g
 
 ## Tree-binning cache key
 
-V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed unique, so distinct trees accidentally shared biomass realizations. V2 inventories carry a stable, unique `tree_id` column (#611), which treevox writes into the `tree_id` band; the cache key is computed separately by binning `(fia_species_code, dbh_bin, height_bin, cr_bin)` at `DBH_BIN_CM = 2.75`, `HEIGHT_BIN_M = 1.0`, `CR_BIN = 0.1`.
+V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed unique, so distinct trees accidentally shared biomass realizations. V2 inventories carry a stable, unique `tree_id` column (#611), which treevox writes into the `tree_id` band; the cache key is computed separately by binning `(fia_species_code, dbh_bin, height_bin, cr_bin)` at `DBH_BIN_CM = 2.75`, `HEIGHT_BIN_M = 1.0`, `CR_BIN = 0.1`. When `max_crown_radius_source` reads an inventory column, that radius joins the key binned at `CROWN_RADIUS_BIN_M = 0.25` (provisional, #613); each bin uses its first tree's radius.
 
 ## Chunk padding model
 

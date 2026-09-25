@@ -9,8 +9,8 @@ These tests make real HTTP requests to the API and interact with Firestore.
 
 import pytest
 
-from lib.config import EXPORTS_COLLECTION
-from tests.fixtures import make_export_data
+from lib.config import DOMAINS_COLLECTION, EXPORTS_COLLECTION
+from tests.fixtures import make_domain_data, make_export_data
 
 # Fixtures
 
@@ -100,10 +100,32 @@ class TestGetExport:
 
 
 class TestListExports:
-    """Test the GET /exports endpoint."""
+    """Test the GET /exports endpoint.
 
-    def test_list_returns_200(self, client, export_in_firestore):
+    Every test lists a fresh isolated owner, never the shared owner, whose
+    exports accumulate from every suite run, including runs from branches
+    whose export formats this API doesn't know yet.
+    """
+
+    @pytest.fixture
+    def owner_with_export(self, isolated_owner):
+        """An isolated owner's client and one export in its own domain."""
+        client, owner_id, seed = isolated_owner
+        domain = seed(DOMAINS_COLLECTION, make_domain_data(owner_id=owner_id))
+        export = seed(
+            EXPORTS_COLLECTION,
+            make_export_data(
+                domain_id=domain["id"],
+                owner_id=owner_id,
+                tags=["fixture"],
+                status="completed",
+            ),
+        )
+        return client, export
+
+    def test_list_returns_200(self, owner_with_export):
         """List endpoint returns 200 with paginated response."""
+        client, export = owner_with_export
         response = client.get(ROUTE)
         assert response.status_code == 200
 
@@ -112,51 +134,53 @@ class TestListExports:
         assert "current_page" in data
         assert "page_size" in data
         assert "total_items" in data
-        assert data["total_items"] >= 1
+        assert [e["id"] for e in data["exports"]] == [export["id"]]
 
     def test_list_does_not_include_other_owners(
-        self, client, export_with_different_owner
+        self, owner_with_export, export_with_different_owner
     ):
         """List should not include exports from other users."""
+        client, _ = owner_with_export
         response = client.get(ROUTE)
-        data = response.json()
-        export_ids = [e["id"] for e in data["exports"]]
-        assert export_with_different_owner["id"] not in export_ids
-
-    def test_list_filter_by_domain_id(self, client, export_in_firestore):
-        """Filter exports by domain_id."""
-        domain_id = export_in_firestore["domain_id"]
-        response = client.get(f"{ROUTE}?domain_id={domain_id}")
         assert response.status_code == 200
 
-        data = response.json()
-        for export in data["exports"]:
-            assert export["domain_id"] == domain_id
+        export_ids = [e["id"] for e in response.json()["exports"]]
+        assert export_with_different_owner["id"] not in export_ids
 
-    def test_list_filter_by_source_name(self, client, export_in_firestore):
+    def test_list_filter_by_domain_id(self, owner_with_export):
+        """Filter exports by domain_id."""
+        client, export = owner_with_export
+        response = client.get(f"{ROUTE}?domain_id={export['domain_id']}")
+        assert response.status_code == 200
+
+        exports = response.json()["exports"]
+        assert [e["id"] for e in exports] == [export["id"]]
+
+    def test_list_filter_by_source_name(self, owner_with_export):
         """Filter exports by source format name."""
+        client, export = owner_with_export
         response = client.get(f"{ROUTE}?source_name=geotiff")
         assert response.status_code == 200
 
-        data = response.json()
-        for export in data["exports"]:
-            assert export["source"]["name"] == "geotiff"
+        exports = response.json()["exports"]
+        assert [e["id"] for e in exports] == [export["id"]]
 
-    def test_list_filter_by_tag(self, client, export_in_firestore):
+    def test_list_filter_by_tag(self, owner_with_export):
         """Filter exports by tag."""
+        client, export = owner_with_export
         response = client.get(f"{ROUTE}?tag=fixture")
         assert response.status_code == 200
 
-        data = response.json()
-        for export in data["exports"]:
-            assert "fixture" in export["tags"]
+        exports = response.json()["exports"]
+        assert [e["id"] for e in exports] == [export["id"]]
 
     @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
     @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
     def test_list_sorting_matrix_returns_200(
-        self, client, export_in_firestore, sort_by, sort_order
+        self, owner_with_export, sort_by, sort_order
     ):
         """Every sort field/direction combination is served (issue #321)."""
+        client, _ = owner_with_export
         url = f"{ROUTE}?sort_by={sort_by}"
         if sort_order:
             url += f"&sort_order={sort_order}"
@@ -166,18 +190,19 @@ class TestListExports:
     @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
     @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
     def test_list_sorting_matrix_with_domain_filter_returns_200(
-        self, client, export_in_firestore, sort_by, sort_order
+        self, owner_with_export, sort_by, sort_order
     ):
         """Sorting combined with the domain_id filter is served (issue #321)."""
-        domain_id = export_in_firestore["domain_id"]
-        url = f"{ROUTE}?domain_id={domain_id}&sort_by={sort_by}"
+        client, export = owner_with_export
+        url = f"{ROUTE}?domain_id={export['domain_id']}&sort_by={sort_by}"
         if sort_order:
             url += f"&sort_order={sort_order}"
         response = client.get(url)
         assert response.status_code == 200
 
-    def test_list_pagination(self, client, export_in_firestore):
+    def test_list_pagination(self, owner_with_export):
         """Pagination parameters work."""
+        client, _ = owner_with_export
         response = client.get(f"{ROUTE}?page=0&size=1")
         assert response.status_code == 200
         data = response.json()

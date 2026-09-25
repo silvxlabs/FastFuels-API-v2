@@ -87,43 +87,24 @@ class TestGetFeature:
 
 
 class TestListFeaturesWildcard:
-    """Test GET /domains/-/features returns features across all domains."""
+    """Test GET /domains/-/features returns features across all domains.
 
-    @pytest.fixture(scope="class")
-    def features_across_domains(
-        self, firestore_client, test_owner_id, domain_for_testing, second_domain
-    ):
-        features = []
-        for domain_id in [domain_for_testing["id"], second_domain["id"]]:
-            feat_data = make_feature_data(
-                domain_id=domain_id, owner_id=test_owner_id, name=f"Feat in {domain_id}"
-            )
-            firestore_client.collection(FEATURES_COLLECTION).document(
-                feat_data["id"]
-            ).set(feat_data)
-            features.append(feat_data)
-        yield features
-        for feat in features:
-            firestore_client.collection(FEATURES_COLLECTION).document(
-                feat["id"]
-            ).delete()
+    Every test lists a fresh isolated owner, never the shared owner, whose
+    features accumulate from every suite run, including runs from branches
+    whose feature types this API doesn't know yet.
+    """
 
-    def route(self):
-        return "/domains/-/features"
-
-    def test_wildcard_returns_features_from_all_domains(self, isolated_owner):
-        """Features from multiple domains are all returned, bounded to a fresh
-        isolated owner so the wildcard result isn't buried past the first page
-        by the shared owner's accumulated test data.
-        """
+    @pytest.fixture
+    def owner_with_features(self, isolated_owner):
+        """An isolated owner's client and one feature in each of two domains."""
         client, owner_id, seed = isolated_owner
-        seeded = []
+        features = []
         for i in range(2):
             domain = seed(
                 DOMAINS_COLLECTION,
                 make_domain_data(owner_id=owner_id, name=f"WC Domain {i}"),
             )
-            seeded.append(
+            features.append(
                 seed(
                     FEATURES_COLLECTION,
                     make_feature_data(
@@ -131,27 +112,37 @@ class TestListFeaturesWildcard:
                     ),
                 )
             )
+        return client, features
 
+    def route(self):
+        return "/domains/-/features"
+
+    def test_wildcard_returns_features_from_all_domains(self, owner_with_features):
+        client, features = owner_with_features
         response = client.get(self.route())
         assert response.status_code == 200
 
         feature_ids = [f["id"] for f in response.json()["features"]]
-        for feat in seeded:
+        for feat in features:
             assert feat["id"] in feature_ids
 
     def test_wildcard_excludes_other_users_features(
-        self, client, feature_with_different_owner
+        self, owner_with_features, feature_with_different_owner
     ):
+        client, _ = owner_with_features
         response = client.get(self.route())
+        assert response.status_code == 200
+
         feature_ids = [f["id"] for f in response.json()["features"]]
         assert feature_with_different_owner["id"] not in feature_ids
 
     @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
     @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
     def test_wildcard_sorting_matrix_returns_200(
-        self, client, features_across_domains, sort_by, sort_order
+        self, owner_with_features, sort_by, sort_order
     ):
         """Every sort field/direction combination is served (issue #321)."""
+        client, _ = owner_with_features
         url = f"{self.route()}?sort_by={sort_by}"
         if sort_order:
             url += f"&sort_order={sort_order}"

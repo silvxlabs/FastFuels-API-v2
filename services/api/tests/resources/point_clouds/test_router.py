@@ -85,49 +85,24 @@ class TestGetPointCloud:
 
 
 class TestListPointCloudsWildcard:
-    """Test GET /domains/-/pointclouds returns point clouds across all domains."""
+    """Test GET /domains/-/pointclouds returns point clouds across all domains.
 
-    @pytest.fixture(scope="class")
-    def point_clouds_across_domains(
-        self, firestore_client, domain_for_testing, second_domain
-    ):
-        """Point clouds spread across two domains, both owned by test-owner."""
-        point_clouds = []
-        for domain_id in [domain_for_testing["id"], second_domain["id"]]:
-            pc_data = make_point_cloud_data(
-                domain_id=domain_id, name=f"Point cloud in {domain_id}"
-            )
-            doc_ref = firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
-                pc_data["id"]
-            )
-            doc_ref.set(pc_data)
-            point_clouds.append(pc_data)
-        yield point_clouds
-        for pc in point_clouds:
-            firestore_client.collection(POINT_CLOUDS_COLLECTION).document(
-                pc["id"]
-            ).delete()
+    Every test lists a fresh isolated owner, never the shared owner, whose
+    point clouds accumulate from every suite run, including runs from branches
+    whose point cloud schemas this API doesn't know yet.
+    """
 
-    def route(self):
-        return "/domains/-/pointclouds"
-
-    def test_wildcard_returns_200(self, client):
-        response = client.get(self.route())
-        assert response.status_code == 200
-
-    def test_wildcard_returns_point_clouds_from_all_domains(self, isolated_owner):
-        """Point clouds from multiple domains are all returned, bounded to a
-        fresh isolated owner so the wildcard result isn't buried past the first
-        page by the shared owner's accumulated test data.
-        """
+    @pytest.fixture
+    def owner_with_point_clouds(self, isolated_owner):
+        """An isolated owner's client and one point cloud in each of two domains."""
         client, owner_id, seed = isolated_owner
-        seeded = []
+        point_clouds = []
         for i in range(2):
             domain = seed(
                 DOMAINS_COLLECTION,
                 make_domain_data(owner_id=owner_id, name=f"WC Domain {i}"),
             )
-            seeded.append(
+            point_clouds.append(
                 seed(
                     POINT_CLOUDS_COLLECTION,
                     make_point_cloud_data(
@@ -135,38 +110,55 @@ class TestListPointCloudsWildcard:
                     ),
                 )
             )
+        return client, point_clouds
 
+    def route(self):
+        return "/domains/-/pointclouds"
+
+    def test_wildcard_returns_200(self, owner_with_point_clouds):
+        client, _ = owner_with_point_clouds
         response = client.get(self.route())
         assert response.status_code == 200
 
-        pc_ids = [p["id"] for p in response.json()["point_clouds"]]
-        for pc in seeded:
-            assert pc["id"] in pc_ids
+    def test_wildcard_returns_point_clouds_from_all_domains(
+        self, owner_with_point_clouds
+    ):
+        """Point clouds from multiple domains are all returned."""
+        client, point_clouds = owner_with_point_clouds
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        ids = [r["id"] for r in response.json()["point_clouds"]]
+        for resource in point_clouds:
+            assert resource["id"] in ids
 
     def test_wildcard_excludes_other_users_point_clouds(
-        self, client, point_cloud_with_different_owner
+        self, owner_with_point_clouds, point_cloud_with_different_owner
     ):
         """Wildcard list does not return point clouds owned by other users."""
+        client, _ = owner_with_point_clouds
         response = client.get(self.route())
         assert response.status_code == 200
 
-        pc_ids = [p["id"] for p in response.json()["point_clouds"]]
-        assert point_cloud_with_different_owner["id"] not in pc_ids
+        ids = [r["id"] for r in response.json()["point_clouds"]]
+        assert point_cloud_with_different_owner["id"] not in ids
 
-    def test_wildcard_excludes_owner_id(self, client, point_clouds_across_domains):
+    def test_wildcard_excludes_owner_id(self, owner_with_point_clouds):
         """Wildcard list does not expose owner_id."""
+        client, _ = owner_with_point_clouds
         response = client.get(self.route())
         assert response.status_code == 200
 
-        for pc in response.json()["point_clouds"]:
-            assert "owner_id" not in pc
+        for resource in response.json()["point_clouds"]:
+            assert "owner_id" not in resource
 
     @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
     @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
     def test_wildcard_sorting_matrix_returns_200(
-        self, client, point_clouds_across_domains, sort_by, sort_order
+        self, owner_with_point_clouds, sort_by, sort_order
     ):
         """Every sort field/direction combination is served (issue #321)."""
+        client, _ = owner_with_point_clouds
         url = f"{self.route()}?sort_by={sort_by}"
         if sort_order:
             url += f"&sort_order={sort_order}"

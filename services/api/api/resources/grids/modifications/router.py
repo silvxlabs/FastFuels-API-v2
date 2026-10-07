@@ -149,7 +149,7 @@ async def apply_grid_modifications(
 
     - `{"band": "...", "modifier": "replace|multiply|divide|add|subtract", "value": ...}`
     - Non-`replace` results are clamped at zero (grid bands are physical
-      quantities).
+      quantities), except on `elevation`, which can be negative.
 
     ## Response
 

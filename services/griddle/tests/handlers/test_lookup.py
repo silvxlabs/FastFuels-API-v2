@@ -42,7 +42,8 @@ ALL_FBFM13_KEYS = [91, 92, 93, 98, 99] + list(range(1, 14))
 # from Albini (1976) GTR INT-30 Table 7. Anderson's printed Table 1 drops the decimal
 # point on model 9's 10-hr load ("41"); Albini gives 0.019 lb/ft**2 = 0.41 t/ac, and
 # Anderson's model 9 description gives a < 3-inch total of 3.5 t/ac (2.92 + 0.41 + 0.15).
-# None = no live fuel in the source; the CSV's 9999 placeholder is not checked.
+# None = no live fuel in the source; the CSV carries BEHAVE's filler SAVR there
+# (see TestNoLoadSavrFillers).
 ANDERSON_13_REFERENCE = {
     key: dict(
         zip(
@@ -174,7 +175,7 @@ class TestFbfm13TableLoading:
         assert table["savr_1hr"][1] == pytest.approx(3500)
         assert table["savr_10hr"][1] == pytest.approx(109)
         assert table["savr_100hr"][1] == pytest.approx(30)
-        assert table["savr_live_foliage"][1] == pytest.approx(9999)
+        assert table["savr_live_foliage"][1] == pytest.approx(1500)
         assert table["fuel_depth"][1] == pytest.approx(1.0)
 
     def test_model2_values_match_source(self):
@@ -213,6 +214,50 @@ class TestFbfm13TableLoading:
             assert table["savr_100hr"][key] == pytest.approx(30), (
                 f"Model {key} savr_100hr should be 30, got {table['savr_100hr'][key]}"
             )
+
+
+class TestNoLoadSavrFillers:
+    """Live classes a model carries no load in use BEHAVE's SAVR, not 9999.
+
+    Scott & Burgan (2005) Table 7 prints 9999 1/ft where a class has no load,
+    which the lookup converted to a real-looking ~32,805 1/m (#635). BEHAVE
+    (firelab/behave src/behave/fuelModels.cpp) fills those cells with 1500
+    (GR live woody, all FBFM13), 1800 (live herb) and 1600 (TL/SB live woody).
+    """
+
+    SB40_FILLERS = {
+        "savr_live_herb": (
+            [142, 143, 145, 146, 147, 148, 162, 164, 165]
+            + list(range(181, 190))
+            + [201, 202, 203, 204],
+            1800,
+        ),
+        "savr_live_woody_gr": (list(range(101, 110)), 1500),
+        "savr_live_woody_tl_sb": (
+            [181, 182, 183, 184, 186, 187, 188, 201, 202, 203, 204],
+            1600,
+        ),
+    }
+
+    def test_no_table_carries_9999(self):
+        for table in (_load_sb40_table(), _load_fbfm13_table()):
+            for col, values in table.items():
+                assert not np.any(values == 9999), f"{col} carries 9999"
+
+    def test_sb40_fillers_match_behave(self):
+        table = _load_sb40_table()
+        for name, (keys, expected) in self.SB40_FILLERS.items():
+            col = "savr_live_herb" if "herb" in name else "savr_live_woody"
+            load_col = col.replace("savr", "fuel_load")
+            for key in keys:
+                assert table[load_col][key] == 0, f"{key} {load_col} not 0"
+                assert table[col][key] == pytest.approx(expected), f"{key} {col}"
+
+    def test_fbfm13_fillers_match_behave(self):
+        table = _load_fbfm13_table()
+        for key in [1, 3, 6, 8, 9, 11, 12, 13]:
+            assert table["fuel_load_live_foliage"][key] == 0
+            assert table["savr_live_foliage"][key] == pytest.approx(1500)
 
 
 class TestSb40TableLoading:
@@ -256,7 +301,7 @@ class TestSb40TableLoading:
         assert table["savr_10hr"][101] == pytest.approx(109)
         assert table["savr_100hr"][101] == pytest.approx(30)
         assert table["savr_live_herb"][101] == pytest.approx(2000)
-        assert table["savr_live_woody"][101] == pytest.approx(9999)
+        assert table["savr_live_woody"][101] == pytest.approx(1500)
         assert table["fuel_depth"][101] == pytest.approx(0.4)
 
     def test_savr_10hr_constant_109(self):

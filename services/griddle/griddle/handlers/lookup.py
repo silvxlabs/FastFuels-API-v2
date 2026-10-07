@@ -162,6 +162,9 @@ FCCS_BAND_KEY_TO_COLUMN = _band_key_to_column(FCCS_QUANTITY_COLUMNS)
 def _load_fbfm13_table() -> dict[str, np.ndarray]:
     """Load Anderson 13 lookup table from CSV into numpy arrays.
 
+    Live foliage SAVR for models with no live fuel is BEHAVE's 1500 1/ft
+    (firelab/behave fuelModels.cpp); Albini (1976) publishes none.
+
     Returns a dict mapping column name to a numpy array indexed by FBFM13
     key, indices 0 through MAX_FBFM13_KEY, with zeros for missing keys.
     """
@@ -186,6 +189,10 @@ def _load_fbfm13_table() -> dict[str, np.ndarray]:
 
 def _load_sb40_table() -> dict[str, np.ndarray]:
     """Load SB40 lookup table from CSV into numpy arrays.
+
+    Values follow Scott & Burgan (2005) Table 7, except live SAVR for classes
+    with no load: the table prints 9999 there, the CSV holds BEHAVE's values
+    (firelab/behave fuelModels.cpp).
 
     Returns a dict mapping column name to a numpy array indexed by FBFM key.
     Index 0 through MAX_FBFM40_KEY, with zeros for missing keys.

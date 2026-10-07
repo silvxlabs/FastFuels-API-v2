@@ -122,8 +122,7 @@ async def create_inventory_canopy_grid(
     - **alignment**: (optional) Output lattice. Against the domain (the
       default) `resolution` defaults to 30 m — an inventory has no native
       cell size to inherit. Against another grid, omitting `resolution`
-      matches that grid's lattice exactly. `target: "native"` is not
-      supported.
+      matches that grid's lattice exactly.
     - **bands**: (optional) Defaults to `["cbd", "cbh", "chm", "cc"]` — the
       four landscape-file canopy roles. Add `cfl` for canopy fuel load.
     - **biomass_source**: (optional) `allometry` with `nsvb` (default),
@@ -214,17 +213,6 @@ async def create_inventory_canopy_grid(
                 f"Inventory '{body.source_inventory_id}' is missing column(s) "
                 f"{sorted(missing_columns)} required by the selected canopy "
                 f"methods. " + " ".join(guidance)
-            ),
-        )
-
-    # An inventory has no source raster whose pixel anchor could be preserved.
-    if body.alignment.target == "native":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                "alignment.target 'native' is not supported for an inventory "
-                "source: there is no source raster whose pixel anchor could "
-                "be preserved. Use 'domain' or 'grid'."
             ),
         )
 

@@ -111,12 +111,28 @@ class TestRequestDefaults:
         with pytest.raises(ValidationError):
             make_request(unknown_field=1)
 
-    def test_native_alignment_target_accepted_by_schema_rejected_by_router(self):
-        # The schema accepts the shared alignment union; the router rejects
-        # `native` with a 422. Document the schema-level behaviour here so a
-        # future tightening is a deliberate change.
-        req = make_request(alignment={"target": "native"})
-        assert req.alignment.target == "native"
+    def test_native_alignment_target_rejected(self):
+        # An inventory has no source raster whose pixel anchor could be kept.
+        with pytest.raises(ValidationError):
+            make_request(alignment={"target": "native"})
+
+    @pytest.mark.parametrize(
+        "alignment",
+        [
+            {"target": "domain", "method": "bilinear"},
+            {"target": "grid", "grid_id": "g1", "method": "nearest"},
+        ],
+    )
+    def test_alignment_method_rejected(self, alignment):
+        # Cells are computed from tree crowns, never resampled.
+        with pytest.raises(ValidationError):
+            make_request(alignment=alignment)
+
+    def test_alignment_schema_has_no_method(self):
+        schema = CreateInventoryCanopyRequest.model_json_schema()
+        for name in ("GridLatticeDomainTarget", "GridLatticeGridTarget"):
+            assert "method" not in schema["$defs"][name]["properties"]
+            assert schema["$defs"][name]["additionalProperties"] is False
 
 
 class TestBands:

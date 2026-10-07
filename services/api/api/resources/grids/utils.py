@@ -19,15 +19,11 @@ from api.resources.grids.modification_models import (
     GridModification,
 )
 from api.resources.grids.schema import BandType, GridDataChunkMetadata
-from api.resources.modifications import (
-    Modifier,
-    stringify_modification_coordinates,
-)
+from api.resources.modifications import stringify_modification_coordinates
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
-from lib.grids import SIGNED_BANDS
 from lib.landfire import CoverageStatus, covers_annual, covers_seasonal
 
 
@@ -40,38 +36,8 @@ def dump_modifications_for_firestore(
     Firestore cannot store, so their coordinates are JSON-encoded on the way
     out (see ``stringify_modification_coordinates``). Mirrors the domains
     pattern; the read-back validator on ``Grid`` decodes them again.
-
-    Raises:
-        HTTPException(422): If a ``replace`` action sets a negative value on a
-            band other than ``SIGNED_BANDS``.
     """
-    _validate_replace_values(modifications)
     return stringify_modification_coordinates([m.model_dump() for m in modifications])
-
-
-def _validate_replace_values(modifications: list[GridModification]) -> None:
-    """Reject negative ``replace`` values on non-negative bands.
-
-    Checked at the write boundary rather than on the model so grids already
-    stored with such values still read back.
-    """
-    for modification in modifications:
-        for action in modification.actions:
-            value = action.value
-            if (
-                action.modifier == Modifier.replace
-                and isinstance(value, int | float)
-                and value < 0
-                and action.band not in SIGNED_BANDS
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=(
-                        f"Modification sets band {action.band!r} to {value}, but "
-                        "that band can't be negative. Modifications can't write "
-                        "nodata; use a value within the band's physical range."
-                    ),
-                )
 
 
 def validate_lfps_coverage(

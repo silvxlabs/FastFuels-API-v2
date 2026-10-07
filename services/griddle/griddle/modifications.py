@@ -28,7 +28,10 @@ from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.domain_utils import buffer_gdf
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
-from lib.grids import SIGNED_BANDS
+
+# Bands that can legitimately be negative (elevation below sea level), so
+# arithmetic results on them are not clamped at zero.
+SIGNED_BANDS = frozenset({"elevation"})
 
 OPERATOR_MAP: dict[str, Callable] = {
     "eq": operator.eq,

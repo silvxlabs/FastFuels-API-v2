@@ -10,9 +10,7 @@ from unittest.mock import patch
 
 import pytest
 from api.resources.exports.schema import GridExportFormat
-from api.resources.grids.modification_models import GridModification
 from api.resources.grids.utils import (
-    dump_modifications_for_firestore,
     validate_format_supports_grid,
     validate_grids_share_horizontal_lattice,
     validate_lfps_coverage,
@@ -233,33 +231,3 @@ class TestValidateFormatSupportsGrid:
                     validate_lfps_coverage("fbfm40", "2024", self._domain())
             assert "doesn't currently cover this domain's location" in exc.value.detail
             assert "landfire.gov/data" in exc.value.detail
-
-
-def _modifications(band, value, modifier="replace"):
-    return [
-        GridModification(
-            conditions=[],
-            actions=[{"band": band, "modifier": modifier, "value": value}],
-        )
-    ]
-
-
-class TestDumpModificationsRejectsNegativeReplace:
-    @pytest.mark.parametrize("band", ["slope", "aspect", "fuel_load.1hr", "fbfm"])
-    def test_negative_replace_rejected(self, band):
-        with pytest.raises(HTTPException) as exc:
-            dump_modifications_for_firestore(_modifications(band, -9999))
-        assert exc.value.status_code == 422
-        assert band in exc.value.detail
-
-    def test_negative_replace_on_elevation_allowed(self):
-        out = dump_modifications_for_firestore(_modifications("elevation", -50.0))
-        assert out[0]["actions"][0]["value"] == -50.0
-
-    def test_zero_and_positive_replace_allowed(self):
-        dump_modifications_for_firestore(_modifications("slope", 0))
-        dump_modifications_for_firestore(_modifications("slope", 35.5))
-
-    def test_negative_arithmetic_operand_allowed(self):
-        # Arithmetic results are clamped by griddle; a negative operand is fine.
-        dump_modifications_for_firestore(_modifications("fuel_load.1hr", -0.5, "add"))

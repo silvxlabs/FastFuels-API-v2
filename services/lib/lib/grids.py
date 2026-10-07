@@ -6,11 +6,6 @@ from math import ceil
 AXES_2D = ("y", "x")
 AXES_3D = ("z", "y", "x")
 
-# Grid bands are non-negative physical quantities except these. Modifications
-# clamp arithmetic results to >= 0 and reject negative `replace` values on
-# every other band.
-SIGNED_BANDS = frozenset({"elevation"})
-
 
 def compute_chunks_doc(
     grid_shape: Sequence[int],

@@ -374,10 +374,12 @@ def handle_resample(
     source_grid_doc = source_snapshot.to_dict()
     band_types = {b["key"]: b["type"] for b in source_grid_doc.get("bands", [])}
 
-    # Derive bands from source and write back before summarize runs.
+    # Derive bands from source and write back before summarize runs. summary
+    # and nodata describe the source pixels; main.py recomputes both from the
+    # resampled data (reproject can assign a nodata the source lacked).
     source_bands = source_grid_doc.get("bands", [])
     bands = [
-        {"key": b["key"], "type": b["type"], "unit": b.get("unit"), "index": b["index"]}
+        {k: v for k, v in b.items() if k not in ("summary", "nodata")}
         for b in source_bands
     ]
     update_grid_metadata(grid["id"], {"bands": bands})

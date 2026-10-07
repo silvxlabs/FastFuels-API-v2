@@ -149,7 +149,8 @@ async def apply_grid_modifications(
 
     - `{"band": "...", "modifier": "replace|multiply|divide|add|subtract", "value": ...}`
     - Non-`replace` results are clamped at zero (grid bands are physical
-      quantities).
+      quantities), except on `elevation`, which can be negative.
+    - `replace` values can't be negative, except on `elevation`.
 
     ## Response
 
@@ -172,7 +173,8 @@ async def apply_grid_modifications(
       (and is not a retryable failed modification); the grid is a 3D voxel
       grid (apply modifications to the source tree inventory and re-voxelize
       instead); a referenced `feature_id` is missing, cross-domain, or not
-      completed; or a referenced band does not exist on this grid.
+      completed; a referenced band does not exist on this grid; or a
+      `replace` action sets a negative value on a band other than `elevation`.
     - **429 Too Many Requests**: You have too many active grid jobs in progress
       (your `max_active_grids` quota). Wait for jobs to complete or delete
       unneeded grids, then retry. The response detail names the exact `quota`

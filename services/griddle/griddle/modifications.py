@@ -28,6 +28,7 @@ from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.domain_utils import buffer_gdf
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
+from lib.grids import SIGNED_BANDS
 
 OPERATOR_MAP: dict[str, Callable] = {
     "eq": operator.eq,
@@ -331,8 +332,9 @@ def _apply_action(ds: xr.Dataset, action: dict, mask: np.ndarray) -> None:
     # Grid bands today are physical quantities (loads, depths, moistures,
     # heights, savr) that can't be negative. Mirrors v1 surfer's
     # np.maximum(data, 0). Skipped for `replace` since the user is setting
-    # the value explicitly.
-    if modifier != "replace":
+    # the value explicitly, and for signed bands (elevation can be below sea
+    # level).
+    if modifier != "replace" and band_key not in SIGNED_BANDS:
         target[mask] = np.maximum(target[mask], 0)
 
 

@@ -853,6 +853,53 @@ class TestHandleResample:
         call_kwargs = mock_resample_grid.call_args[1]
         assert call_kwargs["method_overrides"] == {}
 
+    @patch("griddle.dispatch.update_grid_metadata")
+    @patch("griddle.dispatch.get_document")
+    @patch("griddle.dispatch.resample.resample_grid")
+    def test_preserves_source_band_metadata(
+        self, mock_resample_grid, mock_get_doc, mock_update_metadata
+    ):
+        """Resampled bands keep the source's name/description (#637); summary
+        and nodata are left for main.py to recompute from the resampled data."""
+        snapshot = MagicMock()
+        snapshot.to_dict.return_value = {
+            "bands": [
+                {
+                    "key": "fbfm",
+                    "name": "Fire Behavior Fuel Model 40",
+                    "description": "Scott and Burgan fuel model code.",
+                    "type": "categorical",
+                    "unit": None,
+                    "index": 0,
+                    "nodata": 32767,
+                    "summary": {"min": 91, "max": 204},
+                }
+            ],
+        }
+        mock_get_doc.return_value = (MagicMock(), snapshot)
+        source = {
+            "source_grid_id": "src-id",
+            "alignment": {"target": "domain", "resolution": 10.0},
+        }
+        grid = {"id": "test-grid-id", "source": source}
+
+        handle_resample(grid, MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+
+        expected = [
+            {
+                "key": "fbfm",
+                "name": "Fire Behavior Fuel Model 40",
+                "description": "Scott and Burgan fuel model code.",
+                "type": "categorical",
+                "unit": None,
+                "index": 0,
+            }
+        ]
+        mock_update_metadata.assert_called_once_with(
+            "test-grid-id", {"bands": expected}
+        )
+        assert grid["bands"] == expected
+
 
 class TestDispatchHandlerUniform:
     """Tests for dispatch_handler routing to uniform."""

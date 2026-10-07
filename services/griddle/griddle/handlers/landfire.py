@@ -43,7 +43,8 @@ LANDFIRE_CANOPY_SCALE_FACTORS: dict[str, float] = {
 # simply wrong and -9999 was the real sentinel throughout. From 2024 on,
 # the declared value is correct but -9999 still shows up alongside it.
 # Either way, both are unified onto the declared value at fetch time so
-# downstream code can trust rio.nodata.
+# downstream code can trust rio.nodata. The fold must happen before
+# reprojection, or resampling blends -9999 into valid neighbours.
 LANDFIRE_EXTRA_NODATA: int = -9999
 
 
@@ -103,6 +104,7 @@ def _fetch_landfire_raster(
             roi=roi,
             interpolation_padding_cells=extent_buffer_cells,
             resampling=RESAMPLING_METHOD_MAP[method_name],
+            extra_nodata=LANDFIRE_EXTRA_NODATA,
             destination_resolution=alignment.get("resolution")
             if alignment["target"] == "native"
             else None,

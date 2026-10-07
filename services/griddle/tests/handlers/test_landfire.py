@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import geopandas as gpd
 import numpy as np
 import pytest
+import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.landfire import (
@@ -24,6 +25,8 @@ from griddle.handlers.landfire import (
     fetch_topography,
     scatter_categorical_boundaries,
 )
+from rasterio.transform import from_origin
+from shapely.geometry import box
 
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 
@@ -185,6 +188,68 @@ class TestFetchLandfireRasterNodataConsolidation:
         # every cell should now read 55 — the -9999 cells were the ones that
         # moved, not the cells that were already 55
         np.testing.assert_array_equal(result.values, [[55, 55], [55, 55]])
+
+
+class TestFetchLandfireRasterCoastalEdge:
+    """-9999 must be nodata before reprojection, or bilinear blends it into
+    neighbouring valid cells (#634)."""
+
+    DECLARED = 32767
+    VALID = 45
+
+    @pytest.fixture
+    def coastal_raster(self, tmp_path):
+        """30 m EPSG:5070 raster: west half -9999 (ocean), east half valid."""
+        values = np.full((40, 40), self.VALID, dtype=np.int16)
+        values[:, :20] = LANDFIRE_EXTRA_NODATA
+        path = tmp_path / "coastal.tif"
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            height=40,
+            width=40,
+            count=1,
+            dtype="int16",
+            crs="EPSG:5070",
+            transform=from_origin(0.0, 1200.0, 30.0, 30.0),
+            nodata=self.DECLARED,
+        ) as dst:
+            dst.write(values, 1)
+        return str(path)
+
+    @pytest.mark.parametrize(
+        ("roi_crs", "alignment"),
+        [
+            # Domain-anchored lattice shifted 7 m off the source lattice.
+            ("EPSG:5070", {"target": "domain"}),
+            # CRS-only override at a finer resolution.
+            ("EPSG:5070", {"target": "native", "resolution": 10.0}),
+            # Default path: reproject into the ROI's CRS.
+            ("EPSG:32614", {"target": "native"}),
+        ],
+        ids=["domain", "native-resolution", "native-reproject"],
+    )
+    def test_sentinel_not_blended_across_edge(self, coastal_raster, roi_crs, alignment):
+        roi = gpd.GeoDataFrame(
+            geometry=[box(307.0, 307.0, 907.0, 907.0)], crs="EPSG:5070"
+        ).to_crs(roi_crs)
+
+        result = _fetch_landfire_raster(
+            roi,
+            coastal_raster,
+            extent_buffer_cells=0,
+            alignment=alignment,
+            target_grid_doc=None,
+            is_categorical=False,
+        )
+
+        values = result.values
+        valid = values[values != result.rio.nodata]
+        assert result.rio.nodata == self.DECLARED
+        assert (values == self.DECLARED).any()
+        assert valid.size > 0
+        np.testing.assert_array_equal(np.unique(valid), [self.VALID])
 
 
 class TestNeedsLfps:

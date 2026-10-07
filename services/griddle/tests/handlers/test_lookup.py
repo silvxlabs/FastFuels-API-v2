@@ -38,6 +38,43 @@ from lib.zarr_utils import load_zarr, save_zarr
 
 ALL_FBFM13_KEYS = [91, 92, 93, 98, 99] + list(range(1, 14))
 
+# Anderson (1982) GTR INT-122 Table 1 (loads t/ac, depth ft), with SAVR (1/ft)
+# from Albini (1976) GTR INT-30 Table 7. Anderson's printed Table 1 drops the decimal
+# point on model 9's 10-hr load ("41"); Albini gives 0.019 lb/ft**2 = 0.41 t/ac, and
+# Anderson's model 9 description gives a < 3-inch total of 3.5 t/ac (2.92 + 0.41 + 0.15).
+# None = no live fuel in the source; the CSV's 9999 placeholder is not checked.
+ANDERSON_13_REFERENCE = {
+    key: dict(
+        zip(
+            [
+                "fuel_load_1hr",
+                "fuel_load_10hr",
+                "fuel_load_100hr",
+                "fuel_load_live_foliage",
+                "savr_1hr",
+                "savr_live_foliage",
+                "fuel_depth",
+            ],
+            values,
+        )
+    )
+    for key, values in {
+        1: (0.74, 0.00, 0.00, 0.00, 3500, None, 1.0),
+        2: (2.00, 1.00, 0.50, 0.50, 3000, 1500, 1.0),
+        3: (3.01, 0.00, 0.00, 0.00, 1500, None, 2.5),
+        4: (5.01, 4.01, 2.00, 5.01, 2000, 1500, 6.0),
+        5: (1.00, 0.50, 0.00, 2.00, 2000, 1500, 2.0),
+        6: (1.50, 2.50, 2.00, 0.00, 1750, None, 2.5),
+        7: (1.13, 1.87, 1.50, 0.37, 1750, 1550, 2.5),
+        8: (1.50, 1.00, 2.50, 0.00, 2000, None, 0.2),
+        9: (2.92, 0.41, 0.15, 0.00, 2500, None, 0.2),
+        10: (3.01, 2.00, 5.01, 2.00, 2000, 1500, 1.0),
+        11: (1.50, 4.51, 5.51, 0.00, 1500, None, 1.0),
+        12: (4.01, 14.03, 16.53, 0.00, 1500, None, 2.3),
+        13: (7.01, 23.04, 28.05, 0.00, 1500, None, 3.0),
+    }.items()
+}
+
 ALL_FBFM40_KEYS = [
     91,
     92,
@@ -149,6 +186,17 @@ class TestFbfm13TableLoading:
         assert table["fuel_load_live_foliage"][2] == pytest.approx(0.50)
         assert table["savr_live_foliage"][2] == pytest.approx(1500)
         assert table["fuel_depth"][2] == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("key", sorted(ANDERSON_13_REFERENCE))
+    def test_burnable_models_match_anderson_1982(self, key):
+        """Burnable model parameters match Anderson (1982) Table 1 / Albini (1976) Table 7."""
+        table = _load_fbfm13_table()
+        for column, expected in ANDERSON_13_REFERENCE[key].items():
+            if expected is None:
+                continue
+            assert table[column][key] == pytest.approx(expected), (
+                f"Model {key} {column}: expected {expected}, got {table[column][key]}"
+            )
 
     def test_savr_10hr_constant_109(self):
         """All burnable models have savr_10hr = 109 1/ft."""

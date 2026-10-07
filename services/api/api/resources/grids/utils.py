@@ -13,6 +13,8 @@ from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.alignment import (
     GridAlignmentGridTarget,
     GridAlignmentSpecification,
+    GridLatticeGridTarget,
+    GridLatticeSpecification,
 )
 from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
@@ -344,7 +346,7 @@ def validate_format_supports_grid(
 
 
 async def validate_target_grid_alignment(
-    alignment: GridAlignmentSpecification,
+    alignment: GridAlignmentSpecification | GridLatticeSpecification,
     owner_id: str,
     domain_id: str,
 ) -> None:
@@ -361,7 +363,7 @@ async def validate_target_grid_alignment(
         HTTPException(422): Target grid is not completed or has no
             georeference.
     """
-    if not isinstance(alignment, GridAlignmentGridTarget):
+    if not isinstance(alignment, GridAlignmentGridTarget | GridLatticeGridTarget):
         return
     _, snapshot = await get_document_async(
         GRIDS_COLLECTION,

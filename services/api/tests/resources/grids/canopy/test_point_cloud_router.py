@@ -341,7 +341,22 @@ class TestAlignment:
         )
 
         assert response.status_code == 422
-        assert "native" in response.json()["detail"]
+        assert "native" in str(response.json()["detail"])
+
+    def test_alignment_method_returns_422(
+        self, client, domain_for_testing, als_point_cloud
+    ):
+        """Returns are binned onto cells, so there is nothing to resample."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_point_cloud_id": als_point_cloud["id"],
+                "alignment": {"target": "domain", "method": "bilinear"},
+            },
+        )
+
+        assert response.status_code == 422
+        assert "method" in str(response.json()["detail"])
 
     def test_omitted_resolution_is_resolved_and_persisted(
         self, client, domain_for_testing, als_point_cloud

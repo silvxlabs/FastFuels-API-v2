@@ -317,7 +317,20 @@ class TestInventoryCanopyValidation:
             },
         )
         assert response.status_code == 422
-        assert "native" in response.json()["detail"]
+        assert "native" in str(response.json()["detail"])
+
+    def test_rejects_alignment_method(
+        self, client, domain_for_testing, tree_inventory_for_canopy
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_inventory_id": tree_inventory_for_canopy["id"],
+                "alignment": {"target": "domain", "method": "bilinear"},
+            },
+        )
+        assert response.status_code == 422
+        assert "method" in str(response.json()["detail"])
 
     def test_rejects_inventory_in_other_domain(
         self, client, domain_for_testing, tree_inventory_in_other_domain

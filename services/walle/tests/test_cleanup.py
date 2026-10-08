@@ -253,8 +253,38 @@ def test_orphan_blob_diff_and_recheck(monkeypatch):
         lambda refs: [_Snap(r.id, r.id == "b") for r in refs],
     )
 
+    monkeypatch.setattr(cleanup, "artifact_mtime", lambda _p: NOW - timedelta(days=5))
+
     # "live" is filtered by the id set; "b" is spared by the re-check; only "a".
-    assert find_orphan_blobs(layout, artifacts, {"live"}) == {"a": "b/a"}
+    assert find_orphan_blobs(layout, artifacts, {"live"}, NOW) == {"a": "b/a"}
+
+
+def test_orphan_blob_spares_staging_dirs_and_young_artifacts(monkeypatch):
+    # #647: standgen's "<id>__rev" staging prefix never has a doc and may be the
+    # only surviving copy after INVENTORY_REWRITE_INCOMPLETE, so it is never an
+    # orphan however old. Doc-less test fixtures mid-run are young, so a recent
+    # GCS write spares them.
+    layout = next(x for x in RESOURCE_LAYOUTS if x.name == "inventories")
+    ages = {"i/old": 5, "i/old__rev": 30, "i/young": 0.01}
+    monkeypatch.setattr(cleanup.firestore_client, "get_all", lambda refs: [])
+    monkeypatch.setattr(
+        cleanup, "artifact_mtime", lambda p: NOW - timedelta(days=ages[p])
+    )
+    artifacts = {"old": "i/old", "old__rev": "i/old__rev", "young": "i/young"}
+    assert find_orphan_blobs(layout, artifacts, set(), NOW) == {"old": "i/old"}
+
+
+def test_artifact_mtime_is_newest_object(monkeypatch):
+    class _FS:
+        def find(self, path, detail):
+            assert detail
+            return {
+                f"{path}/a": {"mtime": NOW - timedelta(days=3)},
+                f"{path}/b": {"mtime": NOW - timedelta(hours=1)},
+            }
+
+    monkeypatch.setattr(layouts, "get_gcsfs_client", lambda: _FS())
+    assert layouts.artifact_mtime("bucket/x") == NOW - timedelta(hours=1)
 
 
 def test_exports_layout_exempt_from_orphan_docs():
@@ -272,7 +302,7 @@ def test_static_test_fixtures_protected_both_directions(monkeypatch):
     # orphan — the empty result proves it was excluded before the re-check.
     monkeypatch.setattr(cleanup.firestore_client, "get_all", lambda refs: [])
     artifacts = {"static-test-blue-mtn": "b/static-test-blue-mtn"}
-    assert find_orphan_blobs(layout, artifacts, set()) == {}
+    assert find_orphan_blobs(layout, artifacts, set(), NOW) == {}
 
     # A static-test doc must not be reaped as an orphaned child (domain gone)...
     orphan = rec(

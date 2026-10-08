@@ -8,11 +8,20 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.features.schema import FeatureType
 from api.resources.grids.rasterize.layerset.examples import (
     CREATE_LAYERSET_RASTERIZE_OPENAPI_EXAMPLES,
 )
@@ -98,12 +107,21 @@ async def create_layerset_rasterize(
     # Validate the referenced layerset exists, is owned by the caller, and
     # belongs to this domain. get_document_async raises 404 on any mismatch
     # (existence, owner, domain).
-    await get_document_async(
+    _, feature_snapshot = await get_document_async(
         FEATURES_COLLECTION,
         body.layerset_id,
         owner_id=owner_id,
         domain_id=domain_id,
     )
+    feature_type = feature_snapshot.to_dict().get("type")
+    if feature_type != FeatureType.layerset.value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Feature '{body.layerset_id}' has type '{feature_type}'. "
+                f"This endpoint requires a layerset Feature."
+            ),
+        )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

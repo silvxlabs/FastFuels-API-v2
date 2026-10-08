@@ -51,7 +51,8 @@ def apply_modifications(
     """Apply every modification rule to ``ds`` and return it.
 
     The Dataset is mutated in place — the return value is the same object,
-    returned for caller convenience.
+    returned for caller convenience. A lazy (dask-backed) Dataset is loaded
+    into memory first, since in-place edits on a lazy array are discarded.
 
     Args:
         ds: Result Dataset from ``dispatch_handler`` (rio-extended).
@@ -60,6 +61,7 @@ def apply_modifications(
             feature-reference condition resolves to a Feature in the same
             domain.
     """
+    ds.load()
     feature_cache: dict[tuple[str, float], object] = {}
     for mod in modifications:
         _apply_single_modification(ds, mod, domain_id, feature_cache)

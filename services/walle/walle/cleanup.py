@@ -51,6 +51,7 @@ from walle.config import (
 from walle.layouts import (
     RESOURCE_LAYOUTS,
     ResourceLayout,
+    artifact_mtime,
     artifact_path,
     delete_artifacts,
     list_artifact_ids,
@@ -59,8 +60,10 @@ from walle.layouts import (
 logger = logging.getLogger(__name__)
 
 # Lifecycle defaults mirror api/quota.py Quotas / TIER_PRESETS. The ONLY tier
-# rule that changes a TTL is that the application tier never expires; everything
-# else uses the standard defaults plus any per-owner quota_overrides. Kept as a
+# rules that change a TTL are that the application tier never expires and the
+# guest tier gets 1 day (clamped to TTL_FLOOR_DAYS; anonymous owners are reaped
+# separately by find_guest_expired); everything else uses the standard defaults
+# plus any per-owner quota_overrides. Pinned to api/quota.py by a test. Kept as a
 # small local copy rather than importing the api package into walle's image
 # (neither service depends on the other) — keep these values in sync with
 # api/quota.py by hand.
@@ -68,7 +71,10 @@ FAILED_STATUS = "failed"
 DEFAULT_RESOURCE_TTL_DAYS = 180
 DEFAULT_FAILED_RESOURCE_TTL_DAYS = 14
 _DEFAULT_TTLS = (DEFAULT_RESOURCE_TTL_DAYS, DEFAULT_FAILED_RESOURCE_TTL_DAYS)
-_TIER_TTL_OVERRIDES: dict[str, dict] = {"application": {"resource_ttl_days": None}}
+_TIER_TTL_OVERRIDES: dict[str, dict] = {
+    "application": {"resource_ttl_days": None},
+    "guest": {"resource_ttl_days": 1},
+}
 
 # Firestore fields the single scan projects — everything the categories need.
 _SCAN_FIELDS = [
@@ -422,7 +428,10 @@ def find_stale_test(records: list[Record], now: datetime) -> list[Record]:
 
 
 def find_orphan_blobs(
-    layout: ResourceLayout, artifacts: dict[str, str], live_ids: set[str]
+    layout: ResourceLayout,
+    artifacts: dict[str, str],
+    live_ids: set[str],
+    now: datetime,
 ) -> dict[str, str]:
     """Artifact id -> path for artifacts whose owning doc is gone.
 
@@ -432,10 +441,22 @@ def find_orphan_blobs(
     always written before their GCS, so "artifact, no doc" is otherwise a
     reliable orphan signal. The re-check is batched — a mostly-orphaned bucket
     can have thousands of candidates.
+
+    Ids containing ``__`` are worker staging prefixes (standgen's
+    ``<id>__rev``), not resource ids, and are never reaped. Confirmed orphans
+    written within ``ORPHAN_MIN_AGE_HOURS`` are spared, so doc-less test
+    fixtures are not reaped mid-run.
     """
-    candidate_ids = [i for i in set(artifacts) - live_ids if not _is_protected(i)]
+    candidate_ids = [
+        i for i in set(artifacts) - live_ids if not _is_protected(i) and "__" not in i
+    ]
     still_live = _existing_ids(layout.collection, candidate_ids)
-    return {i: artifacts[i] for i in candidate_ids if i not in still_live}
+    cutoff = now - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
+    return {
+        i: artifacts[i]
+        for i in candidate_ids
+        if i not in still_live and _older_than(artifact_mtime(artifacts[i]), cutoff)
+    }
 
 
 # --- reaping --------------------------------------------------------------
@@ -567,7 +588,7 @@ def run() -> dict:
         ]
 
         artifacts = list_artifact_ids(layout)
-        orphan_blobs = find_orphan_blobs(layout, artifacts, live_ids)
+        orphan_blobs = find_orphan_blobs(layout, artifacts, live_ids, now)
 
         logger.info(
             "%s: %d docs, %d artifacts | orphan_blobs=%d orphan_docs=%d expired=%d guest=%d test=%d",

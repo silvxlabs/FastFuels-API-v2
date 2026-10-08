@@ -165,6 +165,7 @@ async def create_gdam_inventory(
 
     inventory_data = {
         "id": inventory_id,
+        "checksum": uuid.uuid4().hex,
         "domain_id": domain_id,
         "type": body.type.value,
         "name": body.name,

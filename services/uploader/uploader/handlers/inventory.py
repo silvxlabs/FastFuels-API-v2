@@ -7,6 +7,7 @@ against the inventory schema, and writes Parquet to INVENTORIES_BUCKET.
 
 import math
 import os
+from contextlib import suppress
 from datetime import UTC, datetime
 
 import dask.dataframe as dd
@@ -18,7 +19,7 @@ from pandera.typing import Series
 
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_BUCKET, INVENTORIES_COLLECTION
 from lib.domain_utils import parse_domain_gdf
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import get_document
 from lib.gcs import delete_file, download_file, storage_size
 from uploader.main import update_resource
@@ -165,11 +166,16 @@ def handle_inventory(
             },
         )
 
-    finally:
-        try:
+    except (ProcessingError, CancelledException, FileNotFoundError):
+        # Terminal in main.py. Any other error is retried by Eventarc and the
+        # retry needs the upload, so it is kept.
+        with suppress(Exception):
             delete_file(f"gs://{bucket}/{object_name}")
-        except Exception:
-            pass
+        raise
+    else:
+        with suppress(Exception):
+            delete_file(f"gs://{bucket}/{object_name}")
+    finally:
         if os.path.exists(local_path):
             os.remove(local_path)
 

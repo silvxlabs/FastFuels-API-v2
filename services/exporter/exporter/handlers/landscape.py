@@ -18,7 +18,7 @@ LCP-to-GeoTIFF transition memo):
 - All bands int16 with the LANDFIRE scaled encodings: canopy height and
   canopy base height in meters x 10, canopy bulk density in kg/m**3 x 100;
   everything else unscaled (m / deg / % / categorical codes).
-- Nodata -9999; NaN cells become nodata.
+- Nodata -9999; NaN and source-nodata cells become nodata.
 - Band identity mirrors the mechanism LFPS-produced landscapes use (band
   description + a ``BandName`` GDAL metadata tag, readable by GDAL/QGIS,
   ignored by ESRI), plus a ``Units`` tag since LANDFIRE's units are
@@ -36,6 +36,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+import rioxarray  # noqa: F401
 import xarray as xr
 from google.cloud import storage as gcs_storage
 from rasterio.transform import Affine
@@ -48,6 +49,8 @@ from lib.config import EXPORTS_BUCKET
 logger = logging.getLogger(__name__)
 
 _NODATA = -9999
+# LANDFIRE aspect declares flat (-1) as nodata; landscapes encode it as -1.
+_FLAT_ASPECT = -1
 
 # (role, layer name, units label, scale factor) in LANDFIRE band order.
 # The fuel model units label is filled per-request from
@@ -85,7 +88,7 @@ def export_landscape(
 
     grid_cache: dict[str, xr.Dataset] = {}
 
-    def load_band(role: dict) -> np.ndarray:
+    def load_band(role: dict, keep_nodata: float | None = None) -> np.ndarray:
         """Load a band, crop to the landscape extent, return a float64 array.
 
         The validator already enforced lattice alignment and coverage, so the
@@ -111,7 +114,11 @@ def export_landscape(
                 message=f"Band '{band}' not found in grid {grid_id}",
                 suggestion=f"Available bands: {list(ds.data_vars)}",
             )
-        arr = ds[band].transpose("y", "x").values.astype(np.float64, copy=False)
+        da = ds[band].transpose("y", "x")
+        raw = da.values
+        arr = raw.astype(np.float64)
+        if da.rio.nodata is not None and da.rio.nodata != keep_nodata:
+            arr[raw == da.rio.nodata] = np.nan
 
         # x coords ascend (west→east), y coords descend (north→south).
         # Coordinates are cell centers; offset back to cell origin by half a cell.
@@ -126,7 +133,8 @@ def export_landscape(
     progress("Loading and encoding bands...", 20)
     bands: list[tuple[np.ndarray, str, str]] = []
     for role_name, layer_name, units, scale in _BAND_SPECS:
-        raw = load_band(source[role_name])
+        keep = _FLAT_ASPECT if role_name == "aspect" else None
+        raw = load_band(source[role_name], keep_nodata=keep)
         scaled = np.rint(raw * scale)
         encoded = np.where(
             np.isnan(scaled),

@@ -249,6 +249,25 @@ class TestFetchLayerset:
         for name in ds.data_vars:
             assert ds[name].dims == ("band", "y", "x")
 
+    def test_random_distributions_are_reproducible(self):
+        """Repeated runs on the same layerset give identical rasters."""
+
+        def _run():
+            with _patch_read_parquet_with_fixture():
+                return fetch_layerset(
+                    domain_gdf=MagicMock(),
+                    layerset_id="abc123",
+                    domain_id="dom-xyz",
+                    overlap_method="mean",
+                    progress=MagicMock(),
+                    alignment={"target": "native"},
+                    target_grid_doc=None,
+                )
+
+        first, second = _run(), _run()
+        for name in first.data_vars:
+            np.testing.assert_array_equal(first[name].values, second[name].values)
+
     def test_domain_alignment_reprojects_to_destination(self, monkeypatch):
         """alignment.target='domain' triggers per-variable post-process reproject."""
         _patch_dest(monkeypatch)

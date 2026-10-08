@@ -26,6 +26,7 @@ than it looks: the copy path already decoded every point to census it, so what
 is added is the encode, not the decode.
 """
 
+from contextlib import suppress
 from datetime import UTC, datetime
 
 import laspy
@@ -38,7 +39,7 @@ from lib.config import (
     POINT_CLOUDS_BUCKET,
     POINT_CLOUDS_COLLECTION,
 )
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import get_document
 from lib.gcs import delete_file, get_gcsfs_client
 from lib.laz import (
@@ -98,11 +99,15 @@ def handle_point_cloud(
                 "progress": {"message": "Complete", "percent": 100},
             },
         )
-    finally:
-        try:
+    except (ProcessingError, CancelledException, FileNotFoundError):
+        # Terminal in main.py. Any other error is retried by Eventarc and the
+        # retry needs the upload, so it is kept.
+        with suppress(Exception):
             delete_file(f"gs://{bucket}/{object_name}")
-        except Exception:
-            pass
+        raise
+    else:
+        with suppress(Exception):
+            delete_file(f"gs://{bucket}/{object_name}")
 
 
 def _domain_crs_name(domain_id: str) -> str:

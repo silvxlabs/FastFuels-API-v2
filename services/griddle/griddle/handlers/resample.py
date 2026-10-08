@@ -56,7 +56,7 @@ def resample_grid(
 
     try:
         source_ds = load_zarr(source_grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="SOURCE_GRID_NOT_FOUND",
             message=f"Could not load source grid {source_grid_id}: {e}",
@@ -116,6 +116,6 @@ def resample_grid(
     progress("Resample complete.", 80)
 
     ds = xr.Dataset(resampled_vars)
-    ds = ds.rio.write_crs(crs)
+    ds = ds.rio.write_crs(next(iter(resampled_vars.values())).rio.crs)
     ds = ds.rio.write_transform()
     return ds

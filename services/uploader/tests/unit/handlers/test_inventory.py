@@ -22,7 +22,7 @@ from uploader.handlers.inventory import (
     _write_parquet,
 )
 
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
 
 # Domain CRS used across tests (UTM zone 10N — matches typical California domains)
 DOMAIN_CRS = "EPSG:32610"
@@ -576,3 +576,30 @@ class TestHandleInventoryTreeIds:
             )
         assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
         assert "field_uniqueness" in exc_info.value.suggestion
+
+
+@pytest.mark.parametrize(
+    "error, deleted",
+    [
+        (ProcessingError(code="X", message="x"), True),
+        (CancelledException(), True),
+        (FileNotFoundError(), True),
+        (RuntimeError("transient"), False),
+    ],
+)
+def test_staged_upload_kept_only_for_retry(monkeypatch, error, deleted):
+    """main.py re-raises unexpected errors for an Eventarc retry, which re-reads the upload."""
+    deletes = []
+
+    def fail(*args):
+        raise error
+
+    monkeypatch.setattr(inventory, "download_file", lambda src, dst: None)
+    monkeypatch.setattr(inventory, "get_document", fail)
+    monkeypatch.setattr(inventory, "delete_file", deletes.append)
+    doc = {"domain_id": "d", "source": {"format": "csv"}}
+
+    with pytest.raises(type(error)):
+        inventory.handle_inventory("inv", "bucket", "inventories/inv/up.csv", doc)
+
+    assert deletes == (["gs://bucket/inventories/inv/up.csv"] if deleted else [])

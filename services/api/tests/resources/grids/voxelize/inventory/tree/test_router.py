@@ -26,11 +26,11 @@ def tree_inventory_for_voxelization(firestore_client, domain_for_testing):
         status="completed",
         inventory_type="tree",
     )
-    # Biomass columns the documented example and tests read.
+    # Biomass and crown-radius columns the documented examples and tests read.
     inventory_data["columns"] += [
         {"key": key, "type": "continuous", "unit": "kg"}
         for key in ("foliage_biomass", "my_fuel_load_col")
-    ]
+    ] + [{"key": "max_crown_radius", "type": "continuous", "unit": "m"}]
     doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
         inventory_data["id"]
     )
@@ -353,6 +353,35 @@ class TestCreateTreeInventoryGrid:
             assert "null" in detail
             assert "'crown_ratio'" in detail
             assert "allometry/gdam" in detail
+        finally:
+            doc_ref.delete()
+
+    def test_missing_crown_radius_column_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory without crown_radius",
+            status="completed",
+            inventory_type="tree",
+        )
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inv["id"]
+        )
+        doc_ref.set(inv)
+        try:
+            body = {
+                "source_inventory_id": inv["id"],
+                "resolution": {"horizontal": 2.0, "vertical": 1.0},
+                "bands": ["bulk_density.foliage.live"],
+                "max_crown_radius_source": {
+                    "type": "inventory_column",
+                    "column": "crown_radius",
+                },
+            }
+            response = client.post(self.route(domain_for_testing["id"]), json=body)
+            assert response.status_code == 422
+            assert "'crown_radius'" in response.json()["detail"]
         finally:
             doc_ref.delete()
 

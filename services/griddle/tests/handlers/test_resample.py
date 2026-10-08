@@ -23,8 +23,10 @@ import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.resample import resample_grid
+from pyproj import Transformer
 from shapely.geometry import box
 
+from lib.crs import crs_equal
 from lib.errors import ProcessingError
 from lib.zarr_utils import load_zarr, save_zarr
 
@@ -304,6 +306,23 @@ class TestResampleGrid:
         assert exc_info.value.code == "SOURCE_GRID_NOT_FOUND"
 
     @patch("griddle.handlers.resample.load_zarr")
+    def test_other_load_errors_propagate(self, mock_load_zarr):
+        """Non-missing load errors are not terminal ProcessingErrors."""
+        mock_load_zarr.side_effect = OSError("transient")
+
+        with pytest.raises(OSError, match="transient") as exc_info:
+            resample_grid(
+                source_grid_id="grid",
+                alignment=_native_alignment(10.0),
+                method_overrides={},
+                domain_gdf=_domain_gdf(),
+                target_grid_doc=None,
+                band_types=_band_types("elevation"),
+                progress=MagicMock(),
+            )
+        assert not isinstance(exc_info.value, ProcessingError)
+
+    @patch("griddle.handlers.resample.load_zarr")
     def test_empty_dataset_raises(self, mock_load_zarr):
         """Dataset with no data vars raises ProcessingError."""
         mock_load_zarr.return_value = xr.Dataset()
@@ -433,6 +452,38 @@ class TestResampleAlignment:
         assert transform.f == pytest.approx(5190800.0)
         assert abs(transform.a) == pytest.approx(5.0)
         assert result["elevation"].shape == (40, 40)
+
+    @patch("griddle.handlers.resample.load_zarr")
+    def test_grid_target_in_other_crs_stamps_destination_crs(self, mock_load_zarr):
+        """Output of a cross-CRS grid alignment carries the destination CRS."""
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            {"elevation": np.random.rand(20, 20)}, resolution=30.0
+        )
+        x0, y0 = Transformer.from_crs(
+            "EPSG:32611", "EPSG:5070", always_xy=True
+        ).transform(719959.803, 5190907.682)
+        target_grid_doc = {
+            "georeference": {
+                "crs": "EPSG:5070",
+                "transform": (30.0, 0.0, x0, 0.0, -30.0, y0),
+                "shape": (20, 20),
+            }
+        }
+
+        result = resample_grid(
+            source_grid_id="test-grid",
+            alignment={"target": "grid", "grid_id": "x"},
+            method_overrides={},
+            domain_gdf=_domain_gdf(),
+            target_grid_doc=target_grid_doc,
+            band_types=_band_types("elevation"),
+            progress=MagicMock(),
+        )
+
+        assert crs_equal(result.rio.crs, "EPSG:5070")
+        assert crs_equal(result["elevation"].rio.crs, "EPSG:5070")
+        assert result.rio.transform().c == pytest.approx(x0)
+        assert result.rio.transform().f == pytest.approx(y0)
 
     @patch("griddle.handlers.resample.load_zarr")
     def test_grid_target_with_new_resolution(self, mock_load_zarr):

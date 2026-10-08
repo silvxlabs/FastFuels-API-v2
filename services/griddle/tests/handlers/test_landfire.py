@@ -12,6 +12,7 @@ import pytest
 import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
+from griddle.handlers import landfire as landfire_handler
 from griddle.handlers.landfire import (
     LANDFIRE_EXTRA_NODATA,
     _fetch_landfire_raster,
@@ -899,6 +900,32 @@ class TestRemoveNonBurnableBlocks:
         grid[8:12, 8:12] = 99  # 4x4 bare ground block
         result = _remove_non_burnable_blocks(grid, [99])
         assert not np.any(np.isin(result, [99]))
+
+    def test_nodata_is_never_a_fill_source(self):
+        """Non-burnable cells bordering nodata fill from burnable neighbours only."""
+        grid = np.full((10, 10), 101, dtype=np.int16)
+        grid[:, :6] = -9999
+        grid[:, 6:8] = 99
+        result = _remove_non_burnable_blocks(grid, [99], nodata=-9999)
+        np.testing.assert_array_equal(result[:, 6:8], 101)
+        np.testing.assert_array_equal(result[:, :6], -9999)
+
+    @pytest.mark.parametrize("nodata_cols", [0, 3])
+    def test_stops_when_no_fill_source_exists(self, nodata_cols):
+        """Non-burnable cells with no burnable neighbour are left as-is, promptly."""
+        grid = np.full((5, 5), 99, dtype=np.int16)
+        grid[:, :nodata_cols] = -9999
+        real_filter = landfire_handler.generic_filter
+        calls = []
+
+        def capped_filter(*args, **kwargs):
+            calls.append(1)
+            assert len(calls) <= 2, "filter kept running without progress"
+            return real_filter(*args, **kwargs)
+
+        with patch.object(landfire_handler, "generic_filter", capped_filter):
+            result = _remove_non_burnable_blocks(grid, [99], nodata=-9999)
+        np.testing.assert_array_equal(result, grid)
 
 
 def _make_canopy_raster(

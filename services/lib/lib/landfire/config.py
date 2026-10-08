@@ -75,13 +75,19 @@ def lfps_acronym(product: str) -> str:
 SEASON_CODES: tuple[str, ...] = ("ES", "SP", "SU", "FA")
 
 
+def _validatable_versions(product: str) -> list[str]:
+    """Staged versions, or the LFPS versions for products with no staged data."""
+    info = LANDFIRE_VERSIONS[product]
+    return info.get("available", info["lfps_available"])
+
+
 class UnknownLandfireVersionError(ValueError):
     """Raised when a requested LANDFIRE version isn't available for a product."""
 
     def __init__(self, product: str, version: str):
         self.product = product
         self.version = version
-        available = LANDFIRE_VERSIONS[product]["available"]
+        available = _validatable_versions(product)
         super().__init__(
             f"{version!r} is not an available LANDFIRE {product!r} version. "
             f"Available versions: {', '.join(available)}."
@@ -93,7 +99,7 @@ def validate_landfire_version(product: str, version: str) -> str:
 
     Raises :class:`UnknownLandfireVersionError` for an unavailable version.
     """
-    if version not in LANDFIRE_VERSIONS[product]["available"]:
+    if version not in _validatable_versions(product):
         raise UnknownLandfireVersionError(product, version)
     return version
 

@@ -159,19 +159,48 @@ def test_nodata_cells_are_masked_to_nan():
 
 def test_float32_nan_nodata_is_masked():
     # rio.nodata comes back as a numpy float32 NaN here (not a Python float). A
-    # NaN aspect cell must still be recognized as nodata; otherwise it reaches
-    # the core's table lookup and raises KeyError. Guards the regression where
+    # NaN cell must still be recognized as nodata; otherwise it reaches the
+    # core's table lookup and raises KeyError. Guards the regression where
     # `isinstance(nodata, float)` is False for a numpy float and misfires.
-    slope = np.array([[10.0, 40.0], [0.0, 20.0]], dtype=np.float32)
-    aspect = np.array([[0.0, np.nan], [180.0, 270.0]], dtype=np.float32)
+    slope = np.array([[10.0, np.nan], [0.0, 20.0]], dtype=np.float32)
+    aspect = np.array([[0.0, np.nan], [180.0, np.nan]], dtype=np.float32)
     surface = np.full((2, 2), 0.5, dtype=np.float32)
 
     result = _run(
         _topo_ds(slope, aspect, nodata=np.float32("nan")), _surface_ds(surface)
     )
     out = result[OUTPUT_KEY].values
-    assert np.isnan(out[0, 1])  # NaN nodata cell masked, no crash
+    assert np.isnan(out[0, 1])  # NaN slope cell masked, no crash
     assert np.isfinite(out[0, 0])
+    assert np.isfinite(out[1, 1])  # NaN aspect alone is undefined, not masked
+
+
+def test_undefined_aspect_uses_north_class():
+    # LANDFIRE aspect stores flat cells as -1 and declares -1 as nodata. Those
+    # cells keep a moisture value, computed with the north class.
+    slope = np.array([[1.0, 2.0], [0.0, 25.0]], dtype=np.float32)
+    aspect = np.array([[-1, -1], [180, -1]], dtype=np.int16)
+    surface = np.full((2, 2), 1.0, dtype=np.float32)
+
+    result = _run(_topo_ds(slope, aspect, nodata=-1), _surface_ds(surface))
+    out = result[OUTPUT_KEY].values
+
+    def expected(aspect_deg, slope_class):
+        return calculate_1hr_fuel_moisture(
+            dry_bulb_temp=75,
+            relative_humidity=30,
+            aspect=aspect_deg,
+            slope=slope_class,
+            time=1200,
+            month="June",
+            elevation=1,
+            shading=0.0,
+        )
+
+    np.testing.assert_allclose(out[0, 0], expected(0.0, 10.0))
+    np.testing.assert_allclose(out[0, 1], expected(0.0, 10.0))
+    np.testing.assert_allclose(out[1, 0], expected(180.0, 10.0))
+    np.testing.assert_allclose(out[1, 1], expected(0.0, 40.0))
 
 
 def test_surface_nodata_is_masked():

@@ -13,6 +13,7 @@ import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.landfire import (
+    LANDFIRE_ASPECT_NODATA,
     LANDFIRE_EXTRA_NODATA,
     _fetch_landfire_raster,
     _most_frequent,
@@ -250,6 +251,96 @@ class TestFetchLandfireRasterCoastalEdge:
         assert (values == self.DECLARED).any()
         assert valid.size > 0
         np.testing.assert_array_equal(np.unique(valid), [self.VALID])
+
+
+class TestFetchLandfireAspectFlatNodata:
+    """LANDFIRE aspect keeps -1 on flat cells and declares it as nodata, with
+    the declared nodata and -9999 folded onto it before reprojection."""
+
+    DECLARED = 32767
+    VALID = 270
+
+    @pytest.fixture
+    def aspect_raster(self, tmp_path):
+        """30 m EPSG:5070 raster: quadrants of valid, flat, declared, -9999."""
+        values = np.full((40, 40), self.VALID, dtype=np.int16)
+        values[:20, 20:] = LANDFIRE_ASPECT_NODATA
+        values[20:, :20] = self.DECLARED
+        values[20:, 20:] = LANDFIRE_EXTRA_NODATA
+        path = tmp_path / "aspect.tif"
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            height=40,
+            width=40,
+            count=1,
+            dtype="int16",
+            crs="EPSG:5070",
+            transform=from_origin(0.0, 1200.0, 30.0, 30.0),
+            nodata=self.DECLARED,
+        ) as dst:
+            dst.write(values, 1)
+        return str(path)
+
+    @pytest.mark.parametrize(
+        ("roi_crs", "alignment"),
+        [
+            ("EPSG:5070", {"target": "domain"}),
+            ("EPSG:5070", {"target": "native", "resolution": 10.0}),
+            ("EPSG:32614", {"target": "native"}),
+        ],
+        ids=["domain", "native-resolution", "native-reproject"],
+    )
+    def test_flat_is_nodata_and_not_blended(self, aspect_raster, roi_crs, alignment):
+        roi = gpd.GeoDataFrame(
+            geometry=[box(307.0, 307.0, 907.0, 907.0)], crs="EPSG:5070"
+        ).to_crs(roi_crs)
+
+        result = _fetch_landfire_raster(
+            roi,
+            aspect_raster,
+            extent_buffer_cells=0,
+            alignment=alignment,
+            target_grid_doc=None,
+            is_categorical=False,
+            nodata=LANDFIRE_ASPECT_NODATA,
+        )
+
+        values = result.values
+        assert result.rio.nodata == LANDFIRE_ASPECT_NODATA
+        np.testing.assert_array_equal(
+            np.unique(values), [LANDFIRE_ASPECT_NODATA, self.VALID]
+        )
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_fetch_topography_sets_nodata_on_aspect_only(self, mock_fetch, roi):
+        mock_fetch.return_value = (
+            xr.DataArray(
+                np.zeros((2, 2)),
+                dims=("y", "x"),
+                coords={"y": [45.0, 15.0], "x": [15.0, 45.0]},
+            )
+            .rio.write_crs("EPSG:5070")
+            .rio.write_transform(from_origin(0.0, 60.0, 30.0, 30.0))
+        )
+
+        fetch_topography(
+            roi=roi,
+            version="2020",
+            bands=["elevation", "slope", "aspect"],
+            progress=MagicMock(),
+        )
+
+        nodata_by_band = {
+            call.args[1].rsplit("_", 2)[1]: call.kwargs["nodata"]
+            for call in mock_fetch.call_args_list
+        }
+        assert nodata_by_band == {
+            "elevation": None,
+            "slope": None,
+            "aspect": LANDFIRE_ASPECT_NODATA,
+        }
 
 
 class TestNeedsLfps:

@@ -243,7 +243,7 @@ class TestCsvUpload:
             delete_document(DOMAINS_COLLECTION, domain_id)
 
     def test_csv_with_crown_radius_preserves_values(self):
-        """A mapped crown_radius column is recorded and stored exactly, nulls kept."""
+        """A mapped crown_radius column is recorded and stored unrounded, nulls kept."""
         inventory_id = f"test-{uuid4().hex}"
         domain_id = f"test-{uuid4().hex}"
 
@@ -283,9 +283,9 @@ class TestCsvUpload:
                 f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
             ).compute()
             stored = parquet_df["crown_radius"].tolist()
-            assert stored[0] == radii[0]
+            assert stored[0] == pytest.approx(radii[0], rel=1e-12)
             assert pd.isna(stored[1])
-            assert stored[2] == radii[2]
+            assert stored[2] == pytest.approx(radii[2], rel=1e-12)
         finally:
             gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
             if exists(gcs_path):

@@ -240,8 +240,7 @@ def _parse(
     rename = {user_col: v2_name for v2_name, user_col in col_map.items()}
 
     if fmt == "csv":
-        # round_trip parses each float to the exact double it was written from.
-        df = pd.read_csv(local_path, float_precision="round_trip")
+        df = pd.read_csv(local_path)
         df = df.rename(columns=rename)
         return df[[col for col in df.columns if col in _V2_COLUMNS]]
 

@@ -83,6 +83,14 @@ EXAMPLE_WITH_ALTERNATE_MODELS = {
     },
 }
 
+# Geometric crown shape (LANL Trees envelope) with the allometric radius.
+EXAMPLE_WITH_GEOMETRIC_CROWN_PROFILE = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": {"horizontal": 2.0, "vertical": 1.0},
+    "bands": ["bulk_density.foliage.live"],
+    "crown_profile_model": "dual_paraboloid",
+}
+
 # Foliage biomass supplied directly by the inventory.
 EXAMPLE_WITH_INVENTORY_BIOMASS = {
     "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
@@ -235,6 +243,21 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "directly from inventory columns instead of modeling them."
         ),
     },
+    "geometric_crown_profile": {
+        "value": EXAMPLE_WITH_GEOMETRIC_CROWN_PROFILE,
+        "summary": "Use a geometric crown shape",
+        "description": (
+            "Draws each crown as two paraboloids joined at the crown "
+            "midpoint (the LANL Trees crown envelope). The other geometric "
+            "shapes are `cone` and `cylinder`, `single_ellipsoid` and "
+            "`single_paraboloid` (widest at the crown base), and "
+            "`dual_ellipsoid` (widest at the crown midpoint). With the "
+            "default `max_crown_radius_source`, the maximum radius is the "
+            "Purves et al. (2007) maximum crown radius, so the crown is as "
+            "wide as a `purves` crown of the same tree and holds the same "
+            "foliage mass; only the shape changes."
+        ),
+    },
     "with_inventory_biomass": {
         "value": EXAMPLE_WITH_INVENTORY_BIOMASS,
         "summary": "Use inventory foliage biomass",
@@ -318,6 +341,7 @@ ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
     ("with_moisture_model", EXAMPLE_WITH_MOISTURE_MODEL),
     ("with_live_dead_partition", EXAMPLE_WITH_LIVE_DEAD_PARTITION),
     ("alternate_models", EXAMPLE_WITH_ALTERNATE_MODELS),
+    ("geometric_crown_profile", EXAMPLE_WITH_GEOMETRIC_CROWN_PROFILE),
     ("with_inventory_biomass", EXAMPLE_WITH_INVENTORY_BIOMASS),
     ("with_branchwood_biomass", EXAMPLE_WITH_BRANCHWOOD_BIOMASS),
     ("with_derived_fine_biomass", EXAMPLE_WITH_DERIVED_FINE_BIOMASS),

@@ -5,6 +5,7 @@ All tests mock fastfuels_core so they run without heavy data loading.
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -790,6 +791,269 @@ class TestFieldHoistEquivalence:
             hoisted = sample_occupancy(mask, field, n, seed=seed)
             wrapper = sample_occupied_cells(mask, alpha=0.5, beta=0.5, seed=seed)
             assert np.array_equal(hoisted, wrapper)
+
+
+# geometric crown profiles (#614), real fastfuels-core
+
+
+GEOMETRIC_PROFILES = [
+    "cone",
+    "cylinder",
+    "single_ellipsoid",
+    "dual_ellipsoid",
+    "single_paraboloid",
+    "dual_paraboloid",
+]
+
+
+def _real_row(**overrides):
+    data = {
+        "fia_species_code": 122,
+        "fia_status_code": 1,
+        "dbh": 25.0,
+        "height": 18.0,
+        "crown_ratio": 0.5,
+        "x": 5.0,
+        "y": 5.0,
+    }
+    data.update(overrides)
+    return pd.Series(data)
+
+
+def _profile_config(profile, radius_column=None):
+    cfg = base_source_config()
+    cfg["crown_profile_model"] = profile
+    if radius_column is not None:
+        cfg["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": radius_column,
+            "unit": "m",
+        }
+    return cfg
+
+
+def _closed_form_radius(profile, z, hb, ht, r):
+    """Core docstring closed forms, with the widest height the issue fixes."""
+    hd = hb if profile.startswith("single_") else (hb + ht) / 2
+    if profile == "cone":
+        return r * (ht - z) / (ht - hb)
+    if profile == "cylinder":
+        return r
+    if profile.endswith("ellipsoid"):
+        if z <= hd and hd > hb:
+            return r * math.sqrt(1 - ((hd - z) / (hd - hb)) ** 2)
+        return r * math.sqrt(1 - ((z - hd) / (ht - hd)) ** 2)
+    if profile.endswith("paraboloid"):
+        if z <= hd and hd > hb:
+            return r * math.sqrt((z - hb) / (hd - hb))
+        return r * math.sqrt((ht - z) / (ht - hd))
+    raise AssertionError(profile)
+
+
+class TestGeometricCrownProfiles:
+    HB, HT = 9.0, 18.0  # height 18 m, crown_ratio 0.5
+    HEIGHTS = [9.0, 10.0, 11.25, 13.5, 15.0, 16.75, 18.0]
+
+    @pytest.mark.parametrize(
+        "profile,core_type",
+        [
+            ("purves", "purves"),
+            ("beta", "beta"),
+            ("cone", "cone"),
+            ("cylinder", "cylinder"),
+            ("single_ellipsoid", "ellipsoid"),
+            ("dual_ellipsoid", "ellipsoid"),
+            ("single_paraboloid", "paraboloid"),
+            ("dual_paraboloid", "paraboloid"),
+        ],
+    )
+    def test_profile_maps_to_core_type(self, profile, core_type):
+        tree = voxelize.build_tree(_real_row(), _profile_config(profile))
+        assert tree._crown_profile_model_type == core_type
+
+    def test_map_covers_api_enum(self):
+        assert set(voxelize.CROWN_PROFILE_MODEL_MAP) == {
+            "purves",
+            "beta",
+            *GEOMETRIC_PROFILES,
+        }
+
+    @pytest.mark.parametrize("profile", GEOMETRIC_PROFILES)
+    def test_radius_matches_closed_form(self, profile):
+        tree = voxelize.build_tree(_real_row(), _profile_config(profile))
+        r = tree.max_crown_radius
+        assert tree.crown_base_height == pytest.approx(self.HB)
+        for z in self.HEIGHTS:
+            expected = _closed_form_radius(profile, z, self.HB, self.HT, r)
+            assert tree.get_crown_radius_at_height(z) == pytest.approx(
+                expected, abs=1e-12
+            ), (profile, z)
+        # Zero outside the crown.
+        assert tree.get_crown_radius_at_height(self.HB - 0.5) == 0.0
+        assert tree.get_crown_radius_at_height(self.HT + 0.5) == 0.0
+
+    @pytest.mark.parametrize(
+        "profile,widest",
+        [
+            ("cone", "base"),
+            ("single_ellipsoid", "base"),
+            ("single_paraboloid", "base"),
+            ("dual_ellipsoid", "midpoint"),
+            ("dual_paraboloid", "midpoint"),
+            ("cylinder", "uniform"),
+        ],
+    )
+    def test_widest_point(self, profile, widest):
+        tree = voxelize.build_tree(_real_row(), _profile_config(profile))
+        r = tree.max_crown_radius
+        z = np.linspace(self.HB, self.HT, 721)
+        radii = np.asarray(tree.get_crown_radius_at_height(z))
+        if widest == "uniform":
+            assert np.allclose(radii, r)
+            return
+        expected_z = self.HB if widest == "base" else (self.HB + self.HT) / 2
+        assert z[int(np.argmax(radii))] == pytest.approx(expected_z)
+        assert radii.max() == pytest.approx(r)
+        assert tree.crown_profile_model.get_max_radius_height() == pytest.approx(
+            expected_z
+        )
+
+    @pytest.mark.parametrize("profile", GEOMETRIC_PROFILES)
+    @pytest.mark.parametrize(
+        "row_overrides",
+        [
+            {},
+            {"fia_species_code": 202, "dbh": 40.0, "height": 30.0, "crown_ratio": 0.3},
+            {"fia_species_code": 316, "dbh": 12.0, "height": 9.5, "crown_ratio": 0.8},
+        ],
+    )
+    def test_allometry_radius_equals_purves(self, profile, row_overrides):
+        row = _real_row(**row_overrides)
+        purves = voxelize.build_tree(row, _profile_config("purves"))
+        tree = voxelize.build_tree(row, _profile_config(profile))
+        assert tree.max_crown_radius == purves.max_crown_radius
+        assert tree.crown_profile_model.get_max_radius() == purves.max_crown_radius
+
+    @pytest.mark.parametrize("profile", GEOMETRIC_PROFILES)
+    def test_inventory_column_radius_is_max_radius(self, profile):
+        row = _real_row(lidar_radius=2.25)
+        tree = voxelize.build_tree(row, _profile_config(profile, "lidar_radius"))
+        assert tree.max_crown_radius == 2.25
+        z = np.linspace(self.HB, self.HT, 721)
+        radii = np.asarray(tree.get_crown_radius_at_height(z))
+        assert radii.max() == pytest.approx(2.25)
+
+    @pytest.mark.parametrize("profile", ["purves", "beta", *GEOMETRIC_PROFILES])
+    def test_voxelized_mass_is_profile_independent(self, profile):
+        hr, vr = 0.5, 0.5
+        row = _real_row()
+        tree = voxelize.build_tree(row, _profile_config(profile))
+        mask = voxelize.discretize_crown_profile(tree, hr, vr)
+        assert np.count_nonzero(mask) > 0
+        field, n = compute_crown_probability_field(mask, alpha=0.5, beta=0.5)
+        sampled = sample_occupancy(mask, field, n, seed=7)
+        density = voxelize.VoxelizedTree(tree, sampled, hr, vr).distribute_biomass()
+        mass = float(density.sum()) * hr * hr * vr
+        purves = voxelize.build_tree(row, _profile_config("purves"))
+        assert mass == pytest.approx(purves.foliage_biomass, rel=1e-9)
+        assert tree.foliage_biomass == purves.foliage_biomass
+
+    @pytest.mark.parametrize("profile", GEOMETRIC_PROFILES)
+    def test_chunk_cache_mass_is_profile_independent(self, profile):
+        hr, vr = 0.5, 0.5
+        df = pd.DataFrame([_real_row()])
+        df["_cache_key"] = 0
+        purves = voxelize.build_tree(_real_row(), _profile_config("purves"))
+        cache = voxelize.build_chunk_cache(
+            df, hr, vr, _profile_config(profile), np.random.default_rng(3)
+        )
+        assert cache[0].biomass_arrays
+        for arr in cache[0].biomass_arrays:
+            assert float(arr.sum()) * hr * hr * vr == pytest.approx(
+                purves.foliage_biomass, rel=1e-6
+            )
+
+    @pytest.mark.parametrize("profile", GEOMETRIC_PROFILES)
+    @pytest.mark.parametrize("crown_ratio", [0.0, 1.0])
+    def test_degenerate_crown_ratio_does_not_raise(self, profile, crown_ratio):
+        tree = voxelize.build_tree(
+            _real_row(crown_ratio=crown_ratio), _profile_config(profile)
+        )
+        assert np.all(
+            np.isfinite(tree.get_crown_radius_at_height(np.linspace(0, 18, 37)))
+        )
+
+
+def _pre_614_build_tree(row, source_config: dict):
+    """build_tree exactly as it was before #614, for the byte-identity guard."""
+    from fastfuels_core.trees import Tree
+
+    crown_fuel_load = None
+    column = voxelize.foliage_inventory_column(source_config)
+    if column is not None:
+        crown_fuel_load = float(row[column])
+
+    max_crown_radius = None
+    radius_column = voxelize.max_crown_radius_inventory_column(source_config)
+    if radius_column is not None:
+        max_crown_radius = float(row[radius_column])
+
+    return Tree(
+        species_code=int(row["fia_species_code"]),
+        status_code=int(row["fia_status_code"]),
+        diameter=float(row["dbh"]),
+        height=float(row["height"]),
+        crown_ratio=float(row["crown_ratio"]),
+        x=float(row["x"]),
+        y=float(row["y"]),
+        crown_profile_model_type=source_config["crown_profile_model"],
+        biomass_allometry_model_type=voxelize._biomass_allometry_model_type(
+            source_config
+        ),
+        crown_fuel_load=crown_fuel_load,
+        max_crown_radius=max_crown_radius,
+    )
+
+
+class TestPurvesBetaUnchanged:
+    """`purves` and `beta` chunk caches are byte-identical to pre-#614 output."""
+
+    @pytest.mark.parametrize("profile", ["purves", "beta"])
+    @pytest.mark.parametrize("radius_column", [None, "lidar_radius"])
+    def test_chunk_cache_byte_identical(self, monkeypatch, profile, radius_column):
+        hr, vr = 0.5, 0.5
+        rows = [
+            _real_row(lidar_radius=2.0),
+            _real_row(
+                fia_species_code=202,
+                dbh=40.0,
+                height=30.0,
+                crown_ratio=0.3,
+                lidar_radius=3.1,
+            ),
+            _real_row(
+                fia_species_code=316,
+                dbh=12.0,
+                height=9.5,
+                crown_ratio=0.8,
+                lidar_radius=1.4,
+            ),
+        ]
+        df = pd.DataFrame(rows)
+        cfg = _profile_config(profile, radius_column)
+        df["_cache_key"] = voxelize.compute_cache_keys(df, cfg)
+
+        new = voxelize.build_chunk_cache(df, hr, vr, cfg, np.random.default_rng(11))
+        monkeypatch.setattr(voxelize, "build_tree", _pre_614_build_tree)
+        old = voxelize.build_chunk_cache(df, hr, vr, cfg, np.random.default_rng(11))
+
+        assert new.keys() == old.keys() and len(new) == 3
+        for key in new:
+            assert new[key].crown_base_height == old[key].crown_base_height
+            assert len(new[key].biomass_arrays) == len(old[key].biomass_arrays)
+            for a, b in zip(new[key].biomass_arrays, old[key].biomass_arrays):
+                assert a.dtype == b.dtype
+                assert a.tobytes() == b.tobytes()
 
 
 # voxelize_chunk (mocked cache)

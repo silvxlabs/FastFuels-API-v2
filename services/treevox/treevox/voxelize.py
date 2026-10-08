@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from fastfuels_core.crown_profile_models.purves import PurvesCrownProfile
 from fastfuels_core.trees import Tree
 from fastfuels_core.voxelization import (
     VoxelizedTree,
@@ -92,6 +93,21 @@ CR_BIN = 0.1
 
 # Map API allometry equation names to fastfuels-core model names.
 BIOMASS_EQUATION_MAP = {"nsvb": "NSVB", "jenkins": "jenkins"}
+# Map API crown profile names to fastfuels-core `crown_profile_model_type`.
+CROWN_PROFILE_MODEL_MAP = {
+    "purves": "purves",
+    "beta": "beta",
+    "cone": "cone",
+    "cylinder": "cylinder",
+    "single_ellipsoid": "ellipsoid",
+    "dual_ellipsoid": "ellipsoid",
+    "single_paraboloid": "paraboloid",
+    "dual_paraboloid": "paraboloid",
+}
+# Profiles whose maximum radius is an input to core rather than computed.
+GEOMETRIC_CROWN_PROFILES = frozenset(CROWN_PROFILE_MODEL_MAP) - {"purves", "beta"}
+# Single-lobe forms: core's dual form with the widest height at the crown base.
+SINGLE_LOBE_CROWN_PROFILES = frozenset({"single_ellipsoid", "single_paraboloid"})
 BIOMASS_DENSITY_BAND_COMPONENTS = {
     "bulk_density.foliage.live": "foliage",
     "bulk_density.foliage.dead": "foliage",
@@ -267,34 +283,55 @@ def build_tree(row, source_config: dict) -> Tree:
     `inventory_columns` and a foliage column is configured; otherwise foliage
     biomass is computed allometrically via NSVB or Jenkins.
 
-    `max_crown_radius` is only supplied when `max_crown_radius_source.type`
-    is `inventory_column`; otherwise the crown profile model's allometric
-    radius is used. When supplied, fastfuels-core preserves the crown
-    profile shape and rescales it so the maximum radius matches the
-    per-tree value.
+    `max_crown_radius` comes from the inventory column when
+    `max_crown_radius_source.type` is `inventory_column`. Otherwise `purves`
+    and `beta` compute their own allometric radius, and the geometric
+    profiles (cone, cylinder, ellipsoids, paraboloids) take the Purves
+    maximum crown radius of the same tree. The single-lobe ellipsoid and
+    paraboloid are widest at the crown base; the dual forms use core's
+    crown-midpoint default.
     """
     crown_fuel_load = None
     column = foliage_inventory_column(source_config)
     if column is not None:
         crown_fuel_load = float(row[column])
 
+    species_code = int(row["fia_species_code"])
+    diameter = float(row["dbh"])
+    height = float(row["height"])
+    crown_ratio = float(row["crown_ratio"])
+    profile = source_config["crown_profile_model"]
+
     max_crown_radius = None
     radius_column = max_crown_radius_inventory_column(source_config)
     if radius_column is not None:
         max_crown_radius = float(row[radius_column])
+    elif profile in GEOMETRIC_CROWN_PROFILES:
+        max_crown_radius = float(
+            PurvesCrownProfile(
+                species_code, diameter, height, crown_ratio
+            ).get_max_radius()
+        )
+
+    max_crown_diameter_height = None
+    if profile in SINGLE_LOBE_CROWN_PROFILES:
+        # Same expression as core's Tree.crown_base_height, so core's
+        # [crown_base_height, height] range check sees an exact match.
+        max_crown_diameter_height = height - height * crown_ratio
 
     return Tree(
-        species_code=int(row["fia_species_code"]),
+        species_code=species_code,
         status_code=int(row["fia_status_code"]),
-        diameter=float(row["dbh"]),
-        height=float(row["height"]),
-        crown_ratio=float(row["crown_ratio"]),
+        diameter=diameter,
+        height=height,
+        crown_ratio=crown_ratio,
         x=float(row["x"]),
         y=float(row["y"]),
-        crown_profile_model_type=source_config["crown_profile_model"],
+        crown_profile_model_type=CROWN_PROFILE_MODEL_MAP[profile],
         biomass_allometry_model_type=_biomass_allometry_model_type(source_config),
         crown_fuel_load=crown_fuel_load,
         max_crown_radius=max_crown_radius,
+        max_crown_diameter_height=max_crown_diameter_height,
     )
 
 
@@ -452,7 +489,7 @@ def build_chunk_cache(
         the z axis.
     source_config
         The grid's `source` sub-dict. Must carry `crown_profile_model`
-        ("purves" | "beta") and `biomass_source`, whose source is either
+        (a key of `CROWN_PROFILE_MODEL_MAP`) and `biomass_source`, whose source is either
         allometry equations or inventory columns. Passed verbatim into
         `build_tree`.
     rng

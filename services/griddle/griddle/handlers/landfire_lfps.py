@@ -29,6 +29,7 @@ from lib.landfire import (
     SEASON_CODES,
     LfpsJobFailedError,
     download,
+    lfps_acronym,
     poll_status,
     resolve_lf_product,
     submit_job,
@@ -92,7 +93,8 @@ def _lfps_aoi_bbox(
 def _lfps_layer_name(product: str, version: str, season: str | None = None) -> str:
     """Build the LFPS layer name for a fetch request.
 
-    Most products use "LF{version}_{PRODUCT}", e.g. "LF2025_FBFM40".
+    Most products use "LF{version}_{ACRONYM}", with the acronym from
+    lfps_acronym(), e.g. "LF2025_FBFM40" or "LF2025_FDist".
 
     Because LFPS names them differently, FBFM40 seasonal layers and
     annual_disturbance come from the live LFPS catalog via resolve_lf_product().
@@ -101,7 +103,7 @@ def _lfps_layer_name(product: str, version: str, season: str | None = None) -> s
         return _annual_disturbance_layer_name(version)
     if season is not None:
         return _seasonal_fbfm40_layer_name(product, version, season)
-    return f"LF{version}_{product.upper()}"
+    return f"LF{version}_{lfps_acronym(product)}"
 
 
 def _annual_disturbance_layer_name(version: str) -> str:

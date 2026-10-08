@@ -148,6 +148,11 @@ class TestLfpsLayerName:
     def test_annual_layer_name(self):
         assert _lfps_layer_name("fbfm40", "2025") == "LF2025_FBFM40"
 
+    def test_fdist_layer_name(self):
+        """fdist's LFPS acronym is mixed-case, so the layer name can't come
+        from upper-casing the registry key."""
+        assert _lfps_layer_name("fdist", "2025") == "LF2025_FDist"
+
     @patch("griddle.handlers.landfire_lfps.resolve_lf_product")
     def test_seasonal_layer_name(self, mock_resolve):
         """The seasonal layer name comes from the live catalog entry, not

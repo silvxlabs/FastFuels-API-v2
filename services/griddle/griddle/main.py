@@ -320,11 +320,9 @@ def process_grid_request(request: Request):
             # In-place modification (#277): the grid already has rendered
             # data. Load its own zarr and apply only the queued delta —
             # never re-fetch from the upstream source, which may have
-            # drifted and would silently change untouched cells. The .load()
-            # is required: apply_modifications mutates band arrays in place,
-            # which is lost on a lazy (dask-backed) Dataset.
+            # drifted and would silently change untouched cells.
             update_progress(grid_id, "Applying modifications...", 40)
-            result = load_zarr(grid_id).load()
+            result = load_zarr(grid_id)
             apply_modifications(result, pending_modifications, grid["domain_id"])
 
             # Merge the applied delta into the cumulative ledger atomically

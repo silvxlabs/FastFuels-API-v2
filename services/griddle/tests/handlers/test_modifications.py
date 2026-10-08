@@ -145,6 +145,30 @@ def test_replace_does_not_clamp():
     assert (ds["fuel_load.1hr"].values == -1.0).all()
 
 
+@pytest.mark.parametrize(
+    "make_ds, band, select",
+    [
+        (_flat_dataset, "fuel_load.1hr", lambda ds: ds["fuel_load.1hr"]),
+        (
+            _layerset_dataset,
+            "shrub.loading",
+            lambda ds: ds["shrub"].sel(band="loading"),
+        ),
+    ],
+)
+def test_modifications_apply_to_dask_backed_dataset(make_ds, band, select):
+    """Handlers (e.g. compose) can return lazy Datasets; edits must persist."""
+    ds = make_ds(4.0).chunk({"y": 5, "x": 5})
+    mods = [
+        {
+            "conditions": [{"band": band, "operator": "gt", "value": 0.0}],
+            "actions": [{"band": band, "modifier": "multiply", "value": 0.5}],
+        }
+    ]
+    result = apply_modifications(ds, mods, "d")
+    assert (select(result).values == 2.0).all()
+
+
 # --------------------------------------------------- attribute conditions
 
 

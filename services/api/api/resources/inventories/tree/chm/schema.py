@@ -24,6 +24,7 @@ class StemIsolationLmf(BaseModel):
     name: Literal["lmf"] = "lmf"
     min_height: float = Field(
         default=2.0,
+        ge=0,
         description="Minimum height threshold (in meters) for a treetop.",
     )
     max_height: float | None = Field(
@@ -65,6 +66,7 @@ class StemIsolationVwf(BaseModel):
     name: Literal["vwf"] = "vwf"
     min_height: float = Field(
         default=2.0,
+        ge=0,
         description="Minimum height threshold (in meters) for a treetop.",
     )
     max_height: float | None = Field(

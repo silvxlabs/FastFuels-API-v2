@@ -127,7 +127,8 @@ async def create_chm_inventory(
     if body.crown_segmentation is not None:
         transform = source_grid_data["georeference"]["transform"]
         cell_size = max(abs(transform[0]), abs(transform[4]))
-        if cell_size > MAX_CROWN_SEGMENTATION_RESOLUTION_M:
+        # Tolerate float noise in stored transforms (e.g. 0.5999999999998499).
+        if cell_size > MAX_CROWN_SEGMENTATION_RESOLUTION_M + 1e-6:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(

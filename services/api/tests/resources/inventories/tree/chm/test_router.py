@@ -490,6 +490,44 @@ class TestCreateChmInventoryCrownSegmentation:
         finally:
             doc_ref.delete()
 
+    def test_nominal_2m_chm_with_float_noise_accepted(
+        self, client, firestore_client, domain_for_testing
+    ):
+        grid_data = make_grid_data(
+            domain_id=domain_for_testing["id"],
+            name="2 m CHM",
+            status="completed",
+            source={"name": "upload", "format": "geotiff"},
+            bands=[{"key": "chm", "type": "continuous", "unit": "m", "index": 0}],
+            georeference={
+                "crs": "EPSG:32611",
+                "transform": (
+                    2.0000000000001,
+                    0.0,
+                    500000.0,
+                    0.0,
+                    -2.0000000000001,
+                    5201000.0,
+                ),
+                "shape": (510, 510),
+            },
+        )
+        doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+            grid_data["id"]
+        )
+        doc_ref.set(grid_data)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={
+                    "source_chm_grid_id": grid_data["id"],
+                    "crown_segmentation": {},
+                },
+            )
+            assert response.status_code == 201
+        finally:
+            doc_ref.delete()
+
     def test_out_of_range_parameter_returns_422(
         self, client, domain_for_testing, chm_grid_for_inventory
     ):

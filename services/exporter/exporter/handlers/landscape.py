@@ -18,7 +18,7 @@ LCP-to-GeoTIFF transition memo):
 - All bands int16 with the LANDFIRE scaled encodings: canopy height and
   canopy base height in meters x 10, canopy bulk density in kg/m**3 x 100;
   everything else unscaled (m / deg / % / categorical codes).
-- Nodata -9999; NaN cells become nodata.
+- Nodata -9999; NaN and source-nodata cells become nodata.
 - Band identity mirrors the mechanism LFPS-produced landscapes use (band
   description + a ``BandName`` GDAL metadata tag, readable by GDAL/QGIS,
   ignored by ESRI), plus a ``Units`` tag since LANDFIRE's units are
@@ -36,6 +36,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+import rioxarray  # noqa: F401
 import xarray as xr
 from google.cloud import storage as gcs_storage
 from rasterio.transform import Affine
@@ -111,7 +112,11 @@ def export_landscape(
                 message=f"Band '{band}' not found in grid {grid_id}",
                 suggestion=f"Available bands: {list(ds.data_vars)}",
             )
-        arr = ds[band].transpose("y", "x").values.astype(np.float64, copy=False)
+        da = ds[band].transpose("y", "x")
+        raw = da.values
+        arr = raw.astype(np.float64)
+        if da.rio.nodata is not None:
+            arr[raw == da.rio.nodata] = np.nan
 
         # x coords ascend (west→east), y coords descend (north→south).
         # Coordinates are cell centers; offset back to cell origin by half a cell.

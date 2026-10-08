@@ -89,6 +89,15 @@ class TestValidateLandfireVersion:
         assert "2024" in message
         assert "2023" in message
 
+    @pytest.mark.parametrize("product", list(LANDFIRE_VERSIONS))
+    def test_every_product_validates_and_rejects(self, product):
+        info = LANDFIRE_VERSIONS[product]
+        versions = info.get("available", info["lfps_available"])
+        assert validate_landfire_version(product, info["default"]) == info["default"]
+        with pytest.raises(UnknownLandfireVersionError) as exc_info:
+            validate_landfire_version(product, "1999")
+        assert ", ".join(versions) in str(exc_info.value)
+
     def test_error_carries_product_and_version(self):
         with pytest.raises(UnknownLandfireVersionError) as exc_info:
             validate_landfire_version("fbfm40", "2021")

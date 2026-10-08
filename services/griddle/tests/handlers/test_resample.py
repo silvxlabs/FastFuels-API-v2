@@ -306,6 +306,23 @@ class TestResampleGrid:
         assert exc_info.value.code == "SOURCE_GRID_NOT_FOUND"
 
     @patch("griddle.handlers.resample.load_zarr")
+    def test_other_load_errors_propagate(self, mock_load_zarr):
+        """Non-missing load errors are not terminal ProcessingErrors."""
+        mock_load_zarr.side_effect = OSError("transient")
+
+        with pytest.raises(OSError, match="transient") as exc_info:
+            resample_grid(
+                source_grid_id="grid",
+                alignment=_native_alignment(10.0),
+                method_overrides={},
+                domain_gdf=_domain_gdf(),
+                target_grid_doc=None,
+                band_types=_band_types("elevation"),
+                progress=MagicMock(),
+            )
+        assert not isinstance(exc_info.value, ProcessingError)
+
+    @patch("griddle.handlers.resample.load_zarr")
     def test_empty_dataset_raises(self, mock_load_zarr):
         """Dataset with no data vars raises ProcessingError."""
         mock_load_zarr.return_value = xr.Dataset()

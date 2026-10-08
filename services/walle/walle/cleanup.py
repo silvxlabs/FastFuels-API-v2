@@ -60,8 +60,10 @@ from walle.layouts import (
 logger = logging.getLogger(__name__)
 
 # Lifecycle defaults mirror api/quota.py Quotas / TIER_PRESETS. The ONLY tier
-# rule that changes a TTL is that the application tier never expires; everything
-# else uses the standard defaults plus any per-owner quota_overrides. Kept as a
+# rules that change a TTL are that the application tier never expires and the
+# guest tier gets 1 day (clamped to TTL_FLOOR_DAYS; anonymous owners are reaped
+# separately by find_guest_expired); everything else uses the standard defaults
+# plus any per-owner quota_overrides. Pinned to api/quota.py by a test. Kept as a
 # small local copy rather than importing the api package into walle's image
 # (neither service depends on the other) — keep these values in sync with
 # api/quota.py by hand.
@@ -69,7 +71,10 @@ FAILED_STATUS = "failed"
 DEFAULT_RESOURCE_TTL_DAYS = 180
 DEFAULT_FAILED_RESOURCE_TTL_DAYS = 14
 _DEFAULT_TTLS = (DEFAULT_RESOURCE_TTL_DAYS, DEFAULT_FAILED_RESOURCE_TTL_DAYS)
-_TIER_TTL_OVERRIDES: dict[str, dict] = {"application": {"resource_ttl_days": None}}
+_TIER_TTL_OVERRIDES: dict[str, dict] = {
+    "application": {"resource_ttl_days": None},
+    "guest": {"resource_ttl_days": 1},
+}
 
 # Firestore fields the single scan projects — everything the categories need.
 _SCAN_FIELDS = [

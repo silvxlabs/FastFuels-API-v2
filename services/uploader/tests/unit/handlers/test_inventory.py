@@ -614,8 +614,8 @@ class TestCrownRadius:
         [col] = [c for c in updates["columns"] if c["key"] == "crown_radius"]
         assert col["summary"]["null_count"] == 1
 
-    @pytest.mark.parametrize("bad", [0.0, -1.0])
-    def test_non_positive_rejected(self, bad):
+    @pytest.mark.parametrize("bad", [0.0, -1.0, 20.5, np.inf])
+    def test_out_of_range_rejected(self, bad):
         df = pd.DataFrame(
             {"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT}
         ).assign(crown_radius=[2.0, bad, 3.0])

@@ -47,7 +47,7 @@ class CrownSegmentationBase(BaseModel):
     max_crown_radius: float = Field(
         default=10.0,
         gt=0,
-        le=30,
+        le=20,
         description=(
             "A cell joins a crown only if its center lies within this distance "
             "(m) of the treetop cell's center. Provisional default."

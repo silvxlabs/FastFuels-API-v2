@@ -64,6 +64,12 @@ class TestStemIsolationLmf:
             StemIsolationLmf(min_height=5.0, max_height=5.0)
 
 
+@pytest.mark.parametrize("model", [StemIsolationLmf, StemIsolationVwf])
+def test_negative_min_height_rejected(model):
+    with pytest.raises(ValidationError):
+        model(min_height=-1.0)
+
+
 class TestStemIsolationVwf:
     """Tests for StemIsolationVwf model."""
 
@@ -234,7 +240,7 @@ class TestChmCrownSegmentation:
             ("min_relative_crown_height", -0.1),
             ("min_relative_crown_height", 1.0),
             ("max_crown_radius", 0.0),
-            ("max_crown_radius", 30.5),
+            ("max_crown_radius", 20.5),
             ("method", "watershed"),
             ("radius_estimator", "max_extent"),
         ],
@@ -247,9 +253,9 @@ class TestChmCrownSegmentation:
         seg = ChmCrownSegmentation(
             min_relative_height=0.0,
             min_relative_crown_height=0.0,
-            max_crown_radius=30.0,
+            max_crown_radius=20.0,
         )
-        assert seg.max_crown_radius == 30.0
+        assert seg.max_crown_radius == 20.0
 
     def test_source_records_resolved_settings(self):
         source = ChmInventorySource(

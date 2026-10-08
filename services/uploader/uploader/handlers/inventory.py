@@ -57,6 +57,7 @@ _COLUMN_METADATA = {
 
 # tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
 MAX_TREE_ID = 2_147_483_647
+MAX_CROWN_RADIUS_M = 20.0
 
 
 class _InventorySchema(pa.DataFrameModel):
@@ -72,7 +73,9 @@ class _InventorySchema(pa.DataFrameModel):
     )
     dbh: Series[float] | None = pa.Field(ge=0, nullable=True)
     crown_ratio: Series[float] | None = pa.Field(ge=0, le=1, nullable=True)
-    crown_radius: Series[float] | None = pa.Field(gt=0, nullable=True)
+    crown_radius: Series[float] | None = pa.Field(
+        gt=0, le=MAX_CROWN_RADIUS_M, nullable=True
+    )
 
     class Config:
         coerce = True

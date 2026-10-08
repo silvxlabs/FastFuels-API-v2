@@ -66,7 +66,8 @@ class InventoryColumnMapping(BaseModel):
     crown_radius: str | None = Field(
         None,
         description=(
-            "Measured crown radius (m), > 0. Null for trees without a measurement."
+            "Measured crown radius (m), > 0 and <= 20. Null for trees without a "
+            "measurement."
         ),
     )
 

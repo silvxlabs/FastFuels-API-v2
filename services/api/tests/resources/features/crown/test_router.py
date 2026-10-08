@@ -231,8 +231,11 @@ class TestCreateChmCrownFeature:
         assert response.status_code == 422
         assert "2 m or finer" in response.json()["detail"]
 
-    def test_two_metre_chm_accepted(self, client, seed, domain_id, tree_inventory):
-        doc = seed(GRIDS_COLLECTION, chm_grid(domain_id, cell=2.0))
+    @pytest.mark.parametrize("cell", [2.0, 2.0000000000001])
+    def test_two_metre_chm_accepted(
+        self, client, seed, domain_id, tree_inventory, cell
+    ):
+        doc = seed(GRIDS_COLLECTION, chm_grid(domain_id, cell=cell))
         response = client.post(
             self.route(domain_id), json=self.body(tree_inventory, doc)
         )

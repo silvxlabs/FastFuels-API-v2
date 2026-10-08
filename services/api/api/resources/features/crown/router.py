@@ -56,7 +56,8 @@ def validate_grid_resolution(grid_data: dict, grid_id: str, max_cell_size: float
         )
     a, b, _, d, e, _ = transform[:6]
     cell_size = max(math.hypot(a, d), math.hypot(b, e))
-    if cell_size > max_cell_size:
+    # Tolerate float noise in stored transforms (e.g. 0.5999999999998499).
+    if cell_size > max_cell_size + 1e-6:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(

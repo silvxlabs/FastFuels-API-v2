@@ -37,6 +37,9 @@ class TestChmCrownSegmentation:
         "field,value",
         [
             ("min_height", -1.0),
+            ("min_height", float("inf")),
+            ("max_height", float("nan")),
+            ("max_height", float("inf")),
             ("min_relative_height", 1.0),
             ("min_relative_height", -0.1),
             ("min_relative_crown_height", 1.0),

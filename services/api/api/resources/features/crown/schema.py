@@ -21,12 +21,14 @@ class ChmCrownSegmentation(CrownSegmentationBase):
     min_height: float = Field(
         default=2.0,
         ge=0,
+        allow_inf_nan=False,
         description=(
             "A cell joins a crown only if its CHM height is at least this (m)."
         ),
     )
     max_height: float | None = Field(
         default=120.0,
+        allow_inf_nan=False,
         description=(
             "A cell joins a crown only if its CHM height is at most this (m). "
             "Set to null for no ceiling."

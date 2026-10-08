@@ -291,7 +291,7 @@ def fbfm13_lookup(
 
     try:
         source_ds = load_zarr(source_grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="SOURCE_GRID_NOT_FOUND",
             message=f"Could not load source grid {source_grid_id}: {e}",
@@ -405,7 +405,7 @@ def fbfm40_lookup(
 
     try:
         source_ds = load_zarr(source_grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="SOURCE_GRID_NOT_FOUND",
             message=f"Could not load source grid {source_grid_id}: {e}",
@@ -534,7 +534,7 @@ def fccs_lookup(
 
     try:
         source_ds = load_zarr(source_grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="SOURCE_GRID_NOT_FOUND",
             message=f"Could not load source grid {source_grid_id}: {e}",

@@ -21,7 +21,7 @@ from uploader.handlers.point_cloud import (
     _store,
 )
 
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
 from lib.pointcloud.summary import PointSummary
 from lib.pointcloud.writer import _summarize
 from tests.pointcloud_helpers import make_test_las
@@ -332,3 +332,30 @@ class TestStoredFormat:
             )
 
         assert "gps_time" not in got["columns"]
+
+
+@pytest.mark.parametrize(
+    "error, deleted",
+    [
+        (ProcessingError(code="X", message="x"), True),
+        (CancelledException(), True),
+        (FileNotFoundError(), True),
+        (RuntimeError("transient"), False),
+    ],
+)
+def test_staged_upload_kept_only_for_retry(monkeypatch, error, deleted):
+    """main.py re-raises unexpected errors for an Eventarc retry, which re-reads the upload."""
+    deletes = []
+
+    def fail(*args):
+        raise error
+
+    monkeypatch.setattr(point_cloud, "_domain_crs_name", fail)
+    monkeypatch.setattr(point_cloud, "delete_file", deletes.append)
+
+    with pytest.raises(type(error)):
+        point_cloud.handle_point_cloud(
+            "pc", "bucket", "pointclouds/pc/upload", {"domain_id": "d"}
+        )
+
+    assert deletes == (["gs://bucket/pointclouds/pc/upload"] if deleted else [])

@@ -32,6 +32,7 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
 from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassComponent,
     CreateTreeInventoryRequest,
+    InventoryColumnMaxCrownRadiusSource,
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
@@ -180,7 +181,14 @@ async def create_tree_inventory_grid(
     foliage = getattr(body.biomass_source, "columns", {}).get(BiomassComponent.foliage)
     if foliage is not None:
         required_columns.add(foliage.column)
-    missing_columns = incomplete_inventory_columns(inventory_data, required_columns)
+    radius = body.max_crown_radius_source
+    nullable = set()
+    if isinstance(radius, InventoryColumnMaxCrownRadiusSource):
+        required_columns.add(radius.column)
+        nullable.add(radius.column)
+    missing_columns = incomplete_inventory_columns(
+        inventory_data, required_columns, nullable
+    )
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)

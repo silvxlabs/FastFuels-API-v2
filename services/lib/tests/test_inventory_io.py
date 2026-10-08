@@ -256,7 +256,6 @@ class TestReadInventory:
             read_inventory("x")
         assert exc.value.code == "INVENTORY_NOT_FOUND"
 
-
     def test_null_status_is_live(self, monkeypatch, tmp_path):
         """The pushdown keeps live and null-status trees and drops dead ones;
         null status is returned as 1."""

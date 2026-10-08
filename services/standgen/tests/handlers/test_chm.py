@@ -431,16 +431,13 @@ class TestHandleChmCrownSegmentation:
         "max_crown_radius": 3.0,
     }
 
-    def _inventory(self, crown_segmentation):
+    LMF = {"name": "lmf", "min_height": 2.0, "max_height": 120.0, "footprint_size": 3}
+
+    def _inventory(self, crown_segmentation, algorithm=None):
         source = {
             "name": "chm",
             "source_chm_grid_id": "test-grid-id",
-            "algorithm": {
-                "name": "lmf",
-                "min_height": 2.0,
-                "max_height": 120.0,
-                "footprint_size": 3,
-            },
+            "algorithm": algorithm or self.LMF,
             "crown_segmentation": crown_segmentation,
         }
         columns = list(CHM_INVENTORY_COLUMNS)
@@ -525,13 +522,54 @@ class TestHandleChmCrownSegmentation:
         assert calls == [0]
         assert len(df) == 1
 
+    def test_each_tree_gets_its_own_radius(self, mock_domain_gdf):
+        """A broad crown and a one-cell crown keep their radii by tree."""
+        broad = _cone_chm(size=21)
+        steep = _cone_chm(size=21, peak=15.0, slope=15.0)
+        chm = xr.concat([broad, steep.assign_coords(x=steep.x + 21)], dim="x")
+        chm = chm.rio.write_transform(Affine(1.0, 0.0, 0.0, 0.0, -1.0, 21.0))
+        df = self._run(chm, self._inventory(self.SEGMENTATION), mock_domain_gdf)
+        radii = df.set_index("height")["crown_radius"]
+        assert radii[20.0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert radii[15.0] == pytest.approx(np.sqrt(1 / np.pi))
+
+    def test_treetops_sharing_a_cell_do_not_fail(self, mock_domain_gdf):
+        """The tallest treetop in a cell seeds the crown; the others keep one cell."""
+        ddf = dd.from_pandas(
+            pd.DataFrame({"x": [10.5, 10.5], "y": [10.5, 10.5], "height": [2.3, 20.0]}),
+            npartitions=1,
+        )
+        with patch("standgen.handlers.chm.fixed_window_filter", return_value=ddf):
+            df = self._run(
+                _cone_chm(), self._inventory(self.SEGMENTATION), mock_domain_gdf
+            )
+        radii = df.set_index("height")["crown_radius"]
+        assert radii[20.0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert radii[2.3] == pytest.approx(np.sqrt(1 / np.pi))
+
+    def test_vwf_cone(self, mock_domain_gdf):
+        """VWF at 1 m can put a skirt treetop in the apex cell; segmentation runs."""
+        vwf = {
+            "name": "vwf",
+            "min_height": 2.0,
+            "crown_ratio": 0.1,
+            "crown_offset": 1.0,
+        }
+        df = self._run(
+            _cone_chm(size=41), self._inventory(self.SEGMENTATION, vwf), mock_domain_gdf
+        )
+        apex = df[df["height"] == 20.0]
+        assert len(apex) == 1
+        assert apex["crown_radius"].iloc[0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert df["crown_radius"].notna().all()
+
     def test_segmentation_value_error_is_processing_error(self, mock_domain_gdf):
         with (
             patch(
                 "standgen.handlers.chm.dalponte2016",
-                side_effect=ValueError("two treetops fall in the same CHM cell"),
+                side_effect=ValueError("treetop coordinates must be finite"),
             ),
             pytest.raises(ProcessingError) as exc_info,
         ):
             self._run(_cone_chm(), self._inventory(self.SEGMENTATION), mock_domain_gdf)
-        assert exc_info.value.code == "INVALID_CROWN_SEGMENTATION_PARAMS"
+        assert exc_info.value.code == "CROWN_SEGMENTATION_FAILED"

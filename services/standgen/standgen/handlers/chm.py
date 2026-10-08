@@ -9,7 +9,6 @@ measure each tree's crown radius.
 import logging
 import math
 
-import dask
 import dask.array as da
 import dask.dataframe as dd
 import geopandas as gpd
@@ -261,14 +260,19 @@ def _measure_crown_radii(
     Materializes the treetop table (the detection graph's only compute), grows
     ``dalponte2016`` crowns on the CHM, and sets each tree's radius to
     sqrt(area / pi) of its crown. Treetops stay in the CHM's CRS.
+
+    Where several treetops share a CHM cell, the tallest seeds the crown (ties
+    go to the first) and the others keep a one-cell crown.
     """
     npartitions = ddf.npartitions
     treetops = ddf.compute().reset_index(drop=True)
+    transform = chm_da.rio.transform()
+    seeds = _seed_mask(treetops, transform)
 
     try:
         labels = dalponte2016(
             chm_da,
-            treetops,
+            treetops[seeds],
             min_height=algorithm_config.get("min_height", 2.0),
             max_height=algorithm_config.get("max_height"),
             min_relative_height=crown_segmentation["min_relative_height"],
@@ -276,21 +280,43 @@ def _measure_crown_radii(
             max_crown_radius=crown_segmentation["max_crown_radius"],
         )
     except ValueError as e:
-        raise ProcessingError(code="INVALID_CROWN_SEGMENTATION_PARAMS", message=str(e))
+        raise ProcessingError(code="CROWN_SEGMENTATION_FAILED", message=str(e))
 
-    cell_counts = _count_labels(labels.data, len(treetops))
-    a, b, _, d, e, _ = chm_da.rio.transform()[:6]
+    cell_counts = np.ones(len(treetops))
+    cell_counts[seeds] = _count_labels(labels.data, int(seeds.sum()))[1:]
+    a, b, _, d, e, _ = transform[:6]
     cell_area = abs(a * e - b * d)
-    treetops["crown_radius"] = np.sqrt(cell_counts[1:] * cell_area / math.pi)
+    treetops["crown_radius"] = np.sqrt(cell_counts * cell_area / math.pi)
     return dd.from_pandas(treetops, npartitions=max(1, npartitions))
 
 
+def _seed_mask(treetops: pd.DataFrame, transform) -> np.ndarray:
+    """True for the tallest treetop in each CHM cell, ties to the first."""
+    inv = ~transform
+    x = treetops["x"].to_numpy(dtype=np.float64)
+    y = treetops["y"].to_numpy(dtype=np.float64)
+    cells = pd.DataFrame(
+        {
+            "row": np.floor(inv.d * x + inv.e * y + inv.f),
+            "col": np.floor(inv.a * x + inv.b * y + inv.c),
+            "height": treetops["height"].to_numpy(),
+        }
+    )
+    kept = cells.sort_values("height", ascending=False, kind="stable")
+    kept = kept.drop_duplicates(["row", "col"])
+    mask = np.zeros(len(treetops), dtype=bool)
+    mask[kept.index] = True
+    return mask
+
+
 def _count_labels(labels, n: int) -> np.ndarray:
-    """Cells per label 0 … n, counted block by block for dask arrays."""
+    """Cells per label 0 … n, summed block by block for dask arrays."""
     if not isinstance(labels, da.Array):
         return np.bincount(np.asarray(labels).ravel(), minlength=n + 1)
-    parts = [
-        dask.delayed(np.bincount)(block.ravel(), minlength=n + 1)
-        for block in labels.to_delayed().ravel()
-    ]
-    return np.sum(dask.compute(*parts), axis=0)
+    counts = labels.map_blocks(
+        lambda block: np.bincount(block.ravel(), minlength=n + 1)[None, None],
+        new_axis=2,
+        chunks=(1, 1, n + 1),
+        dtype=np.int64,
+    )
+    return counts.sum(axis=(0, 1)).compute()

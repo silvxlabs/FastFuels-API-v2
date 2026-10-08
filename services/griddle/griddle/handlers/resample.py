@@ -116,6 +116,6 @@ def resample_grid(
     progress("Resample complete.", 80)
 
     ds = xr.Dataset(resampled_vars)
-    ds = ds.rio.write_crs(crs)
+    ds = ds.rio.write_crs(next(iter(resampled_vars.values())).rio.crs)
     ds = ds.rio.write_transform()
     return ds

@@ -20,6 +20,7 @@ class TestLandfireVersionsTable:
             "fbfm40",
             "fccs",
             "annual_disturbance",
+            "fdist",
             "fvt",
             "fvc",
             "fvh",
@@ -56,6 +57,11 @@ class TestLandfireVersionsTable:
         assert LANDFIRE_VERSIONS["annual_disturbance"]["lfps_available"] == ["2025"]
         assert LANDFIRE_VERSIONS["annual_disturbance"]["default"] == "2025"
         assert "available" not in LANDFIRE_VERSIONS["annual_disturbance"]
+
+    def test_fdist_versions(self):
+        assert LANDFIRE_VERSIONS["fdist"]["lfps_available"] == ["2024", "2025"]
+        assert LANDFIRE_VERSIONS["fdist"]["default"] == "2025"
+        assert "available" not in LANDFIRE_VERSIONS["fdist"]
 
     @pytest.mark.parametrize("product", ["fvt", "fvc", "fvh"])
     def test_fuel_vegetation_versions(self, product):
@@ -127,3 +133,8 @@ class TestLfpsAcronym:
         """annual_disturbance's real LFPS acronym ("LDist") isn't derivable
         by upper-casing the registry key -- it needs the override table."""
         assert lfps_acronym("annual_disturbance") == "LDist"
+
+    def test_fdist_uses_the_override(self):
+        """fdist's real LFPS acronym ("FDist") isn't derivable by
+        upper-casing the registry key ("FDIST")."""
+        assert lfps_acronym("fdist") == "FDist"

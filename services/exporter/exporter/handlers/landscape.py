@@ -49,6 +49,8 @@ from lib.config import EXPORTS_BUCKET
 logger = logging.getLogger(__name__)
 
 _NODATA = -9999
+# LANDFIRE aspect declares flat (-1) as nodata; landscapes encode it as -1.
+_FLAT_ASPECT = -1
 
 # (role, layer name, units label, scale factor) in LANDFIRE band order.
 # The fuel model units label is filled per-request from
@@ -86,7 +88,7 @@ def export_landscape(
 
     grid_cache: dict[str, xr.Dataset] = {}
 
-    def load_band(role: dict) -> np.ndarray:
+    def load_band(role: dict, keep_nodata: float | None = None) -> np.ndarray:
         """Load a band, crop to the landscape extent, return a float64 array.
 
         The validator already enforced lattice alignment and coverage, so the
@@ -115,7 +117,7 @@ def export_landscape(
         da = ds[band].transpose("y", "x")
         raw = da.values
         arr = raw.astype(np.float64)
-        if da.rio.nodata is not None:
+        if da.rio.nodata is not None and da.rio.nodata != keep_nodata:
             arr[raw == da.rio.nodata] = np.nan
 
         # x coords ascend (west→east), y coords descend (north→south).
@@ -131,7 +133,8 @@ def export_landscape(
     progress("Loading and encoding bands...", 20)
     bands: list[tuple[np.ndarray, str, str]] = []
     for role_name, layer_name, units, scale in _BAND_SPECS:
-        raw = load_band(source[role_name])
+        keep = _FLAT_ASPECT if role_name == "aspect" else None
+        raw = load_band(source[role_name], keep_nodata=keep)
         scaled = np.rint(raw * scale)
         encoded = np.where(
             np.isnan(scaled),

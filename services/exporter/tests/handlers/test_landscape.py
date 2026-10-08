@@ -238,6 +238,20 @@ class TestExportLandscape:
         assert band[1, 2] == -9999
         assert band[0, 0] == valid
 
+    def test_flat_aspect_nodata_stays_flat(self, captured_tif, patch_load_grid):
+        # LANDFIRE aspect declares -1 (flat) as nodata; landscapes encode
+        # flat as -1, so it must not become -9999.
+        values = _role_values()
+        values["aspect"][1, 2] = -1.0
+        grids = _build_grids(values)
+        grids["topo"]["aspect"].rio.write_nodata(-1.0, inplace=True)
+        with patch_load_grid(grids):
+            export_landscape({"id": "e1", "name": ""}, _build_source(), noop_progress)
+        with rasterio.open(captured_tif["tif_path"]) as src:
+            aspect = src.read(3)
+        assert aspect[1, 2] == -1
+        assert aspect[0, 0] == 180
+
     def test_oversized_role_grid_cropped(self, captured_tif, patch_load_grid):
         # Role grids extend one cell west and north of the landscape; the
         # handler must crop by integer slicing to the landscape window.

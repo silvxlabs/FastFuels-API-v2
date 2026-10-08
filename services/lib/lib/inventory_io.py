@@ -244,8 +244,10 @@ def canopy_required_columns(source: dict) -> set[str]:
     Position (`x`, `y`) and the crown interval (`height`, `crown_ratio`) are
     always read; `dbh` and `fia_species_code` only by the methods that consume
     them — allometric crown biomass, the Reinhardt vertical distribution, the
-    FuelCalc hardwood exclusion, the FuelCalc crown-class factors, and the
-    Purves fallback for null radii when crown radius comes from a column. Fuel
+    FuelCalc hardwood exclusion, the FuelCalc crown-class factors, the
+    allometric crown radius when a radius is used (the `cc` band, or a profile
+    band under `crown_projected`), and the Purves fallback for null radii when
+    crown radius comes from a column. Fuel
     and crown-radius columns are not returned here: they are supplied to
     `read_inventory` as `biomass_column` / `crown_radius_column`.
 
@@ -257,7 +259,15 @@ def canopy_required_columns(source: dict) -> set[str]:
     required = {"x", "y", "height", "crown_ratio"}
     if source["biomass_source"]["type"] == "allometry":
         required |= {"dbh", "fia_species_code"}
-    if source["max_crown_radius_source"]["type"] == "inventory_column":
+    radius_type = source["max_crown_radius_source"]["type"]
+    if radius_type == "inventory_column":
+        required |= {"dbh", "fia_species_code"}
+    bands = set(source["bands"])
+    radius_used = "cc" in bands or (
+        source["horizontal_distribution"] == "crown_projected"
+        and bool(bands & {"cbd", "cbh", "chm", "cfl"})
+    )
+    if radius_type == "allometry" and radius_used:
         required |= {"dbh", "fia_species_code"}
     if source["vertical_distribution"] == "reinhardt_2006":
         required.add("fia_species_code")

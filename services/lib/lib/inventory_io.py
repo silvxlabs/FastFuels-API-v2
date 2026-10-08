@@ -14,6 +14,7 @@ pandas' fsspec integration to avoid that double-resident copy.
 from __future__ import annotations
 
 import pandas as pd
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from lib.config import INVENTORIES_BUCKET
@@ -70,7 +71,8 @@ def read_inventory(
     include_tree_id: bool = False,
 ) -> pd.DataFrame:
     """Read a tree-inventory parquet directly from GCS with column projection
-    and, when the column is present, a `fia_status_code == 1` predicate pushdown.
+    and, when the column is present, a live-tree predicate pushdown
+    (`fia_status_code` is 1 or null).
 
     Only the required columns (plus `biomass_column` and `crown_radius_column`
     if supplied) are decoded; parquet row groups containing only dead trees
@@ -101,8 +103,9 @@ def read_inventory(
     dbh / crown_ratio / species, not the live-dead flag), and an upload may omit
     it. When the file has no `fia_status_code` column, every tree is taken as
     live: the live-tree filter is skipped and the column is set to 1 after the
-    read. A `required_columns` member that the inventory lacks (e.g. a `dbh`
-    absent because the allometry step was skipped) still fails the read early
+    read. A null `fia_status_code` likewise means live and is set to 1. A
+    `required_columns` member that the inventory lacks (e.g. a `dbh` absent
+    because the allometry step was skipped) still fails the read early
     with `INVENTORY_MISSING_MORPHOLOGY`.
     """
     gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
@@ -171,7 +174,8 @@ def read_inventory(
     if include_tree_id and TREE_ID_COLUMN not in columns:
         columns.append(TREE_ID_COLUMN)
 
-    filters = None if status_absent else [("fia_status_code", "=", 1)]
+    status = pc.field("fia_status_code")
+    filters = None if status_absent else (status == 1) | status.is_null()
 
     try:
         df = pd.read_parquet(gcs_path, columns=columns, filters=filters)
@@ -193,35 +197,44 @@ def read_inventory(
 
     if status_absent:
         df["fia_status_code"] = 1
+    else:
+        df["fia_status_code"] = df["fia_status_code"].fillna(1).astype("int64")
     return df
 
 
-def drop_null_rows(
+def require_complete_rows(
     df: pd.DataFrame,
     biomass_column: str | None = None,
-    crown_radius_column: str | None = None,
     required_columns: list[str] | None = None,
-) -> pd.DataFrame:
-    """Drop rows with nulls in any required column (plus `biomass_column` and
-    `crown_radius_column` when set).
+) -> None:
+    """Fail when any row has a null in a required column or `biomass_column`.
 
-    Parquet's row-group statistics can skip dead-tree groups (the
-    `fia_status_code == 1` pushdown lives in `read_inventory`), but can't
-    drop individual rows missing `dbh` / `height` / `crown_ratio`. That's
-    this function's job.
+    The API rejects incomplete inventories from their column summaries; this is
+    the worker backstop for inventories without summaries. A tree is never
+    dropped silently. Crown-radius columns are not checked: a null radius means
+    "not measured" and falls back to allometry.
 
     `required_columns` must match the set the paired `read_inventory` call used
-    (defaults to `REQUIRED_COLUMNS`). Dropping on a column the request does not
-    read would silently discard trees — and their canopy fuel — over a value
-    that never enters the computation.
+    (defaults to `REQUIRED_COLUMNS`).
     """
     required = list(
         required_columns if required_columns is not None else REQUIRED_COLUMNS
     )
-    for optional in (biomass_column, crown_radius_column):
-        if optional and optional not in required:
-            required.append(optional)
-    return df.dropna(subset=required).reset_index(drop=True)
+    if biomass_column and biomass_column not in required:
+        required.append(biomass_column)
+    null_counts = df[required].isna().sum()
+    null_counts = null_counts[null_counts > 0]
+    if not null_counts.empty:
+        counts = ", ".join(f"{c}: {n}" for c, n in null_counts.items())
+        raise ProcessingError(
+            code="INCOMPLETE_INVENTORY",
+            message=f"Inventory has null values ({counts}).",
+            suggestion=(
+                "Supply complete values in the source inventory. Null dbh, "
+                "crown_ratio and fia_species_code can be filled with the "
+                "allometry endpoint (POST /inventories/tree/allometry/gdam)."
+            ),
+        )
 
 
 def canopy_required_columns(source: dict) -> set[str]:
@@ -231,8 +244,9 @@ def canopy_required_columns(source: dict) -> set[str]:
     Position (`x`, `y`) and the crown interval (`height`, `crown_ratio`) are
     always read; `dbh` and `fia_species_code` only by the methods that consume
     them — allometric crown biomass, the Reinhardt vertical distribution, the
-    FuelCalc hardwood exclusion, and the FuelCalc crown-class factors. Fuel and
-    crown-radius columns are not returned here: they are supplied to
+    FuelCalc hardwood exclusion, the FuelCalc crown-class factors, and the
+    Purves fallback for null radii when crown radius comes from a column. Fuel
+    and crown-radius columns are not returned here: they are supplied to
     `read_inventory` as `biomass_column` / `crown_radius_column`.
 
     This is the single authority the API router (pre-dispatch column validation)
@@ -242,6 +256,8 @@ def canopy_required_columns(source: dict) -> set[str]:
     """
     required = {"x", "y", "height", "crown_ratio"}
     if source["biomass_source"]["type"] == "allometry":
+        required |= {"dbh", "fia_species_code"}
+    if source["max_crown_radius_source"]["type"] == "inventory_column":
         required |= {"dbh", "fia_species_code"}
     if source["vertical_distribution"] == "reinhardt_2006":
         required.add("fia_species_code")

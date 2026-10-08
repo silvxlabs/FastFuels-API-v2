@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from lib.inventory_io import drop_null_rows, read_inventory
+from lib.inventory_io import read_inventory, require_complete_rows
 from treevox import storage, voxelize
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
@@ -111,7 +111,7 @@ def _pick_worker_count() -> int:
 def _load_inventory_dataframe(
     source: dict, progress: Callable[[str, int | None], None]
 ) -> pd.DataFrame:
-    """Read the parquet from GCS, filter to live trees, and drop incomplete rows.
+    """Read the parquet from GCS, filter to live trees, and require complete rows.
 
     Reads directly from GCS (no tmpfile staging) with column projection and a
     `fia_status_code == 1` predicate pushdown — see `read_inventory`.
@@ -125,14 +125,21 @@ def _load_inventory_dataframe(
         crown_radius_column,
         include_tree_id=True,
     )
-    df = drop_null_rows(df, biomass_column, crown_radius_column)
+    require_complete_rows(df, biomass_column)
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",
-            message="Inventory has no live trees with complete measurements.",
-            suggestion="Verify the inventory contains rows with fia_status_code == 1 "
-            "and non-null dbh / height / crown_ratio.",
+            message="Inventory has no live trees.",
+            suggestion="Verify the inventory contains live trees "
+            "(fia_status_code 1 or null).",
         )
+    if crown_radius_column is not None:
+        fallbacks = int(df[crown_radius_column].isna().sum())
+        if fallbacks:
+            logger.info(
+                f"{fallbacks} trees have no {crown_radius_column}; "
+                "using their allometric crown radius"
+            )
     return df
 
 

@@ -7,6 +7,7 @@ These tests don't hit GCS — they substitute `pd.read_parquet` (on the
 from __future__ import annotations
 
 import pandas as pd
+import pyarrow.compute as pc
 import pytest
 
 from lib import inventory_io
@@ -14,9 +15,12 @@ from lib.errors import ProcessingError
 from lib.inventory_io import (
     REQUIRED_COLUMNS,
     canopy_required_columns,
-    drop_null_rows,
     read_inventory,
+    require_complete_rows,
 )
+
+_STATUS = pc.field("fia_status_code")
+LIVE_FILTER = (_STATUS == 1) | _STATUS.is_null()
 
 
 class TestReadInventory:
@@ -61,7 +65,7 @@ class TestReadInventory:
         assert captured["path"].endswith("inv123")
         # Column projection and status pushdown both make it to parquet.
         assert captured["columns"] == REQUIRED_COLUMNS
-        assert captured["filters"] == [("fia_status_code", "=", 1)]
+        assert captured["filters"].equals(LIVE_FILTER)
 
     def test_biomass_column_appended_to_projection(self, monkeypatch):
         df_in = pd.DataFrame(
@@ -175,7 +179,7 @@ class TestReadInventory:
 
         read_inventory("inv")
         assert captured["columns"] == REQUIRED_COLUMNS
-        assert captured["filters"] == [("fia_status_code", "=", 1)]
+        assert captured["filters"].equals(LIVE_FILTER)
 
     def test_missing_morphology_columns_raises_actionable_error(self, monkeypatch):
         """A CHM-only inventory (position + height, no morphology) raises a clear
@@ -253,9 +257,28 @@ class TestReadInventory:
         assert exc.value.code == "INVENTORY_NOT_FOUND"
 
 
-class TestDropNullRows:
-    """`drop_null_rows` sees post-pushdown input — all rows are already live —
-    so fixtures use `fia_status_code == 1` throughout."""
+    def test_null_status_is_live(self, monkeypatch, tmp_path):
+        """The pushdown keeps live and null-status trees and drops dead ones;
+        null status is returned as 1."""
+        path = tmp_path / "inv.parquet"
+        pd.DataFrame(
+            {col: [1.0, 2.0, 3.0] for col in REQUIRED_COLUMNS}
+            | {"fia_status_code": pd.array([1, 2, None], dtype="Int64")}
+        ).to_parquet(path)
+        real_read_parquet = pd.read_parquet
+        monkeypatch.setattr(
+            inventory_io.pd,
+            "read_parquet",
+            lambda _path, **kwargs: real_read_parquet(path, **kwargs),
+        )
+        result = read_inventory("inv")
+        assert list(result["x"]) == [1.0, 3.0]
+        assert list(result["fia_status_code"]) == [1, 1]
+        assert result["fia_status_code"].dtype == "int64"
+
+
+class TestRequireCompleteRows:
+    """`require_complete_rows` sees post-pushdown input, so every row is live."""
 
     def _df(self, **overrides):
         data = {
@@ -270,53 +293,34 @@ class TestDropNullRows:
         data.update(overrides)
         return pd.DataFrame(data)
 
-    def test_drops_rows_with_null_required_columns(self):
-        df = self._df()
-        df.loc[0, "dbh"] = None
-        out = drop_null_rows(df)
-        assert len(out) == 2
+    def test_complete_rows_pass(self):
+        require_complete_rows(self._df())
 
-    def test_biomass_column_non_null_required_when_specified(self):
-        df = self._df()
-        df["fuel_load"] = [10.0, 20.0, None]
-        out = drop_null_rows(df, biomass_column="fuel_load")
-        assert len(out) == 2
-        assert list(out["fuel_load"]) == [10.0, 20.0]
+    def test_null_required_column_fails_with_counts(self):
+        df = self._df(dbh=[None, None, 20.0], height=[15.0, None, 15.0])
+        with pytest.raises(ProcessingError) as exc:
+            require_complete_rows(df)
+        assert exc.value.code == "INCOMPLETE_INVENTORY"
+        assert "dbh: 2" in exc.value.message
+        assert "height: 1" in exc.value.message
 
-    def test_crown_radius_column_non_null_required_when_specified(self):
+    def test_null_biomass_column_fails(self):
         df = self._df()
-        df["lidar_max_radius"] = [2.5, None, 4.0]
-        out = drop_null_rows(df, crown_radius_column="lidar_max_radius")
-        assert len(out) == 2
-        assert list(out["lidar_max_radius"]) == [2.5, 4.0]
+        df["fuel_load"] = [10.0, None, 30.0]
+        with pytest.raises(ProcessingError) as exc:
+            require_complete_rows(df, biomass_column="fuel_load")
+        assert "fuel_load: 1" in exc.value.message
 
-    def test_biomass_and_crown_radius_columns_drop_independently(self):
+    def test_null_crown_radius_is_not_checked(self):
+        """A null radius means "not measured" and falls back to allometry."""
         df = self._df()
-        df["fuel_load"] = [10.0, 20.0, 30.0]
-        df["lidar_max_radius"] = [2.5, None, 4.0]
-        out = drop_null_rows(
-            df,
-            biomass_column="fuel_load",
-            crown_radius_column="lidar_max_radius",
-        )
-        assert len(out) == 2
-        assert list(out["fuel_load"]) == [10.0, 30.0]
-        assert list(out["lidar_max_radius"]) == [2.5, 4.0]
+        df["crown_radius"] = [2.5, None, 4.0]
+        require_complete_rows(df)
 
-    def test_resets_index(self):
-        df = self._df()
-        df.loc[0, "dbh"] = None  # drop the first row
-        out = drop_null_rows(df)
-        assert list(out.index) == [0, 1]
-
-    def test_required_columns_restricts_dropna(self):
-        """When a request does not read dbh / species, a null in them must not
-        drop the tree — its available fuel would be silently omitted."""
-        df = self._df()
-        df.loc[0, "dbh"] = None
-        df.loc[1, "fia_species_code"] = None
-        out = drop_null_rows(df, required_columns=["x", "y", "height", "crown_ratio"])
-        assert len(out) == 3
+    def test_required_columns_restricts_check(self):
+        """A null in a column the request does not read is not an error."""
+        df = self._df(dbh=[None, 20.0, 20.0], fia_species_code=[131, None, 131])
+        require_complete_rows(df, required_columns=["x", "y", "height", "crown_ratio"])
 
 
 class TestCanopyRequiredColumns:
@@ -341,7 +345,8 @@ class TestCanopyRequiredColumns:
         cols = canopy_required_columns(self._source())
         assert {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"} <= cols
 
-    def test_column_fuel_uniform_all_species_needs_neither_dbh_nor_species(self):
+    def test_column_radius_needs_dbh_and_species_for_fallback(self):
+        """A null column radius falls back to Purves, which reads dbh and species."""
         cols = canopy_required_columns(
             self._source(
                 biomass_source={
@@ -359,9 +364,9 @@ class TestCanopyRequiredColumns:
                 },
             )
         )
-        assert cols == {"x", "y", "height", "crown_ratio"}
+        assert cols == {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"}
 
-    def test_reinhardt_distribution_needs_species_not_dbh(self):
+    def test_reinhardt_distribution_needs_species(self):
         cols = canopy_required_columns(
             self._source(
                 biomass_source={
@@ -380,7 +385,6 @@ class TestCanopyRequiredColumns:
             )
         )
         assert "fia_species_code" in cols
-        assert "dbh" not in cols
 
     def test_fuelcalc_species_inclusion_needs_species(self):
         cols = canopy_required_columns(

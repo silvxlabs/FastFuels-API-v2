@@ -25,10 +25,12 @@ from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.schema import Grid
+from api.resources.grids.utils import incomplete_inventory_columns
 from api.resources.grids.voxelize.inventory.tree.examples import (
     CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES,
 )
 from api.resources.grids.voxelize.inventory.tree.schema import (
+    BiomassComponent,
     CreateTreeInventoryRequest,
     TreeInventoryVoxelizationSource,
     build_tree_bands,
@@ -88,6 +90,9 @@ async def create_tree_inventory_grid(
     ## Request Body
 
     - **source_inventory_id**: (required) ID of a completed tree inventory.
+      Its `x`, `y`, `height`, `dbh`, `crown_ratio` and `fia_species_code`
+      (and any biomass column read) must have no null values; a null
+      `fia_status_code` counts as live.
     - **resolution**: (optional) Voxel resolution in meters. Defaults to
       `{"horizontal": 2.0, "vertical": 1.0}`. All components must be positive.
     - **bands**: (optional) Which output bands to produce. Defaults to
@@ -123,7 +128,8 @@ async def create_tree_inventory_grid(
       `{"type": "inventory_column", "column": <name>}` to read a per-tree
       maximum radius (m) from an inventory column (e.g. derived from LiDAR).
       The crown profile model still controls the crown shape — only the peak
-      radius is rescaled.
+      radius is rescaled. A tree with a null in that column uses its
+      allometric radius.
     - **moisture_model**: (optional) Live/dead fuel moisture configuration.
       Required shape: `{"live": {"method": "uniform", "value": <percent>}}`
       and/or `{"dead": {"method": "uniform", "value": <percent>}}`.
@@ -164,16 +170,17 @@ async def create_tree_inventory_grid(
             ),
         )
 
-    # Must carry the columns voxelization needs. An inventory can lack them for
-    # more than one reason — a CHM-derived inventory (position + height only) or
-    # an upload that omitted the optional morphology columns — so tailor the
-    # guidance to which columns are missing rather than assuming a source.
-    # Reject early rather than dispatching a job that fails on an opaque read.
-    have_columns = {
-        c["key"] if isinstance(c, dict) else c
-        for c in inventory_data.get("columns", [])
-    }
-    missing_columns = VOXELIZE_REQUIRED_COLUMNS - have_columns
+    # Must carry complete values in the columns voxelization needs. An inventory
+    # can lack them for more than one reason — a CHM-derived inventory (position
+    # + height only) or an upload that omitted or left gaps in the optional
+    # morphology columns — so tailor the guidance to which columns are missing
+    # rather than assuming a source. Reject early rather than dispatching a job
+    # that fails. A null crown radius is allowed: it falls back to allometry.
+    required_columns = set(VOXELIZE_REQUIRED_COLUMNS)
+    foliage = getattr(body.biomass_source, "columns", {}).get(BiomassComponent.foliage)
+    if foliage is not None:
+        required_columns.add(foliage.column)
+    missing_columns = incomplete_inventory_columns(inventory_data, required_columns)
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
@@ -193,9 +200,9 @@ async def create_tree_inventory_grid(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Inventory '{body.source_inventory_id}' is missing column(s) "
-                f"{sorted(missing_columns)} required for voxelization. "
-                + " ".join(guidance)
+                f"Inventory '{body.source_inventory_id}' is missing, or has null "
+                f"values in, column(s) {sorted(missing_columns)} required for "
+                f"voxelization. " + " ".join(guidance)
             ),
         )
 

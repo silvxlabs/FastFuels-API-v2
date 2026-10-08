@@ -36,7 +36,10 @@ from api.resources.grids.canopy.inventory.schema import (
     build_inventory_canopy_bands,
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
-from api.resources.grids.utils import validate_target_grid_alignment
+from api.resources.grids.utils import (
+    incomplete_inventory_columns,
+    validate_target_grid_alignment,
+)
 from api.resources.grids.voxelize.inventory.tree.schema import (
     InventoryColumnMaxCrownRadiusSource,
 )
@@ -118,7 +121,8 @@ async def create_inventory_canopy_grid(
     - **source_inventory_id**: (required) ID of a completed tree inventory in
       this domain. Required columns depend on the selected methods; the
       defaults need `x`, `y`, `height`, `crown_ratio`, `dbh`, and
-      `fia_species_code`.
+      `fia_species_code`. Required columns must have no null values; a null
+      `fia_status_code` counts as live.
     - **alignment**: (optional) Output lattice. Against the domain (the
       default) `resolution` defaults to 30 m — an inventory has no native
       cell size to inherit. Against another grid, omitting `resolution`
@@ -141,7 +145,9 @@ async def create_inventory_canopy_grid(
       splits each tree's fuel over the cells its crown covers;
       `stem` assigns it to the stem cell.
     - **max_crown_radius_source**: (optional) Allometric crown radii
-      (default) or a per-tree inventory column (e.g. from LiDAR).
+      (default) or a per-tree inventory column (e.g. from LiDAR). A tree with
+      a null in that column uses its Purves radius, so a column source also
+      needs `dbh` and `fia_species_code`.
     - **cbd**, **cbh**, **chm**, **cc**: (optional) Per-band reduction
       methods. Each may only be supplied when its band is requested;
       requested bands default to the FuelCalc-style methods.
@@ -186,11 +192,16 @@ async def create_inventory_canopy_grid(
     # tailored guidance rather than dispatching a job that fails on an opaque
     # read: morphology columns can be imputed with the allometry endpoint;
     # position, height, and user-named columns cannot.
-    have_columns = {
-        c["key"] if isinstance(c, dict) else c
-        for c in inventory_data.get("columns", [])
-    }
-    missing_columns = _required_columns(body) - have_columns
+    # A null crown radius is allowed: it falls back to the Purves radius.
+    radius = body.max_crown_radius_source
+    nullable = (
+        {radius.column}
+        if isinstance(radius, InventoryColumnMaxCrownRadiusSource)
+        else set()
+    )
+    missing_columns = incomplete_inventory_columns(
+        inventory_data, _required_columns(body), nullable
+    )
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
@@ -210,9 +221,9 @@ async def create_inventory_canopy_grid(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Inventory '{body.source_inventory_id}' is missing column(s) "
-                f"{sorted(missing_columns)} required by the selected canopy "
-                f"methods. " + " ".join(guidance)
+                f"Inventory '{body.source_inventory_id}' is missing, or has null "
+                f"values in, column(s) {sorted(missing_columns)} required by the "
+                f"selected canopy methods. " + " ".join(guidance)
             ),
         )
 

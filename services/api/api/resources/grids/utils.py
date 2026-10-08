@@ -155,6 +155,27 @@ def _resolve_fuel_model_band_value(band_key: str, value, band_types: dict[str, s
     return value
 
 
+def incomplete_inventory_columns(
+    inventory_data: dict, required: set[str], nullable: set[str] = frozenset()
+) -> set[str]:
+    """Required columns the inventory lacks, or whose summary reports nulls.
+
+    `nullable` columns only need to be listed.
+    """
+    columns = {}
+    for c in inventory_data.get("columns", []):
+        if isinstance(c, dict):
+            columns[c["key"]] = c.get("summary") or {}
+        else:
+            columns[c] = {}
+    return {
+        key
+        for key in required
+        if key not in columns
+        or (key not in nullable and (columns[key].get("null_count") or 0) > 0)
+    }
+
+
 def validate_grid_has_band(
     grid_data: dict, grid_id: str, required: str | list[str]
 ) -> None:

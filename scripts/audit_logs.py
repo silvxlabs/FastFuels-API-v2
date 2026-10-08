@@ -9,13 +9,17 @@ severity over a trailing window, grouped by normalized error signature. It does
 no triage: deciding what is a bug and what is expected noise is left to the
 reader (human or agent).
 
-Run locally with ADC:
+Auth modes (--auth):
+
+- ``client`` (default): the google-cloud-logging client with ADC, or with a
+  service-account key from GCP_SA_KEY_B64 / GCP_SA_KEY_JSON.
+- ``rest``: plain HTTPS calls to logging.googleapis.com with no credentials of
+  their own, for sandboxes whose egress proxy injects a bearer token (the Claude
+  cloud "GCP access token" network secret). Set GCP_ACCESS_TOKEN to add the
+  header yourself, e.g. ``GCP_ACCESS_TOKEN=$(gcloud auth print-access-token)``.
 
     uv run scripts/audit_logs.py --hours 24
-
-Or with a service-account key in an env var (base64 of the JSON key):
-
-    GCP_SA_KEY_B64=... uv run scripts/audit_logs.py --hours 24 --out digest.md
+    uv run scripts/audit_logs.py --hours 24 --auth rest --out digest.md
 """
 
 import argparse
@@ -24,6 +28,7 @@ import json
 import os
 import re
 import sys
+import urllib.request
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -119,31 +124,6 @@ def build_filter(services, min_severity, start, end):
     )
 
 
-def extract_message(e):
-    payload = e.payload
-    if isinstance(payload, str):
-        return payload
-    if isinstance(payload, dict):
-        for k in ("message", "msg", "error", "exception"):
-            v = payload.get(k)
-            if isinstance(v, str) and v:
-                return v
-        return json.dumps(payload, sort_keys=True)[:2000]
-    if payload is None and e.http_request:
-        return ""
-    return str(payload)[:2000] if payload is not None else ""
-
-
-def extract_ids(e):
-    ids = {}
-    if isinstance(e.payload, dict):
-        for k in ID_KEYS:
-            v = e.payload.get(k)
-            if isinstance(v, (str, int)):
-                ids[k] = str(v)
-    return ids
-
-
 def parse_traceback(msg):
     if "Traceback (most recent call last)" not in msg:
         return None
@@ -213,38 +193,113 @@ def is_test_traffic(msg, ids, http):
     return False
 
 
-def fetch(client, flt, limit):
-    out = []
-    for e in client.list_entries(filter_=flt, order_by=gcl.DESCENDING, page_size=1000):
-        http = None
+def iter_rest(project, flt, page_size=1000):
+    url = "https://logging.googleapis.com/v2/entries:list"
+    token = os.environ.get("GCP_ACCESS_TOKEN")
+    page_token = None
+    while True:
+        body = {
+            "resourceNames": [f"projects/{project}"],
+            "filter": flt,
+            "orderBy": "timestamp desc",
+            "pageSize": page_size,
+        }
+        if page_token:
+            body["pageToken"] = page_token
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.load(resp)
+        yield from data.get("entries", [])
+        page_token = data.get("nextPageToken")
+        if not page_token:
+            return
+
+
+def iter_client(client, flt, page_size=1000):
+    for e in client.list_entries(
+        filter_=flt, order_by=gcl.DESCENDING, page_size=page_size
+    ):
+        raw = {
+            "severity": str(e.severity),
+            "timestamp": e.timestamp.isoformat() if e.timestamp else "",
+            "resource": {"labels": dict(e.resource.labels)},
+        }
         if e.http_request:
-            http = {
-                k: e.http_request.get(k)
-                for k in (
-                    "requestMethod",
-                    "requestUrl",
-                    "status",
-                    "userAgent",
-                    "latency",
-                    "remoteIp",
-                )
-                if e.http_request.get(k) is not None
-            }
-        msg = extract_message(e)
-        ids = extract_ids(e)
-        tb = parse_traceback(msg)
-        out.append(
-            Entry(
-                service=e.resource.labels.get("service_name", "?"),
-                severity=str(e.severity),
-                timestamp=e.timestamp.isoformat() if e.timestamp else "",
-                message=msg[:4000],
-                ids=ids,
-                http=http,
-                traceback=tb,
-                is_test=is_test_traffic(msg, ids, http),
+            raw["httpRequest"] = dict(e.http_request)
+        if isinstance(e.payload, str):
+            raw["textPayload"] = e.payload
+        elif isinstance(e.payload, dict):
+            raw["jsonPayload"] = e.payload
+        elif e.payload is not None:
+            raw["protoPayload"] = e.payload
+        yield raw
+
+
+def extract_message(raw):
+    if "textPayload" in raw:
+        return raw["textPayload"]
+    payload = raw.get("jsonPayload")
+    if isinstance(payload, dict):
+        for k in ("message", "msg", "error", "exception"):
+            v = payload.get(k)
+            if isinstance(v, str) and v:
+                return v
+        return json.dumps(payload, sort_keys=True)[:2000]
+    proto = raw.get("protoPayload")
+    if proto is not None:
+        return str(proto)[:2000]
+    return ""
+
+
+def extract_ids(raw):
+    ids = {}
+    payload = raw.get("jsonPayload")
+    if isinstance(payload, dict):
+        for k in ID_KEYS:
+            v = payload.get(k)
+            if isinstance(v, (str, int)):
+                ids[k] = str(v)
+    return ids
+
+
+def to_entry(raw):
+    http = None
+    hr = raw.get("httpRequest")
+    if hr:
+        http = {
+            k: hr.get(k)
+            for k in (
+                "requestMethod",
+                "requestUrl",
+                "status",
+                "userAgent",
+                "latency",
+                "remoteIp",
             )
-        )
+            if hr.get(k) is not None
+        }
+    msg = extract_message(raw)
+    ids = extract_ids(raw)
+    tb = parse_traceback(msg)
+    return Entry(
+        service=raw.get("resource", {}).get("labels", {}).get("service_name", "?"),
+        severity=str(raw.get("severity", "DEFAULT")),
+        timestamp=raw.get("timestamp", ""),
+        message=msg[:4000],
+        ids=ids,
+        http=http,
+        traceback=tb,
+        is_test=is_test_traffic(msg, ids, http),
+    )
+
+
+def fetch(raw_iter, limit):
+    out = []
+    for raw in raw_iter:
+        out.append(to_entry(raw))
         if len(out) >= limit:
             break
     return out
@@ -385,6 +440,12 @@ def main(argv=None):
     p.add_argument("--end", help="window end, ISO-8601 UTC (default: now)")
     p.add_argument("--min-severity", default="WARNING")
     p.add_argument("--limit", type=int, default=20000, help="max entries to fetch")
+    p.add_argument(
+        "--auth",
+        choices=["client", "rest"],
+        default="client",
+        help="client: google-cloud-logging with ADC or GCP_SA_KEY_*; rest: bare HTTPS, token injected by a proxy or GCP_ACCESS_TOKEN",
+    )
     p.add_argument("--out", help="write Markdown digest here (default: stdout)")
     p.add_argument(
         "--json", dest="json_out", help="also write clusters + entries as JSON"
@@ -397,15 +458,18 @@ def main(argv=None):
         else datetime.now(UTC)
     )
     start = end - timedelta(hours=args.hours)
-    creds = credentials_from_env()
-    client = (
-        gcl.Client(project=args.project, credentials=creds)
-        if creds
-        else gcl.Client(project=args.project)
-    )
-
     flt = build_filter(args.services, args.min_severity, start, end)
-    entries = fetch(client, flt, args.limit)
+    if args.auth == "rest":
+        raw_iter = iter_rest(args.project, flt)
+    else:
+        creds = credentials_from_env()
+        client = (
+            gcl.Client(project=args.project, credentials=creds)
+            if creds
+            else gcl.Client(project=args.project)
+        )
+        raw_iter = iter_client(client, flt)
+    entries = fetch(raw_iter, args.limit)
     truncated = len(entries) >= args.limit
     clusters = cluster(entries)
     md = render_markdown(entries, clusters, args.services, start, end, truncated)

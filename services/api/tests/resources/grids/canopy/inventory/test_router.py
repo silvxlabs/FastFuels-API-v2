@@ -306,6 +306,46 @@ class TestInventoryCanopyValidation:
         assert "dbh" in detail
         assert "allometry" in detail
 
+    def test_allometric_radius_requires_dbh(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """Column fuel with no species methods still needs dbh for an
+        allometric radius when `cc` is requested."""
+        data = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory with column fuel and no dbh",
+            status="completed",
+            inventory_type="tree",
+        )
+        data["checksum"] = uuid.uuid4().hex
+        data["columns"] = [c for c in data["columns"] if c["key"] != "dbh"] + [
+            {"key": "available_canopy_fuel_kg", "type": "continuous", "unit": "kg"}
+        ]
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            data["id"]
+        )
+        doc_ref.set(data)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={
+                    "source_inventory_id": data["id"],
+                    "bands": ["cc"],
+                    "biomass_source": {
+                        "type": "inventory_column",
+                        "column": "available_canopy_fuel_kg",
+                        "unit": "kg",
+                    },
+                    "vertical_distribution": "uniform",
+                    "species_inclusion": "all_species",
+                    "crown_class_adjustment": {"method": "none"},
+                },
+            )
+            assert response.status_code == 422, response.json()
+            assert "dbh" in response.json()["detail"]
+        finally:
+            doc_ref.delete()
+
     def test_rejects_null_morphology(
         self, client, firestore_client, domain_for_testing
     ):

@@ -45,8 +45,8 @@ credential stops being one. The window is measured from `created_on`, not
 - `WALLE_GUEST_REAP_DRY_RUN` — default `true` (dry-run). The guest category ships
   logging-only; set `false` to enforce once the candidates look right in prod.
 - `WALLE_TTL_FLOOR_DAYS` (default 7) — resolved TTLs are clamped to at least this.
-- `WALLE_ORPHAN_MIN_AGE_HOURS` (default 24) — orphaned docs younger than this are
-  left alone.
+- `WALLE_ORPHAN_MIN_AGE_HOURS` (default 24) — orphaned docs and blobs younger than
+  this are left alone.
 - `WALLE_GUEST_TTL_HOURS` (default 24) — anonymous-owned resources created more
   than this long ago are reaped (ignores the TTL floor).
 - `WALLE_TEST_TTL_DAYS` (default 7) — `test-` resources older than this are purged.

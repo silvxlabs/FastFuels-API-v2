@@ -24,9 +24,8 @@ def _int(name: str, default: int) -> int:
 # real TTL — it only caps how aggressive an override may be.
 TTL_FLOOR_DAYS = _int("WALLE_TTL_FLOOR_DAYS", 7)
 
-# Orphaned child docs modified more recently than this are left alone, so a
-# resource mid-creation is never mistaken for garbage. Orphaned blobs use a
-# per-candidate doc re-check instead (see cleanup.py).
+# Orphaned child docs modified, and orphaned blobs written, more recently than
+# this are left alone, so a resource mid-creation is never mistaken for garbage.
 ORPHAN_MIN_AGE_HOURS = _int("WALLE_ORPHAN_MIN_AGE_HOURS", 24)
 
 # Ephemeral integration-test resources get a short retention. They are matched

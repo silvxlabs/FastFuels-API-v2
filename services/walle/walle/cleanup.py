@@ -51,6 +51,7 @@ from walle.config import (
 from walle.layouts import (
     RESOURCE_LAYOUTS,
     ResourceLayout,
+    artifact_mtime,
     artifact_path,
     delete_artifacts,
     list_artifact_ids,
@@ -422,7 +423,10 @@ def find_stale_test(records: list[Record], now: datetime) -> list[Record]:
 
 
 def find_orphan_blobs(
-    layout: ResourceLayout, artifacts: dict[str, str], live_ids: set[str]
+    layout: ResourceLayout,
+    artifacts: dict[str, str],
+    live_ids: set[str],
+    now: datetime,
 ) -> dict[str, str]:
     """Artifact id -> path for artifacts whose owning doc is gone.
 
@@ -432,10 +436,22 @@ def find_orphan_blobs(
     always written before their GCS, so "artifact, no doc" is otherwise a
     reliable orphan signal. The re-check is batched — a mostly-orphaned bucket
     can have thousands of candidates.
+
+    Ids containing ``__`` are worker staging prefixes (standgen's
+    ``<id>__rev``), not resource ids, and are never reaped. Confirmed orphans
+    written within ``ORPHAN_MIN_AGE_HOURS`` are spared, so doc-less test
+    fixtures are not reaped mid-run.
     """
-    candidate_ids = [i for i in set(artifacts) - live_ids if not _is_protected(i)]
+    candidate_ids = [
+        i for i in set(artifacts) - live_ids if not _is_protected(i) and "__" not in i
+    ]
     still_live = _existing_ids(layout.collection, candidate_ids)
-    return {i: artifacts[i] for i in candidate_ids if i not in still_live}
+    cutoff = now - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
+    return {
+        i: artifacts[i]
+        for i in candidate_ids
+        if i not in still_live and _older_than(artifact_mtime(artifacts[i]), cutoff)
+    }
 
 
 # --- reaping --------------------------------------------------------------
@@ -567,7 +583,7 @@ def run() -> dict:
         ]
 
         artifacts = list_artifact_ids(layout)
-        orphan_blobs = find_orphan_blobs(layout, artifacts, live_ids)
+        orphan_blobs = find_orphan_blobs(layout, artifacts, live_ids, now)
 
         logger.info(
             "%s: %d docs, %d artifacts | orphan_blobs=%d orphan_docs=%d expired=%d guest=%d test=%d",

@@ -315,16 +315,25 @@ def _apply_action(ds: xr.Dataset, action: dict, mask: np.ndarray) -> None:
         band_idx = list(da.coords["band"].values).index(band_coord_val)
         target = arr[band_idx]
 
+    # Sentinel-nodata cells are not data; leave them untouched. NaN nodata
+    # needs no exclusion (NaN arithmetic and the clamp below keep NaN).
+    nodata = da.rio.nodata
+    if nodata is not None and nodata == nodata:
+        mask = mask & (target != nodata)
+
+    # Compute on a float copy of the selected cells so integer bands accept
+    # non-integer values; the result is rounded back to the band dtype.
+    values = target[mask].astype(np.float64)
     if modifier == "replace":
-        target[mask] = value
+        values[:] = value
     elif modifier == "add":
-        target[mask] += value
+        values += value
     elif modifier == "subtract":
-        target[mask] -= value
+        values -= value
     elif modifier == "multiply":
-        target[mask] *= value
+        values *= value
     elif modifier == "divide":
-        target[mask] /= value
+        values /= value
     else:
         raise ProcessingError(
             code="UNKNOWN_MODIFIER",
@@ -340,7 +349,11 @@ def _apply_action(ds: xr.Dataset, action: dict, mask: np.ndarray) -> None:
     # the value explicitly, and for signed bands (elevation can be below sea
     # level).
     if modifier != "replace" and band_key not in SIGNED_BANDS:
-        target[mask] = np.maximum(target[mask], 0)
+        values = np.maximum(values, 0)
+
+    if np.issubdtype(target.dtype, np.integer):
+        values = np.rint(values)
+    target[mask] = values
 
 
 def _resolve_band(ds: xr.Dataset, band_key: str) -> tuple[str, str | None]:

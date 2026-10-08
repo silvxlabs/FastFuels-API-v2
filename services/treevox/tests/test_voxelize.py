@@ -314,6 +314,18 @@ class TestComputeCacheKeys:
         keys = voxelize.compute_cache_keys(df)
         assert keys.nunique() == 1
 
+    def test_null_radius_is_its_own_key(self):
+        """Null radii share a key with each other, never with measured radii."""
+        df = fake_tree_df(n=4, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df["lidar_radius"] = [np.nan, 2.0, np.nan, 2.0]
+        keys = voxelize.compute_cache_keys(
+            df, _profile_config("purves", "lidar_radius")
+        )
+        assert keys.notna().all()
+        assert keys[0] == keys[2]
+        assert keys[1] == keys[3]
+        assert keys[0] != keys[1]
+
     def test_different_species_different_keys(self):
         df = pd.DataFrame(
             {
@@ -942,6 +954,17 @@ class TestGeometricCrownProfiles:
         z = np.linspace(self.HB, self.HT, 721)
         radii = np.asarray(tree.get_crown_radius_at_height(z))
         assert radii.max() == pytest.approx(2.25)
+
+    @pytest.mark.parametrize("profile", ["purves", "beta", *GEOMETRIC_PROFILES])
+    def test_null_column_radius_falls_back_to_allometry(self, profile):
+        """A null in the radius column gives the same tree as `allometry`."""
+        row = _real_row(lidar_radius=np.nan)
+        allometric = voxelize.build_tree(row, _profile_config(profile))
+        tree = voxelize.build_tree(row, _profile_config(profile, "lidar_radius"))
+        assert tree.max_crown_radius == allometric.max_crown_radius
+        assert tree.crown_profile_model.get_max_radius() == pytest.approx(
+            allometric.crown_profile_model.get_max_radius()
+        )
 
     @pytest.mark.parametrize("profile", ["purves", "beta", *GEOMETRIC_PROFILES])
     def test_voxelized_mass_is_profile_independent(self, profile):

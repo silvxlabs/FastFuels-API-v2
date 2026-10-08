@@ -26,6 +26,11 @@ def tree_inventory_for_voxelization(firestore_client, domain_for_testing):
         status="completed",
         inventory_type="tree",
     )
+    # Biomass columns the documented example and tests read.
+    inventory_data["columns"] += [
+        {"key": key, "type": "continuous", "unit": "kg"}
+        for key in ("foliage_biomass", "my_fuel_load_col")
+    ]
     doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
         inventory_data["id"]
     )
@@ -316,6 +321,38 @@ class TestCreateTreeInventoryGrid:
             assert "allometry/gdam" in detail
             # Message must not assume the source was CHM.
             assert "CHM" not in detail
+        finally:
+            doc_ref.delete()
+
+    def test_inventory_with_null_morphology_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory with null crown_ratio",
+            status="completed",
+            inventory_type="tree",
+        )
+        for column in inv["columns"]:
+            column["summary"] = {
+                "null_count": 2 if column["key"] == "crown_ratio" else 0
+            }
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inv["id"]
+        )
+        doc_ref.set(inv)
+        try:
+            body = {
+                "source_inventory_id": inv["id"],
+                "resolution": {"horizontal": 2.0, "vertical": 1.0},
+                "bands": ["bulk_density.foliage.live"],
+            }
+            response = client.post(self.route(domain_for_testing["id"]), json=body)
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "null" in detail
+            assert "'crown_ratio'" in detail
+            assert "allometry/gdam" in detail
         finally:
             doc_ref.delete()
 

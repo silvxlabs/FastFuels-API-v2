@@ -110,8 +110,7 @@ class TestLoadInventoryDataframe:
 
     @patch("treevox.handlers.voxelize.read_inventory")
     def test_keeps_inventory_tree_ids(self, mock_read):
-        """The inventory's tree_id survives null-row dropping unchanged
-        instead of being renumbered (#611)."""
+        """The inventory's tree_id is kept unchanged, not renumbered (#611)."""
         mock_read.return_value = pd.DataFrame(
             {
                 "tree_id": np.array([3, 17, 42], dtype="int32"),
@@ -119,7 +118,7 @@ class TestLoadInventoryDataframe:
                 "y": [1.0, 2.0, 3.0],
                 "fia_species_code": [131, 131, 131],
                 "fia_status_code": [1, 1, 1],
-                "dbh": [20.0, None, 25.0],
+                "dbh": [20.0, 22.0, 25.0],
                 "height": [15.0, 15.0, 15.0],
                 "crown_ratio": [0.4, 0.4, 0.4],
             }
@@ -127,22 +126,12 @@ class TestLoadInventoryDataframe:
         source = _base_grid()["source"]
         df = handler._load_inventory_dataframe(source, lambda *a, **k: None)
         assert mock_read.call_args.kwargs["include_tree_id"] is True
-        assert list(df["tree_id"]) == [3, 42]
+        assert list(df["tree_id"]) == [3, 17, 42]
         assert df["tree_id"].dtype == np.int32
 
     @patch("treevox.handlers.voxelize.read_inventory")
-    def test_empty_after_filter_raises_empty_inventory(self, mock_read):
-        mock_read.return_value = pd.DataFrame(
-            {
-                "x": [1.0],
-                "y": [1.0],
-                "fia_species_code": [131],
-                "fia_status_code": [1],
-                "dbh": [None],  # the only row is null → drops to empty
-                "height": [15.0],
-                "crown_ratio": [0.4],
-            }
-        )
+    def test_no_live_trees_raises_empty_inventory(self, mock_read):
+        mock_read.return_value = _sample_df().iloc[0:0]
         with pytest.raises(ProcessingError) as exc:
             handler._load_inventory_dataframe(
                 _base_grid()["source"], lambda *a, **k: None
@@ -673,21 +662,13 @@ class TestVoxelizeInventoryFlow:
         assert any("Finalizing" in m for m in msgs)
 
     @patch("treevox.handlers.voxelize.read_inventory")
-    def test_empty_inventory_raises(self, mock_read_inv):
-        mock_read_inv.return_value = pd.DataFrame(
-            {
-                "x": [1.0],
-                "y": [1.0],
-                "fia_species_code": [131],
-                "fia_status_code": [1],
-                "dbh": [None],  # null → dropped by drop_null_rows → empty
-                "height": [15.0],
-                "crown_ratio": [0.4],
-            }
-        )
+    def test_null_morphology_fails_instead_of_thinning(self, mock_read_inv):
+        df = _sample_df()
+        df.loc[df.index[0], "dbh"] = None
+        mock_read_inv.return_value = df
         with pytest.raises(ProcessingError) as exc:
             voxelize_inventory(_base_grid(), _fake_domain(), lambda *a, **k: None)
-        assert exc.value.code == "EMPTY_INVENTORY"
+        assert exc.value.code == "INCOMPLETE_INVENTORY"
 
     @patch("treevox.handlers.voxelize.storage.consolidate_metadata")
     @patch("treevox.handlers.voxelize.storage.write_union")

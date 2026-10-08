@@ -284,7 +284,8 @@ def build_tree(row, source_config: dict) -> Tree:
     biomass is computed allometrically via NSVB or Jenkins.
 
     `max_crown_radius` comes from the inventory column when
-    `max_crown_radius_source.type` is `inventory_column`. Otherwise `purves`
+    `max_crown_radius_source.type` is `inventory_column` and the tree's value
+    is not null. Otherwise `purves`
     and `beta` compute their own allometric radius, and the geometric
     profiles (cone, cylinder, ellipsoids, paraboloids) take the Purves
     maximum crown radius of the same tree. The single-lobe ellipsoid and
@@ -304,7 +305,7 @@ def build_tree(row, source_config: dict) -> Tree:
 
     max_crown_radius = None
     radius_column = max_crown_radius_inventory_column(source_config)
-    if radius_column is not None:
+    if radius_column is not None and pd.notna(row[radius_column]):
         max_crown_radius = float(row[radius_column])
     elif profile in GEOMETRIC_CROWN_PROFILES:
         max_crown_radius = float(
@@ -347,8 +348,8 @@ def compute_cache_keys(
     key so rows with the same morphology but different supplied biomass do not
     reuse the first row's cached density arrays. The same applies to a
     per-tree max_crown_radius column: it changes the crown geometry and
-    must split otherwise-identical bins. Returns integer codes via
-    `groupby().ngroup()`.
+    must split otherwise-identical bins. A null radius is its own key value
+    (allometric fallback). Returns integer codes via `groupby().ngroup()`.
 
     See TREEVOX.md for rationale and bin widths.
     """
@@ -366,7 +367,7 @@ def compute_cache_keys(
             groupers.append(df[column].astype("float64"))
         if column := max_crown_radius_inventory_column(source_config):
             groupers.append(df[column].astype("float64"))
-    return df.groupby(groupers, sort=False).ngroup()
+    return df.groupby(groupers, sort=False, dropna=False).ngroup()
 
 
 def calculate_arrays_to_cache(

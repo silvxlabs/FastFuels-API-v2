@@ -13,6 +13,7 @@ drops into anything that accepts one — the landscape export above all. Cells
 with no canopy are written as 0, matching LANDFIRE's non-forest encoding.
 """
 
+import logging
 from collections.abc import Callable
 
 import geopandas as gpd
@@ -22,6 +23,7 @@ import rioxarray  # noqa: F401  (registers the .rio accessor)
 import xarray as xr
 from affine import Affine
 from fastfuels_core.canopy_fuel import compute_canopy_metrics
+from fastfuels_core.canopy_fuel.crown_radius import max_crown_radius
 
 from lib.alignment import resolve_alignment_destination
 from lib.crs import crs_equal
@@ -29,9 +31,11 @@ from lib.errors import ProcessingError
 from lib.inventory_io import (
     CROWN_CLASS_COLUMN,
     canopy_required_columns,
-    drop_null_rows,
     read_inventory,
+    require_complete_rows,
 )
+
+logger = logging.getLogger(__name__)
 
 # An inventory has no native raster cell size. The API resolves the
 # domain-target default (30 m) before persisting, and a grid target inherits
@@ -157,6 +161,27 @@ def _init_dataset(
     ds = ds.rio.write_crs(crs)
     ds = ds.rio.write_transform(transform)
     return ds
+
+
+def _fill_missing_crown_radius(df: pd.DataFrame, column: str) -> None:
+    """Fill null radii in place with the tree's Purves crown radius."""
+    missing = df[column].isna()
+    if not missing.any():
+        return
+    try:
+        df.loc[missing, column] = max_crown_radius(df[missing], equations="purves")
+    except KeyError as e:
+        raise ProcessingError(
+            code="CANOPY_FUEL_INPUT_ERROR",
+            message=f"No Purves crown radius for species code {e}.",
+            suggestion=(
+                f"Supply {column} for trees of that species, or correct their "
+                "fia_species_code."
+            ),
+        ) from e
+    logger.info(
+        f"{int(missing.sum())} trees have no {column}; using their Purves crown radius"
+    )
 
 
 def _inventory_columns(source: dict) -> tuple[str | None, str | None]:
@@ -330,16 +355,17 @@ def fetch_canopy_inventory(
         include_crown_class=use_crown_class,
         required_columns=required,
     )
-    df = drop_null_rows(df, fuel_column, radius_column, required_columns=required)
+    require_complete_rows(df, fuel_column, required_columns=required)
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",
-            message="Inventory has no live trees with complete measurements.",
+            message="Inventory has no live trees.",
             suggestion=(
-                "Verify the inventory contains live trees (fia_status_code == 1) "
-                "with non-null dbh / height / crown_ratio."
+                "Verify the inventory contains live trees (fia_status_code 1 or null)."
             ),
         )
+    if radius_column is not None:
+        _fill_missing_crown_radius(df, radius_column)
 
     dataset = _init_dataset(bands, transform, str(roi.crs), shape)
     kwargs = _core_kwargs(source)

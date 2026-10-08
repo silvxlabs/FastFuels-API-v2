@@ -11,8 +11,8 @@ focuses on happy paths, example verification, and HTTP-specific concerns.
 
 import pytest
 
-from lib.config import GRIDS_COLLECTION
-from tests.fixtures import make_grid_data
+from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
+from tests.fixtures import make_domain_data, make_grid_data
 
 # Fixtures
 
@@ -125,58 +125,66 @@ class TestGetGrid:
 
 
 class TestListGridsWildcard:
-    """Test GET /domains/-/grids returns grids across all domains."""
+    """Test GET /domains/-/grids returns grids across all domains.
 
-    @pytest.fixture(scope="class")
-    def grids_across_domains(self, firestore_client, domain_for_testing, second_domain):
-        """Grids spread across two domains, both owned by test-owner."""
+    Every test lists a fresh isolated owner, never the shared owner, whose
+    grids accumulate from every suite run, including runs from branches whose
+    grid schemas this API doesn't know yet.
+    """
+
+    @pytest.fixture
+    def owner_with_grids(self, isolated_owner):
+        """An isolated owner's client and one grid in each of two domains."""
+        client, owner_id, seed = isolated_owner
         grids = []
-        for domain_id in [domain_for_testing["id"], second_domain["id"]]:
-            grid_data = make_grid_data(
-                domain_id=domain_id,
-                name=f"Grid in {domain_id}",
-                tags=["wildcard-list-test"],
+        for i in range(2):
+            domain = seed(
+                DOMAINS_COLLECTION,
+                make_domain_data(owner_id=owner_id, name=f"WC Domain {i}"),
             )
-            doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(
-                grid_data["id"]
+            grids.append(
+                seed(
+                    GRIDS_COLLECTION,
+                    make_grid_data(
+                        domain_id=domain["id"], owner_id=owner_id, name=f"Grid {i}"
+                    ),
+                )
             )
-            doc_ref.set(grid_data)
-            grids.append(grid_data)
-        yield grids
-        for grid in grids:
-            firestore_client.collection(GRIDS_COLLECTION).document(grid["id"]).delete()
+        return client, grids
 
     def route(self):
         return "/domains/-/grids"
 
-    def test_wildcard_returns_200(self, client):
+    def test_wildcard_returns_200(self, owner_with_grids):
+        client, _ = owner_with_grids
         response = client.get(self.route())
         assert response.status_code == 200
 
-    def test_wildcard_returns_grids_from_all_domains(
-        self, client, grids_across_domains
-    ):
+    def test_wildcard_returns_grids_from_all_domains(self, owner_with_grids):
         """Grids from multiple domains are all returned."""
-        response = client.get(f"{self.route()}?tag=wildcard-list-test&size=1000")
+        client, grids = owner_with_grids
+        response = client.get(self.route())
         assert response.status_code == 200
 
         grid_ids = [g["id"] for g in response.json()["grids"]]
-        for grid in grids_across_domains:
+        for grid in grids:
             assert grid["id"] in grid_ids
 
     def test_wildcard_excludes_other_users_grids(
-        self, client, grid_with_different_owner
+        self, owner_with_grids, grid_with_different_owner
     ):
         """Wildcard list does not return grids owned by other users."""
+        client, _ = owner_with_grids
         response = client.get(self.route())
         assert response.status_code == 200
 
         grid_ids = [g["id"] for g in response.json()["grids"]]
         assert grid_with_different_owner["id"] not in grid_ids
 
-    def test_wildcard_excludes_owner_id(self, client, grids_across_domains):
+    def test_wildcard_excludes_owner_id(self, owner_with_grids):
         """Wildcard list does not expose owner_id."""
-        response = client.get(f"{self.route()}?tag=wildcard-list-test&size=1000")
+        client, _ = owner_with_grids
+        response = client.get(self.route())
         assert response.status_code == 200
 
         for grid in response.json()["grids"]:
@@ -185,9 +193,10 @@ class TestListGridsWildcard:
     @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
     @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
     def test_wildcard_sorting_matrix_returns_200(
-        self, client, grids_across_domains, sort_by, sort_order
+        self, owner_with_grids, sort_by, sort_order
     ):
         """Every sort field/direction combination is served (issue #321)."""
+        client, _ = owner_with_grids
         url = f"{self.route()}?sort_by={sort_by}"
         if sort_order:
             url += f"&sort_order={sort_order}"

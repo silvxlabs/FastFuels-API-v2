@@ -33,8 +33,8 @@ from pydantic import (
 )
 
 from api.resources.grids.alignment import (
-    GridAlignmentDomainTarget,
-    GridAlignmentSpecification,
+    GridLatticeDomainTarget,
+    GridLatticeSpecification,
 )
 from api.resources.grids.canopy.schema import (
     LANDFIRE_CANOPY_BAND_DEFS,
@@ -865,14 +865,14 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
             "LANDFIRE-parity canopy bands; add `cfl` for canopy fuel load."
         ),
     )
-    alignment: GridAlignmentSpecification = Field(
-        default_factory=GridAlignmentDomainTarget,
+    alignment: GridLatticeSpecification = Field(
+        default_factory=GridLatticeDomainTarget,
         description=(
             "Output lattice. Against the domain (`target: 'domain'`, the "
             "default) `resolution` defaults to 30 m — an inventory has no "
             "native cell size to inherit. Against another grid "
             "(`target: 'grid'`) omitting `resolution` matches that grid's "
-            "lattice exactly. `target: 'native'` is not supported."
+            "lattice exactly."
         ),
     )
 
@@ -1018,6 +1018,7 @@ class InventoryCanopySource(CanopySource, InventoryCanopySourceBase):
     model_config = ConfigDict(extra="forbid")
 
     product: Literal["inventory"] = "inventory"
+    alignment: GridLatticeSpecification = Field(default_factory=GridLatticeDomainTarget)
     description: Literal["Canopy fuel metrics computed from a tree inventory"] = (
         "Canopy fuel metrics computed from a tree inventory"
     )

@@ -448,51 +448,24 @@ class TestGetInventory:
 
 
 class TestListInventoriesWildcard:
-    """Test GET /domains/-/inventories returns inventories across all domains."""
+    """Test GET /domains/-/inventories returns inventories across all domains.
 
-    @pytest.fixture(scope="class")
-    def inventories_across_domains(
-        self, firestore_client, domain_for_testing, second_domain
-    ):
-        """Inventories spread across two domains, both owned by test-owner."""
-        inventories = []
-        for domain_id in [domain_for_testing["id"], second_domain["id"]]:
-            inv_data = make_inventory_data(
-                domain_id=domain_id, name=f"Inventory in {domain_id}"
-            )
-            doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
-                inv_data["id"]
-            )
-            doc_ref.set(inv_data)
-            inventories.append(inv_data)
-        yield inventories
-        for inv in inventories:
-            firestore_client.collection(INVENTORIES_COLLECTION).document(
-                inv["id"]
-            ).delete()
+    Every test lists a fresh isolated owner, never the shared owner, whose
+    inventories accumulate from every suite run, including runs from branches
+    whose inventory schemas this API doesn't know yet.
+    """
 
-    def route(self):
-        return "/domains/-/inventories"
-
-    def test_wildcard_returns_200(self, client):
-        response = client.get(self.route())
-        assert response.status_code == 200
-
-    def test_wildcard_returns_inventories_from_all_domains(self, isolated_owner):
-        """Inventories from multiple domains are all returned.
-
-        Runs on a fresh isolated owner so the wildcard result is bounded to the
-        seeded set and never buried past the first page by the shared owner's
-        accumulated test data.
-        """
+    @pytest.fixture
+    def owner_with_inventories(self, isolated_owner):
+        """An isolated owner's client and one inventory in each of two domains."""
         client, owner_id, seed = isolated_owner
-        seeded = []
+        inventories = []
         for i in range(2):
             domain = seed(
                 DOMAINS_COLLECTION,
                 make_domain_data(owner_id=owner_id, name=f"WC Domain {i}"),
             )
-            seeded.append(
+            inventories.append(
                 seed(
                     INVENTORIES_COLLECTION,
                     make_inventory_data(
@@ -500,38 +473,55 @@ class TestListInventoriesWildcard:
                     ),
                 )
             )
+        return client, inventories
 
+    def route(self):
+        return "/domains/-/inventories"
+
+    def test_wildcard_returns_200(self, owner_with_inventories):
+        client, _ = owner_with_inventories
         response = client.get(self.route())
         assert response.status_code == 200
 
-        inv_ids = [i["id"] for i in response.json()["inventories"]]
-        for inv in seeded:
-            assert inv["id"] in inv_ids
+    def test_wildcard_returns_inventories_from_all_domains(
+        self, owner_with_inventories
+    ):
+        """Inventories from multiple domains are all returned."""
+        client, inventories = owner_with_inventories
+        response = client.get(self.route())
+        assert response.status_code == 200
+
+        ids = [r["id"] for r in response.json()["inventories"]]
+        for resource in inventories:
+            assert resource["id"] in ids
 
     def test_wildcard_excludes_other_users_inventories(
-        self, client, inventory_with_different_owner
+        self, owner_with_inventories, inventory_with_different_owner
     ):
         """Wildcard list does not return inventories owned by other users."""
+        client, _ = owner_with_inventories
         response = client.get(self.route())
         assert response.status_code == 200
 
-        inv_ids = [i["id"] for i in response.json()["inventories"]]
-        assert inventory_with_different_owner["id"] not in inv_ids
+        ids = [r["id"] for r in response.json()["inventories"]]
+        assert inventory_with_different_owner["id"] not in ids
 
-    def test_wildcard_excludes_owner_id(self, client, inventories_across_domains):
+    def test_wildcard_excludes_owner_id(self, owner_with_inventories):
         """Wildcard list does not expose owner_id."""
+        client, _ = owner_with_inventories
         response = client.get(self.route())
         assert response.status_code == 200
 
-        for inv in response.json()["inventories"]:
-            assert "owner_id" not in inv
+        for resource in response.json()["inventories"]:
+            assert "owner_id" not in resource
 
     @pytest.mark.parametrize("sort_by", ["created_on", "modified_on", "name"])
     @pytest.mark.parametrize("sort_order", [None, "ascending", "descending"])
     def test_wildcard_sorting_matrix_returns_200(
-        self, client, inventories_across_domains, sort_by, sort_order
+        self, owner_with_inventories, sort_by, sort_order
     ):
         """Every sort field/direction combination is served (issue #321)."""
+        client, _ = owner_with_inventories
         url = f"{self.route()}?sort_by={sort_by}"
         if sort_order:
             url += f"&sort_order={sort_order}"

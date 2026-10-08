@@ -25,10 +25,12 @@ from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.schema import Grid
+from api.resources.grids.utils import incomplete_inventory_columns
 from api.resources.grids.voxelize.inventory.tree.examples import (
     CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES,
 )
 from api.resources.grids.voxelize.inventory.tree.schema import (
+    BiomassComponent,
     CreateTreeInventoryRequest,
     InventoryColumnMaxCrownRadiusSource,
     TreeInventoryVoxelizationSource,
@@ -89,6 +91,9 @@ async def create_tree_inventory_grid(
     ## Request Body
 
     - **source_inventory_id**: (required) ID of a completed tree inventory.
+      Its `x`, `y`, `height`, `dbh`, `crown_ratio` and `fia_species_code`
+      (and any biomass column read) must have no null values; a null
+      `fia_status_code` counts as live.
     - **resolution**: (optional) Voxel resolution in meters. Defaults to
       `{"horizontal": 2.0, "vertical": 1.0}`. All components must be positive.
     - **bands**: (optional) Which output bands to produce. Defaults to
@@ -96,17 +101,36 @@ async def create_tree_inventory_grid(
       duplicates. Branchwood and fine bands are accepted by the API, but
       Treevox currently fails those jobs with a not-implemented processing
       error.
-    - **crown_profile_model**: (optional) Crown geometry model. One of
-      `purves` (default) or `beta`.
+    - **crown_profile_model**: (optional) Crown shape. Every crown runs from
+      the crown base, height × (1 − crown_ratio), to the tree height.
+      - `purves` (default): Purves et al. (2007), species-specific; widest at
+        the crown base.
+      - `beta`: species-group beta distribution; widest within the crown, per
+        species group.
+      - `cone`: right circular cone; widest at the crown base.
+      - `cylinder`: right circular cylinder; uniform radius.
+      - `single_ellipsoid`: one half-ellipsoid of revolution; widest at the
+        crown base.
+      - `dual_ellipsoid`: two half-ellipsoids joined at the crown midpoint;
+        widest there.
+      - `single_paraboloid`: one paraboloid of revolution; widest at the crown
+        base.
+      - `dual_paraboloid`: two paraboloids joined at the crown midpoint;
+        widest there (the LANL Trees crown envelope).
     - **biomass_source**: (optional) Biomass source and requested components. The
       default uses NSVB allometry for foliage. Inventory-column sources must
       provide per-tree kg values for each requested direct component.
     - **max_crown_radius_source**: (optional) Source of each tree's maximum
-      crown radius. Defaults to the crown profile model's allometric value;
-      pass `{"type": "inventory_column", "column": <name>}` to read a per-tree
+      crown radius. The default, `{"type": "allometry"}`, uses the Purves et
+      al. (2007) maximum crown radius for `purves` and every geometric shape
+      (`cone`, `cylinder`, ellipsoids, paraboloids), so a tree's crown is
+      equally wide under each of them and only the shape changes; `beta` uses
+      its own allometric radius. Pass
+      `{"type": "inventory_column", "column": <name>}` to read a per-tree
       maximum radius (m) from an inventory column (e.g. derived from LiDAR).
       The crown profile model still controls the crown shape — only the peak
-      radius is rescaled.
+      radius is rescaled. A tree with a null in that column uses its
+      allometric radius.
     - **moisture_model**: (optional) Live/dead fuel moisture configuration.
       Required shape: `{"live": {"method": "uniform", "value": <percent>}}`
       and/or `{"dead": {"method": "uniform", "value": <percent>}}`.
@@ -147,19 +171,25 @@ async def create_tree_inventory_grid(
             ),
         )
 
-    # Must carry the columns voxelization needs. An inventory can lack them for
-    # more than one reason — a CHM-derived inventory (position + height only) or
-    # an upload that omitted the optional morphology columns — so tailor the
-    # guidance to which columns are missing rather than assuming a source.
-    # Reject early rather than dispatching a job that fails on an opaque read.
-    have_columns = {
-        c["key"] if isinstance(c, dict) else c
-        for c in inventory_data.get("columns", [])
-    }
+    # Must carry complete values in the columns voxelization needs. An inventory
+    # can lack them for more than one reason — a CHM-derived inventory (position
+    # + height only) or an upload that omitted or left gaps in the optional
+    # morphology columns — so tailor the guidance to which columns are missing
+    # rather than assuming a source. Reject early rather than dispatching a job
+    # that fails. A radius column must be listed (uploads store an all-null
+    # column for unmapped optional columns), but a null radius is allowed: it
+    # falls back to allometry.
     required_columns = set(VOXELIZE_REQUIRED_COLUMNS)
+    foliage = getattr(body.biomass_source, "columns", {}).get(BiomassComponent.foliage)
+    if foliage is not None:
+        required_columns.add(foliage.column)
+    nullable = set()
     if isinstance(body.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource):
         required_columns.add(body.max_crown_radius_source.column)
-    missing_columns = required_columns - have_columns
+        nullable.add(body.max_crown_radius_source.column)
+    missing_columns = incomplete_inventory_columns(
+        inventory_data, required_columns, nullable
+    )
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
@@ -179,9 +209,9 @@ async def create_tree_inventory_grid(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Inventory '{body.source_inventory_id}' is missing column(s) "
-                f"{sorted(missing_columns)} required for voxelization. "
-                + " ".join(guidance)
+                f"Inventory '{body.source_inventory_id}' is missing, or has null "
+                f"values in, column(s) {sorted(missing_columns)} required for "
+                f"voxelization. " + " ".join(guidance)
             ),
         )
 

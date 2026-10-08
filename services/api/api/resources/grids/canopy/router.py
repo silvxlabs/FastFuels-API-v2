@@ -385,8 +385,6 @@ async def create_point_cloud_chm(
       matches that grid cell-for-cell, and the output covers the target's
       extent rather than the domain's; giving one keeps the target's origin at
       the new cell size. The target grid must be in this domain's CRS.
-      `target: "native"` is not supported — a point cloud has no pixel anchor
-      to preserve.
     - **spike_filter**: (optional) Removal of lone spurious returns. Under the
       default `max` aggregation a cell takes the tallest return in it, so one
       bad return — a bird, haze — sets the cell unless the cloud classified it
@@ -431,16 +429,6 @@ async def create_point_cloud_chm(
                 f"Point cloud '{body.source_point_cloud_id}' has type "
                 f"'{point_cloud.get('type')}'. A canopy height model requires "
                 f"an airborne (als) point cloud."
-            ),
-        )
-
-    if body.alignment.target == "native":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                "alignment.target 'native' is not supported for a point cloud "
-                "source: there is no source raster whose pixel anchor could be "
-                "preserved. Use 'domain' or 'grid'."
             ),
         )
 

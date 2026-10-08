@@ -306,6 +306,73 @@ class TestInventoryCanopyValidation:
         assert "dbh" in detail
         assert "allometry" in detail
 
+    def test_rejects_null_morphology(
+        self, client, firestore_client, domain_for_testing
+    ):
+        data = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory with null dbh",
+            status="completed",
+            inventory_type="tree",
+        )
+        for column in data["columns"]:
+            column["summary"] = {"null_count": 4 if column["key"] == "dbh" else 0}
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            data["id"]
+        )
+        doc_ref.set(data)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"source_inventory_id": data["id"]},
+            )
+            assert response.status_code == 422
+            detail = response.json()["detail"]
+            assert "null" in detail
+            assert "'dbh'" in detail
+            assert "allometry" in detail
+        finally:
+            doc_ref.delete()
+
+    def test_null_radius_column_is_accepted(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A null crown radius falls back to allometry, so it is not rejected."""
+        data = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory with partial crown radius",
+            status="completed",
+            inventory_type="tree",
+        )
+        data["checksum"] = uuid.uuid4().hex
+        data["columns"].append(
+            {
+                "key": "crown_radius",
+                "type": "continuous",
+                "unit": "m",
+                "summary": {"null_count": 7},
+            }
+        )
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            data["id"]
+        )
+        doc_ref.set(data)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={
+                    "source_inventory_id": data["id"],
+                    "max_crown_radius_source": {
+                        "type": "inventory_column",
+                        "column": "crown_radius",
+                        "unit": "m",
+                    },
+                },
+            )
+            assert response.status_code == 201, response.json()
+        finally:
+            doc_ref.delete()
+
     def test_rejects_native_alignment(
         self, client, domain_for_testing, tree_inventory_for_canopy
     ):
@@ -317,7 +384,20 @@ class TestInventoryCanopyValidation:
             },
         )
         assert response.status_code == 422
-        assert "native" in response.json()["detail"]
+        assert "native" in str(response.json()["detail"])
+
+    def test_rejects_alignment_method(
+        self, client, domain_for_testing, tree_inventory_for_canopy
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_inventory_id": tree_inventory_for_canopy["id"],
+                "alignment": {"target": "domain", "method": "bilinear"},
+            },
+        )
+        assert response.status_code == 422
+        assert "method" in str(response.json()["detail"])
 
     def test_rejects_inventory_in_other_domain(
         self, client, domain_for_testing, tree_inventory_in_other_domain

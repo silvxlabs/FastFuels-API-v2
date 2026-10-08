@@ -490,3 +490,32 @@ class TestPointCloudChmSourceAggregation:
         source = PointCloudChmSource(source_point_cloud_id="cloud-1")
 
         assert source.model_dump()["aggregation"] == {"method": "max"}
+
+
+class TestPointCloudChmAlignment:
+    """A point cloud is binned onto cells, never resampled from a raster."""
+
+    def test_native_alignment_target_rejected(self):
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1", alignment={"target": "native"}
+            )
+
+    @pytest.mark.parametrize(
+        "alignment",
+        [
+            {"target": "domain", "method": "bilinear"},
+            {"target": "grid", "grid_id": "g1", "method": "nearest"},
+        ],
+    )
+    def test_alignment_method_rejected(self, alignment):
+        with pytest.raises(ValidationError):
+            CreatePointCloudChmRequest(
+                source_point_cloud_id="cloud-1", alignment=alignment
+            )
+
+    def test_alignment_schema_has_no_method(self):
+        schema = CreatePointCloudChmRequest.model_json_schema()
+        for name in ("GridLatticeDomainTarget", "GridLatticeGridTarget"):
+            assert "method" not in schema["$defs"][name]["properties"]
+            assert schema["$defs"][name]["additionalProperties"] is False

@@ -149,6 +149,45 @@ class CrownProfileModel(StrEnum):
 
     purves = "purves"
     beta = "beta"
+    cone = "cone"
+    cylinder = "cylinder"
+    single_ellipsoid = "single_ellipsoid"
+    dual_ellipsoid = "dual_ellipsoid"
+    single_paraboloid = "single_paraboloid"
+    dual_paraboloid = "dual_paraboloid"
+
+
+CROWN_PROFILE_MODEL_DESCRIPTION = (
+    "Crown geometry model: the shape of each tree's crown, which runs from "
+    "the crown base, height × (1 − crown_ratio), to the tree height. "
+    "`purves` (default): Purves et al. (2007), species-specific, widest at "
+    "the crown base. "
+    "`beta`: species-group beta distribution, widest within the crown per "
+    "species group. "
+    "`cone`: right circular cone, widest at the crown base. "
+    "`cylinder`: right circular cylinder, uniform radius over the crown. "
+    "`single_ellipsoid`: one half-ellipsoid of revolution, widest at the "
+    "crown base. "
+    "`dual_ellipsoid`: two half-ellipsoids joined at the crown midpoint, "
+    "widest there. "
+    "`single_paraboloid`: one paraboloid of revolution, widest at the crown "
+    "base. "
+    "`dual_paraboloid`: two paraboloids joined at the crown midpoint, widest "
+    "there (the LANL Trees crown envelope). "
+    "The maximum radius of every shape comes from `max_crown_radius_source`."
+)
+
+MAX_CROWN_RADIUS_SOURCE_DESCRIPTION = (
+    "Source of each tree's maximum crown radius. "
+    '`{"type": "allometry"}` (default): the Purves et al. (2007) maximum '
+    "crown radius for `purves`, `cone`, `cylinder`, and the ellipsoid and "
+    "paraboloid shapes, so a tree's crown is equally wide under each of "
+    "them and only the shape changes; `beta` uses its own allometric "
+    "radius. "
+    '`{"type": "inventory_column", "column": ...}`: read a per-tree maximum '
+    "crown radius (m) from an inventory column (e.g. derived from LiDAR); "
+    "`crown_profile_model` still sets the crown shape."
+)
 
 
 class BiomassEquations(StrEnum):
@@ -523,7 +562,7 @@ class CreateTreeInventoryRequest(BaseModel):
     )
     crown_profile_model: CrownProfileModel = Field(
         default=CrownProfileModel.purves,
-        description="Crown geometry model. Default: purves.",
+        description=CROWN_PROFILE_MODEL_DESCRIPTION,
     )
     biomass_source: BiomassSource = Field(
         default_factory=AllometryBiomassSource,
@@ -531,14 +570,7 @@ class CreateTreeInventoryRequest(BaseModel):
     )
     max_crown_radius_source: MaxCrownRadiusSource = Field(
         default_factory=AllometryMaxCrownRadiusSource,
-        description=(
-            "Source of each tree's maximum crown radius. Defaults to the "
-            "crown profile model's allometric value. Use "
-            '`{"type": "inventory_column", "column": ...}` to read a '
-            "per-tree maximum crown radius (m) from an inventory column "
-            "(e.g. derived from LiDAR); the crown profile model still "
-            "controls the crown shape — only the peak radius is rescaled."
-        ),
+        description=MAX_CROWN_RADIUS_SOURCE_DESCRIPTION,
     )
     moisture_model: MoistureModel | None = Field(
         default=None,

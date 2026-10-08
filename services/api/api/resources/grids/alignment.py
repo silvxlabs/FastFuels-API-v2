@@ -10,7 +10,7 @@ an existing grid (`target="grid"`).
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ResamplingMethod(StrEnum):
@@ -72,5 +72,39 @@ class GridAlignmentGridTarget(BaseModel):
 
 GridAlignmentSpecification = Annotated[
     GridAlignmentDomainTarget | GridAlignmentNativeTarget | GridAlignmentGridTarget,
+    Field(discriminator="target"),
+]
+
+
+class GridLatticeDomainTarget(BaseModel):
+    """Anchor output cells to the domain origin.
+
+    For grids computed per cell rather than resampled from a raster, so there
+    is no resampling `method` and no source pixel anchor to preserve.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["domain"] = "domain"
+    resolution: float | None = Field(default=None, ge=1.0)
+
+
+class GridLatticeGridTarget(BaseModel):
+    """Align output cells to an existing grid by id.
+
+    `resolution=None` matches the target grid's lattice exactly. With an
+    explicit `resolution`, the output keeps the target's CRS and origin at the
+    new cell size.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["grid"]
+    grid_id: str
+    resolution: float | None = Field(default=None, ge=1.0)
+
+
+GridLatticeSpecification = Annotated[
+    GridLatticeDomainTarget | GridLatticeGridTarget,
     Field(discriminator="target"),
 ]

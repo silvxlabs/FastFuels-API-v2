@@ -106,6 +106,30 @@ def test_subtract_clamps_to_zero():
     assert (ds["fuel_load.1hr"].values == 0.0).all()
 
 
+@pytest.mark.parametrize(
+    "modifier, value, expected",
+    [
+        ("subtract", 5.0, -15.0),
+        ("add", 2.0, -8.0),
+        ("multiply", 2.0, -20.0),
+        ("divide", 2.0, -5.0),
+    ],
+)
+def test_elevation_is_not_clamped(modifier, value, expected):
+    """Elevation can be below sea level, so arithmetic must keep negatives."""
+    arr = np.full(GRID_SHAPE, -10.0, dtype=np.float32)
+    ds = xr.Dataset({"elevation": xr.DataArray(arr, dims=["y", "x"])})
+    ds = ds.rio.write_crs(GRID_CRS).rio.write_transform(GRID_TRANSFORM)
+    mods = [
+        {
+            "conditions": [],
+            "actions": [{"band": "elevation", "modifier": modifier, "value": value}],
+        }
+    ]
+    apply_modifications(ds, mods, "d")
+    assert (ds["elevation"].values == expected).all()
+
+
 def test_replace_does_not_clamp():
     """Replace honors the user-set value, including negative."""
     ds = _flat_dataset(1.0)

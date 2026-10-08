@@ -568,6 +568,35 @@ class TestResolveLfProduct:
         with patch("lib.landfire.lfps.list_products", return_value=products):
             assert resolve_lf_product("annual_disturbance", "2024") is None
 
+    @pytest.mark.parametrize(
+        ("product", "acronym", "version"),
+        [
+            ("fvt", "FVT", "2024"),
+            ("fvc", "FVC", "2024"),
+            ("fvh", "FVH", "2024"),
+            ("bps", "BPS", "2020"),
+        ],
+    )
+    def test_vegetation_registry_keys_resolve_by_upper_cased_acronym(
+        self, product, acronym, version
+    ):
+        """These keys have no LFPS_ACRONYM_OVERRIDES entry -- the plain
+        upper-cased key has to match the catalog's acronym on its own."""
+        products = [
+            _make_coverage_product(acronym, f"LF{version}", theme="Vegetation"),
+        ]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            match = resolve_lf_product(product, version)
+
+        assert match is not None
+        assert match.layer_name == f"LF{version}_{acronym}"
+
+    def test_bps_returns_none_on_version_mismatch(self):
+        """BPS's LFPS vintage (2020) lags the fuel-vegetation products'."""
+        products = [_make_coverage_product("BPS", "LF2020", theme="Vegetation")]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            assert resolve_lf_product("bps", "2024") is None
+
 
 # A registry with one on-demand vintage and two staged ones, patched in for
 # list_releases so the tests don't track the real LANDFIRE_VERSIONS.

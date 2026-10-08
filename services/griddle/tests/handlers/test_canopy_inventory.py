@@ -14,6 +14,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from fastfuels_core.canopy_fuel.crown_radius import max_crown_radius
 from griddle.handlers import canopy_inventory as ci
 from shapely.geometry import box
 
@@ -380,21 +381,21 @@ class TestRequiredColumns:
 
     def _capture(self, source, df):
         """Run the handler, returning the required_columns passed to the reader
-        and the null-row drop."""
+        and the complete-rows check."""
         captured: dict = {}
-        real_drop = ci.drop_null_rows
+        real_check = ci.require_complete_rows
 
         def cap_read(*args, **kwargs):
             captured["read"] = kwargs.get("required_columns")
             return df
 
-        def cap_drop(frame, *args, **kwargs):
-            captured["drop"] = kwargs.get("required_columns")
-            return real_drop(frame, *args, **kwargs)
+        def cap_check(frame, *args, **kwargs):
+            captured["check"] = kwargs.get("required_columns")
+            return real_check(frame, *args, **kwargs)
 
         with (
             patch.object(ci, "read_inventory", side_effect=cap_read),
-            patch.object(ci, "drop_null_rows", side_effect=cap_drop),
+            patch.object(ci, "require_complete_rows", side_effect=cap_check),
         ):
             ci.fetch_canopy_inventory(
                 roi=_roi(),
@@ -405,21 +406,11 @@ class TestRequiredColumns:
             )
         return captured
 
-    def test_column_fuel_source_requires_neither_dbh_nor_species(self):
-        rng = np.random.default_rng(0)
-        n = 40
-        # A frame with no dbh / fia_species_code, as the trimmed read returns.
-        df = pd.DataFrame(
-            {
-                "x": rng.uniform(10, 110, n),
-                "y": rng.uniform(10, 110, n),
-                "height": rng.uniform(8, 25, n),
-                "crown_ratio": rng.uniform(0.3, 0.6, n),
-                "fia_status_code": np.ones(n, dtype=int),
-                "acf_kg": np.full(n, 6.0),
-                "crad_m": np.full(n, 2.0),
-            }
-        )
+    def test_column_fuel_and_radius_require_dbh_and_species(self):
+        """A column radius needs dbh and species for the Purves fallback."""
+        df = _trees()
+        df["acf_kg"] = 6.0
+        df["crad_m"] = 2.0
         src = _source(
             biomass_source={
                 "type": "inventory_column",
@@ -436,10 +427,49 @@ class TestRequiredColumns:
             },
         )
         captured = self._capture(src, df)
-        assert set(captured["read"]) == {"x", "y", "height", "crown_ratio"}
-        assert set(captured["drop"]) == {"x", "y", "height", "crown_ratio"}
+        expected = {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"}
+        assert set(captured["read"]) == expected
+        assert set(captured["check"]) == expected
 
     def test_allometry_source_requires_dbh_and_species(self):
         captured = self._capture(_source(), _trees())
         assert {"dbh", "fia_species_code"} <= set(captured["read"])
-        assert {"dbh", "fia_species_code"} <= set(captured["drop"])
+        assert {"dbh", "fia_species_code"} <= set(captured["check"])
+
+
+class TestNullValues:
+    RADIUS_SOURCE = {"type": "inventory_column", "column": "crad_m", "unit": "m"}
+
+    def _captured_frame(self, df):
+        captured = {}
+
+        def fake_metrics(frame, dataset, **kwargs):
+            captured["df"] = frame.copy()
+
+        with patch.object(ci, "compute_canopy_metrics", side_effect=fake_metrics):
+            _run(_source(max_crown_radius_source=self.RADIUS_SOURCE), df)
+        return captured["df"]
+
+    def test_null_radius_uses_purves_and_keeps_tree(self):
+        df = _trees(crad_m=2.0)
+        df.loc[[0, 5], "crad_m"] = np.nan
+        out = self._captured_frame(df)
+        assert len(out) == len(df)
+        expected = max_crown_radius(df.loc[[0, 5]], equations="purves")
+        np.testing.assert_allclose(out.loc[[0, 5], "crad_m"], expected)
+        assert (out.drop(index=[0, 5])["crad_m"] == 2.0).all()
+
+    def test_null_radius_with_unknown_species_is_processing_error(self):
+        df = _trees(crad_m=2.0)
+        df.loc[0, ["crad_m", "fia_species_code"]] = [np.nan, 9999]
+        with pytest.raises(ProcessingError) as exc:
+            _run(_source(max_crown_radius_source=self.RADIUS_SOURCE), df)
+        assert exc.value.code == "CANOPY_FUEL_INPUT_ERROR"
+
+    def test_null_morphology_fails_instead_of_thinning(self):
+        df = _trees()
+        df.loc[3, "crown_ratio"] = np.nan
+        with pytest.raises(ProcessingError) as exc:
+            _run(_source(), df)
+        assert exc.value.code == "INCOMPLETE_INVENTORY"
+        assert "crown_ratio: 1" in exc.value.message

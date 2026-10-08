@@ -15,6 +15,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.grids.alignment import (
+    GridLatticeDomainTarget,
+    GridLatticeSpecification,
+)
 from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import (
     Band,
@@ -320,6 +324,7 @@ class PointCloudChmSource(CanopySource):
     description: Literal["Canopy height model rasterized from a point cloud"] = (
         "Canopy height model rasterized from a point cloud"
     )
+    alignment: GridLatticeSpecification = Field(default_factory=GridLatticeDomainTarget)
     source_point_cloud_id: str = Field(
         description="The point cloud this canopy height model was rasterized from."
     )
@@ -369,6 +374,16 @@ class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
 
     source_point_cloud_id: str = Field(
         description="ID of the point cloud to rasterize. Must be an ALS cloud in this domain."
+    )
+    alignment: GridLatticeSpecification = Field(
+        default_factory=GridLatticeDomainTarget,
+        description=(
+            "Output lattice. Against the domain (`target: 'domain'`, the "
+            "default) `resolution` defaults to 1 m — a point cloud has no "
+            "native cell size to inherit. Against another grid "
+            "(`target: 'grid'`) omitting `resolution` matches that grid "
+            "cell-for-cell; the target grid must be in this domain's CRS."
+        ),
     )
     spike_filter: ChmSpikeFilter | None = Field(
         default_factory=ChmSpikeFilter,

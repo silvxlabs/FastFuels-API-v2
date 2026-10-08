@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.utils import (
+    incomplete_inventory_columns,
     validate_format_supports_grid,
     validate_grids_share_horizontal_lattice,
     validate_lfps_coverage,
@@ -231,3 +232,39 @@ class TestValidateFormatSupportsGrid:
                     validate_lfps_coverage("fbfm40", "2024", self._domain())
             assert "doesn't currently cover this domain's location" in exc.value.detail
             assert "landfire.gov/data" in exc.value.detail
+
+
+class TestIncompleteInventoryColumns:
+    def _inventory(self, null_counts: dict) -> dict:
+        return {
+            "columns": [
+                {"key": key, "summary": {"null_count": n}}
+                for key, n in null_counts.items()
+            ]
+        }
+
+    def test_complete_columns_pass(self):
+        inv = self._inventory({"x": 0, "dbh": 0})
+        assert incomplete_inventory_columns(inv, {"x", "dbh"}) == set()
+
+    def test_missing_and_null_columns_are_incomplete(self):
+        inv = self._inventory({"x": 0, "dbh": 3})
+        assert incomplete_inventory_columns(inv, {"x", "dbh", "height"}) == {
+            "dbh",
+            "height",
+        }
+
+    def test_nullable_column_only_needs_to_be_listed(self):
+        inv = self._inventory({"crown_radius": 5})
+        assert (
+            incomplete_inventory_columns(inv, {"crown_radius"}, {"crown_radius"})
+            == set()
+        )
+        assert incomplete_inventory_columns({}, {"crown_radius"}, {"crown_radius"}) == {
+            "crown_radius"
+        }
+
+    def test_columns_without_summaries_count_as_complete(self):
+        """Older inventories have no summaries; the worker backstop covers them."""
+        inv = {"columns": [{"key": "dbh"}, "x"]}
+        assert incomplete_inventory_columns(inv, {"dbh", "x"}) == set()

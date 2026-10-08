@@ -370,10 +370,12 @@ async def validate_target_grid_alignment(
     alignment: GridAlignmentSpecification | GridLatticeSpecification,
     owner_id: str,
     domain_id: str,
+    domain_crs: str | None = None,
 ) -> None:
     """When ``alignment.target == "grid"``, verify the named target grid
     exists, is owned by ``owner_id``, lives in ``domain_id``, is completed,
-    and has a georeference. No-op for other alignment targets.
+    and has a georeference. No-op for other alignment targets. When
+    ``domain_crs`` is given, the target grid must also be in that CRS.
 
     Owner and domain mismatches return 404 (not 403) to avoid leaking
     document existence. Status mismatches return 422.
@@ -381,8 +383,8 @@ async def validate_target_grid_alignment(
     Raises:
         HTTPException(404): Target grid missing, owned by another user, or
             in another domain.
-        HTTPException(422): Target grid is not completed or has no
-            georeference.
+        HTTPException(422): Target grid is not completed, has no
+            georeference, or is not in ``domain_crs``.
     """
     if not isinstance(alignment, GridAlignmentGridTarget | GridLatticeGridTarget):
         return
@@ -393,7 +395,19 @@ async def validate_target_grid_alignment(
         domain_id=domain_id,
         document_status="completed",
     )
-    validate_grid_has_georeference(snapshot.to_dict(), alignment.grid_id)
+    grid = snapshot.to_dict()
+    validate_grid_has_georeference(grid, alignment.grid_id)
+    grid_crs = grid["georeference"].get("crs")
+    if domain_crs is not None and not crs_equal(grid_crs, domain_crs):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"The alignment target grid {alignment.grid_id} is in "
+                f"{grid_crs}, but this domain's point clouds are stored in "
+                f"{domain_crs}. Align to a grid in this domain's CRS, or use "
+                f"alignment.target 'domain'."
+            ),
+        )
 
 
 async def validate_feature_modifications(

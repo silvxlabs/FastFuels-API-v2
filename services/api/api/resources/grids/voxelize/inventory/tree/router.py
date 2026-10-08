@@ -30,6 +30,7 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
 )
 from api.resources.grids.voxelize.inventory.tree.schema import (
     CreateTreeInventoryRequest,
+    InventoryColumnMaxCrownRadiusSource,
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
@@ -155,7 +156,10 @@ async def create_tree_inventory_grid(
         c["key"] if isinstance(c, dict) else c
         for c in inventory_data.get("columns", [])
     }
-    missing_columns = VOXELIZE_REQUIRED_COLUMNS - have_columns
+    required_columns = set(VOXELIZE_REQUIRED_COLUMNS)
+    if isinstance(body.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource):
+        required_columns.add(body.max_crown_radius_source.column)
+    missing_columns = required_columns - have_columns
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)

@@ -26,6 +26,10 @@ def tree_inventory_for_voxelization(firestore_client, domain_for_testing):
         status="completed",
         inventory_type="tree",
     )
+    # The documented crown-radius example reads this column.
+    inventory_data["columns"].append(
+        {"key": "crown_radius", "type": "continuous", "unit": "m"}
+    )
     doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
         inventory_data["id"]
     )
@@ -316,6 +320,37 @@ class TestCreateTreeInventoryGrid:
             assert "allometry/gdam" in detail
             # Message must not assume the source was CHM.
             assert "CHM" not in detail
+        finally:
+            doc_ref.delete()
+
+    def test_inventory_missing_radius_column_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A radius column the inventory doesn't list is rejected up front."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory without crown_radius",
+            status="completed",
+            inventory_type="tree",
+        )
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inv["id"]
+        )
+        doc_ref.set(inv)
+        try:
+            body = {
+                "source_inventory_id": inv["id"],
+                "resolution": {"horizontal": 2.0, "vertical": 1.0},
+                "bands": ["bulk_density.foliage.live"],
+                "max_crown_radius_source": {
+                    "type": "inventory_column",
+                    "column": "crown_radius",
+                    "unit": "m",
+                },
+            }
+            response = client.post(self.route(domain_for_testing["id"]), json=body)
+            assert response.status_code == 422
+            assert "crown_radius" in response.json()["detail"]
         finally:
             doc_ref.delete()
 

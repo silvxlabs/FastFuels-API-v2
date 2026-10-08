@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import dask.array as da
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
@@ -9,7 +10,7 @@ import pytest
 import rioxarray  # noqa: F401 - registers .rio accessor
 import xarray as xr
 from affine import Affine
-from standgen.handlers.chm import handle_chm
+from standgen.handlers.chm import _count_labels, handle_chm
 
 from lib.errors import ProcessingError
 
@@ -483,7 +484,8 @@ class TestHandleChmCrownSegmentation:
     @pytest.mark.parametrize("chunks", [None, 8])
     def test_isolated_cone_clipped_at_max_crown_radius(self, mock_domain_gdf, chunks):
         """Every cell within 3 m of the apex qualifies, so the crown is the 29
-        lattice cells of a radius-3 disc."""
+        lattice cells of a radius-3 disc. Its area-equivalent radius, 3.04 m,
+        is clipped to max_crown_radius."""
         df = self._run(
             _cone_chm(chunks=chunks),
             self._inventory(self.SEGMENTATION),
@@ -491,7 +493,17 @@ class TestHandleChmCrownSegmentation:
         )
         assert df.columns.tolist() == ["tree_id", "x", "y", "height", "crown_radius"]
         assert len(df) == 1
-        assert df["crown_radius"].iloc[0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert df["crown_radius"].iloc[0] == pytest.approx(3.0)
+
+    def test_unclipped_radius_is_area_equivalent(self, mock_domain_gdf):
+        """With a 3.5 m limit the crown is the 37-cell disc, whose
+        area-equivalent radius (3.43 m) is under the limit."""
+        df = self._run(
+            _cone_chm(),
+            self._inventory({**self.SEGMENTATION, "max_crown_radius": 3.5}),
+            mock_domain_gdf,
+        )
+        assert df["crown_radius"].iloc[0] == pytest.approx(np.sqrt(37 / np.pi))
 
     def test_every_tree_gets_at_least_one_cell(self, mock_domain_gdf):
         """A treetop whose neighbours all fail the height tests keeps its own cell."""
@@ -504,7 +516,7 @@ class TestHandleChmCrownSegmentation:
         domain_gdf = mock_domain_gdf.to_crs("EPSG:32611")
         df = self._run(_cone_chm(), self._inventory(self.SEGMENTATION), domain_gdf)
         assert df.columns.tolist() == ["tree_id", "x", "y", "height", "crown_radius"]
-        assert df["crown_radius"].iloc[0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert df["crown_radius"].iloc[0] == pytest.approx(3.0)
 
     def test_detection_graph_computed_once(self, mock_domain_gdf):
         calls = []
@@ -530,7 +542,7 @@ class TestHandleChmCrownSegmentation:
         chm = chm.rio.write_transform(Affine(1.0, 0.0, 0.0, 0.0, -1.0, 21.0))
         df = self._run(chm, self._inventory(self.SEGMENTATION), mock_domain_gdf)
         radii = df.set_index("height")["crown_radius"]
-        assert radii[20.0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert radii[20.0] == pytest.approx(3.0)
         assert radii[15.0] == pytest.approx(np.sqrt(1 / np.pi))
 
     def test_treetops_sharing_a_cell_do_not_fail(self, mock_domain_gdf):
@@ -544,7 +556,7 @@ class TestHandleChmCrownSegmentation:
                 _cone_chm(), self._inventory(self.SEGMENTATION), mock_domain_gdf
             )
         radii = df.set_index("height")["crown_radius"]
-        assert radii[20.0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert radii[20.0] == pytest.approx(3.0)
         assert radii[2.3] == pytest.approx(np.sqrt(1 / np.pi))
 
     def test_vwf_cone(self, mock_domain_gdf):
@@ -560,7 +572,7 @@ class TestHandleChmCrownSegmentation:
         )
         apex = df[df["height"] == 20.0]
         assert len(apex) == 1
-        assert apex["crown_radius"].iloc[0] == pytest.approx(np.sqrt(29 / np.pi))
+        assert apex["crown_radius"].iloc[0] == pytest.approx(3.0)
         assert df["crown_radius"].notna().all()
 
     def test_segmentation_value_error_is_processing_error(self, mock_domain_gdf):
@@ -573,3 +585,17 @@ class TestHandleChmCrownSegmentation:
         ):
             self._run(_cone_chm(), self._inventory(self.SEGMENTATION), mock_domain_gdf)
         assert exc_info.value.code == "CROWN_SEGMENTATION_FAILED"
+
+
+class TestCountLabels:
+    @pytest.mark.parametrize("chunks", [None, 1, 3, 8])
+    def test_matches_bincount(self, chunks):
+        rng = np.random.default_rng(0)
+        labels = rng.integers(0, 50, size=(16, 16))
+        expected = np.bincount(labels.ravel(), minlength=60)
+        arr = labels if chunks is None else da.from_array(labels, chunks=chunks)
+        np.testing.assert_array_equal(_count_labels(arr, 59), expected)
+
+    def test_no_seeds(self):
+        arr = da.zeros((8, 8), dtype=np.int32, chunks=4)
+        np.testing.assert_array_equal(_count_labels(arr, 0), [64])

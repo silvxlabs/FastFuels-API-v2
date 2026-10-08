@@ -9,6 +9,7 @@ measure each tree's crown radius.
 import logging
 import math
 
+import dask
 import dask.array as da
 import dask.dataframe as dd
 import geopandas as gpd
@@ -286,7 +287,11 @@ def _measure_crown_radii(
     cell_counts[seeds] = _count_labels(labels.data, int(seeds.sum()))[1:]
     a, b, _, d, e, _ = transform[:6]
     cell_area = abs(a * e - b * d)
-    treetops["crown_radius"] = np.sqrt(cell_counts * cell_area / math.pi)
+    # A crown's whole cells can cover slightly more than pi * max_crown_radius**2.
+    treetops["crown_radius"] = np.minimum(
+        np.sqrt(cell_counts * cell_area / math.pi),
+        crown_segmentation["max_crown_radius"],
+    )
     return dd.from_pandas(treetops, npartitions=max(1, npartitions))
 
 
@@ -310,13 +315,18 @@ def _seed_mask(treetops: pd.DataFrame, transform) -> np.ndarray:
 
 
 def _count_labels(labels, n: int) -> np.ndarray:
-    """Cells per label 0 … n, summed block by block for dask arrays."""
+    """Cells per label 0 … n, counted block by block for dask arrays.
+
+    Each block reports only the labels it contains, so memory scales with the
+    labels per block rather than blocks × trees.
+    """
     if not isinstance(labels, da.Array):
         return np.bincount(np.asarray(labels).ravel(), minlength=n + 1)
-    counts = labels.map_blocks(
-        lambda block: np.bincount(block.ravel(), minlength=n + 1)[None, None],
-        new_axis=2,
-        chunks=(1, 1, n + 1),
-        dtype=np.int64,
-    )
-    return counts.sum(axis=(0, 1)).compute()
+    parts = [
+        dask.delayed(np.unique)(block, return_counts=True)
+        for block in labels.to_delayed().ravel()
+    ]
+    counts = np.zeros(n + 1, dtype=np.int64)
+    for values, block_counts in dask.compute(*parts):
+        counts[values] += block_counts
+    return counts

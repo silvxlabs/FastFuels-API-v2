@@ -6,7 +6,9 @@ and GCS touching helpers are exercised with monkeypatched clients. The full
 and would act on real project data — its behaviour is covered piece-wise.
 """
 
+import ast
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from walle import cleanup, layouts
 from walle.cleanup import (
@@ -217,12 +219,40 @@ def test_resolve_owner_ttls_bulk(monkeypatch):
     assert result == {"a1": (None, 14), "u1": (30, 14), "x1": (180, 14)}
 
 
+def _api_ttl_contract() -> tuple[dict, dict]:
+    """(Quotas TTL defaults, per-tier TTL presets) parsed from api/quota.py."""
+    path = Path(__file__).parents[2] / "api" / "api" / "quota.py"
+    tree = ast.parse(path.read_text())
+    defaults, tiers = {}, {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "Quotas":
+            for st in node.body:
+                if isinstance(st, ast.AnnAssign) and st.target.id.endswith("ttl_days"):
+                    defaults[st.target.id] = ast.literal_eval(st.value)
+        if isinstance(node, ast.AnnAssign) and node.target.id == "TIER_PRESETS":
+            for tier, preset in zip(node.value.keys, node.value.values):
+                if not isinstance(preset, ast.Dict):  # suspended: dict comp
+                    tiers[tier.value] = {}
+                    continue
+                tiers[tier.value] = {
+                    k.value: ast.literal_eval(v)
+                    for k, v in zip(preset.keys, preset.values)
+                    if k.value.endswith("ttl_days")
+                }
+    return defaults, tiers
+
+
 def test_ttl_defaults_match_api_contract():
-    # Pinned to api/quota.py Quotas defaults; changing either requires updating
-    # both (the two services can't import each other — see cleanup.py).
-    assert cleanup.DEFAULT_RESOURCE_TTL_DAYS == 180
-    assert cleanup.DEFAULT_FAILED_RESOURCE_TTL_DAYS == 14
-    assert cleanup._TIER_TTL_OVERRIDES["application"]["resource_ttl_days"] is None
+    # Read from api/quota.py by path (the services can't import each other), so
+    # drift in a default or in any tier's TTL fields fails here.
+    defaults, tiers = _api_ttl_contract()
+    assert defaults == {
+        "resource_ttl_days": cleanup.DEFAULT_RESOURCE_TTL_DAYS,
+        "failed_resource_ttl_days": cleanup.DEFAULT_FAILED_RESOURCE_TTL_DAYS,
+    }
+    assert tiers["guest"] == {"resource_ttl_days": 1}
+    for tier, preset in tiers.items():
+        assert cleanup._TIER_TTL_OVERRIDES.get(tier, {}) == preset, tier
 
 
 # --- orphaned blobs (with the batched re-check) ---------------------------

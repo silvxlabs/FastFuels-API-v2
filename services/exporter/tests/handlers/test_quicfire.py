@@ -750,3 +750,43 @@ class TestCropOversizedRole:
         # The surrounding 99.0 sentinels are nowhere in the output — the crop
         # was correct.
         assert not np.any(rhof == 99.0)
+
+
+class TestMissingCanopy:
+    """Canopy nodata (NaN or the band's sentinel) contributes nothing."""
+
+    @pytest.mark.parametrize("missing", [np.nan, -9999.0])
+    def test_missing_canopy_keeps_surface(self, captured_zip, patch_load_grid, missing):
+        canopy_rhof = np.full((_NZ, _NY, _NX), 0.2, dtype=np.float32)
+        canopy_moist = np.full((_NZ, _NY, _NX), 100.0, dtype=np.float32)
+        canopy_rhof[0, 0, 0] = missing
+        canopy_moist[0, 0, 0] = missing
+        canopy_rhof[3, 0, 0] = missing
+        tree_ds = _make_3d_dataset(
+            {
+                "bulk_density.foliage.live": canopy_rhof,
+                "fuel_moisture.live": canopy_moist,
+            }
+        )
+        for band in tree_ds.data_vars:
+            tree_ds[band].rio.write_nodata(-9999.0, inplace=True)
+        surf_ds = _make_2d_dataset(
+            {
+                "fuel_load.1hr": np.full((_NY, _NX), 0.5, dtype=np.float32),
+                "fuel_depth": np.full((_NY, _NX), 0.1, dtype=np.float32),
+                "fuel_moisture.1hr": np.full((_NY, _NX), 6.0, dtype=np.float32),
+            }
+        )
+        source = _build_source()
+        source.pop("moist_merge")  # default max merge
+
+        with patch_load_grid({"tree": tree_ds, "uniform": surf_ds}):
+            export_quicfire({"id": "exp-nd", "name": ""}, source, noop_progress)
+
+        rhof = _read_3d(captured_zip["zip_path"], "treesrhof.dat")
+        moist = _read_3d(captured_zip["zip_path"], "treesmoist.dat")
+        # Output is Y-flipped: input row 0 is output row _NY - 1.
+        assert rhof[0, _NY - 1, 0] == pytest.approx(0.5)
+        assert moist[0, _NY - 1, 0] == pytest.approx(0.06)
+        assert rhof[3, _NY - 1, 0] == 0.0
+        assert rhof[0, 0, 0] == pytest.approx(0.7)

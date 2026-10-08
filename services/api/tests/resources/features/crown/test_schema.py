@@ -41,7 +41,7 @@ class TestChmCrownSegmentation:
             ("min_relative_height", -0.1),
             ("min_relative_crown_height", 1.0),
             ("max_crown_radius", 0.0),
-            ("max_crown_radius", 31.0),
+            ("max_crown_radius", 20.5),
             ("method", "watershed"),
         ],
     )

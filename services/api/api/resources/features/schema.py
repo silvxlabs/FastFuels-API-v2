@@ -18,6 +18,7 @@ class FeatureType(StrEnum):
     road = "road"
     water = "water"
     layerset = "layerset"
+    crown = "crown"
 
 
 class FeatureSortField(StrEnum):

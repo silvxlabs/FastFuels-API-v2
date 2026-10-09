@@ -183,6 +183,7 @@ def make_inventory_data(
     source: dict | None = None,
     inventory_type: str = "tree",
     georeference: dict | None = None,
+    columns: list | None = None,
 ) -> dict:
     """Factory function to create inventory data as stored in Firestore."""
     return {
@@ -204,7 +205,8 @@ def make_inventory_data(
             "seed": 42,
         },
         "modifications": [],
-        "columns": [
+        "columns": columns
+        or [
             {"key": "x", "type": "continuous", "unit": "m"},
             {"key": "y", "type": "continuous", "unit": "m"},
             {"key": "fia_species_code", "type": "categorical", "unit": None},

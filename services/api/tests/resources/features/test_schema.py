@@ -33,8 +33,11 @@ class TestFeatureType:
     def test_layerset_value(self):
         assert FeatureType.layerset.value == "layerset"
 
+    def test_crown_value(self):
+        assert FeatureType.crown.value == "crown"
+
     def test_enum_count(self):
-        assert len(FeatureType) == 3
+        assert len(FeatureType) == 4
 
     def test_can_create_from_string(self):
         assert FeatureType("road") == FeatureType.road

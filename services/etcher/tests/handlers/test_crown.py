@@ -256,3 +256,43 @@ def test_handle_chm_writes_one_row_per_crown(mock_trees, mock_chm, mock_save):
     assert gdf.crs == CRS
     assert (gdf.geom_type == "Polygon").all()
     assert result["georeference"]["crs"] == CRS
+
+
+@pytest.mark.parametrize("placement", ["off_chm", "no_data_cell"])
+@patch("etcher.handlers.crown.save_features")
+@patch("etcher.handlers.crown.load_chm")
+@patch("etcher.handlers.crown.load_trees")
+def test_handle_chm_with_no_crowns_saves_empty_result(
+    mock_trees, mock_chm, mock_save, placement
+):
+    values = np.full((20, 20), 10.0, dtype=np.float32)
+    values[5, 5] = np.nan
+    x0, y0 = ORIGIN
+    if placement == "off_chm":
+        x, y = x0 - 50, y0 + 50
+    else:
+        x, y = x0 + 5.5, y0 - 5.5
+    mock_trees.return_value = pd.DataFrame(
+        {"tree_id": [1, 2], "x": [x, x + 0.1], "y": [y, y], "height": [15.0, 12.0]}
+    )
+    mock_chm.return_value = make_chm(values)
+    domain = gpd.GeoDataFrame(
+        geometry=[Polygon([(500000, 3599980), (500020, 3599980), (500020, 3600000)])],
+        crs=CRS,
+    )
+    source = {
+        "product": "chm",
+        "source_inventory_id": "inv",
+        "source_chm_grid_id": "grid",
+        "crown_segmentation": SETTINGS,
+    }
+
+    result = handle_chm({"id": "f", "domain_id": "d"}, source, domain, MagicMock())
+
+    domain_id, feature_id, gdf = mock_save.call_args.args
+    assert (domain_id, feature_id) == ("d", "f")
+    assert len(gdf) == 0
+    assert list(gdf.columns) == ["tree_id", "geometry"]
+    assert gdf["tree_id"].dtype == np.int32
+    assert gdf.crs == CRS
+    assert result["georeference"]["crs"] == CRS

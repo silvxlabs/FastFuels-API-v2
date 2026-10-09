@@ -95,6 +95,8 @@ async def create_chm_crown_feature(
     (Dalponte & Coomes, 2016) and never overlap. A tree gets no crown if it
     lies outside the CHM, sits on a no-data cell, or shares its cell with a
     taller tree (ties go to the lower `tree_id`).
+    A tree whose CHM cell is below `min_height`, such as one on bare ground,
+    gets a one-cell crown.
 
     The completed feature holds one row per crown with columns `tree_id` (the
     seed tree's `tree_id`) and `geometry` (a `Polygon` in the domain CRS,

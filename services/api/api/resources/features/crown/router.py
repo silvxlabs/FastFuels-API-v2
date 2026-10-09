@@ -4,7 +4,6 @@ api/v2/resources/features/crown/router.py
 Router for Crown feature creation from a CHM.
 """
 
-import math
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -29,7 +28,11 @@ from api.resources.features.crown.schema import (
     CreateChmCrownFeatureRequest,
 )
 from api.resources.features.schema import Feature, FeatureType
-from api.resources.grids.utils import validate_band_unit, validate_grid_has_band
+from api.resources.grids.utils import (
+    validate_band_unit,
+    validate_grid_has_band,
+    validate_grid_resolution,
+)
 from api.resources.inventories.schema import TREE_ID_COLUMN
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -44,27 +47,6 @@ from lib.config import (
 router = APIRouter()
 
 COLLECTION = FEATURES_COLLECTION
-
-
-def validate_grid_resolution(grid_data: dict, grid_id: str, max_cell_size: float):
-    """Reject a grid whose cells are coarser than ``max_cell_size`` metres."""
-    transform = (grid_data.get("georeference") or {}).get("transform")
-    if not transform:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Grid {grid_id} has no georeference.",
-        )
-    a, b, _, d, e, _ = transform[:6]
-    cell_size = max(math.hypot(a, d), math.hypot(b, e))
-    # Tolerate float noise in stored transforms (e.g. 0.5999999999998499).
-    if cell_size > max_cell_size + 1e-6:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"Grid {grid_id} has {cell_size:g} m cells. Crown segmentation "
-                f"needs cells of {max_cell_size:g} m or finer."
-            ),
-        )
 
 
 @router.post(

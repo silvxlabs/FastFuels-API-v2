@@ -7,7 +7,7 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.inventories.tree.chm.schema import (
-    ChmCrownSegmentation,
+    ChmInventoryCrownSegmentation,
     ChmInventorySource,
     CreateChmInventoryRequest,
     StemIsolationLmf,
@@ -213,7 +213,7 @@ class TestChmCrownSegmentation:
     """Tests for the crown_segmentation request object."""
 
     def test_defaults(self):
-        seg = ChmCrownSegmentation()
+        seg = ChmInventoryCrownSegmentation()
         assert seg.model_dump() == {
             "method": "dalponte2016",
             "min_relative_height": 0.45,
@@ -230,7 +230,7 @@ class TestChmCrownSegmentation:
         request = CreateChmInventoryRequest(
             source_chm_grid_id="grid123", crown_segmentation={}
         )
-        assert request.crown_segmentation == ChmCrownSegmentation()
+        assert request.crown_segmentation == ChmInventoryCrownSegmentation()
 
     @pytest.mark.parametrize(
         "field,value",
@@ -247,10 +247,10 @@ class TestChmCrownSegmentation:
     )
     def test_out_of_range_rejected(self, field, value):
         with pytest.raises(ValidationError):
-            ChmCrownSegmentation(**{field: value})
+            ChmInventoryCrownSegmentation(**{field: value})
 
     def test_bounds_accepted(self):
-        seg = ChmCrownSegmentation(
+        seg = ChmInventoryCrownSegmentation(
             min_relative_height=0.0,
             min_relative_crown_height=0.0,
             max_crown_radius=20.0,
@@ -261,7 +261,7 @@ class TestChmCrownSegmentation:
         source = ChmInventorySource(
             source_chm_grid_id="grid123",
             algorithm=StemIsolationLmf(),
-            crown_segmentation=ChmCrownSegmentation(max_crown_radius=8.0),
+            crown_segmentation=ChmInventoryCrownSegmentation(max_crown_radius=8.0),
         )
         dumped = source.model_dump()["crown_segmentation"]
         assert dumped["max_crown_radius"] == 8.0

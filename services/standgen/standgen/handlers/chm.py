@@ -281,7 +281,7 @@ def _measure_crown_radii(
             max_crown_radius=crown_segmentation["max_crown_radius"],
         )
     except ValueError as e:
-        raise ProcessingError(code="CROWN_SEGMENTATION_FAILED", message=str(e))
+        raise ProcessingError(code="INVALID_SEGMENTATION_PARAMS", message=str(e))
 
     cell_counts = np.ones(len(treetops))
     cell_counts[seeds] = _count_labels(labels.data, int(seeds.sum()))[1:]

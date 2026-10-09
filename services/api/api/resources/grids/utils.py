@@ -4,7 +4,7 @@ api/v2/resources/grids/utils.py
 Shared validation and computation utilities for grid endpoints.
 """
 
-from math import ceil, isclose
+from math import ceil, hypot, isclose
 
 from fastapi import HTTPException, status
 
@@ -479,6 +479,27 @@ def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:
             detail=(
                 f"Source grid {grid_id} has no georeference. "
                 f"The grid must be fully processed before it can be resampled."
+            ),
+        )
+
+
+def validate_grid_resolution(grid_data: dict, grid_id: str, max_cell_size: float):
+    """Reject a grid whose cells are coarser than ``max_cell_size`` metres."""
+    transform = (grid_data.get("georeference") or {}).get("transform")
+    if not transform:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Grid {grid_id} has no georeference.",
+        )
+    a, b, _, d, e, _ = transform[:6]
+    cell_size = max(hypot(a, d), hypot(b, e))
+    # Tolerate float noise in stored transforms (e.g. 0.5999999999998499).
+    if cell_size > max_cell_size + 1e-6:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Grid {grid_id} has {cell_size:g} m cells. Crown segmentation "
+                f"needs cells of {max_cell_size:g} m or finer."
             ),
         )
 

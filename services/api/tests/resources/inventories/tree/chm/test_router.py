@@ -383,7 +383,7 @@ class TestCreateChmInventory:
         assert data["source"]["algorithm"]["min_height"] == 5.0
         assert data["source"]["algorithm"]["crown_ratio"] == 0.15
         assert (
-            data["source"]["algorithm"]["crown_offset"] == 1.0
+            data["source"]["algorithm"]["crown_offset"] == 3.0
         )  # Proves default was set
 
     def test_invalid_algorithm_name_returns_422(

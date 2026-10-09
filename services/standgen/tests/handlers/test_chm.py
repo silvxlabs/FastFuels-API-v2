@@ -560,7 +560,7 @@ class TestHandleChmCrownSegmentation:
         assert radii[2.3] == pytest.approx(np.sqrt(1 / np.pi))
 
     def test_vwf_cone(self, mock_domain_gdf):
-        """VWF at 1 m can put a skirt treetop in the apex cell; segmentation runs."""
+        """VWF detection feeds segmentation; the apex gets one full crown."""
         vwf = {
             "name": "vwf",
             "min_height": 2.0,
@@ -584,7 +584,7 @@ class TestHandleChmCrownSegmentation:
             pytest.raises(ProcessingError) as exc_info,
         ):
             self._run(_cone_chm(), self._inventory(self.SEGMENTATION), mock_domain_gdf)
-        assert exc_info.value.code == "CROWN_SEGMENTATION_FAILED"
+        assert exc_info.value.code == "INVALID_SEGMENTATION_PARAMS"
 
 
 class TestCountLabels:

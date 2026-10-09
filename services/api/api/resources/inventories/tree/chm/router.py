@@ -12,7 +12,6 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Body,
-    HTTPException,
     Request,
     Response,
     status,
@@ -22,7 +21,11 @@ from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.crown_segmentation import MAX_CROWN_SEGMENTATION_RESOLUTION_M
-from api.resources.grids.utils import validate_band_unit, validate_grid_has_band
+from api.resources.grids.utils import (
+    validate_band_unit,
+    validate_grid_has_band,
+    validate_grid_resolution,
+)
 from api.resources.inventories.schema import (
     CHM_INVENTORY_COLUMNS,
     CROWN_RADIUS_COLUMN,
@@ -125,18 +128,11 @@ async def create_chm_inventory(
 
     columns = list(CHM_INVENTORY_COLUMNS)
     if body.crown_segmentation is not None:
-        transform = source_grid_data["georeference"]["transform"]
-        cell_size = max(abs(transform[0]), abs(transform[4]))
-        # Tolerate float noise in stored transforms (e.g. 0.5999999999998499).
-        if cell_size > MAX_CROWN_SEGMENTATION_RESOLUTION_M + 1e-6:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    f"Crown segmentation needs a CHM cell size of "
-                    f"{MAX_CROWN_SEGMENTATION_RESOLUTION_M:g} m or finer; source "
-                    f"grid {body.source_chm_grid_id} has {cell_size:g} m cells."
-                ),
-            )
+        validate_grid_resolution(
+            source_grid_data,
+            body.source_chm_grid_id,
+            MAX_CROWN_SEGMENTATION_RESOLUTION_M,
+        )
         columns.append(CROWN_RADIUS_COLUMN)
 
     inventory_id = uuid.uuid4().hex

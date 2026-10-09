@@ -86,7 +86,8 @@ class StemIsolationVwf(BaseModel):
         default=0.05,
         description=(
             "Window diameter added per meter of height. The search window "
-            "diameter (in meters) is crown_offset + crown_ratio × height."
+            "diameter (in meters) is crown_offset + crown_ratio × height, "
+            "converted to a whole, odd number of pixels of at least 3."
         ),
     )
     crown_offset: float = Field(
@@ -111,7 +112,7 @@ class CrownRadiusEstimator(StrEnum):
     area_equivalent = "area_equivalent"
 
 
-class ChmCrownSegmentation(CrownSegmentationBase):
+class ChmInventoryCrownSegmentation(CrownSegmentationBase):
     """Crown segmentation run after stem isolation. Each tree gets a
     `crown_radius` column measured from its segmented crown."""
 
@@ -138,7 +139,7 @@ class ChmInventorySource(BaseModel):
         ),
     )
     algorithm: StemIsolationAlgorithm
-    crown_segmentation: ChmCrownSegmentation | None = None
+    crown_segmentation: ChmInventoryCrownSegmentation | None = None
 
 
 class CreateChmInventoryRequest(CreateInventoryRequestBase):
@@ -151,14 +152,15 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
         default_factory=StemIsolationLmf,
         description="Stem isolation algorithm and its parameters.",
     )
-    crown_segmentation: ChmCrownSegmentation | None = Field(
+    crown_segmentation: ChmInventoryCrownSegmentation | None = Field(
         default=None,
         description=(
             "Segment each detected tree's crown on the CHM and add a "
             "`crown_radius` column (m). Crowns grow outward from each treetop "
             "over CHM cells within the detection height range and stop at the "
             "crown's edge; each cell belongs to at most one tree. Every tree "
-            "gets a radius of at least one cell's area-equivalent radius. "
+            "gets a radius of at least one cell's area-equivalent radius, "
+            "capped at `max_crown_radius`. "
             "Requires a CHM cell size of 2 m or finer. Omit to skip "
             "segmentation."
         ),

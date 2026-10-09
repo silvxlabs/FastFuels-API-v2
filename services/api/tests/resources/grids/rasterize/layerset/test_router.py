@@ -17,7 +17,7 @@ from api.resources.grids.rasterize.layerset.examples import (
 )
 
 from lib.config import FEATURES_COLLECTION
-from tests.fixtures import make_layerset_feature_data
+from tests.fixtures import make_feature_data, make_layerset_feature_data
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -260,6 +260,26 @@ class TestCreateLayersetRasterize:
             },
         )
         assert response.status_code == 422
+
+    @pytest.mark.parametrize("feature_type", ["road", "water"])
+    def test_non_layerset_feature_returns_422(
+        self, client, firestore_client, domain_for_testing, feature_type
+    ):
+        feature = _seed_feature(
+            firestore_client,
+            make_feature_data(domain_id=domain_for_testing["id"], type=feature_type),
+        )
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"layerset_id": feature["id"]},
+            )
+            assert response.status_code == 422
+            assert "layerset" in response.json()["detail"]
+        finally:
+            firestore_client.collection(FEATURES_COLLECTION).document(
+                feature["id"]
+            ).delete()
 
     # --- Ownership / domain mismatches (all 404, never 403) --------------
 

@@ -34,6 +34,10 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
         "lfps_available": ["2025"],
         "default": "2025",
     },
+    "fdist": {
+        "lfps_available": ["2024", "2025"],
+        "default": "2025",
+    },
     "fvt": {
         "lfps_available": ["2024"],
         "default": "2024",
@@ -57,6 +61,7 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
 # exceptions, where the LFPS acronym isn't derivable from the registry key.
 LFPS_ACRONYM_OVERRIDES: dict[str, str] = {
     "annual_disturbance": "LDist",
+    "fdist": "FDist",
 }
 
 

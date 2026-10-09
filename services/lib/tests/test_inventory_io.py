@@ -336,6 +336,8 @@ class TestCanopyRequiredColumns:
                 "type": "allometry",
                 "equations": "crookston_stage",
             },
+            "bands": ["cbd", "cbh", "chm", "cc"],
+            "horizontal_distribution": "crown_projected",
         }
         source.update(overrides)
         return source
@@ -424,6 +426,44 @@ class TestCanopyRequiredColumns:
             )
         )
         assert "fia_species_code" in cols
+
+    def _column_fuel_source(self, **overrides):
+        """Column fuel and no species methods, so only the radius can add
+        dbh / species."""
+        return self._source(
+            biomass_source={
+                "type": "inventory_column",
+                "column": "acf_kg",
+                "unit": "kg",
+            },
+            vertical_distribution="uniform",
+            species_inclusion="all_species",
+            crown_class_adjustment={"method": "none"},
+            **overrides,
+        )
+
+    def test_allometric_radius_with_cc_needs_dbh_and_species(self):
+        cols = canopy_required_columns(
+            self._column_fuel_source(bands=["cc"], horizontal_distribution="stem")
+        )
+        assert {"dbh", "fia_species_code"} <= cols
+
+    def test_allometric_radius_with_crown_projected_needs_dbh_and_species(self):
+        cols = canopy_required_columns(
+            self._column_fuel_source(
+                bands=["cbd"], horizontal_distribution="crown_projected"
+            )
+        )
+        assert {"dbh", "fia_species_code"} <= cols
+
+    def test_allometric_radius_unused_adds_nothing(self):
+        """Stem attribution without `cc` never computes a radius."""
+        cols = canopy_required_columns(
+            self._column_fuel_source(
+                bands=["cbd", "cbh", "chm", "cfl"], horizontal_distribution="stem"
+            )
+        )
+        assert cols == {"x", "y", "height", "crown_ratio"}
 
 
 class TestReadInventoryTreeId:

@@ -79,8 +79,8 @@ class TestStemIsolationVwf:
         assert algo.name == "vwf"
         assert algo.min_height == 2.0
         assert algo.spatial_resolution is None
-        assert algo.crown_ratio == 0.10
-        assert algo.crown_offset == 1.0
+        assert algo.crown_ratio == 0.05
+        assert algo.crown_offset == 3.0
 
     def test_name_is_always_vwf(self):
         """The name field cannot be set to anything other than 'vwf'."""
@@ -186,7 +186,7 @@ class TestCreateChmInventoryRequest:
         )
         assert isinstance(request.algorithm, StemIsolationVwf)
         assert request.algorithm.min_height == 3.0
-        assert request.algorithm.crown_ratio == 0.10  # Check default persisted
+        assert request.algorithm.crown_ratio == 0.05  # Check default persisted
 
     def test_missing_source_grid_id_rejected(self):
         """Missing required source_chm_grid_id raises ValidationError."""

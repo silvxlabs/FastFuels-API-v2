@@ -83,12 +83,15 @@ class StemIsolationVwf(BaseModel):
         description="Spatial resolution of the CHM. If omitted, it will be automatically inferred from the source grid metadata.",
     )
     crown_ratio: float = Field(
-        default=0.10,
-        description="Multiplier used to dynamically scale the search window based on pixel height.",
+        default=0.05,
+        description=(
+            "Window diameter added per meter of height. The search window "
+            "diameter (in meters) is crown_offset + crown_ratio × height."
+        ),
     )
     crown_offset: float = Field(
-        default=1.0,
-        description="Constant offset (in meters) added to the dynamic search window.",
+        default=3.0,
+        description="Window diameter (in meters) at zero height.",
     )
 
     @model_validator(mode="after")

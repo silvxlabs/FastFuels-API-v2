@@ -34,8 +34,8 @@ EXAMPLE_CHM_VWF = {
     "algorithm": {
         "name": "vwf",
         "min_height": 3.0,
-        "crown_ratio": 0.15,
-        "crown_offset": 1.0,
+        "crown_ratio": 0.05,
+        "crown_offset": 3.0,
     },
     "type": "tree",
     "name": "VWF CHM extraction inventory",

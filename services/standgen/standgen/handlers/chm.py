@@ -152,8 +152,8 @@ def handle_chm(
                 chm_da=chm_da,
                 min_height=algorithm_config.get("min_height", 2.0),
                 spatial_resolution=spatial_res,
-                crown_ratio=algorithm_config.get("crown_ratio", 0.10),
-                crown_offset=algorithm_config.get("crown_offset", 1.0),
+                crown_ratio=algorithm_config.get("crown_ratio", 0.05),
+                crown_offset=algorithm_config.get("crown_offset", 3.0),
             )
         except ValueError as e:
             raise ProcessingError(code="INVALID_ALGORITHM_PARAMS", message=str(e))

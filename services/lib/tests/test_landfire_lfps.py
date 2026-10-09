@@ -568,6 +568,22 @@ class TestResolveLfProduct:
         with patch("lib.landfire.lfps.list_products", return_value=products):
             assert resolve_lf_product("annual_disturbance", "2024") is None
 
+    @pytest.mark.parametrize("version", ["2024", "2025"])
+    def test_fdist_registry_key_resolves_via_acronym_override(self, version):
+        products = [
+            _make_coverage_product("FDist", f"LF{version}", theme="Disturbance")
+        ]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            match = resolve_lf_product("fdist", version)
+
+        assert match is not None
+        assert match.layer_name == f"LF{version}_FDist"
+
+    def test_fdist_returns_none_on_version_mismatch(self):
+        products = [_make_coverage_product("FDist", "LF2025", theme="Disturbance")]
+        with patch("lib.landfire.lfps.list_products", return_value=products):
+            assert resolve_lf_product("fdist", "2024") is None
+
     @pytest.mark.parametrize(
         ("product", "acronym", "version"),
         [
@@ -610,6 +626,10 @@ RELEASE_REGISTRY = {
         "available": ["2024"],
         "lfps_available": ["2025"],
         "default": "2024",
+    },
+    "fdist": {
+        "lfps_available": ["2024", "2025"],
+        "default": "2025",
     },
 }
 ALL_SEASONS = {"ES": SW, "SP": SW, "SU": SW, "FA": SW}
@@ -712,4 +732,13 @@ class TestListReleases:
         assert [(r.version, r.season, r.year) for r in releases] == [
             ("2025", None, 2025),
             ("2024", None, 2024),
+        ]
+
+    def test_product_with_no_staged_versions_yields_on_demand_releases_only(self):
+        """fdist has no `available` key -- only LFPS-served versions exist."""
+        products = [_make_coverage_product("FDist", "LF2025", geo_areas="SW")]
+        releases = _patched_releases(products, product="fdist")
+        assert releases == [
+            LandfireRelease("2025", None, 2025, CoverageStatus.FULL),
+            LandfireRelease("2024", None, 2024, CoverageStatus.NO_SUCH_PRODUCT),
         ]

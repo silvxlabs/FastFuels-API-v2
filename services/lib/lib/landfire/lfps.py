@@ -448,7 +448,7 @@ def list_releases(
 
     releases = [
         LandfireRelease(version, None, int(version), CoverageStatus.FULL)
-        for version in versions["available"]
+        for version in versions.get("available", [])
         if version not in on_demand
     ]
     for version in on_demand:

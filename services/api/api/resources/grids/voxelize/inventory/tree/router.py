@@ -32,6 +32,7 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
 from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassComponent,
     CreateTreeInventoryRequest,
+    InventoryColumnMaxCrownRadiusSource,
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
@@ -175,12 +176,20 @@ async def create_tree_inventory_grid(
     # + height only) or an upload that omitted or left gaps in the optional
     # morphology columns — so tailor the guidance to which columns are missing
     # rather than assuming a source. Reject early rather than dispatching a job
-    # that fails. A null crown radius is allowed: it falls back to allometry.
+    # that fails. A radius column must be listed (uploads store an all-null
+    # column for unmapped optional columns), but a null radius is allowed: it
+    # falls back to allometry.
     required_columns = set(VOXELIZE_REQUIRED_COLUMNS)
     foliage = getattr(body.biomass_source, "columns", {}).get(BiomassComponent.foliage)
     if foliage is not None:
         required_columns.add(foliage.column)
-    missing_columns = incomplete_inventory_columns(inventory_data, required_columns)
+    nullable = set()
+    if isinstance(body.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource):
+        required_columns.add(body.max_crown_radius_source.column)
+        nullable.add(body.max_crown_radius_source.column)
+    missing_columns = incomplete_inventory_columns(
+        inventory_data, required_columns, nullable
+    )
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)

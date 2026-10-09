@@ -7,6 +7,7 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.inventories.tree.chm.schema import (
+    ChmInventoryCrownSegmentation,
     ChmInventorySource,
     CreateChmInventoryRequest,
     StemIsolationLmf,
@@ -63,6 +64,12 @@ class TestStemIsolationLmf:
             StemIsolationLmf(min_height=5.0, max_height=5.0)
 
 
+@pytest.mark.parametrize("model", [StemIsolationLmf, StemIsolationVwf])
+def test_negative_min_height_rejected(model):
+    with pytest.raises(ValidationError):
+        model(min_height=-1.0)
+
+
 class TestStemIsolationVwf:
     """Tests for StemIsolationVwf model."""
 
@@ -72,8 +79,8 @@ class TestStemIsolationVwf:
         assert algo.name == "vwf"
         assert algo.min_height == 2.0
         assert algo.spatial_resolution is None
-        assert algo.crown_ratio == 0.10
-        assert algo.crown_offset == 1.0
+        assert algo.crown_ratio == 0.05
+        assert algo.crown_offset == 3.0
 
     def test_name_is_always_vwf(self):
         """The name field cannot be set to anything other than 'vwf'."""
@@ -179,7 +186,7 @@ class TestCreateChmInventoryRequest:
         )
         assert isinstance(request.algorithm, StemIsolationVwf)
         assert request.algorithm.min_height == 3.0
-        assert request.algorithm.crown_ratio == 0.10  # Check default persisted
+        assert request.algorithm.crown_ratio == 0.05  # Check default persisted
 
     def test_missing_source_grid_id_rejected(self):
         """Missing required source_chm_grid_id raises ValidationError."""
@@ -200,3 +207,62 @@ class TestCreateChmInventoryRequest:
                     {"metric": "diameter", "method": "from_below", "value": 30.0}
                 ],
             )
+
+
+class TestChmCrownSegmentation:
+    """Tests for the crown_segmentation request object."""
+
+    def test_defaults(self):
+        seg = ChmInventoryCrownSegmentation()
+        assert seg.model_dump() == {
+            "method": "dalponte2016",
+            "min_relative_height": 0.45,
+            "min_relative_crown_height": 0.55,
+            "max_crown_radius": 10.0,
+            "radius_estimator": "area_equivalent",
+        }
+
+    def test_omitted_by_default(self):
+        request = CreateChmInventoryRequest(source_chm_grid_id="grid123")
+        assert request.crown_segmentation is None
+
+    def test_empty_object_resolves_defaults(self):
+        request = CreateChmInventoryRequest(
+            source_chm_grid_id="grid123", crown_segmentation={}
+        )
+        assert request.crown_segmentation == ChmInventoryCrownSegmentation()
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("min_relative_height", -0.1),
+            ("min_relative_height", 1.0),
+            ("min_relative_crown_height", -0.1),
+            ("min_relative_crown_height", 1.0),
+            ("max_crown_radius", 0.0),
+            ("max_crown_radius", 20.5),
+            ("method", "watershed"),
+            ("radius_estimator", "max_extent"),
+        ],
+    )
+    def test_out_of_range_rejected(self, field, value):
+        with pytest.raises(ValidationError):
+            ChmInventoryCrownSegmentation(**{field: value})
+
+    def test_bounds_accepted(self):
+        seg = ChmInventoryCrownSegmentation(
+            min_relative_height=0.0,
+            min_relative_crown_height=0.0,
+            max_crown_radius=20.0,
+        )
+        assert seg.max_crown_radius == 20.0
+
+    def test_source_records_resolved_settings(self):
+        source = ChmInventorySource(
+            source_chm_grid_id="grid123",
+            algorithm=StemIsolationLmf(),
+            crown_segmentation=ChmInventoryCrownSegmentation(max_crown_radius=8.0),
+        )
+        dumped = source.model_dump()["crown_segmentation"]
+        assert dumped["max_crown_radius"] == 8.0
+        assert dumped["radius_estimator"] == "area_equivalent"

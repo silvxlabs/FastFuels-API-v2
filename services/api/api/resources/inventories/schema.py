@@ -148,6 +148,10 @@ CHM_INVENTORY_COLUMNS = [
     Column(key="height", type=ColumnType.continuous, unit="m"),
 ]
 
+# Per-tree crown radius (m) measured from a segmented crown. Added to a CHM
+# inventory by crown segmentation; uploads may carry it too.
+CROWN_RADIUS_COLUMN = Column(key="crown_radius", type=ColumnType.continuous, unit="m")
+
 
 class FIASpeciesGroupShare(BaseModel):
     """Basal area share for a single FIA species group."""

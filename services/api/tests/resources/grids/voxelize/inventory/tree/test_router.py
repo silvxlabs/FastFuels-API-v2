@@ -26,10 +26,13 @@ def tree_inventory_for_voxelization(firestore_client, domain_for_testing):
         status="completed",
         inventory_type="tree",
     )
-    # Biomass columns the documented example and tests read.
+    # Columns the documented examples and tests read.
     inventory_data["columns"] += [
-        {"key": key, "type": "continuous", "unit": "kg"}
-        for key in ("foliage_biomass", "my_fuel_load_col")
+        {"key": "crown_radius", "type": "continuous", "unit": "m"},
+        *(
+            {"key": key, "type": "continuous", "unit": "kg"}
+            for key in ("foliage_biomass", "my_fuel_load_col")
+        ),
     ]
     doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
         inventory_data["id"]
@@ -324,6 +327,79 @@ class TestCreateTreeInventoryGrid:
         finally:
             doc_ref.delete()
 
+    def _post_for_inventory(self, client, firestore_client, domain_id, inv, **body):
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inv["id"]
+        )
+        doc_ref.set(inv)
+        try:
+            return client.post(
+                self.route(domain_id),
+                json={
+                    "source_inventory_id": inv["id"],
+                    "resolution": {"horizontal": 2.0, "vertical": 1.0},
+                    "bands": ["bulk_density.foliage.live"],
+                    **body,
+                },
+            )
+        finally:
+            doc_ref.delete()
+
+    RADIUS_SOURCE = {
+        "max_crown_radius_source": {
+            "type": "inventory_column",
+            "column": "crown_radius",
+            "unit": "m",
+        }
+    }
+
+    def test_inventory_missing_radius_column_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A radius column the inventory doesn't list is rejected up front."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory without crown_radius",
+            status="completed",
+            inventory_type="tree",
+        )
+        response = self._post_for_inventory(
+            client,
+            firestore_client,
+            domain_for_testing["id"],
+            inv,
+            **self.RADIUS_SOURCE,
+        )
+        assert response.status_code == 422
+        assert "crown_radius" in response.json()["detail"]
+
+    def test_null_radius_values_are_accepted(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A listed radius column with nulls is accepted: nulls use allometry."""
+        inv = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Inventory with partial crown_radius",
+            status="completed",
+            inventory_type="tree",
+        )
+        inv["columns"].append(
+            {
+                "key": "crown_radius",
+                "type": "continuous",
+                "unit": "m",
+                "summary": {"null_count": 5},
+            }
+        )
+        response = self._post_for_inventory(
+            client,
+            firestore_client,
+            domain_for_testing["id"],
+            inv,
+            **self.RADIUS_SOURCE,
+        )
+        assert response.status_code == 201, response.json()
+
     def test_inventory_with_null_morphology_returns_422(
         self, client, firestore_client, domain_for_testing
     ):
@@ -337,24 +413,14 @@ class TestCreateTreeInventoryGrid:
             column["summary"] = {
                 "null_count": 2 if column["key"] == "crown_ratio" else 0
             }
-        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
-            inv["id"]
+        response = self._post_for_inventory(
+            client, firestore_client, domain_for_testing["id"], inv
         )
-        doc_ref.set(inv)
-        try:
-            body = {
-                "source_inventory_id": inv["id"],
-                "resolution": {"horizontal": 2.0, "vertical": 1.0},
-                "bands": ["bulk_density.foliage.live"],
-            }
-            response = client.post(self.route(domain_for_testing["id"]), json=body)
-            assert response.status_code == 422
-            detail = response.json()["detail"]
-            assert "null" in detail
-            assert "'crown_ratio'" in detail
-            assert "allometry/gdam" in detail
-        finally:
-            doc_ref.delete()
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "null" in detail
+        assert "'crown_ratio'" in detail
+        assert "allometry/gdam" in detail
 
     # --- Request body validation ---
 

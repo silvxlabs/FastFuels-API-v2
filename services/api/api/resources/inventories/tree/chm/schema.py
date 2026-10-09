@@ -4,10 +4,12 @@ api/v2/resources/inventories/tree/chm/schema.py
 Schema models for CHM extraction inventory creation.
 """
 
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from api.resources.crown_segmentation import CrownSegmentationBase
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
 from api.resources.inventories.treatment_models import InventoryTreatment
@@ -22,6 +24,7 @@ class StemIsolationLmf(BaseModel):
     name: Literal["lmf"] = "lmf"
     min_height: float = Field(
         default=2.0,
+        ge=0,
         description="Minimum height threshold (in meters) for a treetop.",
     )
     max_height: float | None = Field(
@@ -63,6 +66,7 @@ class StemIsolationVwf(BaseModel):
     name: Literal["vwf"] = "vwf"
     min_height: float = Field(
         default=2.0,
+        ge=0,
         description="Minimum height threshold (in meters) for a treetop.",
     )
     max_height: float | None = Field(
@@ -79,12 +83,16 @@ class StemIsolationVwf(BaseModel):
         description="Spatial resolution of the CHM. If omitted, it will be automatically inferred from the source grid metadata.",
     )
     crown_ratio: float = Field(
-        default=0.10,
-        description="Multiplier used to dynamically scale the search window based on pixel height.",
+        default=0.05,
+        description=(
+            "Window diameter added per meter of height. The search window "
+            "diameter (in meters) is crown_offset + crown_ratio × height, "
+            "converted to a whole, odd number of pixels of at least 3."
+        ),
     )
     crown_offset: float = Field(
-        default=1.0,
-        description="Constant offset (in meters) added to the dynamic search window.",
+        default=3.0,
+        description="Window diameter (in meters) at zero height.",
     )
 
     @model_validator(mode="after")
@@ -98,6 +106,23 @@ class StemIsolationVwf(BaseModel):
 StemIsolationAlgorithm = Annotated[
     StemIsolationLmf | StemIsolationVwf, Field(discriminator="name")
 ]
+
+
+class CrownRadiusEstimator(StrEnum):
+    area_equivalent = "area_equivalent"
+
+
+class ChmInventoryCrownSegmentation(CrownSegmentationBase):
+    """Crown segmentation run after stem isolation. Each tree gets a
+    `crown_radius` column measured from its segmented crown."""
+
+    radius_estimator: CrownRadiusEstimator = Field(
+        default=CrownRadiusEstimator.area_equivalent,
+        description=(
+            "How a crown becomes one radius. `area_equivalent` is the radius of "
+            "a circle with the crown's area, sqrt(area / pi)."
+        ),
+    )
 
 
 class ChmInventorySource(BaseModel):
@@ -114,6 +139,7 @@ class ChmInventorySource(BaseModel):
         ),
     )
     algorithm: StemIsolationAlgorithm
+    crown_segmentation: ChmInventoryCrownSegmentation | None = None
 
 
 class CreateChmInventoryRequest(CreateInventoryRequestBase):
@@ -125,6 +151,19 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
     algorithm: StemIsolationAlgorithm = Field(
         default_factory=StemIsolationLmf,
         description="Stem isolation algorithm and its parameters.",
+    )
+    crown_segmentation: ChmInventoryCrownSegmentation | None = Field(
+        default=None,
+        description=(
+            "Segment each detected tree's crown on the CHM and add a "
+            "`crown_radius` column (m). Crowns grow outward from each treetop "
+            "over CHM cells within the detection height range and stop at the "
+            "crown's edge; each cell belongs to at most one tree. Every tree "
+            "gets a radius of at least one cell's area-equivalent radius, "
+            "capped at `max_crown_radius`. "
+            "Requires a CHM cell size of 2 m or finer. Omit to skip "
+            "segmentation."
+        ),
     )
     modifications: list[InventoryModification] = Field(
         default_factory=list,

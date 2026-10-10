@@ -47,6 +47,12 @@ LANDFIRE_CANOPY_SCALE_FACTORS: dict[str, float] = {
 # reprojection, or resampling blends -9999 into valid neighbours.
 LANDFIRE_EXTRA_NODATA: int = -9999
 
+# LANDFIRE aspect marks flat cells (slope <= 2 deg) with -1: aspect is
+# undefined there. -1 is kept as the stored value and declared as the band's
+# nodata, with the other sentinels folded onto it, so resampling never blends
+# it into real angles.
+LANDFIRE_ASPECT_NODATA: int = -1
+
 
 def _landfire_cog_url(product: str, version: str) -> str:
     """Build the gs:// path to a staged LANDFIRE COG."""
@@ -67,6 +73,7 @@ def _fetch_landfire_raster(
     alignment: dict,
     target_grid_doc: dict | None,
     is_categorical: bool,
+    nodata: float | None = None,
 ) -> DataArray:
     """Fetch a single LANDFIRE raster product.
 
@@ -84,6 +91,8 @@ def _fetch_landfire_raster(
         is_categorical: Drives the role-aware default for the resampling
             method when ``alignment.method`` is unset (categorical →
             ``nearest``; continuous → ``bilinear``).
+        nodata: Replaces the raster's declared nodata; the declared value
+            and the -9999 sentinel are folded onto it before reprojection.
 
     Returns:
         DataArray with dims (y, x)
@@ -105,6 +114,7 @@ def _fetch_landfire_raster(
             interpolation_padding_cells=extent_buffer_cells,
             resampling=RESAMPLING_METHOD_MAP[method_name],
             extra_nodata=LANDFIRE_EXTRA_NODATA,
+            nodata=nodata,
             destination_resolution=alignment.get("resolution")
             if alignment["target"] == "native"
             else None,
@@ -589,6 +599,7 @@ def fetch_topography(
             alignment,
             target_grid_doc,
             is_categorical=False,
+            nodata=LANDFIRE_ASPECT_NODATA if band == "aspect" else None,
         )
 
     return _to_dataset(variables)

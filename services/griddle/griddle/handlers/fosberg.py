@@ -40,6 +40,11 @@ _SLOPE_CLASS_BREAK_DEG = math.degrees(math.atan(0.30))
 _GENTLE_SLOPE = 0.0
 _STEEP_SLOPE = 31.0
 
+# Aspect is undefined on flat ground (LANDFIRE aspect nodata, -1). Those cells
+# still get a moisture value; they use the north class, as LANDFIRE's -1
+# did before it was declared nodata.
+_UNDEFINED_ASPECT = 0.0
+
 
 def fosberg_grid(
     grid: dict,
@@ -60,11 +65,12 @@ def fosberg_grid(
         surface = surface.rio.reproject_match(slope, resampling=Resampling.bilinear)
 
     progress("Computing 1-hr dead fuel moisture...", 50)
-    valid = _defined(slope) & _defined(aspect) & _defined(surface)
+    valid = _defined(slope) & _defined(surface)
+    aspect_values = np.where(_defined(aspect), aspect.values, _UNDEFINED_ASPECT)
     fmc = calculate_1hr_fuel_moisture(
         dry_bulb_temp=source["dry_bulb_temp"],
         relative_humidity=source["relative_humidity"],
-        aspect=np.where(valid, aspect.values, 0.0),
+        aspect=np.where(valid, aspect_values, 0.0),
         slope=np.where(
             slope.values > _SLOPE_CLASS_BREAK_DEG, _STEEP_SLOPE, _GENTLE_SLOPE
         ),

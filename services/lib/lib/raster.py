@@ -33,14 +33,22 @@ def cog_env(**extra: str) -> rasterio.Env:
     return rasterio.Env(**{**GDAL_COG_CONFIG, **extra})
 
 
-def _fold_extra_nodata(window: DataArray, extra_nodata: float | None) -> DataArray:
-    """Fold ``extra_nodata`` onto the window's declared nodata."""
-    if extra_nodata is None:
-        return window
-    if window.rio.nodata is None:
-        return window.rio.write_nodata(extra_nodata)
+def _fold_nodata(
+    window: DataArray, extra_nodata: float | None, nodata: float | None
+) -> DataArray:
+    """Fold the declared nodata and ``extra_nodata`` onto a single sentinel.
+
+    The sentinel is ``nodata`` if given, else the declared nodata, else
+    ``extra_nodata``.
+    """
     declared = window.rio.nodata
-    return window.where(window != extra_nodata, declared).rio.write_nodata(declared)
+    target = next((v for v in (nodata, declared, extra_nodata) if v is not None), None)
+    if target is None:
+        return window
+    for sentinel in (declared, extra_nodata):
+        if sentinel is not None and sentinel != target:
+            window = window.where(window != sentinel, target)
+    return window.rio.write_nodata(target)
 
 
 class RasterConnection:
@@ -86,6 +94,7 @@ class RasterConnection:
         destination_resolution: float | None = None,
         resampling: Resampling = Resampling.nearest,
         extra_nodata: float | None = None,
+        nodata: float | None = None,
     ) -> DataArray:
         """Extract the raster window covering the ROI plus result-cell padding.
 
@@ -103,6 +112,10 @@ class RasterConnection:
         ``extra_nodata``, if given, is a second sentinel folded onto the
         declared nodata (or used as nodata when none is declared) before
         reprojection, so resampling never blends it into valid cells.
+
+        ``nodata``, if given, replaces the declared nodata: the declared
+        value and ``extra_nodata`` are both folded onto it before
+        reprojection.
         """
         if self.connection_type == "rioxarray":
             return self._extract_window_rioxarray(
@@ -114,6 +127,7 @@ class RasterConnection:
                 destination_resolution=destination_resolution,
                 resampling=resampling,
                 extra_nodata=extra_nodata,
+                nodata=nodata,
             )
 
     def _extract_window_rioxarray(
@@ -126,6 +140,7 @@ class RasterConnection:
         destination_resolution: float | None = None,
         resampling: Resampling = Resampling.nearest,
         extra_nodata: float | None = None,
+        nodata: float | None = None,
     ) -> DataArray:
         """Extract the window of the raster that contains the ROI using
         rioxarray. Performs a single reprojection.
@@ -152,7 +167,7 @@ class RasterConnection:
                     destination_transform, destination_shape, dst_crs
                 )
             )
-            window = _fold_extra_nodata(window, extra_nodata)
+            window = _fold_nodata(window, extra_nodata, nodata)
             return window.rio.reproject(
                 dst_crs,
                 transform=destination_transform,
@@ -167,7 +182,7 @@ class RasterConnection:
                 destination_resolution=destination_resolution,
             )
         )
-        window = _fold_extra_nodata(window, extra_nodata)
+        window = _fold_nodata(window, extra_nodata, nodata)
 
         # CRS-only override (e.g. target="native" with a custom resolution):
         # reproject preserving source-pixel anchor, optionally at a new

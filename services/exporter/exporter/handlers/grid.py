@@ -13,6 +13,7 @@ import tempfile
 import traceback
 from collections.abc import Callable
 
+import numpy as np
 import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
@@ -23,6 +24,9 @@ from exporter.storage import load_grid_zarr
 from lib.config import EXPORTS_BUCKET
 
 logger = logging.getLogger(__name__)
+
+# Shared GeoTIFF nodata for integer bands whose own nodata values disagree.
+_SHARED_NODATA = -9999
 
 
 def _load_and_select_bands(
@@ -98,6 +102,36 @@ def _nodata_is_uniform(ds: xr.Dataset) -> bool:
     return True
 
 
+def _stack_with_shared_nodata(ds: xr.Dataset) -> xr.DataArray:
+    """Stack bands into one array that carries a single nodata value.
+
+    Each band's cells at its own nodata are set to a shared sentinel: NaN when
+    the stacked dtype is floating, else -9999 (integer dtypes are widened to
+    a signed type that holds it).
+    """
+    dtype = np.result_type(*(ds[v].dtype for v in ds.data_vars))
+    if np.issubdtype(dtype, np.integer):
+        dtype = np.result_type(dtype, np.int16)
+    sentinel = np.nan if np.issubdtype(dtype, np.floating) else _SHARED_NODATA
+
+    bands = {}
+    for name in ds.data_vars:
+        da = ds[name]
+        nodata = da.rio.nodata
+        if nodata is None:
+            is_nodata = xr.zeros_like(da, dtype=bool)
+        elif _is_nan(nodata):
+            is_nodata = da.isnull()
+        else:
+            is_nodata = da == nodata
+        bands[name] = da.astype(dtype).where(~is_nodata, sentinel)
+        bands[name].encoding.pop("_FillValue", None)
+        bands[name].attrs.pop("_FillValue", None)
+
+    stacked = ds.assign(bands).to_array(dim="band")
+    return stacked.rio.write_nodata(sentinel, encoded=False)
+
+
 def export_geotiff(
     export: dict,
     source: dict,
@@ -135,12 +169,10 @@ def export_geotiff(
             if _nodata_is_uniform(ds):
                 ds.rio.to_raster(gcs_path, driver="GTiff")
             else:
-                # Bands carry distinct nodata (e.g. tm_id sentinel + plt_cn 0).
-                # A GeoTIFF is one dtype with one file-level nodata, so stack the
-                # bands into a uniform-dtype array. Raw values (including per-band
-                # sentinels) are written; no single nodata tag is set since the
-                # bands disagree on one.
-                ds.to_array(dim="band").rio.to_raster(gcs_path, driver="GTiff")
+                # Bands carry distinct nodata (e.g. LANDFIRE aspect -1 next to
+                # elevation 32767). A GeoTIFF has one dtype and one file-level
+                # nodata, so map every band's nodata onto a shared value.
+                _stack_with_shared_nodata(ds).rio.to_raster(gcs_path, driver="GTiff")
     except Exception as e:
         raise ProcessingError(
             code="GEOTIFF_WRITE_ERROR",

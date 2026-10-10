@@ -16,7 +16,11 @@ import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 from exporter.errors import ProcessingError
-from exporter.handlers.grid import _nodata_is_uniform, export_geotiff
+from exporter.handlers.grid import (
+    _nodata_is_uniform,
+    _stack_with_shared_nodata,
+    export_geotiff,
+)
 from pyproj import CRS
 from rasterio.transform import from_bounds
 from rioxarray.raster_array import RasterArray
@@ -269,13 +273,16 @@ class TestNodataHandling:
         mock_ds_raster.assert_called_once()
         mock_arr_raster.assert_not_called()
 
-    def test_stacked_write_preserves_sentinels_and_dtype(self, tmp_path):
-        """The stacked-array write (the non-uniform-nodata fallback) produces a
-        valid multi-band GeoTIFF that preserves integer dtype, CRS, and the raw
-        per-band sentinels — they are not floated or masked to NaN. Exercises
-        the same to_array -> to_raster path as export_geotiff, against a local
-        file so it runs without GCS.
-        """
+    @staticmethod
+    def _write_stacked(ds, path):
+        """Write through the same stacked path export_geotiff uses for bands
+        with distinct nodata, against a local file so it runs without GCS."""
+        _stack_with_shared_nodata(ds).rio.to_raster(str(path), driver="GTiff")
+        return rasterio.open(path)
+
+    def test_stacked_write_maps_sentinels_to_shared_nodata(self, tmp_path):
+        """Each band's own sentinel becomes the shared -9999 and the file is
+        tagged with it; integer dtype and CRS are preserved."""
         ds = make_test_dataset(
             bands={
                 "tm_id": np.array([[5, 6], [7, 2147483647]], dtype=np.int32),
@@ -286,16 +293,77 @@ class TestNodataHandling:
         )
         assert not _nodata_is_uniform(ds)
 
-        out = tmp_path / "stacked.tif"
-        ds.to_array(dim="band").rio.to_raster(str(out), driver="GTiff")
-
-        with rasterio.open(out) as r:
+        with self._write_stacked(ds, tmp_path / "stacked.tif") as r:
             assert r.count == 2
             assert all(dt == "int32" for dt in r.dtypes)
             assert CRS(r.crs) == CRS("EPSG:32611")
-            # Raw sentinels survive in their respective bands.
-            assert r.read(1)[1, 1] == 2147483647
-            assert r.read(2)[1, 1] == 0
+            assert r.nodata == -9999
+            np.testing.assert_array_equal(r.read(1), [[5, 6], [7, -9999]])
+            np.testing.assert_array_equal(r.read(2), [[11, 12], [13, -9999]])
+
+    def test_topography_with_flat_aspect_keeps_a_nodata_tag(self, tmp_path):
+        """LANDFIRE topography: elevation nodata 32767, aspect nodata -1
+        (flat). Both become -9999 under one file-level tag."""
+        ds = make_test_dataset(
+            bands={
+                "elevation": np.array([[1500, 32767]], dtype=np.int16),
+                "aspect": np.array([[-1, 90]], dtype=np.int16),
+            },
+            shape=(1, 2),
+            nodatas={"elevation": 32767, "aspect": -1},
+        )
+
+        with self._write_stacked(ds, tmp_path / "topo.tif") as r:
+            assert r.dtypes == ("int16", "int16")
+            assert r.nodata == -9999
+            np.testing.assert_array_equal(r.read(1), [[1500, -9999]])
+            np.testing.assert_array_equal(r.read(2), [[-9999, 90]])
+
+    def test_unsigned_bands_widen_to_hold_shared_nodata(self, tmp_path):
+        ds = make_test_dataset(
+            bands={
+                "a": np.array([[1, 255]], dtype=np.uint8),
+                "b": np.array([[0, 7]], dtype=np.uint8),
+            },
+            shape=(1, 2),
+            nodatas={"a": 255, "b": 0},
+        )
+
+        with self._write_stacked(ds, tmp_path / "uint8.tif") as r:
+            assert r.dtypes == ("int16", "int16")
+            assert r.nodata == -9999
+            np.testing.assert_array_equal(r.read(1), [[1, -9999]])
+            np.testing.assert_array_equal(r.read(2), [[-9999, 7]])
+
+    def test_float_stack_uses_nan(self, tmp_path):
+        ds = make_test_dataset(
+            bands={
+                "f": np.array([[0.5, np.nan]], dtype=np.float32),
+                "i": np.array([[3, 32767]], dtype=np.int16),
+            },
+            shape=(1, 2),
+            nodatas={"f": np.nan, "i": 32767},
+        )
+
+        with self._write_stacked(ds, tmp_path / "float.tif") as r:
+            assert r.dtypes == ("float32", "float32")
+            assert np.isnan(r.nodata)
+            np.testing.assert_array_equal(r.read(1), [[0.5, np.nan]])
+            np.testing.assert_array_equal(r.read(2), [[3.0, np.nan]])
+
+    def test_band_without_nodata_is_unchanged(self, tmp_path):
+        ds = make_test_dataset(
+            bands={
+                "a": np.array([[4, 5]], dtype=np.int16),
+                "b": np.array([[6, 32767]], dtype=np.int16),
+            },
+            shape=(1, 2),
+            nodatas={"b": 32767},
+        )
+
+        with self._write_stacked(ds, tmp_path / "unset.tif") as r:
+            np.testing.assert_array_equal(r.read(1), [[4, 5]])
+            np.testing.assert_array_equal(r.read(2), [[6, -9999]])
 
 
 class TestExportGeotiffIntegration:

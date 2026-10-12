@@ -77,7 +77,8 @@ async def create_landfire_topography(
     Available bands:
     - **elevation**: meters above sea level
     - **slope**: degrees (0-90)
-    - **aspect**: degrees clockwise from north (0-360)
+    - **aspect**: degrees clockwise from north (0-360). Flat cells have no
+      aspect and are nodata.
 
     By default all three bands are included. Use the `bands` field to select
     a subset.

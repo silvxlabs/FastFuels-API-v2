@@ -793,8 +793,8 @@ def voxelize_inventory(
         )
         logger.info(
             f"{len(measured.footprints)} trees have a crown in the Feature; "
-            f"{measured.ignored_crowns} crowns have no tree in the inventory "
-            "and are ignored",
+            f"{measured.ignored_crowns} crowns have no live tree in the "
+            "inventory and are ignored",
             extra={"grid_id": grid_id},
         )
 

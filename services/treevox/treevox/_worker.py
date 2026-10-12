@@ -59,10 +59,10 @@ def run(payload: dict) -> dict:
     try:
         rng = np.random.default_rng(payload["rng_seed"])
         footprints = payload.get("footprints")
-        measured = counts = None
+        measured = reasons = None
         cache_trees = trees
         if footprints is not None:
-            measured, counts = plan_measured_crowns(trees, footprints, payload["vr"])
+            measured, reasons = plan_measured_crowns(trees, footprints, payload["vr"])
             # Measured crowns are all different, so they skip the binned cache.
             cache_trees = trees[~trees["tree_id"].isin(list(measured))]
         cache = build_chunk_cache(
@@ -72,7 +72,7 @@ def run(payload: dict) -> dict:
             payload["source_config"],
             rng,
         )
-        voxelize_chunk(
+        counts = voxelize_chunk(
             trees,
             payload["buffers"],
             cache,
@@ -86,6 +86,7 @@ def run(payload: dict) -> dict:
             rng,
             measured=measured,
             base_seed=payload.get("base_seed", 0),
+            reasons=reasons,
         )
         result = {
             "chunk_location": payload["chunk_location"],

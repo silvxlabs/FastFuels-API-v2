@@ -424,9 +424,10 @@ CROWN_GEOMETRY_SOURCE_DESCRIPTION = (
     "the crown Feature, matched by `tree_id`, gets a measured crown. Its "
     "outline is the crown's CHM cells, its top is each cell's CHM height, "
     "and its bottom follows `crown_profile_model` up from the crown base, at "
-    "least one voxel below the top. `max_crown_radius_source` does not apply "
-    "to measured crowns. A tree with no crown in the Feature, or whose CHM "
-    "heights are all at or below its crown base, is drawn parametrically. "
+    "least one voxel below the top but never below the crown base. "
+    "`max_crown_radius_source` does not apply to measured crowns. A tree with "
+    "no crown in the Feature, or with no CHM height above its crown base, is "
+    "drawn parametrically. "
     "Crowns of trees not in the inventory are ignored. Every tree keeps the "
     "mass `biomass_source` gives it. Requires an inventory with a `tree_id` "
     "column."
@@ -441,9 +442,7 @@ class CrownGeometryCounts(BaseModel):
         description="Trees drawn parametrically: no crown in the Feature."
     )
     parametric_no_volume: int = Field(
-        description=(
-            "Trees drawn parametrically: CHM heights all at or below the crown base."
-        )
+        description=("Trees drawn parametrically: no CHM height above the crown base.")
     )
 
 

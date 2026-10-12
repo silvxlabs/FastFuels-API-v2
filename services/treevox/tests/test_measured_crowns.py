@@ -363,12 +363,12 @@ class TestFallbackAndMatching:
             3: _disc(30.0, 20.0, 3.0, top=CBH - 1.0),
             99: _disc(5.0, 5.0, 2.0),  # crown of a tree not in the chunk
         }
-        measured, counts = v.plan_measured_crowns(trees, footprints, 1.0)
+        measured, reasons = v.plan_measured_crowns(trees, footprints, 1.0)
         assert set(measured) == {1}
-        assert counts == {
-            "measured": 1,
-            "parametric_no_crown": 1,
-            "parametric_no_volume": 1,
+        assert reasons == {
+            1: "measured",
+            2: "parametric_no_crown",
+            3: "parametric_no_volume",
         }
 
     def test_fallback_trees_are_drawn_parametrically(self):
@@ -414,6 +414,26 @@ class TestFallbackAndMatching:
             assert mass == pytest.approx(
                 v.build_tree(row, source).foliage_biomass, rel=1e-5
             )
+
+    def test_trees_that_cannot_be_built_are_not_counted(self):
+        """An unknown species is skipped on either path, and not counted."""
+        unknown = _row(2, x=10.5, y=10.5).copy()
+        unknown["fia_species_code"] = 999999
+        no_crown = _row(3, x=30.5, y=30.5).copy()
+        no_crown["fia_species_code"] = 999999
+        trees = _trees(_row(1), unknown, no_crown)
+        footprints = {
+            1: _disc(20.0, 20.0, 3.0, top=16.0),
+            2: _disc(10.5, 10.5, 3.0, top=16.0),
+        }
+        result = worker_run(_payload(trees, footprints, _source("purves")))
+        assert "error" not in result, result.get("error")
+        assert result["crown_geometry_counts"] == {
+            "measured": 1,
+            "parametric_no_crown": 0,
+            "parametric_no_volume": 0,
+        }
+        assert set(np.unique(result["buffers"]["tree_id"])) == {0, 1}
 
     def test_empty_footprints_draw_everything_parametrically(self):
         trees = _trees(_row(1), _row(2, x=8.0, y=8.0))

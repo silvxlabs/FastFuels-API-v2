@@ -735,38 +735,43 @@ def footprint_has_volume(
     return bool(np.any(tops - crown_base_height > MEASURED_VOLUME_TOLERANCE * vr))
 
 
+CROWN_GEOMETRY_REASONS = ("measured", "parametric_no_crown", "parametric_no_volume")
+
+
 def plan_measured_crowns(
     trees_in_chunk: pd.DataFrame,
     footprints: dict[int, Footprint],
     vr: float,
-) -> tuple[dict[int, Footprint], dict[str, int]]:
-    """Choose which trees get a measured crown, and count the rest by reason.
+) -> tuple[dict[int, Footprint], dict[int, str]]:
+    """Choose which trees get a measured crown, and why the rest do not.
 
     A tree gets a measured crown when the crown Feature holds a footprint for
     its `tree_id` and some footprint cell rises above its crown base,
     `height × (1 − crown_ratio)`. Every other tree is drawn parametrically.
 
     Returns the footprints of trees drawn measured, keyed by `tree_id`, and
-    the counts `measured`, `parametric_no_crown` and `parametric_no_volume`.
+    each tree's `CROWN_GEOMETRY_REASONS` entry, keyed by `tree_id`.
+    `voxelize_chunk` counts the reasons of the trees it actually draws.
     """
     measured: dict[int, Footprint] = {}
-    counts = {"measured": 0, "parametric_no_crown": 0, "parametric_no_volume": 0}
+    reasons: dict[int, str] = {}
     tree_ids = trees_in_chunk["tree_id"].to_numpy()
     heights = trees_in_chunk["height"].to_numpy(dtype=float)
     crown_ratios = trees_in_chunk["crown_ratio"].to_numpy(dtype=float)
     for tree_id, height, crown_ratio in zip(tree_ids, heights, crown_ratios):
-        footprint = footprints.get(int(tree_id))
+        tree_id = int(tree_id)
+        footprint = footprints.get(tree_id)
         if footprint is None:
-            counts["parametric_no_crown"] += 1
+            reasons[tree_id] = "parametric_no_crown"
             continue
         # Same expression as core's Tree.crown_base_height.
         crown_base_height = height - height * crown_ratio
         if footprint_has_volume(footprint, crown_base_height, vr):
-            measured[int(tree_id)] = footprint
-            counts["measured"] += 1
+            measured[tree_id] = footprint
+            reasons[tree_id] = "measured"
         else:
-            counts["parametric_no_volume"] += 1
-    return measured, counts
+            reasons[tree_id] = "parametric_no_volume"
+    return measured, reasons
 
 
 def measured_crown_seed(base_seed: int, tree_id: int) -> int:
@@ -1146,7 +1151,8 @@ def voxelize_chunk(
     rng: np.random.Generator,
     measured: dict[int, Footprint] | None = None,
     base_seed: int = 0,
-) -> None:
+    reasons: dict[int, str] | None = None,
+) -> dict[str, int] | None:
     """Render every tree in a chunk into the per-band buffers.
 
     Inputs
@@ -1198,6 +1204,9 @@ def voxelize_chunk(
     base_seed
         The job's base seed; seeds each measured crown's occupancy draw via
         `measured_crown_seed`. Unused without `measured`.
+    reasons
+        Each tree's crown geometry reason from `plan_measured_crowns`, keyed
+        by `tree_id`. When given, the drawn trees are counted by reason.
 
     What it does
     ------------
@@ -1225,11 +1234,16 @@ def voxelize_chunk(
 
     Output
     ------
-    None. Side effect: every buffer in `buffers` is mutated in place
-    with one tree's contribution per iteration.
+    With `reasons`, the number of trees drawn under each
+    `CROWN_GEOMETRY_REASONS` entry; trees skipped because they cannot be
+    built are not counted. Otherwise None. Side effect: every buffer in
+    `buffers` is mutated in place with one tree's contribution per iteration.
     """
+    counts = None
+    if reasons is not None:
+        counts = dict.fromkeys(CROWN_GEOMETRY_REASONS, 0)
     if trees_in_chunk.empty:
-        return
+        return counts
 
     moisture_values: dict[str, float] = {}
     moisture_model = source_config.get("moisture_model") or {}
@@ -1267,6 +1281,8 @@ def voxelize_chunk(
                     f"although its footprint rises above the crown base."
                 )
             biomass_array, (z_start, row_start, col_start) = built
+            if counts is not None:
+                counts["measured"] += 1
             placement = _place_at_offset(
                 z_start,
                 row_start - chunk_y_start,
@@ -1281,6 +1297,8 @@ def voxelize_chunk(
             entry = cache.get(int(row["_cache_key"]))
             if entry is None or not entry.biomass_arrays:
                 continue
+            if counts is not None:
+                counts[reasons[int(row["tree_id"])]] += 1
             arrays = entry.biomass_arrays
             biomass_array = (
                 arrays[0]
@@ -1331,3 +1349,4 @@ def voxelize_chunk(
             component_state,
             biomass_component,
         )
+    return counts

@@ -129,11 +129,12 @@ async def validate_crown_feature_source(
         )
 
     chm_grid_id = (feature.get("source") or {}).get("source_chm_grid_id")
-    chm = None
-    if chm_grid_id:
-        chm = await _get_owned_document(
-            GRIDS_COLLECTION, chm_grid_id, owner_id, domain_id
+    if not chm_grid_id:
+        raise _unprocessable(
+            f"Crown Feature '{feature_id}' does not record the CHM grid it was "
+            f"built from. Build the crown Feature again from a CHM grid."
         )
+    chm = await _get_owned_document(GRIDS_COLLECTION, chm_grid_id, owner_id, domain_id)
     if chm is None:
         raise _unprocessable(
             f"CHM grid '{chm_grid_id}', which crown Feature '{feature_id}' was "
@@ -228,13 +229,14 @@ async def create_tree_inventory_grid(
       - Top: each cell's CHM height.
       - Bottom: `crown_profile_model`, going up from the crown base. Profiles
         widest at the crown base give a flat bottom there; `beta` and the
-        dual profiles give a bottom that rises toward the crown's edge. Every
-        cell above the crown base is at least one voxel thick.
+        dual profiles give a bottom that rises toward the crown's edge. Each
+        cell's bottom is at least one voxel below its top, but never below
+        the crown base.
 
       `max_crown_radius_source` does not apply to measured crowns, and every
       tree keeps the mass `biomass_source` gives it. Trees with no crown in
-      the Feature, and trees whose CHM heights are all at or below their
-      crown base, are drawn parametrically. Crowns of trees not in the
+      the Feature, and trees with no CHM height above their crown base, are
+      drawn parametrically. Crowns of trees not in the
       inventory are ignored. The inventory must have a `tree_id` column, the
       Feature must be a completed crown Feature in this domain, and the CHM
       grid it was built from must still exist.

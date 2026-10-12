@@ -14,6 +14,7 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from griddle.handlers.landfire import (
     LANDFIRE_EXTRA_NODATA,
+    _fetch_fuel_model,
     _fetch_landfire_raster,
     _most_frequent,
     _needs_lfps,
@@ -28,6 +29,7 @@ from griddle.handlers.landfire import (
 from rasterio.transform import from_origin
 from shapely.geometry import box
 
+from lib.landfire import UnknownLandfireVersionError
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
@@ -190,6 +192,70 @@ class TestFetchLandfireRasterNodataConsolidation:
         np.testing.assert_array_equal(result.values, [[55, 55], [55, 55]])
 
 
+class TestFetchLandfireRasterBandSelection:
+    """Unit tests for _fetch_landfire_raster's band parameter."""
+
+    @pytest.fixture
+    def multiband(self, roi):
+        """RasterConnection patched to return a (band, y, x) raster whose bands
+        hold 101, 202 and 303. Band 3 also has a -9999 cell."""
+        values = {1: 101, 2: 202, 3: 303}
+        data = np.stack(
+            [np.full((2, 2), values[b], dtype=np.int16) for b in sorted(values)]
+        )
+        data[2, 0, 0] = -9999
+        raw = (
+            xr.DataArray(
+                data,
+                dims=("band", "y", "x"),
+                coords={
+                    "band": sorted(values),
+                    "y": np.arange(2, dtype=np.float64),
+                    "x": np.arange(2, dtype=np.float64),
+                },
+            )
+            .rio.write_crs(roi.crs)
+            .rio.write_nodata(32767)
+        )
+        with patch("griddle.handlers.landfire.RasterConnection") as mock_raster_cls:
+            mock_raster = MagicMock()
+            mock_raster.extract_window.return_value = raw
+            mock_raster_cls.return_value = mock_raster
+            yield
+
+    def _fetch(self, roi, **kwargs):
+        return _fetch_landfire_raster(
+            roi,
+            "gs://mock/url.tiff",
+            extent_buffer_cells=0,
+            alignment={"target": "native"},
+            target_grid_doc=None,
+            is_categorical=True,
+            **kwargs,
+        )
+
+    def test_default_band_is_one(self, roi, multiband):
+        assert (self._fetch(roi).values == 101).all()
+
+    def test_selects_requested_band(self, roi, multiband):
+        result = self._fetch(roi, band=2)
+        assert (result.values == 202).all()
+
+    def test_band_dimension_dropped(self, roi, multiband):
+        assert "band" not in self._fetch(roi, band=2).dims
+
+    def test_nodata_consolidation_applies_to_the_selected_band(self, roi, multiband):
+        """Band 3's -9999 cell is folded onto the declared nodata value."""
+        result = self._fetch(roi, band=3)
+
+        np.testing.assert_array_equal(result.values, [[32767, 303], [303, 303]])
+        assert result.rio.nodata == 32767
+
+    def test_missing_band_raises(self, roi, multiband):
+        with pytest.raises(KeyError):
+            self._fetch(roi, band=9)
+
+
 class TestFetchLandfireRasterCoastalEdge:
     """-9999 must be nodata before reprojection, or bilinear blends it into
     neighbouring valid cells (#634)."""
@@ -327,6 +393,90 @@ class TestFetchAnnualDisturbance:
         )
 
 
+class TestFetchFuelModel:
+    """Unit tests for _fetch_fuel_model, the staged-COG-vs-LFPS decision
+    shared by fetch_fbfm13/40/fccs."""
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_staged_version_reads_the_cog_and_skips_lfps(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        raster = _make_canopy_raster(np.zeros((4, 4), dtype=np.int16))
+        mock_fetch_raster.return_value = raster
+
+        result = _fetch_fuel_model(
+            roi, "fbfm13", "2024", MagicMock(), 0, {"target": "domain"}, None
+        )
+
+        mock_fetch_lfps.assert_not_called()
+        assert mock_fetch_raster.call_args[0][1].endswith("LF2024_FBFM13_CONUS.tif")
+        assert result is raster
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_lfps_only_version_reads_the_lfps_download(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        raster = _make_canopy_raster(np.zeros((4, 4), dtype=np.int16))
+        mock_fetch_raster.return_value = raster
+        progress = MagicMock()
+
+        result = _fetch_fuel_model(
+            roi, "fbfm13", "2025", progress, 0, {"target": "domain"}, None
+        )
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "fbfm13", "2025", {"target": "domain"}, None, 0, progress, None
+        )
+        assert mock_fetch_raster.call_args[0][1] == "/tmp/lfps_xyz/result.tif"
+        assert result is raster
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_season_forces_lfps_even_for_a_staged_version(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = "/tmp/lfps_xyz/result.tif"
+        mock_fetch_lfps.return_value = mock_cm
+        mock_fetch_raster.return_value = _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        progress = MagicMock()
+
+        _fetch_fuel_model(
+            roi,
+            "fbfm40",
+            "2024",
+            progress,
+            0,
+            {"target": "domain"},
+            None,
+            season="SP",
+        )
+
+        mock_fetch_lfps.assert_called_once_with(
+            roi, "fbfm40", "2024", {"target": "domain"}, None, 0, progress, "SP"
+        )
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    def test_unknown_version_raises_before_any_fetch(
+        self, mock_fetch_lfps, mock_fetch_raster, roi
+    ):
+        with pytest.raises(UnknownLandfireVersionError):
+            _fetch_fuel_model(
+                roi, "fbfm13", "1999", MagicMock(), 0, {"target": "domain"}, None
+            )
+
+        mock_fetch_lfps.assert_not_called()
+        mock_fetch_raster.assert_not_called()
+
+
 class TestFetchFbfm13:
     """Integration tests for fetch_fbfm13."""
 
@@ -400,7 +550,7 @@ class TestFetchFbfm13LfpsPath:
         result = fetch_fbfm13(roi, progress, version="2025")
 
         mock_fetch_lfps.assert_called_once_with(
-            roi, "fbfm13", "2025", {"target": "domain"}, None, 0, progress
+            roi, "fbfm13", "2025", {"target": "domain"}, None, 0, progress, None
         )
         mock_fetch_raster.assert_called_once_with(
             roi,
@@ -686,7 +836,7 @@ class TestFetchFccsLfpsPath:
         result = fetch_fccs(roi, progress, version="2025")
 
         mock_fetch_lfps.assert_called_once_with(
-            roi, "fccs", "2025", {"target": "domain"}, None, 0, progress
+            roi, "fccs", "2025", {"target": "domain"}, None, 0, progress, None
         )
         mock_fetch_raster.assert_called_once_with(
             roi,

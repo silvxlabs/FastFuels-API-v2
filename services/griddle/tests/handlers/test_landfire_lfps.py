@@ -9,6 +9,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
@@ -20,6 +21,7 @@ from griddle.handlers.landfire_lfps import (
     _lfps_aoi_bbox,
     _lfps_layer_name,
     fetch_lfps,
+    fetch_lfps_multi,
 )
 from rasterio.warp import transform_bounds
 
@@ -322,3 +324,158 @@ class TestFetchLfps:
                 pass
 
         assert exc_info.value.code == "LFPS_OUTPUT_INVALID"
+
+
+class TestFetchLfpsMulti:
+    """Unit tests for the fetch_lfps_multi context manager."""
+
+    @pytest.fixture
+    def lfps(self):
+        """LFPS client calls patched to a job that succeeds on the first poll
+        and returns a zip holding one result.tif. `raster` is what
+        rioxarray.open_rasterio hands back; tests set its band names."""
+        raster = MagicMock()
+        with (
+            patch("griddle.handlers.landfire_lfps.submit_job") as submit,
+            patch("griddle.handlers.landfire_lfps.poll_status") as poll,
+            patch("griddle.handlers.landfire_lfps.download") as download,
+            patch("griddle.handlers.landfire_lfps.time.sleep"),
+            patch(
+                "griddle.handlers.landfire_lfps.rioxarray.open_rasterio",
+                return_value=raster,
+            ),
+        ):
+            submit.return_value = LfpsJob(job_id="job-1", status="Pending")
+            poll.return_value = LfpsJob(
+                job_id="job-1", status="Succeeded", output_file="https://x/job-1.zip"
+            )
+            download.return_value = _make_zip("result.tif")
+            yield SimpleNamespace(
+                submit=submit, poll=poll, download=download, raster=raster
+            )
+
+    def _fetch(self, roi, layers):
+        return fetch_lfps_multi(roi, layers, {"target": "domain"}, None, 0, MagicMock())
+
+    def test_yields_the_tif_path_and_cleans_up(self, roi, lfps):
+        lfps.raster.attrs = {"long_name": ("LF2024_FVT_CONUS", "LF2020_BPS_CONUS")}
+
+        with self._fetch(roi, {"fvt": "2024", "bps": "2020"}) as path:
+            assert Path(path).name == "result.tif"
+            assert Path(path).exists()
+
+        assert not Path(path).exists()
+
+    def test_submits_layers_in_dict_order(self, roi, lfps):
+        """Band order downstream depends entirely on submission order."""
+        lfps.raster.attrs = {
+            "long_name": (
+                "LF2024_FVT_CONUS",
+                "LF2024_FVC_CONUS",
+                "LF2024_FVH_CONUS",
+                "LF2020_BPS_CONUS",
+            )
+        }
+
+        with self._fetch(
+            roi, {"fvt": "2024", "fvc": "2024", "fvh": "2024", "bps": "2020"}
+        ):
+            pass
+
+        assert lfps.submit.call_args[0][0] == [
+            "LF2024_FVT",
+            "LF2024_FVC",
+            "LF2024_FVH",
+            "LF2020_BPS",
+        ]
+
+    def test_fdist_and_annual_disturbance_batch(self, roi, lfps):
+        """The combined-mode batch: fdist by registry name, annual_disturbance
+        through the live catalog, in the order they were given."""
+        lfps.raster.attrs = {
+            "long_name": ("LF2024_FDist_CONUS", "LF2025_LDist25_CONUS")
+        }
+        ldist = LfpsProduct(
+            layer_name="LF2025_LDist25",
+            product_name="Limited Annual Disturbance",
+            theme="Disturbance",
+            acronym="LDist",
+            version="LF2025",
+            conus=True,
+            geo_areas="All",
+            season=None,
+            season_year=None,
+        )
+
+        with patch(
+            "griddle.handlers.landfire_lfps.resolve_lf_product", return_value=ldist
+        ):
+            with self._fetch(roi, {"fdist": "2024", "annual_disturbance": "2025"}):
+                pass
+
+        assert lfps.submit.call_args[0][0] == ["LF2024_FDist", "LF2025_LDist25"]
+
+    def test_band_order_mismatch_raises(self, roi, lfps):
+        lfps.raster.attrs = {"long_name": ("LF2020_BPS_CONUS", "LF2024_FVT_CONUS")}
+
+        with pytest.raises(ProcessingError) as exc_info:
+            with self._fetch(roi, {"fvt": "2024", "bps": "2020"}):
+                pass
+
+        assert exc_info.value.code == "LFPS_BAND_ORDER_MISMATCH"
+
+    def test_missing_long_name_raises(self, roi, lfps):
+        """A result with no band names can't be trusted by position either."""
+        lfps.raster.attrs = {}
+
+        with pytest.raises(ProcessingError) as exc_info:
+            with self._fetch(roi, {"fvt": "2024", "bps": "2020"}):
+                pass
+
+        assert exc_info.value.code == "LFPS_BAND_ORDER_MISMATCH"
+
+    def test_raster_is_closed_after_reading_band_names(self, roi, lfps):
+        lfps.raster.attrs = {"long_name": ("LF2024_FVT_CONUS", "LF2020_BPS_CONUS")}
+
+        with self._fetch(roi, {"fvt": "2024", "bps": "2020"}):
+            pass
+
+        lfps.raster.close.assert_called_once()
+
+    def test_no_tif_in_zip_raises(self, roi, lfps):
+        lfps.download.return_value = _make_zip("readme.txt")
+
+        with pytest.raises(ProcessingError) as exc_info:
+            with self._fetch(roi, {"fvt": "2024", "bps": "2020"}):
+                pass
+
+        assert exc_info.value.code == "LFPS_OUTPUT_INVALID"
+
+    def test_multiple_tifs_in_zip_raises(self, roi, lfps):
+        """A batched job returns one multi-band GeoTIFF; several files means
+        something unexpected, not something to pick the first of."""
+        lfps.download.return_value = _make_zip("result1.tif", "result2.tif")
+
+        with pytest.raises(ProcessingError) as exc_info:
+            with self._fetch(roi, {"fvt": "2024", "bps": "2020"}):
+                pass
+
+        assert exc_info.value.code == "LFPS_OUTPUT_INVALID"
+
+    def test_job_failure_propagates(self, roi, lfps):
+        """Confirms fetch_lfps_multi is wired to the shared submit/poll helper;
+        timeout and polling edge cases are covered via TestFetchLfps."""
+        lfps.poll.side_effect = LfpsJobFailedError("ERROR: bad AOI")
+
+        with pytest.raises(ProcessingError) as exc_info:
+            with self._fetch(roi, {"fvt": "2024", "bps": "2020"}):
+                pass
+
+        assert exc_info.value.code == "LFPS_JOB_FAILED"
+
+    def test_fewer_than_two_layers_raises_before_submitting(self, roi, lfps):
+        with pytest.raises(ValueError, match="at least two layers"):
+            with self._fetch(roi, {"fvt": "2024"}):
+                pass
+
+        lfps.submit.assert_not_called()

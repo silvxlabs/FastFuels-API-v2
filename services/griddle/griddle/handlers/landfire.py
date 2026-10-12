@@ -67,6 +67,7 @@ def _fetch_landfire_raster(
     alignment: dict,
     target_grid_doc: dict | None,
     is_categorical: bool,
+    band: int = 1,
 ) -> DataArray:
     """Fetch a single LANDFIRE raster product.
 
@@ -84,6 +85,9 @@ def _fetch_landfire_raster(
         is_categorical: Drives the role-aware default for the resampling
             method when ``alignment.method`` is unset (categorical →
             ``nearest``; continuous → ``bilinear``).
+        band: Which band to read (1-indexed). The default, 1, is the only
+            band a single-product source has; a multi-band source (a batched
+            LFPS download) passes the band its caller wants.
 
     Returns:
         DataArray with dims (y, x)
@@ -110,9 +114,67 @@ def _fetch_landfire_raster(
             else None,
             **dest,
         )
-        data = data.squeeze("band", drop=True)
+        data = data.sel(band=band, drop=True)
 
         return _consolidate_landfire_nodata(data)
+
+
+def _fetch_fuel_model(
+    roi: gpd.GeoDataFrame,
+    product: str,
+    version: str,
+    progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int,
+    alignment: dict,
+    target_grid_doc: dict | None,
+    season: str | None = None,
+) -> DataArray:
+    """Fetch one fuel model product's raw raster, from a staged COG or on
+    demand via LFPS.
+
+    Shared by fetch_fbfm13/40/fccs, which each apply their own
+    post-processing (remove_non_burnable, boundary_scatter) on top.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest.
+        product: "fbfm13", "fbfm40", or "fccs".
+        version: LANDFIRE version year.
+        progress: Progress callback, only used when this version is
+            fetched via LFPS.
+        extent_buffer_cells: Result-grid cells of buffer around the ROI.
+        alignment: Alignment specification dict.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+        season: LANDFIRE Seasonal Fuels code (fbfm40 only). Forces an LFPS
+            fetch regardless of `version`.
+
+    Returns:
+        DataArray with dims (y, x), categorical fuel model codes.
+    """
+    if season is not None or _needs_lfps(product, version):
+        source = landfire_lfps.fetch_lfps(
+            roi,
+            product,
+            version,
+            alignment,
+            target_grid_doc,
+            extent_buffer_cells,
+            progress,
+            season,
+        )
+    else:
+        validate_landfire_version(product, version)
+        source = nullcontext(_landfire_cog_url(product, version))
+
+    with source as url:
+        return _fetch_landfire_raster(
+            roi,
+            url,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+            is_categorical=True,
+        )
 
 
 def _consolidate_landfire_nodata(data: DataArray) -> DataArray:
@@ -311,30 +373,15 @@ def fetch_fbfm13(
         1-13 plus non-burnable 91/92/93/98/99)
     """
     alignment = alignment or {"target": "domain"}
-    product = "fbfm13"
-    if _needs_lfps(product, version):
-        source = landfire_lfps.fetch_lfps(
-            roi,
-            product,
-            version,
-            alignment,
-            target_grid_doc,
-            extent_buffer_cells,
-            progress,
-        )
-    else:
-        validate_landfire_version(product, version)
-        source = nullcontext(_landfire_cog_url(product, version))
-
-    with source as url:
-        data = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=True,
-        )
+    data = _fetch_fuel_model(
+        roi,
+        "fbfm13",
+        version,
+        progress,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+    )
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
@@ -380,32 +427,16 @@ def fetch_fbfm40(
         Dataset with a single "fbfm" variable (int16 categorical codes)
     """
     alignment = alignment or {"target": "domain"}
-    product = "fbfm40"
-    if season is not None or _needs_lfps(product, version):
-        source = landfire_lfps.fetch_lfps(
-            roi,
-            product,
-            version,
-            alignment,
-            target_grid_doc,
-            extent_buffer_cells,
-            progress,
-            season,
-        )
-    else:
-        validate_landfire_version(product, version)
-        source = nullcontext(_landfire_cog_url(product, version))
-
-    with source as url:
-        # `url` is the gs:// or local path `_fetch_landfire_raster` opens
-        data = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=True,
-        )
+    data = _fetch_fuel_model(
+        roi,
+        "fbfm40",
+        version,
+        progress,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+        season,
+    )
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
@@ -448,30 +479,15 @@ def fetch_fccs(
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
     alignment = alignment or {"target": "domain"}
-    product = "fccs"
-    if _needs_lfps(product, version):
-        source = landfire_lfps.fetch_lfps(
-            roi,
-            product,
-            version,
-            alignment,
-            target_grid_doc,
-            extent_buffer_cells,
-            progress,
-        )
-    else:
-        validate_landfire_version(product, version)
-        source = nullcontext(_landfire_cog_url(product, version))
-
-    with source as url:
-        data = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=True,
-        )
+    data = _fetch_fuel_model(
+        roi,
+        "fccs",
+        version,
+        progress,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+    )
 
     if remove_bare_ground:
         filtered = _remove_non_burnable_blocks(data.values, [0])

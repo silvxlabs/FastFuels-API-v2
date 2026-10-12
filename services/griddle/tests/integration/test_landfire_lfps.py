@@ -10,7 +10,8 @@ import json
 
 import geopandas as gpd
 import pytest
-from griddle.handlers import landfire
+import rasterio
+from griddle.handlers import landfire, landfire_lfps
 
 from lib.landfire import LANDFIRE_VERSIONS, list_products
 from lib.testing import SHARED_TEST_DOMAINS_DIR
@@ -115,3 +116,31 @@ def test_annual_lfps_available_version(roi, product, fetch_fn, band):
     assert ds[band].rio.nodata is not None
     assert ds.rio.height > 0
     assert ds.rio.width > 0
+
+
+def test_multi_layer_job_returns_bands_in_submission_order(roi):
+    """Submit one real job for several layers -- the combined-mode disturbance
+    inputs -- and confirm LFPS hands back one multi-band file whose bands match
+    the submitted order. fetch_lfps_multi raises LFPS_BAND_ORDER_MISMATCH if the
+    band names LFPS tags don't, so getting a path back is the check; reading
+    every band confirms they come out on one grid."""
+    layers = {
+        product: LANDFIRE_VERSIONS[product]["default"]
+        for product in ("fdist", "fvt", "bps")
+    }
+    alignment = {"target": "domain"}
+
+    with landfire_lfps.fetch_lfps_multi(
+        roi, layers, alignment, None, 0, lambda *a, **k: None
+    ) as path:
+        with rasterio.open(path) as src:
+            assert src.count == len(layers)
+
+        shapes = {
+            landfire._fetch_landfire_raster(
+                roi, path, 0, alignment, None, is_categorical=True, band=band
+            ).shape
+            for band in range(1, len(layers) + 1)
+        }
+
+    assert len(shapes) == 1

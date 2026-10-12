@@ -254,7 +254,7 @@ class TestFetchLandfireRasterCoastalEdge:
 
 class TestFetchTopographyAspectResampling:
     """Aspect defaults to nearest, so resampling never blends angles or flat
-    (-1) cells into new directions."""
+    (-1) cells into new directions; flat cells are stored as 0."""
 
     DECLARED = 32767
 
@@ -307,9 +307,10 @@ class TestFetchTopographyAspectResampling:
             )
 
         aspect = result["aspect"]
+        assert aspect.dtype == np.int16
         assert aspect.rio.nodata == self.DECLARED
         np.testing.assert_array_equal(
-            np.unique(aspect.values), [-1, 10, 350, self.DECLARED]
+            np.unique(aspect.values), [0, 10, 350, self.DECLARED]
         )
 
     @patch("griddle.handlers.landfire._fetch_landfire_raster")

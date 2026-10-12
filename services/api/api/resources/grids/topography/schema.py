@@ -55,7 +55,7 @@ TOPOGRAPHY_BAND_DEFS = {
     TopographyBand.aspect: {
         "key": "aspect",
         "name": "Aspect",
-        "description": "Downslope compass direction, degrees clockwise from north (0-360).",
+        "description": "Downslope compass direction, degrees clockwise from north (0-360). Flat cells are 0.",
         "type": BandType.continuous,
         "unit": "deg",
     },

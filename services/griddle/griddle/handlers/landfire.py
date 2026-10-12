@@ -47,6 +47,10 @@ LANDFIRE_CANOPY_SCALE_FACTORS: dict[str, float] = {
 # reprojection, or resampling blends -9999 into valid neighbours.
 LANDFIRE_EXTRA_NODATA: int = -9999
 
+# LANDFIRE aspect marks flat cells (slope 0-2 deg) with -1. Topography grids
+# store flat as 0, matching 3DEP.
+LANDFIRE_FLAT_ASPECT: int = -1
+
 
 def _landfire_cog_url(product: str, version: str) -> str:
     """Build the gs:// path to a staged LANDFIRE COG."""
@@ -582,7 +586,7 @@ def fetch_topography(
         pct = 10 + int(70 * i / len(bands))
         progress(f"Fetching LANDFIRE {band}...", pct)
         url = _landfire_cog_url(band, version)
-        variables[band] = _fetch_landfire_raster(
+        data = _fetch_landfire_raster(
             roi,
             url,
             extent_buffer_cells,
@@ -592,6 +596,9 @@ def fetch_topography(
             # invents directions (350 and 10 average to 180).
             is_categorical=band == "aspect",
         )
+        if band == "aspect":
+            data = data.where(data != LANDFIRE_FLAT_ASPECT, 0)
+        variables[band] = data
 
     return _to_dataset(variables)
 

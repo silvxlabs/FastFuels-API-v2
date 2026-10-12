@@ -71,8 +71,9 @@ class CreateChmCrownFeatureRequest(CreateFeatureRequestBase):
     type: Literal[FeatureType.crown] = FeatureType.crown
     source_inventory_id: str = Field(
         description=(
-            "ID of a completed tree inventory in this domain. Each tree seeds "
-            "one crown at its `x`, `y`."
+            "ID of a completed tree inventory in this domain, created with "
+            "`POST /inventories/tree/chm` from `source_chm_grid_id`. Each tree "
+            "seeds one crown at its `x`, `y`."
         ),
     )
     source_chm_grid_id: str = Field(

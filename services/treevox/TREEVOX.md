@@ -12,6 +12,8 @@ Mirrors griddle/standgen: a thin `dispatch.py` routes on the source triple, dele
 - `voxelize.py` — pure compute (GridSpec, chunk binning, cache, voxelize_chunk). Worker-safe imports only.
 - `storage.py` — xarray-backed zarr I/O (init_store, read/write union, masked_merge). Not imported by workers.
 - `_worker.py` — spawned worker entry. Strict imports: numpy, pandas, treevox.voxelize only.
+- `measured_crown.py` — worker-safe measured-crown compute (#617): `Footprint`, which trees are drawn measured and why, the halo they need, and each crown's occupancy.
+- `crown_feature.py` — handler-side: crown Feature + CHM → per-tree `Footprint`s for measured crowns (#617).
 - `errors.py`, `firestore_io.py`, `inventory_io.py` — error types, Firestore helpers, parquet IO.
 
 The `handlers/` package was added for the leaflux solar-irradiance source (#424); a second source module (e.g. `handlers/leaflux.py`) slots in alongside `handlers/voxelize.py` with a new `case` in `dispatch.py`.
@@ -41,7 +43,7 @@ Job
 
 ### Halo (per-chunk, clamped at grid edges)
 
-Each chunk carries a halo on every side, clamped to `[0, nx)` / `[0, ny)` at the outer grid boundary. Trees are assigned only to the chunk holding their stem, so the halo must be as wide as the widest crown: `crown_halo_cells` sizes it per job as `ceil(max crown radius / hr)`, using the `max_crown_radius_source` inventory column where set and the allometric radius otherwise, with `OVERLAP_CELLS = 10` as the minimum (#666). `_plan_grid_layout` stores it on `GridLayout.halo_cells`; `chunk_slice` and `batch_union_slices` both take it from there, so chunk buffers always sit inside the batch union. Halos let crowns whose stem is near a chunk boundary render into the neighbor's cells correctly.
+Each chunk carries a halo on every side, clamped to `[0, nx)` / `[0, ny)` at the outer grid boundary. Trees are assigned only to the chunk holding their stem, so the halo must be as wide as the widest crown: `crown_halo_cells` sizes it per job as `ceil(max crown radius / hr)`, using the `max_crown_radius_source` inventory column where set and the allometric radius otherwise, widened to hold every measured crown (see "Measured crowns"), with `OVERLAP_CELLS = 10` as the minimum (#666). `_plan_grid_layout` stores it on `GridLayout.halo_cells`; `chunk_slice` and `batch_union_slices` both take it from there, so chunk buffers always sit inside the batch union. Halos let crowns whose stem is near a chunk boundary render into the neighbor's cells correctly.
 
 A wider halo grows every chunk buffer to `nz × (chunk_xy + 2·halo)²` and the batch union to `nz × (2·chunk_xy + 2·halo)²` for a 2×2 batch. At `chunk_xy = 500` a 40-cell halo (20 m crown at 0.5 m) makes buffers 1.24× the 10-cell size.
 
@@ -69,6 +71,22 @@ V1 pre-computes every tree's biomass realizations before touching zarr. Memory g
 V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed unique, so distinct trees accidentally shared biomass realizations. V2 inventories carry a stable, unique `tree_id` column (#611), which treevox writes into the `tree_id` band; the cache key is computed separately by binning `(fia_species_code, dbh_bin, height_bin, cr_bin)` at `DBH_BIN_CM = 2.75`, `HEIGHT_BIN_M = 1.0`, `CR_BIN = 0.1`. When `max_crown_radius_source` reads an inventory column, that radius joins the key binned at `CROWN_RADIUS_BIN_M = 0.25` (provisional, #613); each bin uses its first tree's radius.
 
 The geometric crown profiles (`cone`, `cylinder`, `single_/dual_ellipsoid`, `single_/dual_paraboloid`) need no extra key field: with the allometric radius source their maximum radius is the Purves radius, a function of the already-binned species, DBH, height, and crown ratio.
+
+## Measured crowns (#617)
+
+With `source.crown_geometry_source.type == "crown_feature"`, trees with a crown in the crown Feature get a measured crown instead of a solid of revolution.
+
+- **Parent** (`crown_feature.py`, handler-side): reads the Feature document for its CHM grid id, the Feature's GeoParquet (`tree_id`, `geometry`) and the CHM under the matched crowns, one tile of about `TILE_CELLS` (2048) cells a side at a time, so the parent's memory is bounded by the tile, not the domain (about 950 MB for one window over 16M cells versus 440 MB in tiles, of which 280 MB is the footprints themselves). Crowns match inventory trees by `tree_id`; crowns of trees not in the inventory are ignored. The polygons follow CHM cell edges, so `rasterio.features.rasterize` onto the CHM lattice recovers each crown's cells exactly. Each becomes a `measured_crown.Footprint` (a bool mask and the CHM tops in its bounding box). No-data CHM cells are dropped from the footprint. Etcher grows each crown from its tree's stem cell, so a matched crown that does not contain its tree's stem (`stem_in_crown`) came from another inventory: uploaded inventories all number `tree_id` from 1. Such crowns are set aside before the layout is planned, so they widen neither the halo nor `nz`, and the handler flags their trees in the `_stem_outside_crown` column. The grid's `nz` reaches the highest footprint top as well as the tallest tree.
+- **Payload**: a `crown_feature` payload also carries `footprints` (the chunk's trees only) and `base_seed`. Parametric payloads are unchanged.
+- **Worker** (`measured_crown.py`, with the loop in `voxelize.py`): `plan_measured_crowns` sends a tree measured when it has a footprint with a cell above its crown base, and gives every other tree its reason, `parametric_no_crown` / `parametric_stem_outside_crown` / `parametric_no_volume`. `voxelize_chunk` counts trees by reason as it draws them, so a tree that cannot be built (e.g. an unknown species, or one whose species has no NSVB foliage mass) is skipped on either path and counted nowhere. `voxelize_chunk` draws each row with `draw_measured` or `draw_cached`, which return the same biomass, placement and species attributes. Measured trees skip the binned cache (every crown differs); the others build it as before. In the height-ASC loop, a measured tree's occupancy comes from `measured_crown_occupancy`, which calls core's `voxelize_measured_crown` (outline = footprint, top = CHM, bottom = `crown_profile_model`), sampled with the same occupancy field and uniform density as a parametric crown, and placed at the offset core returns. Its mass is the parametric tree's mass.
+- **Seeds**: a measured crown's occupancy seed is `crc32(base_seed, tree_id)`, not the chunk RNG, so it does not depend on the chunk layout.
+- **Counts**: workers return `crown_geometry_counts`; the handler sums them and `main.py` writes `source.crown_geometry_counts` on completion.
+
+**Halo.** A measured crown is rendered by the chunk that owns its stem, like a parametric crown. `measured_halo_cells` measures how far each footprint reaches from its stem's cell, on the output lattice with core's placement arithmetic, and `_plan_grid_layout` widens the halo to the farthest reach, so no measured crown is clipped. The `MAX_HALO_CELLS` cap and `CROWN_TOO_WIDE` apply to the combined halo.
+
+## Bulk density cap (`max_bulk_density`)
+
+A voxel's bulk density is final only once every chunk whose halo covers it has been merged, so the cap cannot be applied in the workers or per batch. When `source.max_bulk_density` is set and a band it scales is requested, `_plan_grid_layout` adds the scratch band `_bulk_density_total` (`BULK_DENSITY_TOTAL_KEY`), which workers accumulate with the distributed component's live + dead bulk density. After the batch loop, `storage.cap_bulk_density` multiplies every bulk density band and `leaf_area_density` by `cap / max(total, cap)` on the store's own chunks, then deletes the scratch band and reconsolidates metadata. Treevox distributes one biomass component per grid, so this caps each component; `volume_fraction` is not scaled. If the job fails during the cap pass, the store is deleted like any failed job.
 
 ## Chunk padding model
 

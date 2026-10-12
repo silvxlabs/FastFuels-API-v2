@@ -307,6 +307,44 @@ def crown_halo_cells(df: pd.DataFrame, source_config: dict, hr: float) -> int:
     return max(OVERLAP_CELLS, math.ceil(float(radius.max()) / hr))
 
 
+def measured_halo_cells(
+    df: pd.DataFrame, footprints: dict[int, Footprint], dims: dict
+) -> int:
+    """Halo width in cells that holds every measured crown.
+
+    The farthest any measured crown reaches from its stem's cell, in cells.
+    Each footprint's box is converted to output columns and rows with the same
+    arithmetic core's `voxelize_measured_crown` uses to place the crown, so
+    the crown never extends past it. Stem cells are found as in
+    `assign_trees_to_chunks`. Returns 0 when no tree has a footprint.
+    """
+    hr, nx, ny = dims["hr"], dims["nx"], dims["ny"]
+    x_origin, y_origin = dims["x_origin"], dims["y_origin"]
+    stem_x = dict(zip(df["tree_id"].astype("int64"), df["x"].astype("float64")))
+    stem_y = dict(zip(df["tree_id"].astype("int64"), df["y"].astype("float64")))
+    reach = 0
+    for tree_id, footprint in footprints.items():
+        if tree_id not in stem_x or not footprint.mask.any():
+            continue
+        stem_col = min(max(math.floor((stem_x[tree_id] - x_origin) / hr), 0), nx - 1)
+        stem_row = min(max(math.floor((y_origin - stem_y[tree_id]) / hr), 0), ny - 1)
+        res = footprint.resolution
+        rows = np.flatnonzero(footprint.mask.any(axis=1))
+        cols = np.flatnonzero(footprint.mask.any(axis=0))
+        west = footprint.origin[0] - x_origin + cols[0] * res
+        east = footprint.origin[0] - x_origin + (cols[-1] + 1) * res
+        north = y_origin - footprint.origin[1] + rows[0] * res
+        south = y_origin - footprint.origin[1] + (rows[-1] + 1) * res
+        reach = max(
+            reach,
+            stem_col - math.floor(west / hr),
+            math.ceil(east / hr) - 1 - stem_col,
+            stem_row - math.floor(north / hr),
+            math.ceil(south / hr) - 1 - stem_row,
+        )
+    return reach
+
+
 def _biomass_allometry_model_type(source_config: dict) -> str:
     """Return the fastfuels-core foliage allometry model for this source."""
     biomass_source = source_config["biomass_source"]

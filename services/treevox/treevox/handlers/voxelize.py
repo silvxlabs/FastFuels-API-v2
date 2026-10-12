@@ -152,11 +152,16 @@ def _load_inventory_dataframe(
 
 
 def _plan_grid_layout(
-    grid: dict, domain_gdf, df: pd.DataFrame, min_top: float | None = None
+    grid: dict,
+    domain_gdf,
+    df: pd.DataFrame,
+    min_top: float | None = None,
+    footprints: dict[int, voxelize.Footprint] | None = None,
 ) -> GridLayout:
     """Compute grid dimensions, chunk sizing, and the chunk processing order.
 
-    `min_top` raises the grid to the highest measured crown top (m).
+    `min_top` raises the grid to the highest measured crown top (m). The halo
+    holds the widest parametric crown and every crown in `footprints`.
     """
     res = grid["source"]["resolution"]
     if isinstance(res, dict):
@@ -181,15 +186,17 @@ def _plan_grid_layout(
     chunk_xy = min(voxelize.CHUNK_SIZE_HORIZONTAL, nx, ny)
     chunk_shape: tuple[int, int, int] = (nz, chunk_xy, chunk_xy)
     halo_cells = voxelize.crown_halo_cells(df, grid["source"], hr)
+    if footprints:
+        halo_cells = max(halo_cells, voxelize.measured_halo_cells(df, footprints, dims))
     if halo_cells > voxelize.MAX_HALO_CELLS:
         raise ProcessingError(
             code="CROWN_TOO_WIDE",
-            message=f"The widest crown in the inventory reaches about "
+            message=f"The widest crown reaches about "
             f"{halo_cells * hr:g} m from its stem, which is {halo_cells} cells "
             f"at a horizontal resolution of {hr:g} m. Crowns may reach at most "
             f"{voxelize.MAX_HALO_CELLS} cells.",
             suggestion="Use a coarser horizontal resolution, or check the "
-            "inventory for implausible crown radii or diameters.",
+            "inventory and crown Feature for implausibly wide crowns.",
         )
 
     num_row_chunks = int(math.ceil(ny / chunk_xy))
@@ -237,75 +244,6 @@ def _prepare_tree_chunks(
         layout.chunk_xy,
     )
     return df
-
-
-def measured_halo_overhang(
-    df: pd.DataFrame,
-    footprints: dict[int, voxelize.Footprint],
-    layout: GridLayout,
-) -> tuple[int, int]:
-    """Count measured crowns that reach past their chunk's halo.
-
-    A crown is rendered by the chunk that owns its stem, into that chunk's
-    buffer of `chunk_xy + 2 * OVERLAP_CELLS` cells, so any part beyond the
-    halo is clipped. Overhang past the grid edge is not counted: every crown
-    is clipped there.
-
-    Returns the number of such crowns and the largest overhang, in cells.
-    """
-    dims = layout.dims
-    hr, nx, ny = dims["hr"], dims["nx"], dims["ny"]
-    x_origin, y_origin = dims["x_origin"], dims["y_origin"]
-    halo = voxelize.OVERLAP_CELLS
-    chunk_of = dict(
-        zip(
-            df["tree_id"].astype("int64"),
-            zip(df["row_chunk"].astype("int64"), df["col_chunk"].astype("int64")),
-        )
-    )
-    clipped = largest = 0
-    for tree_id, footprint in footprints.items():
-        if tree_id not in chunk_of or not footprint.mask.any():
-            continue
-        row_chunk, col_chunk = chunk_of[tree_id]
-        res = footprint.resolution
-        rows = np.flatnonzero(footprint.mask.any(axis=1))
-        cols = np.flatnonzero(footprint.mask.any(axis=0))
-        west = footprint.origin[0] + cols[0] * res
-        east = footprint.origin[0] + (cols[-1] + 1) * res
-        north = footprint.origin[1] - rows[0] * res
-        south = footprint.origin[1] - (rows[-1] + 1) * res
-        col_lo = max(0, math.floor((west - x_origin) / hr))
-        col_hi = min(nx, math.ceil((east - x_origin) / hr))
-        row_lo = max(0, math.floor((y_origin - north) / hr))
-        row_hi = min(ny, math.ceil((y_origin - south) / hr))
-        overhang = max(
-            0,
-            col_chunk * layout.chunk_xy - halo - col_lo,
-            col_hi - ((col_chunk + 1) * layout.chunk_xy + halo),
-            row_chunk * layout.chunk_xy - halo - row_lo,
-            row_hi - ((row_chunk + 1) * layout.chunk_xy + halo),
-        )
-        if overhang:
-            clipped += 1
-            largest = max(largest, overhang)
-    return clipped, largest
-
-
-def _log_halo_overhang(
-    df: pd.DataFrame,
-    footprints: dict[int, voxelize.Footprint],
-    layout: GridLayout,
-    grid_id: str,
-) -> None:
-    clipped, largest = measured_halo_overhang(df, footprints, layout)
-    if clipped:
-        logger.warning(
-            f"{clipped} measured crowns reach past their chunk halo "
-            f"({voxelize.OVERLAP_CELLS} cells) by up to {largest} cells "
-            f"({largest * layout.dims['hr']} m); the overhang is clipped",
-            extra={"grid_id": grid_id},
-        )
 
 
 def _chunk_relative_slices(
@@ -861,8 +799,13 @@ def voxelize_inventory(
         )
 
     progress("Computing grid extent...", 10)
+    footprints = measured.footprints if measured else None
     layout = _plan_grid_layout(
-        grid, domain_gdf, df, min_top=measured.max_top if measured else None
+        grid,
+        domain_gdf,
+        df,
+        min_top=measured.max_top if measured else None,
+        footprints=footprints,
     )
 
     progress("Initializing zarr store...", 15)
@@ -880,9 +823,6 @@ def voxelize_inventory(
     )
 
     df = _prepare_tree_chunks(df, layout, source)
-    footprints = measured.footprints if measured else None
-    if footprints:
-        _log_halo_overhang(df, footprints, layout, grid_id)
     stats = _run_voxelization_batches(
         df, layout, source, grid_id, path, progress, footprints
     )

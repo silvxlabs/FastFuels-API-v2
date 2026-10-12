@@ -619,7 +619,9 @@ def _run_job(tmp_path, monkeypatch, df, footprints, source, chunk_xy, name):
     monkeypatch.setattr(handler.voxelize, "CHUNK_SIZE_HORIZONTAL", chunk_xy)
     grid = _grid(source)
     max_top = max(np.nanmax(f.top) for f in footprints.values())
-    layout = handler._plan_grid_layout(grid, _domain(), df, min_top=max_top)
+    layout = handler._plan_grid_layout(
+        grid, _domain(), df, min_top=max_top, footprints=footprints
+    )
     path = str(tmp_path / name)
     storage.init_store(
         path,
@@ -708,6 +710,28 @@ class TestChunking:
         tree_ids = one["tree_id"].values.any(axis=0)
         assert tree_ids[:20, :20].any() and tree_ids[20:, 20:].any()
 
+    def test_crown_wider_than_default_halo_is_not_clipped(self, tmp_path, monkeypatch):
+        """A crown reaching 14 cells from a stem on a chunk's first cell."""
+        df = _trees(_row(1, x=20.5, y=20.5, height=22.0))
+        footprints = {
+            1: _disc(
+                20.5,
+                20.5,
+                14.0,
+                top=lambda xx, yy: 22.0 - 0.3 * np.hypot(xx - 20.5, yy - 20.5),
+            )
+        }
+        source = _source("dual_ellipsoid")
+        one, _, _ = _run_job(tmp_path, monkeypatch, df, footprints, source, 500, "one")
+        four, _, layout = _run_job(
+            tmp_path, monkeypatch, df, footprints, source, 20, "four"
+        )
+        assert layout.halo_cells > handler.voxelize.OVERLAP_CELLS
+        occupied = np.flatnonzero(one["volume_fraction"].values.any(axis=(0, 1)))
+        assert 20 - occupied.min() > handler.voxelize.OVERLAP_CELLS
+        for key in BANDS:
+            np.testing.assert_array_equal(one[key].values, four[key].values)
+
     def test_grid_reaches_highest_chm_top(self):
         df = _trees(_row(1, height=12.0))
         layout = handler._plan_grid_layout(
@@ -792,16 +816,45 @@ class _SerialContext:
         return _PoolContext()
 
 
-class TestHaloOverhang:
-    def test_counts_crowns_past_the_halo(self, monkeypatch):
-        monkeypatch.setattr(handler.voxelize, "CHUNK_SIZE_HORIZONTAL", 20)
-        df = _trees(_row(1, x=19.5, y=30.5), _row(2, x=5.5, y=35.5))
-        layout = handler._plan_grid_layout(_grid(_source()), _domain(), df)
-        df = handler._prepare_tree_chunks(df, layout)
-        footprints = {
-            # Reaches x = 19.5 + 12.5 = 32 m: 2 cells past the halo at 30.
-            1: _disc(19.5, 30.5, 12.0),
-            # Reaches past the grid's west and north edges only.
-            2: _disc(5.5, 35.5, 8.0),
-        }
-        assert handler.measured_halo_overhang(df, footprints, layout) == (1, 2)
+class TestMeasuredHaloCells:
+    def _dims(self, hr=1.0, n=40):
+        return {"hr": hr, "nx": n, "ny": n, "x_origin": 0.0, "y_origin": float(n)}
+
+    def test_reach_from_stem_cell(self):
+        df = _trees(_row(1, x=20.5, y=20.5))
+        # Disc cells span x = 7 .. 34, so 13 cells west and 13 east of col 20.
+        footprints = {1: _disc(20.5, 20.5, 13.0)}
+        assert v.measured_halo_cells(df, footprints, self._dims()) == 13
+
+    def test_trees_without_a_footprint_are_ignored(self):
+        df = _trees(_row(1, x=20.5, y=20.5))
+        assert v.measured_halo_cells(df, {2: _disc(5.5, 5.5, 30.0)}, self._dims()) == 0
+
+    @pytest.mark.parametrize("hr", [0.3, 0.5, 1.0, 2.0])
+    @pytest.mark.parametrize("shift", [(0.0, 0.0), (0.37, -0.81), (0.5, 0.5)])
+    def test_covers_core_placement(self, hr, shift):
+        """Every voxel core places lies within the reach of the stem's cell."""
+        dims = self._dims(hr=hr, n=int(round(40 / hr)))
+        dims["x_origin"], dims["y_origin"] = 0.0, 40.0
+        rng = np.random.default_rng(0)
+        for i in range(20):
+            x, y = rng.uniform(12.0, 28.0, size=2)
+            row = _row(1, x=x, y=y, height=20.0)
+            footprint = _disc(
+                x + rng.uniform(-1, 1),
+                y + rng.uniform(-1, 1),
+                rng.uniform(1.0, 9.0),
+                res=float(rng.choice([0.5, 1.0, 2.0])),
+                top=20.0,
+                shift=shift,
+            )
+            crown = _crown(row, footprint, "purves", hr=hr, origin=(0.0, 40.0))
+            if crown is None:
+                continue
+            reach = v.measured_halo_cells(_trees(row), {1: footprint}, dims)
+            stem_col = int(np.floor(x / hr))
+            stem_row = int(np.floor((40.0 - y) / hr))
+            _, r0, c0 = crown.offset
+            _, ny, nx = crown.volume_fraction.shape
+            assert stem_col - c0 <= reach and c0 + nx - 1 - stem_col <= reach
+            assert stem_row - r0 <= reach and r0 + ny - 1 - stem_row <= reach

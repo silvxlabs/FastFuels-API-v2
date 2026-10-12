@@ -179,6 +179,7 @@ EXAMPLE_REMOVE_TREES_IN_INLINE_POLYGON = {
                         ]
                     ],
                 },
+                "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
                 "buffer_m": 5,
             },
             "actions": {"modifier": "remove"},

@@ -14,7 +14,9 @@ from api.resources.grids.modification_models import (
     GridModificationCondition,
     GridSpatialTarget,
 )
+from api.resources.grids.modifications import examples as grid_examples
 from api.resources.grids.utils import resolve_modification_fuel_model_labels
+from api.resources.inventories.modifications import examples as inventory_examples
 from api.resources.modifications import (
     Modifier,
     Operator,
@@ -774,3 +776,19 @@ class TestFuelModelLabelResolution:
             resolve_modification_fuel_model_labels([modification], self._BAND_TYPES)
         assert exc_info.value.status_code == 422
         assert "continuous" in exc_info.value.detail.lower()
+
+
+@pytest.mark.parametrize(
+    "example",
+    [
+        grid_examples.EXAMPLE_ZERO_FUEL_IN_POLYGON,
+        grid_examples.EXAMPLE_REPLACE_GR1_WITH_GR2_IN_POLYGON,
+        inventory_examples.EXAMPLE_REMOVE_TREES_IN_INLINE_POLYGON,
+    ],
+)
+def test_lonlat_inline_geometry_examples_declare_crs(example):
+    # crs defaults to the domain CRS, so lon/lat examples must say EPSG:4326
+    conds = example["modifications"][0]["conditions"]
+    conds = conds if isinstance(conds, list) else [conds]
+    cond = next(c for c in conds if "geometry" in c)
+    assert cond["crs"] == {"type": "name", "properties": {"name": "EPSG:4326"}}

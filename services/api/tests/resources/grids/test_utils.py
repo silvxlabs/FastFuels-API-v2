@@ -10,11 +10,13 @@ from unittest.mock import patch
 
 import pytest
 from api.resources.exports.schema import GridExportFormat
+from api.resources.grids.alignment import GridLatticeGridTarget
 from api.resources.grids.utils import (
     incomplete_inventory_columns,
     validate_format_supports_grid,
     validate_grids_share_horizontal_lattice,
     validate_lfps_coverage,
+    validate_target_grid_alignment,
 )
 from fastapi import HTTPException
 
@@ -86,6 +88,39 @@ class TestValidateGridsShareHorizontalLattice:
             )
         assert exc.value.status_code == 422
         assert "transform" in exc.value.detail
+
+
+class TestValidateTargetGridAlignmentCrs:
+    @pytest.mark.parametrize(
+        "domain_crs,grid_crs,ok",
+        [
+            ("EPSG:32611", "urn:ogc:def:crs:EPSG::32611", True),
+            ("EPSG:32611", "EPSG:5070", False),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_target_grid_crs_must_match_domain_crs(
+        self, domain_crs, grid_crs, ok
+    ):
+        snapshot = type(
+            "S", (), {"to_dict": lambda self: _lattice_grid("g", crs=grid_crs)}
+        )()
+        alignment = GridLatticeGridTarget(target="grid", grid_id="g")
+        with patch(
+            "api.resources.grids.utils.get_document_async",
+            return_value=(None, snapshot),
+        ):
+            call = validate_target_grid_alignment(
+                alignment, "owner", "dom", domain_crs=domain_crs
+            )
+            if ok:
+                await call
+                return
+            with pytest.raises(HTTPException) as exc:
+                await call
+        assert exc.value.status_code == 422
+        assert grid_crs in exc.value.detail
+        assert domain_crs in exc.value.detail
 
 
 class TestValidateFormatSupportsGrid:

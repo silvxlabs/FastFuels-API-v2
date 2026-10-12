@@ -349,11 +349,13 @@ class TestExportNetcdfUnit:
         promoted to float/NaN. Reopened with mask_and_scale=False to inspect the
         stored representation.
         """
+        values = np.array([[101, 102], [103, 32767]], dtype=np.int16)
+        # Dask-backed, multi-chunk like a production zarr load (#647).
         mock_load.return_value = make_test_dataset(
-            bands={"fbfm": np.array([[101, 102], [103, 32767]], dtype=np.int16)},
+            bands={"fbfm": values},
             shape=(2, 2),
             nodatas={"fbfm": 32767},
-        )
+        ).chunk({"y": 1, "x": 1})
         mock_get_doc.return_value = (
             None,
             fake_grid_snapshot(
@@ -379,6 +381,7 @@ class TestExportNetcdfUnit:
         ds = xr.open_dataset(captured["path"], engine="h5netcdf", mask_and_scale=False)
         assert ds["fbfm"].dtype == np.int16
         assert ds["fbfm"].rio.nodata == 32767
+        np.testing.assert_array_equal(ds["fbfm"].values, values)
         ds.close()
 
 

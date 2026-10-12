@@ -1336,3 +1336,21 @@ class TestLookupZarrRoundTrip:
         out_path = str(tmp_path / "fccs.tif")
         loaded.rio.to_raster(out_path)
         assert (tmp_path / "fccs.tif").exists()
+
+
+class TestSourceLoadErrors:
+    @pytest.mark.parametrize("lookup", [fbfm13_lookup, fbfm40_lookup, fccs_lookup])
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_missing_source_is_terminal(self, mock_load_zarr, lookup):
+        mock_load_zarr.side_effect = FileNotFoundError("gone")
+        with pytest.raises(ProcessingError) as exc_info:
+            lookup("missing-grid", [], MagicMock())
+        assert exc_info.value.code == "SOURCE_GRID_NOT_FOUND"
+
+    @pytest.mark.parametrize("lookup", [fbfm13_lookup, fbfm40_lookup, fccs_lookup])
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_other_load_errors_propagate(self, mock_load_zarr, lookup):
+        mock_load_zarr.side_effect = OSError("transient")
+        with pytest.raises(OSError, match="transient") as exc_info:
+            lookup("grid", [], MagicMock())
+        assert not isinstance(exc_info.value, ProcessingError)

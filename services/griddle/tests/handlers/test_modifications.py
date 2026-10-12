@@ -145,6 +145,30 @@ def test_replace_does_not_clamp():
     assert (ds["fuel_load.1hr"].values == -1.0).all()
 
 
+@pytest.mark.parametrize(
+    "make_ds, band, select",
+    [
+        (_flat_dataset, "fuel_load.1hr", lambda ds: ds["fuel_load.1hr"]),
+        (
+            _layerset_dataset,
+            "shrub.loading",
+            lambda ds: ds["shrub"].sel(band="loading"),
+        ),
+    ],
+)
+def test_modifications_apply_to_dask_backed_dataset(make_ds, band, select):
+    """Handlers (e.g. compose) can return lazy Datasets; edits must persist."""
+    ds = make_ds(4.0).chunk({"y": 5, "x": 5})
+    mods = [
+        {
+            "conditions": [{"band": band, "operator": "gt", "value": 0.0}],
+            "actions": [{"band": band, "modifier": "multiply", "value": 0.5}],
+        }
+    ]
+    result = apply_modifications(ds, mods, "d")
+    assert (select(result).values == 2.0).all()
+
+
 # --------------------------------------------------- attribute conditions
 
 
@@ -692,6 +716,42 @@ def test_empty_conditions_preserves_nan_nodata():
     values = ds["fuel_load.1hr"].values
     assert np.isnan(values[0, 0])
     assert (values[~np.isnan(values)] == 0.75).all()
+
+
+@pytest.mark.parametrize(
+    "dtype, modifier, value, expected",
+    [
+        (np.float32, "multiply", 2.0, 8.0),
+        (np.float32, "replace", 0.0, 0.0),
+        (np.int16, "multiply", 1.5, 6),
+        (np.int16, "divide", 3.0, 1),
+    ],
+)
+def test_actions_skip_sentinel_nodata_and_support_int_bands(
+    dtype, modifier, value, expected
+):
+    """Sentinel-nodata cells are left untouched, and non-integer arithmetic
+    on an integer band rounds back to the band dtype."""
+    arr = np.full(GRID_SHAPE, 4, dtype=dtype)
+    arr[0, 0] = -9999
+    ds = xr.Dataset({"fuel_load.1hr": xr.DataArray(arr, dims=["y", "x"])})
+    ds = ds.rio.write_crs(GRID_CRS).rio.write_transform(GRID_TRANSFORM)
+    ds["fuel_load.1hr"].rio.write_nodata(-9999, inplace=True)
+    mods = [
+        {
+            "conditions": [],
+            "actions": [
+                {"band": "fuel_load.1hr", "modifier": modifier, "value": value}
+            ],
+        }
+    ]
+    apply_modifications(ds, mods, "d")
+    values = ds["fuel_load.1hr"].values
+    assert values.dtype == dtype
+    assert values[0, 0] == -9999
+    valid = np.ones(GRID_SHAPE, dtype=bool)
+    valid[0, 0] = False
+    assert (values[valid] == expected).all()
 
 
 def test_empty_actions_skips_rule():

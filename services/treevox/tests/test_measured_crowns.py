@@ -660,6 +660,27 @@ class TestLoadFootprints:
         assert result.max_top == 18.0
         assert result.stem_outside == frozenset()
 
+    def test_tiles_do_not_change_footprints(self, monkeypatch):
+        """Crowns straddling tile edges are cut out as from one window."""
+        self._patch(monkeypatch)
+        trees = pd.DataFrame(
+            {
+                "tree_id": np.array([1, 2, 3], dtype="int32"),
+                "x": [12.0, 21.0, 31.0],
+                "y": [12.0, 21.0, 31.0],
+            }
+        )
+        whole = measured_crowns.load_footprints("f1", trees)
+        monkeypatch.setattr(measured_crowns, "TILE_CELLS", 7)
+        tiled = measured_crowns.load_footprints("f1", trees)
+        assert set(tiled.footprints) == set(whole.footprints) == {1, 2, 3}
+        for tree_id, footprint in whole.footprints.items():
+            other = tiled.footprints[tree_id]
+            np.testing.assert_array_equal(other.mask, footprint.mask)
+            np.testing.assert_array_equal(other.top, footprint.top)
+            assert other.origin == footprint.origin
+        assert tiled.max_top == whole.max_top
+
     def test_sets_aside_a_crown_that_does_not_hold_its_stem(self, monkeypatch):
         """Tree 3's crown is at (31, 31), but its stem is at (5, 5)."""
         self._patch(monkeypatch)

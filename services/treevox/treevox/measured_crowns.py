@@ -31,6 +31,8 @@ from treevox.voxelize import Footprint, stem_in_crown
 
 logger = logging.getLogger(__name__)
 
+TILE_CELLS = 2048  # CHM cells a side per tile read by `load_footprints`
+
 
 @dataclass
 class MeasuredFootprints:
@@ -72,15 +74,24 @@ def load_footprints(feature_id: str, trees: pd.DataFrame) -> MeasuredFootprints:
         return MeasuredFootprints(footprints={}, max_top=None, ignored_crowns=ignored)
 
     chm = load_chm(chm_grid_id)
-    values, transform = read_chm_window(chm, matched.total_bounds)
-    footprints = footprints_from_crowns(
-        matched["tree_id"].to_numpy(), matched.geometry.to_numpy(), values, transform
+    footprints: dict[int, Footprint] = {}
+    for tile in _tiles(matched, chm):
+        values, transform = read_chm_window(chm, tile.total_bounds)
+        footprints.update(
+            footprints_from_crowns(
+                tile["tree_id"].to_numpy(), tile.geometry.to_numpy(), values, transform
+            )
+        )
+    stems = dict(
+        zip(
+            trees["tree_id"].astype("int64"),
+            zip(trees["x"].astype("float64"), trees["y"].astype("float64")),
+        )
     )
-    stems = trees.set_index("tree_id")[["x", "y"]].astype("float64")
     stem_outside = frozenset(
         tree_id
         for tree_id, footprint in footprints.items()
-        if footprint.mask.any() and not stem_in_crown(*stems.loc[tree_id], footprint)
+        if footprint.mask.any() and not stem_in_crown(*stems[tree_id], footprint)
     )
     footprints = {k: f for k, f in footprints.items() if k not in stem_outside}
     tops = [np.nanmax(f.top) for f in footprints.values() if f.mask.any()]
@@ -90,6 +101,27 @@ def load_footprints(feature_id: str, trees: pd.DataFrame) -> MeasuredFootprints:
         ignored_crowns=ignored,
         stem_outside=stem_outside,
     )
+
+
+def _tiles(crowns: gpd.GeoDataFrame, chm: xr.DataArray) -> list[gpd.GeoDataFrame]:
+    """Group crowns into tiles of about `TILE_CELLS` CHM cells a side.
+
+    A crown belongs to the tile holding its bounding box's north-west corner,
+    so each tile's window is at most one crown wider than the tile. Reading
+    the CHM one tile at a time keeps the parent's memory bounded by the tile
+    rather than by the domain.
+    """
+    transform = chm.rio.transform()
+    size = TILE_CELLS * transform.a
+    bounds = crowns.bounds
+    keys = pd.DataFrame(
+        {
+            "col": np.floor((bounds["minx"] - transform.c) / size),
+            "row": np.floor((transform.f - bounds["maxy"]) / size),
+        },
+        index=crowns.index,
+    )
+    return [crowns.loc[index] for index in keys.groupby(["row", "col"]).groups.values()]
 
 
 def load_chm(grid_id: str) -> xr.DataArray:

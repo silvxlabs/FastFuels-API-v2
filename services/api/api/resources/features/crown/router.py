@@ -80,6 +80,10 @@ async def create_chm_crown_feature(
     A tree whose CHM cell is below `min_height`, such as one on bare ground,
     gets a one-cell crown.
 
+    The inventory must hold trees detected from this CHM, created with
+    `POST /inventories/tree/chm` from `source_chm_grid_id`, so that each crown
+    belongs to the tree that made it.
+
     The completed feature holds one row per crown with columns `tree_id` (the
     seed tree's `tree_id`) and `geometry` (a `Polygon` in the domain CRS,
     traced along CHM cell edges). Read it from the feature's `/data`
@@ -88,7 +92,7 @@ async def create_chm_crown_feature(
     ## Request Body
 
     - **source_inventory_id**: (required) ID of a completed tree inventory
-      with a `tree_id` column.
+      created with `POST /inventories/tree/chm` from `source_chm_grid_id`.
     - **source_chm_grid_id**: (required) ID of a completed grid with a `chm`
       band in metres, at 2 m resolution or finer.
     - **crown_segmentation**: (optional) Segmentation settings. Defaults are
@@ -148,6 +152,20 @@ async def create_chm_crown_feature(
     validate_grid_resolution(
         grid_data, body.source_chm_grid_id, MAX_CROWN_SEGMENTATION_RESOLUTION_M
     )
+    inventory_source = inventory_data.get("source") or {}
+    if (
+        inventory_source.get("name") != "chm"
+        or inventory_source.get("source_chm_grid_id") != body.source_chm_grid_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Inventory '{body.source_inventory_id}' was not detected from "
+                f"CHM grid '{body.source_chm_grid_id}'. Crowns need trees "
+                f"detected from the same CHM: create the inventory with "
+                f"POST /inventories/tree/chm from this grid."
+            ),
+        )
 
     feature_id = uuid.uuid4().hex
     request_time = datetime.now()

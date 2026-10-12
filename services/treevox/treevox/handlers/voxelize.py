@@ -802,6 +802,13 @@ def voxelize_inventory(
             "live tree in the inventory and are ignored",
             extra={"grid_id": grid_id},
         )
+        tallest = float(df["height"].max())
+        if measured.max_top is not None and measured.max_top > tallest:
+            logger.info(
+                f"Measured crowns raise the grid top from {tallest:g} m, the "
+                f"tallest tree, to {measured.max_top:g} m",
+                extra={"grid_id": grid_id},
+            )
 
     progress("Computing grid extent...", 10)
     footprints = measured.footprints if measured else None

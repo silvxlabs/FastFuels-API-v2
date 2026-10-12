@@ -7,6 +7,7 @@ with the right geometry. Core's own tests cover the function in isolation.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import numpy as np
@@ -851,7 +852,7 @@ class TestChunking:
 
 
 class TestVoxelizeInventoryWithCrownFeature:
-    def test_job_reports_counts_on_the_grid(self, tmp_path, monkeypatch):
+    def test_job_reports_counts_on_the_grid(self, tmp_path, monkeypatch, caplog):
         df = _trees(_row(1), _row(2, x=8.0, y=8.0), _row(3, x=31.0, y=31.0))
         footprints = {
             1: _disc(20.0, 20.0, 3.0, top=22.4),
@@ -880,11 +881,17 @@ class TestVoxelizeInventoryWithCrownFeature:
             handler.multiprocessing, "get_context", lambda method: _SerialContext()
         )
 
-        result = handler.voxelize_inventory(
-            _grid(_source("dual_ellipsoid")), _domain(), lambda *a, **k: None
-        )
+        # treevox.main stops the package logger propagating to caplog's handler.
+        monkeypatch.setattr(logging.getLogger("treevox"), "propagate", True)
+        with caplog.at_level("INFO", logger=handler.logger.name):
+            result = handler.voxelize_inventory(
+                _grid(_source("dual_ellipsoid")), _domain(), lambda *a, **k: None
+            )
 
         assert loaded == [("f1", [1, 2, 3])]
+        assert "raise the grid top from 20 m, the tallest tree, to 22.4 m" in (
+            caplog.text
+        )
         assert result.source_updates == {
             "crown_geometry_counts": {
                 "measured": 1,

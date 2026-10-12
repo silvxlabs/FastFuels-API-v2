@@ -17,12 +17,15 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassComponentState,
     BiomassEquations,
     CreateTreeInventoryRequest,
+    CrownFeatureCrownGeometrySource,
+    CrownGeometryCounts,
     CrownProfileModel,
     FineBiomassConfig,
     InventoryColumnMaxCrownRadiusSource,
     InventoryColumnsBiomassSource,
     MaxCrownRadiusUnit,
     MoistureModel,
+    ParametricCrownGeometrySource,
     TreeBand,
     TreeInventoryVoxelizationSource,
     UniformMoistureValue,
@@ -815,3 +818,78 @@ class TestTreeInventoryVoxelizationSource:
                 biomass_source=AllometryBiomassSource(),  # foliage default
                 seed=42,
             )
+
+
+class TestCrownGeometrySource:
+    """`crown_geometry_source` defaults to parametric and discriminates on type."""
+
+    def test_defaults_to_parametric(self):
+        req = CreateTreeInventoryRequest(source_inventory_id="inv1")
+        assert isinstance(req.crown_geometry_source, ParametricCrownGeometrySource)
+        assert req.crown_geometry_source.model_dump() == {"type": "parametric"}
+
+    def test_crown_feature_variant(self):
+        req = CreateTreeInventoryRequest(
+            source_inventory_id="inv1",
+            crown_geometry_source={"type": "crown_feature", "feature_id": "f1"},
+        )
+        assert isinstance(req.crown_geometry_source, CrownFeatureCrownGeometrySource)
+        assert req.crown_geometry_source.feature_id == "f1"
+
+    def test_crown_feature_requires_feature_id(self):
+        with pytest.raises(ValidationError, match="feature_id"):
+            CreateTreeInventoryRequest(
+                source_inventory_id="inv1",
+                crown_geometry_source={"type": "crown_feature"},
+            )
+
+    def test_unknown_type_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateTreeInventoryRequest(
+                source_inventory_id="inv1",
+                crown_geometry_source={"type": "lidar"},
+            )
+
+    def test_parametric_rejects_feature_id(self):
+        with pytest.raises(ValidationError):
+            CreateTreeInventoryRequest(
+                source_inventory_id="inv1",
+                crown_geometry_source={"type": "parametric", "feature_id": "f1"},
+            )
+
+    def _source(self, **kwargs):
+        return TreeInventoryVoxelizationSource(
+            source_inventory_id="inv1",
+            resolution={"horizontal": 1.0, "vertical": 1.0},
+            bands=[TreeBand.bulk_density_foliage_live],
+            crown_profile_model=CrownProfileModel.dual_ellipsoid,
+            biomass_source=AllometryBiomassSource(),
+            seed=42,
+            **kwargs,
+        )
+
+    def test_source_records_parametric_by_default(self):
+        data = self._source().model_dump(mode="json", exclude_none=True)
+        assert data["crown_geometry_source"] == {"type": "parametric"}
+        assert "source_chm_checksum" not in data
+        assert "crown_geometry_counts" not in data
+
+    def test_source_records_crown_feature_and_chm_checksum(self):
+        data = self._source(
+            crown_geometry_source=CrownFeatureCrownGeometrySource(feature_id="f1"),
+            source_chm_checksum="abc",
+        ).model_dump(mode="json", exclude_none=True)
+        assert data["crown_geometry_source"] == {
+            "type": "crown_feature",
+            "feature_id": "f1",
+        }
+        assert data["source_chm_checksum"] == "abc"
+
+    def test_source_accepts_worker_counts(self):
+        """The completed grid's counts round-trip through the source schema."""
+        counts = {"measured": 3, "parametric_no_crown": 2, "parametric_no_volume": 1}
+        source = self._source(
+            crown_geometry_source=CrownFeatureCrownGeometrySource(feature_id="f1"),
+            crown_geometry_counts=counts,
+        )
+        assert source.crown_geometry_counts == CrownGeometryCounts(**counts)

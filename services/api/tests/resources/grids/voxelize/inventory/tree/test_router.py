@@ -11,10 +11,68 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
     ALL_TREE_INVENTORY_EXAMPLE_VALUES,
 )
 
-from lib.config import DOMAINS_COLLECTION, INVENTORIES_COLLECTION
-from tests.fixtures import make_domain_data, make_inventory_data
+from lib.config import (
+    DOMAINS_COLLECTION,
+    FEATURES_COLLECTION,
+    GRIDS_COLLECTION,
+    INVENTORIES_COLLECTION,
+)
+from tests.fixtures import (
+    make_domain_data,
+    make_feature_data,
+    make_grid_data,
+    make_inventory_data,
+)
 
 # --- Fixtures ---
+
+
+def _chm_grid_data(domain_id: str, status: str = "completed") -> dict:
+    grid = make_grid_data(
+        domain_id=domain_id,
+        status=status,
+        source={"product": "chm"},
+        bands=[{"key": "chm", "type": "continuous", "unit": "m", "index": 0}],
+    )
+    grid["checksum"] = "chm-checksum-" + grid["id"]
+    return grid
+
+
+def _crown_feature_data(
+    domain_id: str, chm_grid_id: str, status: str = "completed", type: str = "crown"
+) -> dict:
+    feature = make_feature_data(
+        domain_id=domain_id, type=type, product="chm", status=status
+    )
+    feature["source"] = {
+        "product": "chm",
+        "source_inventory_id": "inv",
+        "source_chm_grid_id": chm_grid_id,
+        "crown_segmentation": {},
+    }
+    return feature
+
+
+@pytest.fixture(scope="session")
+def chm_grid_for_crowns(firestore_client, domain_for_testing):
+    """A completed CHM grid in domain_for_testing."""
+    grid = _chm_grid_data(domain_for_testing["id"])
+    doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(grid["id"])
+    doc_ref.set(grid)
+    yield grid
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def crown_feature_for_voxelization(
+    firestore_client, domain_for_testing, chm_grid_for_crowns
+):
+    """A completed crown Feature built from `chm_grid_for_crowns`."""
+    feature = _crown_feature_data(domain_for_testing["id"], chm_grid_for_crowns["id"])
+    doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(feature["id"])
+    doc_ref.set(feature)
+    yield feature
+    doc_ref.delete()
 
 
 @pytest.fixture(scope="session")
@@ -28,6 +86,7 @@ def tree_inventory_for_voxelization(firestore_client, domain_for_testing):
     )
     # Columns the documented examples and tests read.
     inventory_data["columns"] += [
+        {"key": "tree_id", "type": "categorical", "unit": None},
         {"key": "crown_radius", "type": "continuous", "unit": "m"},
         *(
             {"key": key, "type": "continuous", "unit": "kg"}
@@ -732,6 +791,7 @@ class TestCreateTreeInventoryGrid:
         client,
         domain_for_testing,
         tree_inventory_for_voxelization,
+        crown_feature_for_voxelization,
         example_name,
         example_value,
     ):
@@ -739,6 +799,12 @@ class TestCreateTreeInventoryGrid:
         body = {**example_value}
         if body.get("source_inventory_id") == "PLACEHOLDER_INVENTORY_ID":
             body["source_inventory_id"] = tree_inventory_for_voxelization["id"]
+        crown_source = body.get("crown_geometry_source", {})
+        if crown_source.get("feature_id") == "PLACEHOLDER_CROWN_FEATURE_ID":
+            body["crown_geometry_source"] = {
+                **crown_source,
+                "feature_id": crown_feature_for_voxelization["id"],
+            }
 
         response = client.post(self.route(domain_for_testing["id"]), json=body)
         assert response.status_code == 201, (
@@ -750,3 +816,169 @@ class TestCreateTreeInventoryGrid:
         assert data["source"]["input"] == "inventory"
         assert data["source"]["entity"] == "tree"
         assert data["status"] == "pending"
+
+
+class TestCrownGeometrySource:
+    """`crown_geometry_source` on POST .../grids/voxelize/inventory/tree."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/voxelize/inventory/tree"
+
+    def body(self, inventory_id, feature_id):
+        return {
+            "source_inventory_id": inventory_id,
+            "crown_profile_model": "dual_ellipsoid",
+            "crown_geometry_source": {
+                "type": "crown_feature",
+                "feature_id": feature_id,
+            },
+        }
+
+    def test_default_records_parametric(
+        self, client, domain_for_testing, tree_inventory_for_voxelization
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"source_inventory_id": tree_inventory_for_voxelization["id"]},
+        )
+        assert response.status_code == 201
+        source = response.json()["source"]
+        assert source["crown_geometry_source"] == {"type": "parametric"}
+        assert "source_chm_checksum" not in source
+
+    def test_crown_feature_records_source_and_chm_checksum(
+        self,
+        client,
+        domain_for_testing,
+        tree_inventory_for_voxelization,
+        crown_feature_for_voxelization,
+        chm_grid_for_crowns,
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json=self.body(
+                tree_inventory_for_voxelization["id"],
+                crown_feature_for_voxelization["id"],
+            ),
+        )
+        assert response.status_code == 201, response.json()
+        source = response.json()["source"]
+        assert source["crown_geometry_source"] == {
+            "type": "crown_feature",
+            "feature_id": crown_feature_for_voxelization["id"],
+        }
+        assert source["source_chm_checksum"] == chm_grid_for_crowns["checksum"]
+
+    def test_inventory_without_tree_id_returns_422(
+        self,
+        client,
+        firestore_client,
+        domain_for_testing,
+        crown_feature_for_voxelization,
+    ):
+        inventory = make_inventory_data(
+            domain_id=domain_for_testing["id"], status="completed"
+        )
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inventory["id"]
+        )
+        doc_ref.set(inventory)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json=self.body(inventory["id"], crown_feature_for_voxelization["id"]),
+            )
+        finally:
+            doc_ref.delete()
+        assert response.status_code == 422
+        assert "tree_id" in response.json()["detail"]
+
+    def test_missing_feature_returns_422(
+        self, client, domain_for_testing, tree_inventory_for_voxelization
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json=self.body(tree_inventory_for_voxelization["id"], "no-such-feature"),
+        )
+        assert response.status_code == 422
+        assert "does not exist" in response.json()["detail"]
+
+    def test_feature_in_other_domain_returns_422(
+        self,
+        client,
+        firestore_client,
+        domain_for_testing,
+        second_domain_for_tree_voxelization,
+        tree_inventory_for_voxelization,
+        chm_grid_for_crowns,
+    ):
+        feature = _crown_feature_data(
+            second_domain_for_tree_voxelization["id"], chm_grid_for_crowns["id"]
+        )
+        doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feature["id"]
+        )
+        doc_ref.set(feature)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json=self.body(tree_inventory_for_voxelization["id"], feature["id"]),
+            )
+        finally:
+            doc_ref.delete()
+        assert response.status_code == 422
+        assert "does not exist" in response.json()["detail"]
+
+    @pytest.mark.parametrize(
+        "status,type,match",
+        [("running", "crown", "status"), ("completed", "road", "crown Feature")],
+    )
+    def test_incomplete_or_non_crown_feature_returns_422(
+        self,
+        client,
+        firestore_client,
+        domain_for_testing,
+        tree_inventory_for_voxelization,
+        chm_grid_for_crowns,
+        status,
+        type,
+        match,
+    ):
+        feature = _crown_feature_data(
+            domain_for_testing["id"], chm_grid_for_crowns["id"], status, type
+        )
+        doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feature["id"]
+        )
+        doc_ref.set(feature)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json=self.body(tree_inventory_for_voxelization["id"], feature["id"]),
+            )
+        finally:
+            doc_ref.delete()
+        assert response.status_code == 422
+        assert match in response.json()["detail"]
+
+    def test_deleted_chm_grid_returns_422(
+        self,
+        client,
+        firestore_client,
+        domain_for_testing,
+        tree_inventory_for_voxelization,
+    ):
+        feature = _crown_feature_data(domain_for_testing["id"], "test-deleted-chm")
+        doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feature["id"]
+        )
+        doc_ref.set(feature)
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json=self.body(tree_inventory_for_voxelization["id"], feature["id"]),
+            )
+        finally:
+            doc_ref.delete()
+        assert response.status_code == 422
+        assert "no longer exists" in response.json()["detail"]

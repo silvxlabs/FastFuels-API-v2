@@ -45,6 +45,10 @@ Each chunk carries a halo on every side, clamped to `[0, nx)` / `[0, ny)` at the
 
 A wider halo grows every chunk buffer to `nz × (chunk_xy + 2·halo)²` and the batch union to `nz × (2·chunk_xy + 2·halo)²` for a 2×2 batch. At `chunk_xy = 500` a 40-cell halo (20 m crown at 0.5 m) makes buffers 1.24× the 10-cell size.
 
+The halo is capped at `MAX_HALO_CELLS = 125` (a quarter of a chunk; buffers ≤ 2.1× the 10-cell size). A job whose widest crown needs more fails with `CROWN_TOO_WIDE` instead of risking an OOM: one outlier radius (a bad inventory value, or Purves extrapolated to a very large dbh) would otherwise widen every chunk.
+
+Overwrite bands (`spcd`, `tree_id`, `savr.*`, `fuel_moisture.*`) take the tallest tree's value only among trees in the same chunk. A chunk's worker starts from the union's current values and `masked_merge` keeps the last chunk's change, so where crowns from different chunks overlap, the chunk processed last wins whatever the heights. The API band descriptions say "usually the tallest" for this reason.
+
 ### Per-batch flow
 
 1. **Plan** — `batch_union_slices` computes the bounding slice covering every chunk's halo in the batch.

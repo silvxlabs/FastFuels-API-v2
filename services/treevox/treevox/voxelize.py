@@ -86,6 +86,7 @@ class CacheEntry:
 
 CHUNK_SIZE_HORIZONTAL = 500  # cells per chunk in x and y; resolution-independent
 OVERLAP_CELLS = 10  # minimum halo cells; see crown_halo_cells (v1 line 525)
+MAX_HALO_CELLS = 125  # widest halo a job may use; a quarter of a chunk
 MAX_BIOMASS_ARRAY_CACHE = 100  # v1 line 42
 
 # Tree-binning widths for cache grouping — see TREEVOX.md "Tree-binning cache key".
@@ -240,8 +241,9 @@ def crown_halo_cells(df: pd.DataFrame, source_config: dict, hr: float) -> int:
     chunk that holds its stem. The radius is the `max_crown_radius_source`
     inventory column where it has a value, else the allometric radius
     `build_tree` gives the tree (beta for `beta`, Purves for every other
-    profile). Never below `OVERLAP_CELLS`. Rows with species core does not
-    know are skipped, as `build_chunk_cache` skips them.
+    profile). Core draws a negative radius at its absolute value, so the
+    absolute value is used. Never below `OVERLAP_CELLS`. Allometric rows with
+    species core does not know are skipped, as `build_chunk_cache` skips them.
     """
     radius = np.full(len(df), np.nan)
     column = max_crown_radius_inventory_column(source_config)
@@ -264,7 +266,7 @@ def crown_halo_cells(df: pd.DataFrame, source_config: dict, hr: float) -> int:
             )
         radius = np.concatenate([radius, np.ravel(model.get_max_radius())])
 
-    radius = radius[np.isfinite(radius)]
+    radius = np.abs(radius[np.isfinite(radius)])
     if radius.size == 0:
         return OVERLAP_CELLS
     return max(OVERLAP_CELLS, math.ceil(float(radius.max()) / hr))
@@ -438,7 +440,8 @@ def assign_trees_to_chunks(
     Returns a new DataFrame with added `row_chunk` and `col_chunk` columns,
     sorted such that tallest trees within each chunk are iterated last —
     this is how overwrite-style bands (spcd, tree_id, savr, fuel_moisture)
-    achieve the "tallest tree wins" overlap policy documented on the API.
+    take the tallest tree's value where crowns overlap within a chunk.
+    Across chunks the last chunk written wins instead, whatever the heights.
     """
     col_cell = np.floor((df["x"].to_numpy() - x_origin) / hr).astype("int64")
     row_cell = np.floor((y_origin - df["y"].to_numpy()) / hr).astype("int64")
@@ -464,7 +467,7 @@ def batch_union_slices(
     ny: int,
     nx: int,
     chunk_xy: int,
-    overlap_cells: int = OVERLAP_CELLS,
+    overlap_cells: int,
 ) -> tuple[slice, slice]:
     """Compute (y_slice, x_slice) covering a batch of chunks plus halo.
 
@@ -494,7 +497,7 @@ def chunk_slice(
     ny: int,
     nx: int,
     chunk_xy: int,
-    overlap_cells: int = OVERLAP_CELLS,
+    overlap_cells: int,
 ) -> tuple[slice, slice]:
     """Halo-extended (y_slice, x_slice) for a single chunk."""
     row, col = chunk_location
@@ -893,8 +896,9 @@ def _apply_bands(
 
     Accumulate bands SUM across overlapping crowns. Overwrite bands
     take the LAST writer's value on overlap — which, because the caller
-    iterates trees in height-ASC order, means the tallest tree wins (the
-    policy documented on the API).
+    iterates trees in height-ASC order, means the tallest tree in the chunk
+    wins. Crowns from other chunks already in the buffer are overwritten
+    whatever their height.
 
     Uses `buf[buf_slices]` views (not copies), so `region += ...` and
     `region[mask] = ...` mutate `buffers` directly.
@@ -1001,9 +1005,9 @@ def voxelize_chunk(
        requested band buffer with the appropriate accumulate/overwrite
        rule.
 
-    Because trees are iterated height-ASC, the tallest writer wins on
-    overwrite bands (spcd, tree_id, savr.foliage, fuel_moisture.*)
-    at overlap cells — matches the policy documented on the API.
+    Because trees are iterated height-ASC, the tallest writer in the chunk
+    wins on overwrite bands (spcd, tree_id, savr.foliage, fuel_moisture.*)
+    at overlap cells.
 
     Output
     ------

@@ -24,8 +24,8 @@ def run(payload: dict) -> dict:
 
     payload keys:
       chunk_location: (row, col)
-      buffers: {band_key: np.ndarray (nz, halo_y, halo_x)} pre-filled with
-               each band's fill value
+      buffers: {band_key: np.ndarray (nz, halo_y, halo_x)} holding the
+               union's current values for this chunk's halo-extended slice
       trees: pd.DataFrame slice for this chunk (must include `_cache_key`
              and `tree_id` columns)
       hr: float horizontal resolution

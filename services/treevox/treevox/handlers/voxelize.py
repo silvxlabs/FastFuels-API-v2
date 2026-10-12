@@ -168,6 +168,16 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
     chunk_xy = min(voxelize.CHUNK_SIZE_HORIZONTAL, nx, ny)
     chunk_shape: tuple[int, int, int] = (nz, chunk_xy, chunk_xy)
     halo_cells = voxelize.crown_halo_cells(df, grid["source"], hr)
+    if halo_cells > voxelize.MAX_HALO_CELLS:
+        raise ProcessingError(
+            code="CROWN_TOO_WIDE",
+            message=f"The widest crown in the inventory reaches about "
+            f"{halo_cells * hr:g} m from its stem, which is {halo_cells} cells "
+            f"at a horizontal resolution of {hr:g} m. Crowns may reach at most "
+            f"{voxelize.MAX_HALO_CELLS} cells.",
+            suggestion="Use a coarser horizontal resolution, or check the "
+            "inventory for implausible crown radii or diameters.",
+        )
 
     num_row_chunks = int(math.ceil(ny / chunk_xy))
     num_col_chunks = int(math.ceil(nx / chunk_xy))

@@ -172,6 +172,27 @@ class TestPlanGridLayout:
             handler._plan_grid_layout(grid, _fake_domain(), _sample_df())
         assert exc.value.code == "INVALID_RESOLUTION"
 
+    def test_crown_wider_than_max_halo_raises(self):
+        grid = _base_grid()
+        grid["source"]["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+        }
+        df = _sample_df().assign(crown_radius=1e6)
+        with pytest.raises(ProcessingError) as exc:
+            handler._plan_grid_layout(grid, _fake_domain(), df)
+        assert exc.value.code == "CROWN_TOO_WIDE"
+
+    def test_crown_at_max_halo_is_allowed(self):
+        grid = _base_grid()
+        grid["source"]["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+        }
+        df = _sample_df().assign(crown_radius=float(handler.voxelize.MAX_HALO_CELLS))
+        layout = handler._plan_grid_layout(grid, _fake_domain(), df)
+        assert layout.halo_cells == handler.voxelize.MAX_HALO_CELLS
+
 
 class TestPrepareTreeChunks:
     def test_attaches_cache_key_and_chunk_columns(self):
@@ -1152,29 +1173,36 @@ class TestHaloCoversWideCrowns:
         assert reach_cells > handler.voxelize.OVERLAP_CELLS
         bands = ["volume_fraction", "bulk_density.foliage.live", "spcd", "tree_id"]
         mid_col = self.CHUNK_XY // 2
-        edge_col = self.CHUNK_XY + 1  # one cell inside chunk (0, 1)'s west edge
         row = self.CHUNK_XY // 2
 
         mid = self._render(
             monkeypatch, self._tree(mid_col, row, hr, **extra), source, hr, bands
         )
-        edge = self._render(
-            monkeypatch, self._tree(edge_col, row, hr, **extra), source, hr, bands
-        )
-
-        shift = edge_col - mid_col
         vf = mid["volume_fraction"]
         occupied = np.nonzero(vf.any(axis=(0, 1)))[0]
-        # The crown really does reach past the default halo, west of the stem.
+        # The crown reaches past the default halo on both sides, and exactly
+        # `reach_cells` west (east may be a cell shorter).
         assert mid_col - occupied.min() == reach_cells
-        assert not vf[:, :, -shift:].any()
+        assert occupied.max() - mid_col > handler.voxelize.OVERLAP_CELLS
 
-        for key in bands:
-            expected = np.zeros_like(mid[key])
-            expected[:, :, shift:] = mid[key][:, :, :-shift]
-            np.testing.assert_array_equal(
-                edge[key], expected, err_msg=f"band {key} lost crown overhang"
+        # First cell of chunk (0, 1), overhanging west into chunk (0, 0), and
+        # last cell of chunk (0, 0), overhanging east into chunk (0, 1). With
+        # the stem on the chunk's outermost cell, a halo one cell short of the
+        # crown's reach loses foliage.
+        for edge_col in (self.CHUNK_XY, self.CHUNK_XY - 1):
+            edge = self._render(
+                monkeypatch, self._tree(edge_col, row, hr, **extra), source, hr, bands
             )
+            shift = edge_col - mid_col
+            assert not vf[:, :, -shift:].any()
+            for key in bands:
+                expected = np.zeros_like(mid[key])
+                expected[:, :, shift:] = mid[key][:, :, :-shift]
+                np.testing.assert_array_equal(
+                    edge[key],
+                    expected,
+                    err_msg=f"band {key} lost crown overhang (stem col {edge_col})",
+                )
 
     def test_allometric_crown_wider_than_default_halo(self, monkeypatch):
         """Purves radius ~5.5 m at 0.25 m resolution reaches 22 cells."""

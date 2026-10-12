@@ -525,7 +525,7 @@ class TestBatchUnionSlices:
 
     def test_empty_batch_raises(self):
         with pytest.raises(ValueError):
-            voxelize.batch_union_slices([], 100, 100, chunk_xy=50)
+            voxelize.batch_union_slices([], 100, 100, chunk_xy=50, overlap_cells=10)
 
 
 class TestChunkSlice:
@@ -563,6 +563,11 @@ class TestCrownHaloCells:
         assert voxelize.crown_halo_cells(df, self._radius_config(), hr=0.5) == 20
         df = fake_tree_df(n=2).assign(crown_radius=[3.0, 12.3])
         assert voxelize.crown_halo_cells(df, self._radius_config(), hr=1.0) == 13
+
+    def test_negative_column_radius_counts_at_its_magnitude(self):
+        """Core draws a negative radius at its absolute value."""
+        df = fake_tree_df(n=2).assign(crown_radius=[3.0, -12.0])
+        assert voxelize.crown_halo_cells(df, self._radius_config(), hr=0.5) == 24
 
     def test_null_column_value_uses_allometric_radius(self):
         df = fake_tree_df(n=2, dbh=80.0, height=20.0, crown_ratio=0.6).assign(

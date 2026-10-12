@@ -47,7 +47,7 @@ A wider halo grows every chunk buffer to `nz × (chunk_xy + 2·halo)²` and the 
 
 The halo is capped at `MAX_HALO_CELLS = 125` (a quarter of a chunk; buffers ≤ 2.1× the 10-cell size). A job whose widest crown needs more fails with `CROWN_TOO_WIDE` instead of risking an OOM: one outlier radius (a bad inventory value, or Purves extrapolated to a very large dbh) would otherwise widen every chunk.
 
-Overwrite bands (`spcd`, `tree_id`, `savr.*`, `fuel_moisture.*`) take the tallest tree's value only among trees in the same chunk. A chunk's worker starts from the union's current values and `masked_merge` keeps the last chunk's change, so where crowns from different chunks overlap, the chunk processed last wins whatever the heights. The API band descriptions say "usually the tallest" for this reason.
+Overwrite bands (`spcd`, `tree_id`, `savr.*`, `fuel_moisture.*`) take the tallest tree's value only among trees in the same chunk. A chunk's worker starts from the union's current values and `masked_merge` keeps the last chunk's change, so where crowns from different chunks overlap, the chunk processed last wins whatever the heights. See #668.
 
 ### Per-batch flow
 

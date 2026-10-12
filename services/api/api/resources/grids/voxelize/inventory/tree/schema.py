@@ -120,10 +120,7 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
     TreeBand.spcd: {
         "key": "spcd",
         "name": "Species Code",
-        "description": (
-            "FIA species code (SPCD) of a tree whose crown occupies the voxel; "
-            "usually the tallest where crowns overlap."
-        ),
+        "description": "FIA species code (SPCD) of the dominant tree in the voxel.",
         "type": BandType.categorical,
         "unit": None,
     },
@@ -131,8 +128,8 @@ TREE_BAND_DEFS: dict[TreeBand, dict] = {
         "key": "tree_id",
         "name": "Tree ID",
         "description": (
-            "The source inventory's `tree_id` of a tree whose crown occupies the "
-            "voxel, usually the tallest where crowns overlap; 0 where no tree."
+            "The source inventory's `tree_id` of the dominant tree contributing "
+            "to the voxel; 0 where no tree."
         ),
         "type": BandType.categorical,
         "unit": None,

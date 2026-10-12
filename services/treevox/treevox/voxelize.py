@@ -148,6 +148,9 @@ BIOMASS_DENSITY_BAND_COMPONENTS = {
     "bulk_density.fine.live": "fine",
     "bulk_density.fine.dead": "fine",
 }
+# Scratch band holding the distributed component's live + dead bulk density,
+# stored only while a `max_bulk_density` grid is built.
+BULK_DENSITY_TOTAL_KEY = "_bulk_density_total"
 
 
 # Errors
@@ -1096,6 +1099,7 @@ def _apply_bands(
       | volume_fraction       | accumulate| `region += mask`             |
       | bulk_density.<component>.<state> | accumulate| `region += biomass_clip * fraction` |
       | leaf_area_density     | accumulate| `region += lad_clip`         |
+      | BULK_DENSITY_TOTAL_KEY| accumulate| `region += biomass_clip`     |
       | savr.foliage          | overwrite | `region[mask] = foliage_sav` |
       | fuel_moisture.<state> | overwrite | `region[mask] = moisture`    |
       | spcd                  | overwrite | `region[mask] = species_code`|
@@ -1125,6 +1129,8 @@ def _apply_bands(
             region += (biomass_clip * component_state["dead"]).astype(buf.dtype)
         elif key == "leaf_area_density":
             region += lad_clip.astype(buf.dtype)
+        elif key == BULK_DENSITY_TOTAL_KEY:
+            region += biomass_clip.astype(buf.dtype)
         elif key == "savr.foliage":
             region[mask] = foliage_sav
         elif key == "fuel_moisture.live":

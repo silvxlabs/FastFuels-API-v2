@@ -347,6 +347,19 @@ class TestCreateTreeInventoryRequest:
         assert req.description == ""
         assert req.tags == []
 
+    def test_max_bulk_density_defaults_to_none(self):
+        req = CreateTreeInventoryRequest(**self._minimal())
+        assert req.max_bulk_density is None
+
+    def test_max_bulk_density_accepted(self):
+        req = CreateTreeInventoryRequest(**self._minimal(max_bulk_density=1.5))
+        assert req.max_bulk_density == 1.5
+
+    @pytest.mark.parametrize("value", [0, -1.0])
+    def test_max_bulk_density_must_be_positive(self, value):
+        with pytest.raises(ValidationError):
+            CreateTreeInventoryRequest(**self._minimal(max_bulk_density=value))
+
     def test_max_crown_radius_inventory_column_accepted(self):
         req = CreateTreeInventoryRequest(
             **self._minimal(

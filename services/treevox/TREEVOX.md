@@ -83,6 +83,10 @@ With `source.crown_geometry_source.type == "crown_feature"`, trees with a crown 
 
 **Halo.** A measured crown is rendered by the chunk that owns its stem, like a parametric crown. `measured_halo_cells` measures how far each footprint reaches from its stem's cell, on the output lattice with core's placement arithmetic, and `_plan_grid_layout` widens the halo to the farthest reach, so no measured crown is clipped. The `MAX_HALO_CELLS` cap and `CROWN_TOO_WIDE` apply to the combined halo.
 
+## Bulk density cap (`max_bulk_density`)
+
+A voxel's bulk density is final only once every chunk whose halo covers it has been merged, so the cap cannot be applied in the workers or per batch. When `source.max_bulk_density` is set, `_plan_grid_layout` adds the scratch band `_bulk_density_total` (`BULK_DENSITY_TOTAL_KEY`), which workers accumulate with the distributed component's live + dead bulk density. After the batch loop, `storage.cap_bulk_density` multiplies every bulk density band and `leaf_area_density` by `cap / max(total, cap)` on the store's own chunks, then deletes the scratch band and reconsolidates metadata. Treevox distributes one biomass component per grid, so this caps each component; `volume_fraction` is not scaled. If the job fails during the cap pass, the store is deleted like any failed job.
+
 ## Chunk padding model
 
 Two primitives together ensure crowns near chunk boundaries render correctly:

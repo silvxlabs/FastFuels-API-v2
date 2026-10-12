@@ -434,6 +434,16 @@ CROWN_GEOMETRY_SOURCE_DESCRIPTION = (
 )
 
 
+MAX_BULK_DENSITY_DESCRIPTION = (
+    "Upper limit on bulk density, in kg/m**3. In any voxel where a biomass "
+    "component's bulk density, live and dead combined, exceeds the limit, "
+    "that component's live and dead bulk density are scaled down to it, "
+    "keeping their live/dead split, and `leaf_area_density` is scaled with "
+    "foliage. Fuel above the limit is removed from the grid. Omit for no "
+    "limit."
+)
+
+
 class CrownGeometryCounts(BaseModel):
     """How many trees got each crown geometry."""
 
@@ -573,6 +583,9 @@ class TreeInventoryVoxelizationSource(BaseModel):
     biomass_source: BiomassSource
     max_crown_radius_source: MaxCrownRadiusSource = AllometryMaxCrownRadiusSource()
     crown_geometry_source: CrownGeometrySource = ParametricCrownGeometrySource()
+    max_bulk_density: PositiveFloat | None = Field(
+        default=None, description=MAX_BULK_DENSITY_DESCRIPTION
+    )
     source_chm_checksum: str | None = Field(
         default=None,
         description=(
@@ -645,6 +658,9 @@ class CreateTreeInventoryRequest(BaseModel):
     crown_geometry_source: CrownGeometrySource = Field(
         default_factory=ParametricCrownGeometrySource,
         description=CROWN_GEOMETRY_SOURCE_DESCRIPTION,
+    )
+    max_bulk_density: PositiveFloat | None = Field(
+        default=None, description=MAX_BULK_DENSITY_DESCRIPTION
     )
     moisture_model: MoistureModel | None = Field(
         default=None,

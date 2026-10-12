@@ -240,6 +240,12 @@ async def create_tree_inventory_grid(
       inventory are ignored. The inventory must have a `tree_id` column, the
       Feature must be a completed crown Feature in this domain, and the CHM
       grid it was built from must still exist.
+    - **max_bulk_density**: (optional) Upper limit on bulk density, in
+      kg/m**3. In any voxel where a biomass component's bulk density, live
+      and dead combined, exceeds the limit, that component's live and dead
+      bulk density are scaled down to it, keeping their live/dead split, and
+      `leaf_area_density` is scaled with foliage. Fuel above the limit is
+      removed from the grid. Omit for no limit.
     - **moisture_model**: (optional) Live/dead fuel moisture configuration.
       Required shape: `{"live": {"method": "uniform", "value": <percent>}}`
       and/or `{"dead": {"method": "uniform", "value": <percent>}}`.
@@ -353,6 +359,7 @@ async def create_tree_inventory_grid(
         biomass_source=body.biomass_source,
         max_crown_radius_source=body.max_crown_radius_source,
         crown_geometry_source=body.crown_geometry_source,
+        max_bulk_density=body.max_bulk_density,
         source_chm_checksum=source_chm_checksum,
         moisture_model=body.moisture_model,
         seed=body.seed,

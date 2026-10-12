@@ -181,6 +181,8 @@ def _plan_grid_layout(
         ) from e
 
     requested_keys = [b["key"] for b in grid["bands"]]
+    if grid["source"].get("max_bulk_density") is not None:
+        requested_keys.append(voxelize.BULK_DENSITY_TOTAL_KEY)
     hr = dims["hr"]
     nx, ny, nz = dims["nx"], dims["ny"], dims["nz"]
     chunk_xy = min(voxelize.CHUNK_SIZE_HORIZONTAL, nx, ny)
@@ -767,7 +769,8 @@ def voxelize_inventory(
       3. storage.init_store        — write empty zarr metadata.
       4. _prepare_tree_chunks      — cache keys + per-chunk assignment + sort.
       5. _run_voxelization_batches — persistent Pool, batch loop.
-      6. storage.consolidate_metadata + _build_voxelization_result.
+      6. storage.cap_bulk_density   — only with `max_bulk_density`.
+      7. _build_voxelization_result.
     """
     grid_id = grid["id"]
     source = grid["source"]
@@ -826,6 +829,15 @@ def voxelize_inventory(
     stats = _run_voxelization_batches(
         df, layout, source, grid_id, path, progress, footprints
     )
+
+    if source.get("max_bulk_density") is not None:
+        progress("Capping bulk density...", 92)
+        cap_start = time.monotonic()
+        storage.cap_bulk_density(path, float(source["max_bulk_density"]))
+        logger.info(
+            f"Capped bulk density in {time.monotonic() - cap_start:.2f}s",
+            extra={"grid_id": grid_id},
+        )
 
     progress("Finalizing...", 95)
     # Metadata was consolidated at init_store time; region writes during the

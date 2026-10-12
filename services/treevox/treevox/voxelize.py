@@ -392,7 +392,9 @@ def distribute_component_biomass(vt: VoxelizedTree, component: str) -> np.ndarra
     raise ValueError(f"Unknown biomass component: {component!r}.")
 
 
-def build_tree(row, source_config: dict) -> Tree:
+def build_tree(
+    row, source_config: dict, jenkins_species_group: int | None = None
+) -> Tree:
     """Construct a fastfuels_core.Tree from a v2 inventory row.
 
     V2 columns map directly to Tree kwargs (no renames):
@@ -410,6 +412,9 @@ def build_tree(row, source_config: dict) -> Tree:
     maximum crown radius of the same tree. The single-lobe ellipsoid and
     paraboloid are widest at the crown base; the dual forms use core's
     crown-midpoint default.
+
+    `jenkins_species_group`, when given, saves core looking it up again for a
+    species already seen.
     """
     crown_fuel_load = None
     column = foliage_inventory_column(source_config)
@@ -452,6 +457,7 @@ def build_tree(row, source_config: dict) -> Tree:
         crown_fuel_load=crown_fuel_load,
         max_crown_radius=max_crown_radius,
         max_crown_diameter_height=max_crown_diameter_height,
+        jenkins_species_group=jenkins_species_group,
     )
 
 
@@ -1291,12 +1297,17 @@ def voxelize_chunk(
     component_state = biomass_component_state(source_config, biomass_component)
 
     buffer_shape = next(iter(buffers.values())).shape
+    # Jenkins group, foliage SAV and SLA depend on species alone, and core looks
+    # them up in pandas tables on every access, so measured trees read them once
+    # per species.
+    species_attrs: dict[int, tuple[int, float, float]] = {}
 
     for _, row in trees_in_chunk.iterrows():
         footprint = measured.get(int(row["tree_id"])) if measured else None
         if footprint is not None:
+            attrs = species_attrs.get(int(row["fia_species_code"]))
             try:
-                tree = build_tree(row, source_config)
+                tree = build_tree(row, source_config, attrs and attrs[0])
             except Exception:
                 # Degenerate tree (e.g. allometric failure): skipped, as a
                 # parametric bin that fails to build is.
@@ -1327,8 +1338,13 @@ def voxelize_chunk(
                 buffer_shape,
             )
             species_code = int(tree.species_code)
-            foliage_sav = float(tree.foliage_sav)
-            specific_leaf_area = float(tree.specific_leaf_area)
+            if attrs is None:
+                attrs = species_attrs[species_code] = (
+                    int(tree.jenkins_species_group),
+                    float(tree.foliage_sav),
+                    float(tree.specific_leaf_area),
+                )
+            _, foliage_sav, specific_leaf_area = attrs
         else:
             entry = cache.get(int(row["_cache_key"]))
             if entry is None or not entry.biomass_arrays:

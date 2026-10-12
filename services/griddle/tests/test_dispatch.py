@@ -666,6 +666,7 @@ class TestHandleLookup:
         source = {
             "table": "fbfm40",
             "source_grid_id": "test-source-grid-id",
+            "herbaceous_curing": 0.5,
         }
 
         result = handle_lookup(grid, source, progress)
@@ -674,8 +675,19 @@ class TestHandleLookup:
             source_grid_id="test-source-grid-id",
             bands=grid["bands"],
             progress=progress,
+            herbaceous_curing=0.5,
         )
         assert result == mock_result
+
+    @patch("griddle.dispatch.lookup.fbfm40_lookup")
+    def test_fbfm40_without_curing_keeps_herb_live(self, mock_fbfm40_lookup):
+        """A pre-#675 fbfm40 source (no herbaceous_curing) runs with no curing."""
+        grid = {"bands": [{"key": "fuel_load.live_herb"}]}
+        source = {"table": "fbfm40", "source_grid_id": "test-source-grid-id"}
+
+        handle_lookup(grid, source, MagicMock())
+
+        assert mock_fbfm40_lookup.call_args.kwargs["herbaceous_curing"] == 0.0
 
     @patch("griddle.dispatch.lookup.fccs_lookup")
     def test_routes_fccs_table(self, mock_fccs_lookup):

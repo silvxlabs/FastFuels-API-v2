@@ -26,13 +26,24 @@ EXAMPLE_FBFM40_LOOKUP_ALL_BANDS = {
         "fuel_load.100hr",
         "fuel_load.live_herb",
         "fuel_load.live_woody",
+        "fuel_load.dead_herb",
+        "fuel_load.fine_dead",
         "savr.1hr",
         "savr.10hr",
         "savr.100hr",
         "savr.live_herb",
         "savr.live_woody",
+        "savr.dead_herb",
+        "savr.fine_dead",
         "fuel_depth",
     ],
+}
+
+EXAMPLE_FBFM40_LOOKUP_FINE_DEAD = {
+    "source_grid_id": "grid_abc123",
+    "name": "Fully cured surface fuels",
+    "herbaceous_curing": 1.0,
+    "bands": ["fuel_load.fine_dead", "savr.fine_dead", "fuel_depth"],
 }
 
 CREATE_FBFM40_LOOKUP_OPENAPI_EXAMPLES = {
@@ -49,8 +60,18 @@ CREATE_FBFM40_LOOKUP_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_FBFM40_LOOKUP_ALL_BANDS,
         "summary": "All fuel bands",
         "description": (
-            "Looks up all available SB40 fuel parameters: fuel loads (5 size "
-            "classes), SAV ratios (5 size classes), and fuel depth."
+            "Looks up all available SB40 fuel parameters: fuel loads and SAV "
+            "ratios for every fuel class, including dead herbaceous and fine "
+            "dead fuel at the default curing, and fuel depth."
+        ),
+    },
+    "fine_dead": {
+        "value": EXAMPLE_FBFM40_LOOKUP_FINE_DEAD,
+        "summary": "Fine dead fuel, fully cured",
+        "description": (
+            "Looks up 1-hr plus dead herbaceous fuel as a single fine dead "
+            "fuel class, with all herbaceous fuel cured. Suits models with one "
+            "surface fuel class, such as the QUIC-Fire export."
         ),
     },
 }
@@ -58,4 +79,5 @@ CREATE_FBFM40_LOOKUP_OPENAPI_EXAMPLES = {
 ALL_FBFM40_LOOKUP_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_FBFM40_LOOKUP_MINIMAL),
     ("all_bands", EXAMPLE_FBFM40_LOOKUP_ALL_BANDS),
+    ("fine_dead", EXAMPLE_FBFM40_LOOKUP_FINE_DEAD),
 ]

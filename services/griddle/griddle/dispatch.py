@@ -330,10 +330,14 @@ def handle_lookup(
                 progress=progress,
             )
         case "fbfm40":
+            # Grids created before #675 carry no curing; their herbaceous load
+            # stayed live.
+            curing = source.get("herbaceous_curing")
             return lookup.fbfm40_lookup(
                 source_grid_id=source["source_grid_id"],
                 bands=grid["bands"],
                 progress=progress,
+                herbaceous_curing=0.0 if curing is None else curing,
             )
         case "fccs":
             return lookup.fccs_lookup(

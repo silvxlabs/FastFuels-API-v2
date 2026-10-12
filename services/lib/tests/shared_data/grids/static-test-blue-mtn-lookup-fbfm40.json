@@ -1,18 +1,18 @@
 {
   "bands": [
     {
-      "description": "Oven-dry mass per unit area of 1-hour timelag dead fuels.",
+      "description": "Oven-dry mass per unit area of fine dead fuels: 1-hour plus dead herbaceous. Takes the dead 1-hour fuel moisture.",
       "index": 0,
-      "key": "fuel_load.1hr",
-      "name": "1-hour Fuel Load",
+      "key": "fuel_load.fine_dead",
+      "name": "Fine Dead Fuel Load",
       "nodata": null,
       "summary": {
         "count": 289068,
         "max": 1.3001821041107178,
-        "mean": 0.316337780055216,
+        "mean": 0.36258726966189186,
         "min": 0.0,
         "nodata_count": 0,
-        "std": 0.4233536320219707,
+        "std": 0.4017820338091179,
         "type": "continuous"
       },
       "type": "continuous",
@@ -37,18 +37,18 @@
       "unit": "m"
     },
     {
-      "description": "Surface-area-to-volume ratio of 1-hour timelag dead fuels.",
+      "description": "Load-weighted surface-area-to-volume ratio of 1-hour and dead herbaceous fuels.",
       "index": 2,
-      "key": "savr.1hr",
-      "name": "1-hour Surface-Area-to-Volume Ratio",
+      "key": "savr.fine_dead",
+      "name": "Fine Dead Surface-Area-to-Volume Ratio",
       "nodata": null,
       "summary": {
         "count": 289068,
         "max": 6561.6796875,
-        "mean": 6234.117790083129,
+        "mean": 6071.553679448234,
         "min": 0.0,
         "nodata_count": 0,
-        "std": 1193.6326415617798,
+        "std": 1159.3400259859488,
         "type": "continuous"
       },
       "type": "continuous",
@@ -90,6 +90,7 @@
     "percent": 100
   },
   "source": {
+    "herbaceous_curing": 0.67,
     "name": "lookup",
     "source_band": "fbfm",
     "source_grid_checksum": null,

@@ -900,7 +900,12 @@ class TestCrownGeometrySource:
 
     def test_source_accepts_worker_counts(self):
         """The completed grid's counts round-trip through the source schema."""
-        counts = {"measured": 3, "parametric_no_crown": 2, "parametric_no_volume": 1}
+        counts = {
+            "measured": 3,
+            "parametric_no_crown": 2,
+            "parametric_stem_outside_crown": 4,
+            "parametric_no_volume": 1,
+        }
         source = self._source(
             crown_geometry_source=CrownFeatureCrownGeometrySource(feature_id="f1"),
             crown_geometry_counts=counts,

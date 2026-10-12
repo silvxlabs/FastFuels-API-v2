@@ -792,12 +792,14 @@ def voxelize_inventory(
     if voxelize.crown_geometry_type(source) == "crown_feature":
         progress("Loading measured crowns...", 8)
         measured = measured_crowns.load_footprints(
-            source["crown_geometry_source"]["feature_id"], df["tree_id"]
+            source["crown_geometry_source"]["feature_id"], df
         )
+        df = df.assign(_stem_outside_crown=df["tree_id"].isin(measured.stem_outside))
         logger.info(
             f"{len(measured.footprints)} trees have a crown in the Feature; "
-            f"{measured.ignored_crowns} crowns have no live tree in the "
-            "inventory and are ignored",
+            f"{len(measured.stem_outside)} crowns do not contain their tree's "
+            f"stem and are set aside; {measured.ignored_crowns} crowns have no "
+            "live tree in the inventory and are ignored",
             extra={"grid_id": grid_id},
         )
 

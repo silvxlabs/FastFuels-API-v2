@@ -27,7 +27,7 @@ from lib.config import FEATURES_BUCKET, GRIDS_BUCKET
 from lib.zarr_utils import load_zarr
 from treevox.errors import ProcessingError
 from treevox.firestore_io import load_feature
-from treevox.voxelize import Footprint
+from treevox.voxelize import Footprint, stem_in_crown
 
 logger = logging.getLogger(__name__)
 
@@ -38,20 +38,26 @@ class MeasuredFootprints:
 
     `footprints` is keyed by `tree_id`. `max_top` is the highest CHM top among
     them (m), or None when there are none. `ignored_crowns` counts the
-    Feature's crowns whose tree is not in the inventory.
+    Feature's crowns whose tree is not in the inventory. `stem_outside` holds
+    the trees whose matched crown does not contain their stem; their crowns
+    are left out of `footprints`.
     """
 
     footprints: dict[int, Footprint]
     max_top: float | None
     ignored_crowns: int
+    stem_outside: frozenset[int] = frozenset()
 
 
-def load_footprints(feature_id: str, tree_ids: pd.Series) -> MeasuredFootprints:
+def load_footprints(feature_id: str, trees: pd.DataFrame) -> MeasuredFootprints:
     """Read a crown Feature and its CHM, and cut out each matched footprint.
 
-    A crown matches a tree by `tree_id`. Crowns whose tree is not in
-    `tree_ids` (e.g. removed by a treatment) are ignored.
+    A crown matches a tree by `tree_id`. Crowns whose tree is not in `trees`
+    (e.g. removed by a treatment) are ignored. A matched crown that does not
+    contain its tree's stem, from `trees`' `x` and `y`, came from another
+    inventory with the same `tree_id`s and is set aside.
     """
+    tree_ids = trees["tree_id"]
     feature = load_feature(feature_id)
     chm_grid_id = feature["source"]["source_chm_grid_id"]
 
@@ -70,11 +76,19 @@ def load_footprints(feature_id: str, tree_ids: pd.Series) -> MeasuredFootprints:
     footprints = footprints_from_crowns(
         matched["tree_id"].to_numpy(), matched.geometry.to_numpy(), values, transform
     )
+    stems = trees.set_index("tree_id")[["x", "y"]].astype("float64")
+    stem_outside = frozenset(
+        tree_id
+        for tree_id, footprint in footprints.items()
+        if footprint.mask.any() and not stem_in_crown(*stems.loc[tree_id], footprint)
+    )
+    footprints = {k: f for k, f in footprints.items() if k not in stem_outside}
     tops = [np.nanmax(f.top) for f in footprints.values() if f.mask.any()]
     return MeasuredFootprints(
         footprints=footprints,
         max_top=float(max(tops)) if tops else None,
         ignored_crowns=ignored,
+        stem_outside=stem_outside,
     )
 
 

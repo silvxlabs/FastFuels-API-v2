@@ -738,7 +738,25 @@ def footprint_has_volume(
     return bool(np.any(tops - crown_base_height > MEASURED_VOLUME_TOLERANCE * vr))
 
 
-CROWN_GEOMETRY_REASONS = ("measured", "parametric_no_crown", "parametric_no_volume")
+def stem_in_crown(x: float, y: float, footprint: Footprint) -> bool:
+    """Whether the stem at (x, y) lies in one of the footprint's cells.
+
+    A crown Feature grows each crown from its tree's stem cell, so a crown
+    that does not hold its tree's stem was built from another inventory.
+    """
+    res = footprint.resolution
+    col = math.floor((x - footprint.origin[0]) / res)
+    row = math.floor((footprint.origin[1] - y) / res)
+    nrows, ncols = footprint.mask.shape
+    return 0 <= row < nrows and 0 <= col < ncols and bool(footprint.mask[row, col])
+
+
+CROWN_GEOMETRY_REASONS = (
+    "measured",
+    "parametric_no_crown",
+    "parametric_stem_outside_crown",
+    "parametric_no_volume",
+)
 
 
 def plan_measured_crowns(
@@ -751,6 +769,9 @@ def plan_measured_crowns(
     A tree gets a measured crown when the crown Feature holds a footprint for
     its `tree_id` and some footprint cell rises above its crown base,
     `height × (1 − crown_ratio)`. Every other tree is drawn parametrically.
+    `footprints` holds only crowns that contain their tree's stem; a tree
+    whose crown does not is flagged in the `_stem_outside_crown` column
+    (see `measured_crowns.load_footprints`).
 
     Returns the footprints of trees drawn measured, keyed by `tree_id`, and
     each tree's `CROWN_GEOMETRY_REASONS` entry, keyed by `tree_id`.
@@ -761,9 +782,18 @@ def plan_measured_crowns(
     tree_ids = trees_in_chunk["tree_id"].to_numpy()
     heights = trees_in_chunk["height"].to_numpy(dtype=float)
     crown_ratios = trees_in_chunk["crown_ratio"].to_numpy(dtype=float)
-    for tree_id, height, crown_ratio in zip(tree_ids, heights, crown_ratios):
+    if "_stem_outside_crown" in trees_in_chunk:
+        stem_outside = trees_in_chunk["_stem_outside_crown"].to_numpy(dtype=bool)
+    else:
+        stem_outside = np.zeros(len(trees_in_chunk), dtype=bool)
+    for tree_id, height, crown_ratio, outside in zip(
+        tree_ids, heights, crown_ratios, stem_outside
+    ):
         tree_id = int(tree_id)
         footprint = footprints.get(tree_id)
+        if outside:
+            reasons[tree_id] = "parametric_stem_outside_crown"
+            continue
         if footprint is None:
             reasons[tree_id] = "parametric_no_crown"
             continue

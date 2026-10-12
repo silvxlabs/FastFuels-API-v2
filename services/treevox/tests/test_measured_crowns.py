@@ -355,6 +355,29 @@ def _payload(trees, footprints, source, hr=1.0, vr=1.0, shape=(24, 40, 40)):
     return payload
 
 
+class TestStemInCrown:
+    def test_stem_cell_in_crown(self):
+        assert v.stem_in_crown(20.0, 20.0, _disc(20.0, 20.0, 3.0))
+
+    def test_stem_inside_box_but_not_crown(self):
+        # A disc's box corner is outside the disc.
+        footprint = _disc(20.0, 20.0, 3.0)
+        x0, y0 = footprint.origin
+        assert not v.stem_in_crown(x0 + 0.5, y0 - 0.5, footprint)
+
+    def test_stem_outside_box(self):
+        assert not v.stem_in_crown(5.0, 5.0, _disc(20.0, 20.0, 3.0))
+
+    @pytest.mark.parametrize("res", [0.5, 1.0, 2.0])
+    def test_cell_edges_follow_floor(self, res):
+        footprint = _disc(20.0, 20.0, 3.0, res=res, shift=(0.3, -0.2))
+        rows, cols = np.nonzero(footprint.mask)
+        x0, y0 = footprint.origin
+        for r, c in zip(rows, cols):
+            # The west and north edges belong to the cell, like etcher's seeds.
+            assert v.stem_in_crown(x0 + c * res, y0 - r * res - 1e-9, footprint)
+
+
 class TestFallbackAndMatching:
     def test_plan_counts_each_reason(self):
         trees = _trees(_row(1), _row(2, x=10.0), _row(3, x=30.0))
@@ -371,6 +394,26 @@ class TestFallbackAndMatching:
             3: "parametric_no_volume",
         }
 
+    def test_stem_outside_crown_is_drawn_parametrically(self):
+        trees = _trees(_row(1), _row(2, x=8.0, y=8.0)).assign(
+            _stem_outside_crown=[False, True]
+        )
+        footprints = {1: _disc(20.0, 20.0, 3.0, top=16.0)}
+        measured, reasons = v.plan_measured_crowns(trees, footprints, 1.0)
+        assert set(measured) == {1}
+        assert reasons == {1: "measured", 2: "parametric_stem_outside_crown"}
+
+        result = worker_run(_payload(trees, footprints, _source("purves")))
+        assert "error" not in result, result.get("error")
+        assert result["crown_geometry_counts"] == {
+            "measured": 1,
+            "parametric_no_crown": 0,
+            "parametric_stem_outside_crown": 1,
+            "parametric_no_volume": 0,
+        }
+        # Drawn around its own stem.
+        assert (result["buffers"]["tree_id"][:, 27:38, 3:14] == 2).any()
+
     def test_fallback_trees_are_drawn_parametrically(self):
         trees = _trees(_row(1), _row(2, x=8.0, y=8.0), _row(3, x=31.0, y=31.0))
         footprints = {
@@ -383,6 +426,7 @@ class TestFallbackAndMatching:
         assert result["crown_geometry_counts"] == {
             "measured": 1,
             "parametric_no_crown": 1,
+            "parametric_stem_outside_crown": 0,
             "parametric_no_volume": 1,
         }
         tree_ids = result["buffers"]["tree_id"]
@@ -431,6 +475,7 @@ class TestFallbackAndMatching:
         assert result["crown_geometry_counts"] == {
             "measured": 1,
             "parametric_no_crown": 0,
+            "parametric_stem_outside_crown": 0,
             "parametric_no_volume": 0,
         }
         assert set(np.unique(result["buffers"]["tree_id"])) == {0, 1}
@@ -441,6 +486,7 @@ class TestFallbackAndMatching:
         assert result["crown_geometry_counts"] == {
             "measured": 0,
             "parametric_no_crown": 2,
+            "parametric_stem_outside_crown": 0,
             "parametric_no_volume": 0,
         }
 
@@ -558,7 +604,7 @@ class TestFootprintsFromCrowns:
 
 
 class TestLoadFootprints:
-    def test_matches_by_tree_id_and_ignores_removed_trees(self, monkeypatch):
+    def _patch(self, monkeypatch):
         transform = Affine(1.0, 0, 0.0, 0, -1.0, 40.0)
         heights = np.full((40, 40), 18.0)
         heights[0, 0] = -9999.0
@@ -597,14 +643,36 @@ class TestLoadFootprints:
             measured_crowns, "load_zarr", lambda path: xr.Dataset({"chm": chm})
         )
 
-        result = measured_crowns.load_footprints(
-            "f1", pd.Series([1, 3, 4], dtype="int32")
+    def test_matches_by_tree_id_and_ignores_removed_trees(self, monkeypatch):
+        self._patch(monkeypatch)
+        trees = pd.DataFrame(
+            {
+                "tree_id": np.array([1, 3, 4], dtype="int32"),
+                "x": [12.0, 31.0, 5.0],
+                "y": [12.0, 31.0, 5.0],
+            }
         )
+        result = measured_crowns.load_footprints("f1", trees)
         assert set(result.footprints) == {1, 3}
         assert result.ignored_crowns == 1  # tree 2 is not in the inventory
         assert result.footprints[1].mask.sum() == 16
         assert result.footprints[3].mask.sum() == 4
         assert result.max_top == 18.0
+        assert result.stem_outside == frozenset()
+
+    def test_sets_aside_a_crown_that_does_not_hold_its_stem(self, monkeypatch):
+        """Tree 3's crown is at (31, 31), but its stem is at (5, 5)."""
+        self._patch(monkeypatch)
+        trees = pd.DataFrame(
+            {
+                "tree_id": np.array([1, 3], dtype="int32"),
+                "x": [12.0, 5.0],
+                "y": [12.0, 5.0],
+            }
+        )
+        result = measured_crowns.load_footprints("f1", trees)
+        assert set(result.footprints) == {1}
+        assert result.stem_outside == frozenset({3})
 
 
 def _domain(n=40):
@@ -721,6 +789,7 @@ class TestChunking:
             == {
                 "measured": 5,
                 "parametric_no_crown": 0,
+                "parametric_stem_outside_crown": 0,
                 "parametric_no_volume": 0,
             }
         )
@@ -769,10 +838,14 @@ class TestVoxelizeInventoryWithCrownFeature:
         }
         loaded = []
 
-        def fake_load_footprints(feature_id, tree_ids):
-            loaded.append((feature_id, sorted(tree_ids)))
+        def fake_load_footprints(feature_id, trees):
+            loaded.append((feature_id, sorted(trees["tree_id"])))
+            # Tree 2's crown was set aside: it does not hold tree 2's stem.
             return measured_crowns.MeasuredFootprints(
-                footprints=footprints, max_top=22.4, ignored_crowns=4
+                footprints=footprints,
+                max_top=22.4,
+                ignored_crowns=4,
+                stem_outside=frozenset({2}),
             )
 
         monkeypatch.setattr(handler, "read_inventory", lambda *a, **k: df.copy())
@@ -794,7 +867,8 @@ class TestVoxelizeInventoryWithCrownFeature:
         assert result.source_updates == {
             "crown_geometry_counts": {
                 "measured": 1,
-                "parametric_no_crown": 1,
+                "parametric_no_crown": 0,
+                "parametric_stem_outside_crown": 1,
                 "parametric_no_volume": 1,
             }
         }

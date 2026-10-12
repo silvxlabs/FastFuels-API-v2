@@ -235,8 +235,8 @@ async def create_tree_inventory_grid(
 
       `max_crown_radius_source` does not apply to measured crowns, and every
       tree keeps the mass `biomass_source` gives it. Trees with no crown in
-      the Feature, and trees with no CHM height above their crown base, are
-      drawn parametrically. Crowns of trees not in the
+      the Feature, trees whose crown does not contain their stem, and trees
+      with no CHM height above their crown base, are drawn parametrically. Crowns of trees not in the
       inventory are ignored. The inventory must have a `tree_id` column, the
       Feature must be a completed crown Feature in this domain, and the CHM
       grid it was built from must still exist.
@@ -264,8 +264,9 @@ async def create_tree_inventory_grid(
     grid's `checksum` at creation, and the completed grid's
     `source.crown_geometry_counts` gives the number of trees drawn with a
     measured crown (`measured`) and drawn parametrically because they had no
-    crown in the Feature (`parametric_no_crown`) or no CHM height above their
-    crown base (`parametric_no_volume`).
+    crown in the Feature (`parametric_no_crown`), their crown did not contain
+    their stem (`parametric_stem_outside_crown`), or they had no CHM height
+    above their crown base (`parametric_no_volume`).
     """
     owner_id = request.state.id
     domain_id = domain["id"]

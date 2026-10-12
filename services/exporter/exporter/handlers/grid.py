@@ -129,6 +129,8 @@ def _stack_with_shared_nodata(ds: xr.Dataset) -> xr.DataArray:
         bands[name].attrs.pop("_FillValue", None)
 
     stacked = ds.assign(bands).to_array(dim="band")
+    # rioxarray writes long_name as the GeoTIFF band descriptions.
+    stacked.attrs["long_name"] = tuple(str(v) for v in ds.data_vars)
     return stacked.rio.write_nodata(sentinel, encoded=False)
 
 

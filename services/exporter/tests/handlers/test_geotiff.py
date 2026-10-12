@@ -366,6 +366,65 @@ class TestNodataHandling:
             np.testing.assert_array_equal(r.read(2), [[6, -9999]])
 
 
+class TestExportGeotiffLocalWrite:
+    """Run export_geotiff end to end on a grid saved to and loaded from Zarr,
+    with the GCS write redirected to a local file."""
+
+    @pytest.fixture
+    def export_local(self, tmp_path):
+        """Return a function that exports ``ds`` and opens the written file."""
+        original = RasterArray.to_raster
+        local_path = tmp_path / "export.tif"
+
+        def to_local(self, raster_path, **kwargs):
+            return original(self, str(local_path), **kwargs)
+
+        def run(ds, bands=None):
+            zarr_path = str(tmp_path / "grid.zarr")
+            save_zarr(zarr_path, ds, chunk_shape=(1, 2))
+            source = {"grid_id": "grid-abc", "name": "geotiff"}
+            if bands:
+                source["bands"] = bands
+            with (
+                patch(
+                    "exporter.handlers.grid.load_grid_zarr",
+                    return_value=load_zarr(zarr_path),
+                ),
+                patch.object(RasterArray, "to_raster", to_local),
+            ):
+                export_geotiff({"id": "test-export"}, source, noop_progress)
+            return rasterio.open(local_path)
+
+        return run
+
+    @staticmethod
+    def _topography():
+        return make_test_dataset(
+            bands={
+                "elevation": np.array([[1500, 32767]], dtype=np.int16),
+                "slope": np.array([[0, 12]], dtype=np.int16),
+                "aspect": np.array([[-1, 90]], dtype=np.int16),
+            },
+            shape=(1, 2),
+            nodatas={"elevation": 32767, "slope": 32767, "aspect": -1},
+        )
+
+    def test_distinct_nodata_writes_shared_nodata_and_band_names(self, export_local):
+        # Zarr loads bands in alphabetical order.
+        with export_local(self._topography()) as r:
+            assert r.nodata == -9999
+            assert r.descriptions == ("aspect", "elevation", "slope")
+            np.testing.assert_array_equal(r.read(1), [[-9999, 90]])
+            np.testing.assert_array_equal(r.read(2), [[1500, -9999]])
+            np.testing.assert_array_equal(r.read(3), [[0, 12]])
+
+    def test_uniform_nodata_keeps_band_nodata_and_names(self, export_local):
+        with export_local(self._topography(), bands=["elevation", "slope"]) as r:
+            assert r.nodata == 32767
+            assert r.descriptions == ("elevation", "slope")
+            np.testing.assert_array_equal(r.read(1), [[1500, 32767]])
+
+
 class TestExportGeotiffIntegration:
     """Integration tests that write to the real GCS bucket.
 

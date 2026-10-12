@@ -7,12 +7,18 @@ All handlers return xr.Dataset where each variable name is a band name.
 
 from collections.abc import Callable
 from contextlib import nullcontext
+from functools import cache, lru_cache
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import xarray as xr
+from affine import Affine
 from numpy import ndarray
+from rasterio.features import rasterize
+from rasterio.transform import array_bounds
 from scipy.ndimage import generic_filter
+from shapely.geometry import box
 from xarray import DataArray
 
 from griddle.handlers import landfire_lfps
@@ -58,6 +64,66 @@ def _landfire_cog_url(product: str, version: str) -> str:
 def _needs_lfps(product: str, version: str) -> bool:
     """Whether `version` is only served on-demand via LFPS, not as a staged COG."""
     return version in LANDFIRE_VERSIONS[product].get("lfps_available", ())
+
+
+@lru_cache(maxsize=1)
+def _lf_map_zones() -> gpd.GeoDataFrame:
+    """LANDFIRE CONUS map zone polygons, with the zone number in ``ZONE_NUM``.
+
+    Read from the rasters bucket on first use and cached. Not loaded at import:
+    only disturbance update requests need it.
+    """
+    return gpd.read_parquet(f"gs://{RASTERS_BUCKET}/LF_MapZones.parquet")
+
+
+def _lookup_lf_zones(
+    zones: gpd.GeoDataFrame,
+    transform: Affine,
+    shape: tuple[int, int],
+    crs,
+    nodata: int = -9999,
+) -> np.ndarray:
+    """LANDFIRE map zone number for every cell of a grid.
+
+    Args:
+        zones: Map zone polygons with the zone number in ``ZONE_NUM``, in
+            any CRS.
+        transform: The grid's transform, e.g. ``da.rio.transform()``.
+        shape: Grid shape, ``(ny, nx)``.
+        crs: The grid's CRS, e.g. ``da.rio.crs``.
+        nodata: Value for cells outside every map zone.
+
+    Returns:
+        int16 zone numbers, shape ``shape``.
+
+    Most grids fall inside a single zone, which is filled directly. Only a
+    grid that crosses a zone boundary or the CONUS edge is rasterized. Each
+    cell gets the zone containing its center.
+
+    Only the grid's outline is reprojected to find the zones it touches. Its
+    edges can bend slightly after reprojection, but over typical grid sizes
+    the error is well under one 30 m cell.
+    """
+    outline = (
+        gpd.GeoSeries([box(*array_bounds(*shape, transform))], crs=crs)
+        .to_crs(zones.crs)
+        .iloc[0]
+    )
+    touching = zones.iloc[zones.sindex.query(outline, predicate="intersects")]
+
+    if touching.empty:
+        return np.full(shape, nodata, dtype=np.int16)
+    if len(touching) == 1 and touching.geometry.iloc[0].contains(outline):
+        return np.full(shape, int(touching["ZONE_NUM"].iloc[0]), dtype=np.int16)
+
+    touching = touching.to_crs(crs)
+    return rasterize(
+        zip(touching.geometry, touching["ZONE_NUM"].astype(int)),
+        out_shape=shape,
+        transform=transform,
+        fill=nodata,
+        dtype="int16",
+    )
 
 
 def _fetch_landfire_raster(

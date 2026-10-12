@@ -16,6 +16,8 @@ from griddle.handlers.landfire import (
     LANDFIRE_EXTRA_NODATA,
     _fetch_fuel_model,
     _fetch_landfire_raster,
+    _lf_map_zones,
+    _lookup_lf_zones,
     _most_frequent,
     _needs_lfps,
     _remove_non_burnable_blocks,
@@ -26,6 +28,7 @@ from griddle.handlers.landfire import (
     fetch_topography,
     scatter_categorical_boundaries,
 )
+from pyproj import Transformer
 from rasterio.transform import from_origin
 from shapely.geometry import box
 
@@ -331,6 +334,115 @@ class TestNeedsLfps:
         """Falls back cleanly if a product's config has no lfps_available key
         at all, rather than KeyError."""
         assert _needs_lfps("fbfm13", "1999") is False
+
+
+class TestLookupLfZones:
+    """Unit tests for _lookup_lf_zones, on two adjacent square zones in
+    EPSG:5070 so every expected zone is known exactly:
+
+        zone 1: x 0-1000, y 0-1000
+        zone 2: x 1000-2000, y 0-1000
+    """
+
+    ALBERS = "EPSG:5070"
+    UTM = "EPSG:32614"
+
+    @pytest.fixture
+    def zones(self) -> gpd.GeoDataFrame:
+        return gpd.GeoDataFrame(
+            {"ZONE_NUM": [1, 2]},
+            geometry=[box(0, 0, 1000, 1000), box(1000, 0, 2000, 1000)],
+            crs=self.ALBERS,
+        )
+
+    @classmethod
+    def _utm_grid(cls, center_x, center_y, cell, shape):
+        """A UTM grid centered on an EPSG:5070 point."""
+        x, y = Transformer.from_crs(cls.ALBERS, cls.UTM, always_xy=True).transform(
+            center_x, center_y
+        )
+        ny, nx = shape
+        return from_origin(x - nx * cell / 2, y + ny * cell / 2, cell, cell)
+
+    def test_grid_inside_one_zone_is_filled_without_rasterizing(
+        self, zones, monkeypatch
+    ):
+        def fail(*args, **kwargs):
+            raise AssertionError("single-zone grid should not be rasterized")
+
+        monkeypatch.setattr("griddle.handlers.landfire.rasterize", fail)
+
+        result = _lookup_lf_zones(
+            zones, from_origin(100, 900, 100, 100), (3, 3), self.ALBERS
+        )
+
+        np.testing.assert_array_equal(result, np.full((3, 3), 1))
+        assert result.dtype == np.int16
+
+    def test_grid_crossing_a_boundary(self, zones):
+        # Columns are centered at x = 850, 950 | 1050, 1150.
+        result = _lookup_lf_zones(
+            zones, from_origin(800, 900, 100, 100), (2, 4), self.ALBERS
+        )
+
+        np.testing.assert_array_equal(result, [[1, 1, 2, 2], [1, 1, 2, 2]])
+        assert result.dtype == np.int16
+
+    def test_grid_past_the_edge_of_every_zone(self, zones):
+        # Only zone 2 touches this grid, but it doesn't contain it, so the
+        # cells past x = 2000 must still be nodata.
+        result = _lookup_lf_zones(
+            zones, from_origin(1900, 500, 100, 100), (1, 3), self.ALBERS
+        )
+
+        np.testing.assert_array_equal(result, [[2, -9999, -9999]])
+
+    def test_grid_outside_every_zone(self, zones):
+        result = _lookup_lf_zones(
+            zones, from_origin(5000, 5000, 100, 100), (2, 2), self.ALBERS
+        )
+
+        np.testing.assert_array_equal(result, np.full((2, 2), -9999))
+        assert result.dtype == np.int16
+
+    @pytest.mark.parametrize("center_x, expected", [(500, 1), (1500, 2)])
+    def test_grid_in_another_crs_inside_one_zone(self, zones, center_x, expected):
+        transform = self._utm_grid(center_x, 500, cell=30, shape=(4, 4))
+
+        result = _lookup_lf_zones(zones, transform, (4, 4), self.UTM)
+
+        np.testing.assert_array_equal(result, np.full((4, 4), expected))
+
+    def test_grid_in_another_crs_crossing_a_boundary(self, zones):
+        # Two 100 m cells straddling the boundary at x = 1000; their centers
+        # are 50 m either side of it.
+        transform = self._utm_grid(1000, 500, cell=100, shape=(1, 2))
+
+        result = _lookup_lf_zones(zones, transform, (1, 2), self.UTM)
+
+        np.testing.assert_array_equal(result, [[1, 2]])
+
+
+class TestLfMapZones:
+    """Unit tests for the map-zone polygon loader."""
+
+    def setup_method(self):
+        _lf_map_zones.cache_clear()
+
+    def teardown_method(self):
+        _lf_map_zones.cache_clear()
+
+    @patch("griddle.handlers.landfire.gpd.read_parquet")
+    def test_reads_the_rasters_bucket_parquet_once(self, mock_read):
+        mock_read.return_value = MagicMock()
+
+        first = _lf_map_zones()
+        second = _lf_map_zones()
+
+        mock_read.assert_called_once()
+        assert mock_read.call_args[0][0].startswith("gs://")
+        assert mock_read.call_args[0][0].endswith("/LF_MapZones.parquet")
+        assert first is second
 
 
 class TestFetchAnnualDisturbance:

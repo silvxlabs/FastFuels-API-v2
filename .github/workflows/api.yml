@@ -111,7 +111,7 @@ jobs:
         run: |
           #          URL="${{ steps.get-url.outputs.service_url }}"
           #          deadline=$((SECONDS + 120))
-          #          until curl -fsS --max-time 10 "$URL/" >/dev/null 2>&1; do
+          #          until curl -fsS --max-time 10 "$URL/v2/openapi.json" >/dev/null 2>&1; do
           #            if [ $SECONDS -ge $deadline ]; then
           #              echo "Service did not respond within 120s"; exit 1
           #            fi

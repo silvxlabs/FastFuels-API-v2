@@ -30,7 +30,7 @@ import pandas as pd
 import xarray as xr
 
 from lib.inventory_io import read_inventory, require_complete_rows
-from treevox import measured_crowns, storage, voxelize
+from treevox import crown_feature, measured_crown, storage, voxelize
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
 
@@ -151,12 +151,47 @@ def _load_inventory_dataframe(
     return df
 
 
+def _load_measured_crowns(
+    source: dict,
+    df: pd.DataFrame,
+    grid_id: str,
+    progress: Callable[[str, int | None], None],
+) -> tuple[pd.DataFrame, crown_feature.MeasuredFootprints | None]:
+    """Load the crown Feature's footprints for a `crown_feature` grid.
+
+    Returns the inventory with its `_stem_outside_crown` flag and the
+    footprints, or the inventory unchanged and None for a parametric grid.
+    """
+    if measured_crown.crown_geometry_type(source) != "crown_feature":
+        return df, None
+    progress("Loading measured crowns...", 8)
+    measured = crown_feature.load_footprints(
+        source["crown_geometry_source"]["feature_id"], df
+    )
+    df = df.assign(_stem_outside_crown=df["tree_id"].isin(measured.stem_outside))
+    logger.info(
+        f"{len(measured.footprints)} trees have a crown in the Feature; "
+        f"{len(measured.stem_outside)} crowns do not contain their tree's "
+        f"stem and are set aside; {measured.ignored_crowns} crowns have no "
+        "live tree in the inventory and are ignored",
+        extra={"grid_id": grid_id},
+    )
+    tallest = float(df["height"].max())
+    if measured.max_top is not None and measured.max_top > tallest:
+        logger.info(
+            f"Measured crowns raise the grid top from {tallest:g} m, the "
+            f"tallest tree, to {measured.max_top:g} m",
+            extra={"grid_id": grid_id},
+        )
+    return df, measured
+
+
 def _plan_grid_layout(
     grid: dict,
     domain_gdf,
     df: pd.DataFrame,
     min_top: float | None = None,
-    footprints: dict[int, voxelize.Footprint] | None = None,
+    footprints: dict[int, measured_crown.Footprint] | None = None,
 ) -> GridLayout:
     """Compute grid dimensions, chunk sizing, and the chunk processing order.
 
@@ -181,7 +216,10 @@ def _plan_grid_layout(
         ) from e
 
     requested_keys = [b["key"] for b in grid["bands"]]
-    if grid["source"].get("max_bulk_density") is not None:
+    # The cap has nothing to scale unless a band it scales is requested.
+    if grid["source"].get("max_bulk_density") is not None and (
+        storage.CAPPED_BANDS & set(requested_keys)
+    ):
         requested_keys.append(voxelize.BULK_DENSITY_TOTAL_KEY)
     hr = dims["hr"]
     nx, ny, nz = dims["nx"], dims["ny"], dims["nz"]
@@ -189,7 +227,9 @@ def _plan_grid_layout(
     chunk_shape: tuple[int, int, int] = (nz, chunk_xy, chunk_xy)
     halo_cells = voxelize.crown_halo_cells(df, grid["source"], hr)
     if footprints:
-        halo_cells = max(halo_cells, voxelize.measured_halo_cells(df, footprints, dims))
+        halo_cells = max(
+            halo_cells, measured_crown.measured_halo_cells(df, footprints, dims)
+        )
     if halo_cells > voxelize.MAX_HALO_CELLS:
         raise ProcessingError(
             code="CROWN_TOO_WIDE",
@@ -466,7 +506,7 @@ def _build_payloads(
     layout: GridLayout,
     source_config: dict,
     grid_id: str,
-    footprints: dict[int, voxelize.Footprint] | None = None,
+    footprints: dict[int, measured_crown.Footprint] | None = None,
 ) -> list[dict]:
     """Split a halo-extended union Dataset into per-chunk worker payloads.
 
@@ -543,7 +583,7 @@ def _process_batch(
     source: dict,
     grid_id: str,
     path: str,
-    footprints: dict[int, voxelize.Footprint] | None = None,
+    footprints: dict[int, measured_crown.Footprint] | None = None,
 ) -> dict:
     """Run one batch: union-read → split payloads → pool.map → merge → write.
 
@@ -664,7 +704,7 @@ def _run_voxelization_batches(
     grid_id: str,
     path: str,
     progress: Callable[[str, int | None], None],
-    footprints: dict[int, voxelize.Footprint] | None = None,
+    footprints: dict[int, measured_crown.Footprint] | None = None,
 ) -> BatchStats:
     """Create one persistent Pool and drive every batch through `_process_batch`.
 
@@ -769,7 +809,8 @@ def voxelize_inventory(
       3. storage.init_store        — write empty zarr metadata.
       4. _prepare_tree_chunks      — cache keys + per-chunk assignment + sort.
       5. _run_voxelization_batches — persistent Pool, batch loop.
-      6. storage.cap_bulk_density   — only with `max_bulk_density`.
+      6. storage.cap_bulk_density   — only with `max_bulk_density` and a
+                                      band it scales.
       7. _build_voxelization_result.
     """
     grid_id = grid["id"]
@@ -788,27 +829,7 @@ def voxelize_inventory(
         extra={"grid_id": grid_id},
     )
 
-    measured = None
-    if voxelize.crown_geometry_type(source) == "crown_feature":
-        progress("Loading measured crowns...", 8)
-        measured = measured_crowns.load_footprints(
-            source["crown_geometry_source"]["feature_id"], df
-        )
-        df = df.assign(_stem_outside_crown=df["tree_id"].isin(measured.stem_outside))
-        logger.info(
-            f"{len(measured.footprints)} trees have a crown in the Feature; "
-            f"{len(measured.stem_outside)} crowns do not contain their tree's "
-            f"stem and are set aside; {measured.ignored_crowns} crowns have no "
-            "live tree in the inventory and are ignored",
-            extra={"grid_id": grid_id},
-        )
-        tallest = float(df["height"].max())
-        if measured.max_top is not None and measured.max_top > tallest:
-            logger.info(
-                f"Measured crowns raise the grid top from {tallest:g} m, the "
-                f"tallest tree, to {measured.max_top:g} m",
-                extra={"grid_id": grid_id},
-            )
+    df, measured = _load_measured_crowns(source, df, grid_id, progress)
 
     progress("Computing grid extent...", 10)
     footprints = measured.footprints if measured else None
@@ -839,7 +860,7 @@ def voxelize_inventory(
         df, layout, source, grid_id, path, progress, footprints
     )
 
-    if source.get("max_bulk_density") is not None:
+    if voxelize.BULK_DENSITY_TOTAL_KEY in layout.requested_keys:
         progress("Capping bulk density...", 92)
         cap_start = time.monotonic()
         storage.cap_bulk_density(path, float(source["max_bulk_density"]))

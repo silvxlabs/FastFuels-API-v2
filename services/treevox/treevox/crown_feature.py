@@ -1,4 +1,4 @@
-"""Measured crown footprints for tree voxelization (#617).
+"""Load a crown Feature's footprints for tree voxelization (#617).
 
 Handler-side module — never imported by spawned workers.
 
@@ -6,7 +6,7 @@ A crown Feature holds one polygon per segmented crown, keyed by `tree_id` and
 traced along the edges of the CHM grid it was built from. Rasterizing the
 polygons back onto that CHM lattice recovers each crown's cells exactly; the
 CHM gives each cell's top. Workers receive one `Footprint` per tree and build
-the crown with fastfuels-core (`treevox.voxelize.build_measured_biomass`).
+the crown with fastfuels-core (`treevox.measured_crown`).
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from lib.config import FEATURES_BUCKET, GRIDS_BUCKET
 from lib.zarr_utils import load_zarr
 from treevox.errors import ProcessingError
 from treevox.firestore_io import load_feature
-from treevox.voxelize import Footprint, stem_in_crown
+from treevox.measured_crown import Footprint, stem_in_crown
 
 logger = logging.getLogger(__name__)
 

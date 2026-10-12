@@ -4,8 +4,10 @@ This is the ONLY treevox module that workers may import. Every import here
 counts against per-worker spawn startup cost — do not add more without
 weighing the cost (see TREEVOX.md on worker isolation).
 
-Specifically do NOT import: xarray, rioxarray, gcsfs, zarr, treevox.storage,
-treevox.main. Workers receive numpy arrays + plain dicts and return the same.
+It imports only the worker-safe compute modules, `treevox.voxelize` and
+`treevox.measured_crown`. Specifically do NOT import: xarray, rioxarray, gcsfs,
+zarr, treevox.storage, treevox.crown_feature, treevox.main. Workers receive
+numpy arrays + plain dicts and return the same.
 """
 
 from __future__ import annotations
@@ -16,11 +18,8 @@ import traceback
 
 import numpy as np
 
-from treevox.voxelize import (
-    build_chunk_cache,
-    plan_measured_crowns,
-    voxelize_chunk,
-)
+from treevox.measured_crown import plan_measured_crowns
+from treevox.voxelize import build_chunk_cache, voxelize_chunk
 
 
 def run(payload: dict) -> dict:

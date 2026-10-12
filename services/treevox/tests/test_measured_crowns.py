@@ -17,8 +17,9 @@ import rioxarray  # noqa: F401
 import shapely
 import xarray as xr
 from affine import Affine
-from fastfuels_core.voxelization import voxelize_measured_crown
-from treevox import measured_crowns, storage
+from fastfuels_core.voxelization import VoxelizedTree, voxelize_measured_crown
+from treevox import crown_feature, storage
+from treevox import measured_crown as mc
 from treevox import voxelize as v
 from treevox._worker import run as worker_run
 from treevox.handlers import voxelize as handler
@@ -96,7 +97,7 @@ def _disc(cx, cy, radius, res=1.0, top=16.0, shift=(0.0, 0.0)):
     yc = y_north - (rows + 0.5) * res
     mask = np.hypot(xc - cx, yc - cy) <= radius
     heights = top(xc, yc) if callable(top) else np.full(mask.shape, float(top))
-    return v.Footprint(
+    return mc.Footprint(
         mask=mask,
         top=np.where(mask, heights, np.nan),
         origin=(float(x_west), float(y_north)),
@@ -120,11 +121,19 @@ def _crown(row, footprint, profile, hr=1.0, vr=1.0, origin=(0.0, 40.0)):
     )
 
 
+def _measured_biomass(tree, footprint, hr=1.0, vr=1.0, seed=1):
+    """One measured crown's biomass and offset, as `voxelize_chunk` builds it."""
+    occupancy = mc.measured_crown_occupancy(tree, footprint, hr, vr, 0.0, 40.0, seed)
+    if occupancy is None:
+        return None
+    sampled, offset = occupancy
+    vt = VoxelizedTree(tree, sampled, hr, vr)
+    return v.distribute_component_biomass(vt, "foliage"), offset
+
+
 def _measured(row, footprint, profile="purves", hr=1.0, vr=1.0, seed=1):
     tree = v.build_tree(row, _source(profile))
-    return tree, v.build_measured_biomass(
-        tree, footprint, hr, vr, 0.0, 40.0, "foliage", seed
-    )
+    return tree, _measured_biomass(tree, footprint, hr, vr, seed)
 
 
 def _column_z(biomass, offset, footprint, cell, hr=1.0, origin=(0.0, 40.0)):
@@ -143,7 +152,7 @@ def _column_z(biomass, offset, footprint, cell, hr=1.0, origin=(0.0, 40.0)):
 def keep_every_voxel(monkeypatch):
     """Occupy every crown voxel, so occupied voxels show the crown's shape."""
     monkeypatch.setattr(
-        v, "sample_occupancy", lambda vf, field, n, seed=None: vf.copy()
+        mc, "sample_occupancy", lambda vf, field, n, seed=None: vf.copy()
     )
 
 
@@ -245,7 +254,7 @@ class TestCrownShape:
 
     def test_crown_entirely_below_base_has_no_volume(self):
         footprint = _disc(20.0, 20.0, 3.0, top=CBH)
-        assert not v.footprint_has_volume(footprint, CBH, 1.0)
+        assert not mc.footprint_has_volume(footprint, CBH, 1.0)
         _, built = _measured(_row(), footprint)
         assert built is None
 
@@ -322,9 +331,7 @@ class TestMass:
             "component_states": {"foliage": {"live": 1.0, "dead": 0.0}},
         }
         tree = v.build_tree(row, source)
-        biomass, _ = v.build_measured_biomass(
-            tree, _disc(20.0, 20.0, 3.0), 1.0, 1.0, 0.0, 40.0, "foliage", 3
-        )
+        biomass, _ = _measured_biomass(tree, _disc(20.0, 20.0, 3.0), seed=3)
         assert biomass.sum() == pytest.approx(7.5, rel=1e-9)
 
 
@@ -358,16 +365,16 @@ def _payload(trees, footprints, source, hr=1.0, vr=1.0, shape=(24, 40, 40)):
 
 class TestStemInCrown:
     def test_stem_cell_in_crown(self):
-        assert v.stem_in_crown(20.0, 20.0, _disc(20.0, 20.0, 3.0))
+        assert mc.stem_in_crown(20.0, 20.0, _disc(20.0, 20.0, 3.0))
 
     def test_stem_inside_box_but_not_crown(self):
         # A disc's box corner is outside the disc.
         footprint = _disc(20.0, 20.0, 3.0)
         x0, y0 = footprint.origin
-        assert not v.stem_in_crown(x0 + 0.5, y0 - 0.5, footprint)
+        assert not mc.stem_in_crown(x0 + 0.5, y0 - 0.5, footprint)
 
     def test_stem_outside_box(self):
-        assert not v.stem_in_crown(5.0, 5.0, _disc(20.0, 20.0, 3.0))
+        assert not mc.stem_in_crown(5.0, 5.0, _disc(20.0, 20.0, 3.0))
 
     @pytest.mark.parametrize("res", [0.5, 1.0, 2.0])
     def test_cell_edges_follow_floor(self, res):
@@ -376,7 +383,7 @@ class TestStemInCrown:
         x0, y0 = footprint.origin
         for r, c in zip(rows, cols):
             # The west and north edges belong to the cell, like etcher's seeds.
-            assert v.stem_in_crown(x0 + c * res, y0 - r * res - 1e-9, footprint)
+            assert mc.stem_in_crown(x0 + c * res, y0 - r * res - 1e-9, footprint)
 
 
 class TestFallbackAndMatching:
@@ -387,7 +394,7 @@ class TestFallbackAndMatching:
             3: _disc(30.0, 20.0, 3.0, top=CBH - 1.0),
             99: _disc(5.0, 5.0, 2.0),  # crown of a tree not in the chunk
         }
-        measured, reasons = v.plan_measured_crowns(trees, footprints, 1.0)
+        measured, reasons = mc.plan_measured_crowns(trees, footprints, 1.0)
         assert set(measured) == {1}
         assert reasons == {
             1: "measured",
@@ -400,7 +407,7 @@ class TestFallbackAndMatching:
             _stem_outside_crown=[False, True]
         )
         footprints = {1: _disc(20.0, 20.0, 3.0, top=16.0)}
-        measured, reasons = v.plan_measured_crowns(trees, footprints, 1.0)
+        measured, reasons = mc.plan_measured_crowns(trees, footprints, 1.0)
         assert set(measured) == {1}
         assert reasons == {1: "measured", 2: "parametric_stem_outside_crown"}
 
@@ -479,6 +486,24 @@ class TestFallbackAndMatching:
             "parametric_stem_outside_crown": 0,
             "parametric_no_volume": 0,
         }
+        assert set(np.unique(result["buffers"]["tree_id"])) == {0, 1}
+
+    def test_tree_whose_mass_fails_is_skipped_not_fatal(self):
+        """Species 7199 builds a Tree, but NSVB has no foliage mass for it.
+
+        The parametric path skips such a tree; the measured path must too,
+        rather than failing the whole chunk.
+        """
+        failing = _row(2, x=10.5, y=10.5).copy()
+        failing["fia_species_code"] = 7199
+        trees = _trees(_row(1), failing)
+        footprints = {
+            1: _disc(20.0, 20.0, 3.0, top=16.0),
+            2: _disc(10.5, 10.5, 3.0, top=16.0),
+        }
+        result = worker_run(_payload(trees, footprints, _source("purves")))
+        assert "error" not in result, result.get("error")
+        assert result["crown_geometry_counts"]["measured"] == 1
         assert set(np.unique(result["buffers"]["tree_id"])) == {0, 1}
 
     def test_empty_footprints_draw_everything_parametrically(self):
@@ -577,7 +602,7 @@ class TestFootprintsFromCrowns:
             self._cells_polygon(transform, cells_a),
             self._cells_polygon(transform, cells_b),
         ]
-        footprints = measured_crowns.footprints_from_crowns(
+        footprints = crown_feature.footprints_from_crowns(
             np.array([11, 22]), np.array(geoms, dtype=object), chm, transform
         )
         for tree_id, cells in ((11, cells_a), (22, cells_b)):
@@ -597,11 +622,11 @@ class TestFootprintsFromCrowns:
     def test_crown_without_cells_gets_empty_footprint(self):
         chm, transform = self._chm()
         sliver = shapely.box(100.01, 200.01, 100.02, 200.02)
-        footprints = measured_crowns.footprints_from_crowns(
+        footprints = crown_feature.footprints_from_crowns(
             np.array([5]), np.array([sliver], dtype=object), chm, transform
         )
         assert not footprints[5].mask.any()
-        assert not v.footprint_has_volume(footprints[5], 0.0, 1.0)
+        assert not mc.footprint_has_volume(footprints[5], 0.0, 1.0)
 
 
 class TestLoadFootprints:
@@ -626,7 +651,7 @@ class TestLoadFootprints:
             }
         )
         monkeypatch.setattr(
-            measured_crowns,
+            crown_feature,
             "load_feature",
             lambda fid: {
                 "domain_id": "d1",
@@ -634,14 +659,14 @@ class TestLoadFootprints:
             },
         )
         monkeypatch.setattr(
-            measured_crowns.gpd,
+            crown_feature.gpd,
             "read_parquet",
-            lambda path, columns: measured_crowns.gpd.GeoDataFrame(
+            lambda path, columns: crown_feature.gpd.GeoDataFrame(
                 crowns, geometry="geometry"
             ),
         )
         monkeypatch.setattr(
-            measured_crowns, "load_zarr", lambda path: xr.Dataset({"chm": chm})
+            crown_feature, "load_zarr", lambda path: xr.Dataset({"chm": chm})
         )
 
     def test_matches_by_tree_id_and_ignores_removed_trees(self, monkeypatch):
@@ -653,7 +678,7 @@ class TestLoadFootprints:
                 "y": [12.0, 31.0, 5.0],
             }
         )
-        result = measured_crowns.load_footprints("f1", trees)
+        result = crown_feature.load_footprints("f1", trees)
         assert set(result.footprints) == {1, 3}
         assert result.ignored_crowns == 1  # tree 2 is not in the inventory
         assert result.footprints[1].mask.sum() == 16
@@ -671,9 +696,9 @@ class TestLoadFootprints:
                 "y": [12.0, 21.0, 31.0],
             }
         )
-        whole = measured_crowns.load_footprints("f1", trees)
-        monkeypatch.setattr(measured_crowns, "TILE_CELLS", 7)
-        tiled = measured_crowns.load_footprints("f1", trees)
+        whole = crown_feature.load_footprints("f1", trees)
+        monkeypatch.setattr(crown_feature, "TILE_CELLS", 7)
+        tiled = crown_feature.load_footprints("f1", trees)
         assert set(tiled.footprints) == set(whole.footprints) == {1, 2, 3}
         for tree_id, footprint in whole.footprints.items():
             other = tiled.footprints[tree_id]
@@ -692,7 +717,7 @@ class TestLoadFootprints:
                 "y": [12.0, 5.0],
             }
         )
-        result = measured_crowns.load_footprints("f1", trees)
+        result = crown_feature.load_footprints("f1", trees)
         assert set(result.footprints) == {1}
         assert result.stem_outside == frozenset({3})
 
@@ -863,7 +888,7 @@ class TestVoxelizeInventoryWithCrownFeature:
         def fake_load_footprints(feature_id, trees):
             loaded.append((feature_id, sorted(trees["tree_id"])))
             # Tree 2's crown was set aside: it does not hold tree 2's stem.
-            return measured_crowns.MeasuredFootprints(
+            return crown_feature.MeasuredFootprints(
                 footprints=footprints,
                 max_top=22.4,
                 ignored_crowns=4,
@@ -872,7 +897,7 @@ class TestVoxelizeInventoryWithCrownFeature:
 
         monkeypatch.setattr(handler, "read_inventory", lambda *a, **k: df.copy())
         monkeypatch.setattr(
-            handler.measured_crowns, "load_footprints", fake_load_footprints
+            handler.crown_feature, "load_footprints", fake_load_footprints
         )
         monkeypatch.setattr(
             handler.storage, "gcs_path", lambda grid_id: str(tmp_path / grid_id)
@@ -918,7 +943,7 @@ class TestVoxelizeInventoryWithCrownFeature:
         def fail(*a, **k):
             raise AssertionError("parametric grids read no crown Feature")
 
-        monkeypatch.setattr(handler.measured_crowns, "load_footprints", fail)
+        monkeypatch.setattr(handler.crown_feature, "load_footprints", fail)
         result = handler.voxelize_inventory(
             _grid(_source(geometry="parametric")), _domain(), lambda *a, **k: None
         )
@@ -946,11 +971,11 @@ class TestMeasuredHaloCells:
         df = _trees(_row(1, x=20.5, y=20.5))
         # Disc cells span x = 7 .. 34, so 13 cells west and 13 east of col 20.
         footprints = {1: _disc(20.5, 20.5, 13.0)}
-        assert v.measured_halo_cells(df, footprints, self._dims()) == 13
+        assert mc.measured_halo_cells(df, footprints, self._dims()) == 13
 
     def test_trees_without_a_footprint_are_ignored(self):
         df = _trees(_row(1, x=20.5, y=20.5))
-        assert v.measured_halo_cells(df, {2: _disc(5.5, 5.5, 30.0)}, self._dims()) == 0
+        assert mc.measured_halo_cells(df, {2: _disc(5.5, 5.5, 30.0)}, self._dims()) == 0
 
     @pytest.mark.parametrize("hr", [0.3, 0.5, 1.0, 2.0])
     @pytest.mark.parametrize("shift", [(0.0, 0.0), (0.37, -0.81), (0.5, 0.5)])
@@ -973,7 +998,7 @@ class TestMeasuredHaloCells:
             crown = _crown(row, footprint, "purves", hr=hr, origin=(0.0, 40.0))
             if crown is None:
                 continue
-            reach = v.measured_halo_cells(_trees(row), {1: footprint}, dims)
+            reach = mc.measured_halo_cells(_trees(row), {1: footprint}, dims)
             stem_col = int(np.floor(x / hr))
             stem_row = int(np.floor((40.0 - y) / hr))
             _, r0, c0 = crown.offset

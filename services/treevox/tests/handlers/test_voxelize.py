@@ -1316,6 +1316,12 @@ class TestMaxBulkDensity:
         # Occupancy is not a bulk density, so it is not scaled.
         assert ds["volume_fraction"].values.max() == 2.0
 
+    def test_no_scratch_band_without_a_band_to_cap(self):
+        grid = _base_grid(bands=[{"key": "volume_fraction"}, {"key": "spcd"}])
+        grid["source"]["max_bulk_density"] = 1.5
+        layout = handler._plan_grid_layout(grid, _fake_domain(), _sample_df())
+        assert handler.voxelize.BULK_DENSITY_TOTAL_KEY not in layout.requested_keys
+
     def test_scratch_band_is_removed(self, tmp_path, monkeypatch):
         ds = self._run(tmp_path, monkeypatch, cap=1.5)
         assert handler.voxelize.BULK_DENSITY_TOTAL_KEY not in ds.data_vars

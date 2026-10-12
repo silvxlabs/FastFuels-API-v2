@@ -70,8 +70,9 @@ class VoxelizationResult:
 class GridLayout:
     """Derived layout for a voxelization job.
 
-    Bundles the grid dimensions, requested band keys, chunk sizing, and the
-    deterministic order in which chunks will be processed. Constructed once by
+    Bundles the grid dimensions, requested band keys, chunk sizing, the halo
+    width every chunk buffer and batch union uses, and the deterministic order
+    in which chunks will be processed. Constructed once by
     `_plan_grid_layout` and threaded through the rest of the stages so
     downstream functions take one object instead of ~8 scalars.
     """
@@ -81,6 +82,7 @@ class GridLayout:
     chunk_xy: int
     chunk_shape: tuple[int, int, int]
     chunk_locations: list[tuple[int, int]]
+    halo_cells: int
 
 
 def _pick_worker_count() -> int:
@@ -165,6 +167,17 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
     nx, ny, nz = dims["nx"], dims["ny"], dims["nz"]
     chunk_xy = min(voxelize.CHUNK_SIZE_HORIZONTAL, nx, ny)
     chunk_shape: tuple[int, int, int] = (nz, chunk_xy, chunk_xy)
+    halo_cells = voxelize.crown_halo_cells(df, grid["source"], hr)
+    if halo_cells > voxelize.MAX_HALO_CELLS:
+        raise ProcessingError(
+            code="CROWN_TOO_WIDE",
+            message=f"The widest crown in the inventory reaches about "
+            f"{halo_cells * hr:g} m from its stem, which is {halo_cells} cells "
+            f"at a horizontal resolution of {hr:g} m. Crowns may reach at most "
+            f"{voxelize.MAX_HALO_CELLS} cells.",
+            suggestion="Use a coarser horizontal resolution, or check the "
+            "inventory for implausible crown radii or diameters.",
+        )
 
     num_row_chunks = int(math.ceil(ny / chunk_xy))
     num_col_chunks = int(math.ceil(nx / chunk_xy))
@@ -178,7 +191,7 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
         f"Grid dimensions: {nz}x{ny}x{nx} (z, y, x); "
         f"chunk_xy={chunk_xy} ({num_row_chunks}x{num_col_chunks} chunks, "
         f"{num_row_chunks * num_col_chunks} total); "
-        f"hr={hr}m, vr={dims['vr']}m",
+        f"halo={halo_cells} cells; hr={hr}m, vr={dims['vr']}m",
         extra={"grid_id": grid["id"]},
     )
     return GridLayout(
@@ -187,6 +200,7 @@ def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
         chunk_xy=chunk_xy,
         chunk_shape=chunk_shape,
         chunk_locations=chunk_locations,
+        halo_cells=halo_cells,
     )
 
 
@@ -451,7 +465,7 @@ def _build_payloads(
     payloads: list[dict] = []
     for row, col in batch:
         chunk_y, chunk_x = voxelize.chunk_slice(
-            (row, col), ny, nx, layout.chunk_xy, overlap_cells=voxelize.OVERLAP_CELLS
+            (row, col), ny, nx, layout.chunk_xy, overlap_cells=layout.halo_cells
         )
         rel_y, rel_x = _chunk_relative_slices(chunk_y, chunk_x, union_y, union_x)
         expected_shape = (
@@ -511,7 +525,7 @@ def _process_batch(
         dims["ny"],
         dims["nx"],
         layout.chunk_xy,
-        overlap_cells=voxelize.OVERLAP_CELLS,
+        overlap_cells=layout.halo_cells,
     )
 
     read_start = time.monotonic()

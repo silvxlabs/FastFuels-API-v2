@@ -525,7 +525,7 @@ class TestBatchUnionSlices:
 
     def test_empty_batch_raises(self):
         with pytest.raises(ValueError):
-            voxelize.batch_union_slices([], 100, 100, chunk_xy=50)
+            voxelize.batch_union_slices([], 100, 100, chunk_xy=50, overlap_cells=10)
 
 
 class TestChunkSlice:
@@ -540,6 +540,70 @@ class TestChunkSlice:
         )
         assert (s_y.start, s_y.stop) == (u_y.start, u_y.stop)
         assert (s_x.start, s_x.stop) == (u_x.start, u_x.stop)
+
+
+class TestCrownHaloCells:
+    @staticmethod
+    def _radius_config(profile="purves"):
+        config = base_source_config()
+        config["crown_profile_model"] = profile
+        config["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+        }
+        return config
+
+    def test_small_crowns_keep_minimum_halo(self):
+        df = fake_tree_df(dbh=20.0)
+        halo = voxelize.crown_halo_cells(df, base_source_config(), hr=2.0)
+        assert halo == voxelize.OVERLAP_CELLS
+
+    def test_inventory_column_max_sets_halo(self):
+        df = fake_tree_df(n=2).assign(crown_radius=[3.0, 10.0])
+        assert voxelize.crown_halo_cells(df, self._radius_config(), hr=0.5) == 20
+        df = fake_tree_df(n=2).assign(crown_radius=[3.0, 12.3])
+        assert voxelize.crown_halo_cells(df, self._radius_config(), hr=1.0) == 13
+
+    def test_negative_column_radius_counts_at_its_magnitude(self):
+        """Core draws a negative radius at its absolute value."""
+        df = fake_tree_df(n=2).assign(crown_radius=[3.0, -12.0])
+        assert voxelize.crown_halo_cells(df, self._radius_config(), hr=0.5) == 24
+
+    def test_null_column_value_uses_allometric_radius(self):
+        df = fake_tree_df(n=2, dbh=80.0, height=20.0, crown_ratio=0.6).assign(
+            crown_radius=[1.0, np.nan]
+        )
+        config = self._radius_config()
+        allometric = voxelize.build_tree(df.iloc[1], config).max_crown_radius
+        halo = voxelize.crown_halo_cells(df, config, hr=0.1)
+        assert halo == math.ceil(allometric / 0.1)
+
+    @pytest.mark.parametrize("profile", ["purves", "beta", "cone", "dual_ellipsoid"])
+    def test_allometric_halo_covers_widest_built_tree(self, profile):
+        df = pd.DataFrame(
+            {
+                "x": [1.0, 2.0, 3.0],
+                "y": [1.0, 2.0, 3.0],
+                "fia_species_code": [131, 202, 122],
+                "fia_status_code": [1, 1, 1],
+                "dbh": [80.0, 40.0, 25.0],
+                "height": [20.0, 30.0, 12.0],
+                "crown_ratio": [0.6, 0.5, 0.8],
+            }
+        )
+        config = base_source_config()
+        config["crown_profile_model"] = profile
+        widest = max(
+            voxelize.build_tree(row, config).max_crown_radius
+            for _, row in df.iterrows()
+        )
+        halo = voxelize.crown_halo_cells(df, config, hr=0.1)
+        assert halo == math.ceil(widest / 0.1)
+
+    def test_unknown_species_is_skipped(self):
+        df = fake_tree_df(n=2, species=999999)
+        halo = voxelize.crown_halo_cells(df, base_source_config(), hr=0.1)
+        assert halo == voxelize.OVERLAP_CELLS
 
 
 # build_chunk_cache (mocked fastfuels-core)

@@ -198,7 +198,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "`volume_fraction`. `fuel_moisture.live` defaults to a uniform "
             "100% because no `moisture_model` is provided. `spcd` and "
             "`tree_id` record which species and inventory record occupy "
-            "each voxel (tallest tree wins when crowns overlap). "
+            "each voxel. "
             "`volume_fraction` sums per-tree crown occupancy and exceeds "
             "1.0 where crowns overlap — useful for diagnosing dense canopy. "
             "Branchwood and fine bands are accepted by the API but currently "

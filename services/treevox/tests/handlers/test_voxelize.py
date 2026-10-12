@@ -551,7 +551,7 @@ class TestBuildPayloadsZeroTrees:
             dims["ny"],
             dims["nx"],
             layout.chunk_xy,
-            overlap_cells=handler.voxelize.OVERLAP_CELLS,
+            overlap_cells=layout.halo_cells,
         )
         union_ds = xr.Dataset(
             {
@@ -879,7 +879,7 @@ class TestHaloMergeAcrossChunks:
             layout.dims["ny"],
             layout.dims["nx"],
             layout.chunk_xy,
-            overlap_cells=handler.voxelize.OVERLAP_CELLS,
+            overlap_cells=layout.halo_cells,
         )
         span_y = union_y.stop - union_y.start
         span_x = union_x.stop - union_x.start
@@ -1061,3 +1061,135 @@ class TestHaloMergeAcrossChunks:
         # Species code present on both sides of the seam.
         assert (spcd[:, :, 17:20] == 131).any()
         assert (spcd[:, :, 20:22] == 131).any()
+
+
+class TestHaloCoversWideCrowns:
+    """#666: crowns wider than the halo must not lose foliage at chunk edges.
+
+    Runs the real handler batch path (`_process_batch` -> `_build_payloads` ->
+    `worker_run` -> `masked_merge`) with real fastfuels-core against an
+    in-memory store, one chunk per batch. The same tree rendered with its stem
+    one cell inside a chunk edge must match the mid-chunk render, shifted.
+    """
+
+    CHUNK_XY = 60
+
+    def _render(self, monkeypatch, df, source, hr, bands):
+        from treevox import storage
+
+        monkeypatch.setattr(handler.voxelize, "CHUNK_SIZE_HORIZONTAL", self.CHUNK_XY)
+        # Same RNG in every chunk so both placements draw the same realization.
+        monkeypatch.setattr(handler, "_chunk_rng_seed", lambda *a: 7)
+
+        domain = SimpleNamespace(
+            total_bounds=np.array(
+                [0.0, 0.0, 2 * self.CHUNK_XY * hr, self.CHUNK_XY * hr]
+            ),
+            crs="EPSG:32610",
+        )
+        grid = {"id": "g-666", "source": source, "bands": [{"key": k} for k in bands]}
+        layout = handler._plan_grid_layout(grid, domain, df)
+        assert layout.chunk_xy == self.CHUNK_XY
+        assert len(layout.chunk_locations) == 2
+
+        dims = layout.dims
+        shape = (dims["nz"], dims["ny"], dims["nx"])
+        store = xr.Dataset(
+            {
+                k: (
+                    ("z", "y", "x"),
+                    np.full(shape, storage.BAND_SPECS[k][1], storage.BAND_SPECS[k][0]),
+                )
+                for k in bands
+            }
+        )
+
+        def read_union(path, y, x):
+            return store.isel(y=y, x=x).copy(deep=True)
+
+        def write_union(path, merged, y, x):
+            for k in bands:
+                store[k].values[:, y, x] = merged[k].values
+
+        monkeypatch.setattr(handler.storage, "read_union", read_union)
+        monkeypatch.setattr(handler.storage, "write_union", write_union)
+
+        df = df.assign(tree_id=np.arange(1, len(df) + 1, dtype="int32"))
+        df = handler._prepare_tree_chunks(df, layout, source)
+        chunk_indices = df.groupby(["row_chunk", "col_chunk"], sort=False).indices
+        pool = SimpleNamespace(map=lambda fn, payloads: [fn(p) for p in payloads])
+        for i, loc in enumerate(layout.chunk_locations):
+            handler._process_batch(
+                pool,
+                [loc],
+                i + 1,
+                len(layout.chunk_locations),
+                df,
+                chunk_indices,
+                layout,
+                source,
+                grid["id"],
+                "mem://g-666",
+            )
+        return {k: store[k].values for k in bands}
+
+    def _tree(self, col, row, hr, **extra):
+        y_max = self.CHUNK_XY * hr
+        return pd.DataFrame(
+            {
+                "x": [(col + 0.5) * hr],
+                "y": [y_max - (row + 0.5) * hr],
+                "fia_species_code": [131],
+                "fia_status_code": [1],
+                "dbh": [80.0],
+                "height": [20.0],
+                "crown_ratio": [0.6],
+                **{k: [v] for k, v in extra.items()},
+            }
+        )
+
+    def _assert_edge_matches_mid(self, monkeypatch, source, hr, reach_cells, **extra):
+        assert reach_cells > handler.voxelize.OVERLAP_CELLS
+        bands = ["volume_fraction", "bulk_density.foliage.live", "spcd", "tree_id"]
+        mid_col = self.CHUNK_XY // 2
+        edge_col = self.CHUNK_XY + 1  # one cell inside chunk (0, 1)'s west edge
+        row = self.CHUNK_XY // 2
+
+        mid = self._render(
+            monkeypatch, self._tree(mid_col, row, hr, **extra), source, hr, bands
+        )
+        edge = self._render(
+            monkeypatch, self._tree(edge_col, row, hr, **extra), source, hr, bands
+        )
+
+        shift = edge_col - mid_col
+        vf = mid["volume_fraction"]
+        occupied = np.nonzero(vf.any(axis=(0, 1)))[0]
+        # The crown really does reach past the default halo, west of the stem.
+        assert mid_col - occupied.min() == reach_cells
+        assert not vf[:, :, -shift:].any()
+
+        for key in bands:
+            expected = np.zeros_like(mid[key])
+            expected[:, :, shift:] = mid[key][:, :, :-shift]
+            np.testing.assert_array_equal(
+                edge[key], expected, err_msg=f"band {key} lost crown overhang"
+            )
+
+    def test_allometric_crown_wider_than_default_halo(self, monkeypatch):
+        """Purves radius ~5.5 m at 0.25 m resolution reaches 22 cells."""
+        source = _base_grid()["source"]
+        source["resolution"] = (0.25, 0.25, 1.0)
+        self._assert_edge_matches_mid(monkeypatch, source, hr=0.25, reach_cells=22)
+
+    def test_inventory_crown_radius_10m_at_half_meter(self, monkeypatch):
+        """10 m `crown_radius` column at 0.5 m resolution reaches 20 cells."""
+        source = _base_grid()["source"]
+        source["resolution"] = (0.5, 0.5, 1.0)
+        source["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+        }
+        self._assert_edge_matches_mid(
+            monkeypatch, source, hr=0.5, reach_cells=20, crown_radius=10.0
+        )

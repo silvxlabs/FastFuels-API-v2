@@ -41,7 +41,9 @@ Job
 
 ### Halo (per-chunk, clamped at grid edges)
 
-Each chunk carries an `OVERLAP_CELLS = 10` halo on every side, clamped to `[0, nx)` / `[0, ny)` at the outer grid boundary. At `hr = 1 m` that's 10 m of physical overlap; at `hr = 2 m`, 20 m. Halos let crowns whose stem is near a chunk boundary render into the neighbor's cells correctly.
+Each chunk carries a halo on every side, clamped to `[0, nx)` / `[0, ny)` at the outer grid boundary. Trees are assigned only to the chunk holding their stem, so the halo must be as wide as the widest crown: `crown_halo_cells` sizes it per job as `ceil(max crown radius / hr)`, using the `max_crown_radius_source` inventory column where set and the allometric radius otherwise, with `OVERLAP_CELLS = 10` as the minimum (#666). `_plan_grid_layout` stores it on `GridLayout.halo_cells`; `chunk_slice` and `batch_union_slices` both take it from there, so chunk buffers always sit inside the batch union. Halos let crowns whose stem is near a chunk boundary render into the neighbor's cells correctly.
+
+A wider halo grows every chunk buffer to `nz × (chunk_xy + 2·halo)²` and the batch union to `nz × (2·chunk_xy + 2·halo)²` for a 2×2 batch. At `chunk_xy = 500` a 40-cell halo (20 m crown at 0.5 m) makes buffers 1.24× the 10-cell size.
 
 ### Per-batch flow
 
@@ -67,7 +69,7 @@ The geometric crown profiles (`cone`, `cylinder`, `single_/dual_ellipsoid`, `sin
 ## Chunk padding model
 
 Two primitives together ensure crowns near chunk boundaries render correctly:
-1. **Union reads with halo** — each batch reads a region covering all chunks in the batch plus a 10-cell halo. Trees placed near a chunk interior boundary render into the halo.
+1. **Union reads with halo** — each batch reads a region covering all chunks in the batch plus the job's halo (see "Halo" above). Trees placed near a chunk interior boundary render into the halo.
 2. **Masked merge on write** — after workers return, the voxelize handler merges per-chunk buffers into the union by `mask = data != fill_value`. Two chunks touching the same halo cell combine without clobbering.
 
 V2 does **not** pad the outer grid itself (v1's `horizontal_padding_m = 10`). `compute_grid_dimensions` just snaps the domain's total bounds outward to the nearest multiple of `hr`. Domain-edge padding, where needed, is the domain resource's job via `pad_to_resolution` upstream.
@@ -102,4 +104,3 @@ V2's `masked_merge` uses `mask = data != BAND_SPECS[key].fill_value` per band, s
 - Moisture methods beyond `uniform` — schema permits them; add when needed.
 - Per-tree SAVR / fuel-moisture overrides — current `fuel_moisture.live` is uniform per moisture_model contract.
 - Shared-memory worker payloads (Constraint #4 optimization) — defer until profiling shows IPC dominates wall time.
-- Tree-crown boundary overflow correctness beyond the halo+merge approach — at the canonical 1 m / 2 m horizontal resolutions, the 10-cell halo exceeds typical crown radii while staying tiny relative to the 500-cell chunk size, so boundary artifacts are sub-1%.

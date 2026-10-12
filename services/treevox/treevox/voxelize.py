@@ -14,7 +14,9 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from fastfuels_core.crown_profile_models.beta import BetaCrownProfile
 from fastfuels_core.crown_profile_models.purves import PurvesCrownProfile
+from fastfuels_core.ref_data import SPCD_PARAMS
 from fastfuels_core.trees import Tree
 from fastfuels_core.voxelization import (
     VoxelizedTree,
@@ -83,7 +85,7 @@ class CacheEntry:
 
 
 CHUNK_SIZE_HORIZONTAL = 500  # cells per chunk in x and y; resolution-independent
-OVERLAP_CELLS = 10  # halo cells for batch union reads (v1 line 525)
+OVERLAP_CELLS = 10  # minimum halo cells; see crown_halo_cells (v1 line 525)
 MAX_BIOMASS_ARRAY_CACHE = 100  # v1 line 42
 
 # Tree-binning widths for cache grouping — see TREEVOX.md "Tree-binning cache key".
@@ -228,6 +230,44 @@ def max_crown_radius_inventory_column(source_config: dict) -> str | None:
     if radius_source.get("type") != "inventory_column":
         return None
     return radius_source.get("column")
+
+
+def crown_halo_cells(df: pd.DataFrame, source_config: dict, hr: float) -> int:
+    """Halo width in cells that holds the widest crown this job places.
+
+    A crown reaches at most `ceil(radius / hr)` cells from its stem's cell, so
+    a halo that wide keeps all of a tree's foliage inside the buffer of the
+    chunk that holds its stem. The radius is the `max_crown_radius_source`
+    inventory column where it has a value, else the allometric radius
+    `build_tree` gives the tree (beta for `beta`, Purves for every other
+    profile). Never below `OVERLAP_CELLS`. Rows with species core does not
+    know are skipped, as `build_chunk_cache` skips them.
+    """
+    radius = np.full(len(df), np.nan)
+    column = max_crown_radius_inventory_column(source_config)
+    if column is not None:
+        radius = df[column].to_numpy("float64", na_value=np.nan)
+
+    allometric = np.isnan(radius) & df["fia_species_code"].isin(SPCD_PARAMS).to_numpy()
+    if allometric.any():
+        rows = df[allometric]
+        species = rows["fia_species_code"].to_numpy("int64")
+        height = rows["height"].to_numpy("float64")
+        crown_ratio = rows["crown_ratio"].to_numpy("float64")
+        if source_config["crown_profile_model"] == "beta":
+            model = BetaCrownProfile(
+                species, height - height * crown_ratio, height * crown_ratio
+            )
+        else:
+            model = PurvesCrownProfile(
+                species, rows["dbh"].to_numpy("float64"), height, crown_ratio
+            )
+        radius = np.concatenate([radius, np.ravel(model.get_max_radius())])
+
+    radius = radius[np.isfinite(radius)]
+    if radius.size == 0:
+        return OVERLAP_CELLS
+    return max(OVERLAP_CELLS, math.ceil(float(radius.max()) / hr))
 
 
 def _biomass_allometry_model_type(source_config: dict) -> str:

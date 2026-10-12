@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Request, status
 
 from api.db.documents import set_document_async
-from api.dependencies import VerifiedDomain
+from api.dependencies import VerifiedDomain, url_path_from_base
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas
 from api.resources.grids.fbfm13.examples import (
     CREATE_LANDFIRE_FBFM13_OPENAPI_EXAMPLES,
@@ -158,7 +158,7 @@ async def check_landfire_fbfm13_coverage(request: Request, domain: VerifiedDomai
     """
     geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
     releases = await asyncio.to_thread(list_releases, "fbfm13", geometry)
-    create_href = str(
-        request.app.url_path_for("create_landfire_fbfm13", domain_id=domain["id"])
+    create_href = url_path_from_base(
+        request, "create_landfire_fbfm13", domain_id=domain["id"]
     )
     return build_landfire_coverage_response("fbfm13", releases, create_href)

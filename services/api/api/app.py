@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
 from api.auth import authenticate_user
+from api.dependencies import API_PREFIX
 from api.resources.applications.router import router as applications_router
 from api.resources.domains.router import router as domain_router
 from api.resources.exports.router import router as exports_router
@@ -77,7 +78,6 @@ Found a bug or have a request? Open an issue on
 """
 
 OPENAPI_TAGS = [
-    {"name": "Index", "description": "Service metadata and welcome endpoint."},
     {
         "name": "Domains",
         "description": "Geographic areas of interest. All other resources hang off a domain.",
@@ -125,6 +125,9 @@ app = FastAPI(
     },
     openapi_tags=OPENAPI_TAGS,
     separate_input_output_schemas=False,
+    docs_url=f"{API_PREFIX}/docs",
+    redoc_url=f"{API_PREFIX}/redoc",
+    openapi_url=f"{API_PREFIX}/openapi.json",
 )
 
 # Every response header the API sets that a browser client needs to read. Only
@@ -176,54 +179,6 @@ app.add_middleware(
 api_router = APIRouter()
 
 
-@app.get(
-    "/",
-    tags=["Index"],
-    summary="Welcome / service metadata",
-    description="Returns service metadata, documentation links, and the current "
-    "deployment status. Useful as a liveness check and as a starting "
-    "point for discovering the API.",
-)
-async def index():
-    return {
-        "name": "FastFuels API",
-        "version": app.version,
-        "status": "beta",
-        "message": (
-            "Welcome to FastFuels v2 — the next-generation API for 3D fuels. "
-            "v2 is in active development; schemas and endpoints may change "
-            "without notice."
-        ),
-        "environment": DEPLOYMENT_ENV,
-        "documentation": {
-            "swagger": {
-                "url": "/docs",
-                "description": "Interactive API documentation (Swagger UI).",
-            },
-            "redoc": {
-                "url": "/redoc",
-                "description": "Static API documentation (ReDoc).",
-            },
-            "openapi": {
-                "url": "/openapi.json",
-                "description": "Raw OpenAPI 3.1 schema.",
-            },
-            "repository": {
-                "url": "https://github.com/silvxlabs/FastFuels-API-v2",
-                "description": "Source code, design docs, and changelog.",
-            },
-        },
-        "webApplication": {
-            "url": "https://beta-app-fastfuels-silvxlabs.web.app",
-            "description": "Beta web application for creating, editing, and visualizing FastFuels v2 data.",
-        },
-        "feedback": {
-            "issues": "https://github.com/silvxlabs/FastFuels-API-v2/issues",
-            "email": "support.fastfuels@silvxlabs.com",
-        },
-    }
-
-
 # Include resource routers
 api_router.include_router(domain_router, prefix="/domains", tags=["Domains"])
 api_router.include_router(exports_router, prefix="/exports", tags=["Exports"])
@@ -268,7 +223,9 @@ api_router.include_router(
 )
 
 # Include router with authentication middleware
-app.include_router(api_router, dependencies=[Depends(authenticate_user)])
+app.include_router(
+    api_router, prefix=API_PREFIX, dependencies=[Depends(authenticate_user)]
+)
 
 
 # Simplify operation IDs

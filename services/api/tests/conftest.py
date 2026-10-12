@@ -20,6 +20,7 @@ from uuid import uuid4
 
 import pytest
 from api.auth import hash_api_key
+from api.dependencies import API_PREFIX
 from google.cloud import firestore
 from httpx import Client
 
@@ -37,7 +38,8 @@ from tests.fixtures import (
     make_key_data,
 )
 
-TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080")
+# TEST_API_URL is the service root; every route lives under API_PREFIX.
+TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080").rstrip("/") + API_PREFIX
 TEST_API_KEY = os.environ.get("TEST_API_KEY", "")
 
 
@@ -69,7 +71,7 @@ def client(test_owner_id):
 def _warmup_api(client):
     """Fire a warmup request to absorb Cloud Run cold start while unit tests run."""
     thread = threading.Thread(
-        target=lambda: client.get("/", timeout=120.0),
+        target=lambda: client.get("/openapi.json", timeout=120.0),
         daemon=True,
     )
     print("Warming up API")

@@ -5,11 +5,13 @@ LFPS is an ArcGIS GeoProcessing Server: submit a job, poll until it finishes,
 then download the output from a URL the job carries once done.
 
 Only the request shape our own pipeline needs is exposed. `Resample_Resolution`,
-`Edit_Rule`, `Edit_Mask`, `Include_Layer_List_XML_File`, `Output_Projection`,
-and the Map Zone AOI form are deliberately not parameters here: resampling,
-reprojection, and non-burnable reclassification already happen in our own
-post-fetch pipeline, so an LFPS fetch goes through the same path as a
-stored-COG raster rather than being edited twice.
+Edit_Rule`, `Edit_Mask`, `Include_Layer_List_XML_File`, and the Map Zone AOI
+form are deliberately not parameters here: resampling and non-burnable
+reclassification already happen in our own post-fetch pipeline, so an LFPS
+fetch goes through the same path as a stored-COG raster rather than being
+edited twice. `Output_Projection` is fixed to EPSG:5070, LANDFIRE's native
+grid. Left unset, LFPS resamples into a localized Albers centered on the AOI,
++which shifts values by a fraction of a pixel against the staged COGs.
 
 All functions are synchronous. The API wraps blocking I/O calls with
 asyncio.to_thread() to avoid blocking the event loop.
@@ -40,6 +42,8 @@ from lib.landfire.config import (
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://lfps.usgs.gov/api"
+
+_OUTPUT_PROJECTION = 5070
 
 # LFPS's own timeout guidance puts typical jobs at 12s-7min and a hard fail at
 # 2 hours; this is just the HTTP request timeout for each individual call.
@@ -180,6 +184,7 @@ def submit_job(layers: list[str], aoi: str) -> LfpsJob:
         "Email": LANDFIRE_USER_EMAIL,
         "Layer_List": ";".join(layers),
         "Area_of_Interest": aoi,
+        "Output_Projection": _OUTPUT_PROJECTION,
     }
     response = requests.get(
         f"{BASE_URL}/job/submit", params=params, timeout=_REQUEST_TIMEOUT

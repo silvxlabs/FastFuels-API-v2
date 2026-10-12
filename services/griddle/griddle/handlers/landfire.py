@@ -588,7 +588,9 @@ def fetch_topography(
             extent_buffer_cells,
             alignment,
             target_grid_doc,
-            is_categorical=False,
+            # Aspect is an angle, with -1 on flat cells; interpolating it
+            # invents directions (350 and 10 average to 180).
+            is_categorical=band == "aspect",
         )
 
     return _to_dataset(variables)

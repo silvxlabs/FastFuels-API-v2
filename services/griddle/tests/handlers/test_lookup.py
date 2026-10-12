@@ -20,13 +20,16 @@ import xarray as xr
 from griddle.handlers.lookup import (
     FBFM13_BAND_KEY_TO_COLUMN,
     FBFM40_BAND_KEY_TO_COLUMN,
+    FBFM40_TABLE_COLUMNS,
     FCCS_BAND_KEY_TO_COLUMN,
     FCCS_QUANTITY_COLUMNS,
     UNIT_CONVERSIONS,
     _convert_to_metric,
+    _cure_sb40_table,
     _get_conversion_key,
     _load_fbfm13_table,
     _load_fccs_table,
+    _load_sb40_dynamic,
     _load_sb40_table,
     fbfm13_lookup,
     fbfm40_lookup,
@@ -126,6 +129,10 @@ ALL_FBFM40_KEYS = [
 
 FBFM13_BAND_KEYS = list(FBFM13_BAND_KEY_TO_COLUMN.keys())
 FBFM40_BAND_KEYS = list(FBFM40_BAND_KEY_TO_COLUMN.keys())
+# Bands read straight from the SB40 table (no herbaceous curing applied).
+FBFM40_TABLE_BAND_KEYS = [
+    k for k, col in FBFM40_BAND_KEY_TO_COLUMN.items() if col in FBFM40_TABLE_COLUMNS
+]
 FCCS_BAND_KEYS = list(FCCS_BAND_KEY_TO_COLUMN.keys())
 
 ureg = pint.UnitRegistry()
@@ -273,10 +280,9 @@ class TestSb40TableLoading:
             ), f"Burnable model {key} should have some fuel load"
 
     def test_table_has_all_columns(self):
-        """Table contains all expected quantity columns."""
+        """Table contains every column read from the SB40 CSV."""
         table = _load_sb40_table()
-        expected_columns = list(FBFM40_BAND_KEY_TO_COLUMN.values())
-        for col in expected_columns:
+        for col in FBFM40_TABLE_COLUMNS:
             assert col in table, f"Missing column: {col}"
 
     def test_nb_models_are_zeros(self):
@@ -696,6 +702,138 @@ class TestFbfm13Lookup:
         assert exc_info.value.code == "SOURCE_GRID_NOT_FOUND"
 
 
+def _t_ac(value):
+    """Scott & Burgan load (t/ac) in kg/m**2."""
+    return Q_(value, "short_ton / acre").to("kg / m**2").magnitude
+
+
+def _per_ft(value):
+    """Scott & Burgan SAVR (1/ft) in 1/m."""
+    return Q_(value, "1 / ft").to("1 / m").magnitude
+
+
+CURED_BANDS = [
+    {"key": "fuel_load.1hr"},
+    {"key": "fuel_load.live_herb"},
+    {"key": "fuel_load.dead_herb"},
+    {"key": "fuel_load.fine_dead"},
+    {"key": "fuel_load.live_woody"},
+    {"key": "savr.dead_herb"},
+    {"key": "savr.fine_dead"},
+]
+
+
+class TestFbfm40HerbaceousCuring:
+    """Herbaceous curing in dynamic fuel models (Scott & Burgan 2005, p. 6).
+
+    Expected values are hand-computed from Scott & Burgan Table 7.
+    """
+
+    def test_dynamic_flags_match_table_7(self):
+        """Models with live herbaceous load are dynamic; all others are not."""
+        is_dynamic = _load_sb40_dynamic()
+        expected = {101, 102, 103, 104, 105, 106, 107, 108, 109}
+        expected |= {121, 122, 123, 124, 141, 149, 161, 163}
+        assert {k for k in ALL_FBFM40_KEYS if is_dynamic[k]} == expected
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_gr2_two_thirds_cured(self, mock_load_zarr):
+        """GR2: 1-hr 0.10, herb 1.00 t/ac; SAVR 1-hr 2000, herb 1800 1/ft."""
+        mock_load_zarr.return_value = _make_mock_source_ds(np.array([[102]]))
+
+        result = fbfm40_lookup("g", CURED_BANDS, MagicMock(), herbaceous_curing=0.67)
+
+        def val(k):
+            return result[k].values[0, 0]
+
+        assert val("fuel_load.1hr") == pytest.approx(_t_ac(0.10), rel=1e-6)
+        assert val("fuel_load.live_herb") == pytest.approx(_t_ac(0.33), rel=1e-5)
+        assert val("fuel_load.dead_herb") == pytest.approx(_t_ac(0.67), rel=1e-5)
+        assert val("fuel_load.fine_dead") == pytest.approx(_t_ac(0.77), rel=1e-5)
+        assert val("savr.dead_herb") == pytest.approx(_per_ft(1800), rel=1e-6)
+        expected_savr = (0.10 * 2000 + 0.67 * 1800) / 0.77
+        assert val("savr.fine_dead") == pytest.approx(_per_ft(expected_savr), rel=1e-5)
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_sh9_fully_cured_leaves_woody_live(self, mock_load_zarr):
+        """SH9: 1-hr 4.50, herb 1.55, woody 7.00 t/ac. Woody never cures."""
+        mock_load_zarr.return_value = _make_mock_source_ds(np.array([[149]]))
+
+        result = fbfm40_lookup("g", CURED_BANDS, MagicMock(), herbaceous_curing=1.0)
+
+        def val(k):
+            return result[k].values[0, 0]
+
+        assert val("fuel_load.live_herb") == 0.0
+        assert val("fuel_load.dead_herb") == pytest.approx(_t_ac(1.55), rel=1e-5)
+        assert val("fuel_load.fine_dead") == pytest.approx(_t_ac(6.05), rel=1e-5)
+        assert val("fuel_load.live_woody") == pytest.approx(_t_ac(7.00), rel=1e-5)
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_no_herb_model_fine_dead_is_1hr(self, mock_load_zarr):
+        """SH2 has no herbaceous load: fine_dead is the 1-hr load and SAVR."""
+        mock_load_zarr.return_value = _make_mock_source_ds(np.array([[142]]))
+
+        result = fbfm40_lookup("g", CURED_BANDS, MagicMock(), herbaceous_curing=1.0)
+
+        assert result["fuel_load.dead_herb"].values[0, 0] == 0.0
+        assert result["fuel_load.fine_dead"].values[0, 0] == pytest.approx(
+            _t_ac(1.35), rel=1e-5
+        )
+        assert result["savr.fine_dead"].values[0, 0] == pytest.approx(
+            _per_ft(2000), rel=1e-6
+        )
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_uncured_matches_table(self, mock_load_zarr):
+        """With no curing, herbaceous load stays live and fine_dead is 1-hr."""
+        mock_load_zarr.return_value = _make_mock_source_ds(np.array([[102]]))
+
+        result = fbfm40_lookup("g", CURED_BANDS, MagicMock(), herbaceous_curing=0.0)
+
+        assert result["fuel_load.live_herb"].values[0, 0] == pytest.approx(
+            _t_ac(1.00), rel=1e-6
+        )
+        assert result["fuel_load.dead_herb"].values[0, 0] == 0.0
+        assert result["fuel_load.fine_dead"].values[0, 0] == pytest.approx(
+            _t_ac(0.10), rel=1e-6
+        )
+        assert result["savr.fine_dead"].values[0, 0] == pytest.approx(
+            _per_ft(2000), rel=1e-6
+        )
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_nonburnable_cured_bands_are_zero(self, mock_load_zarr):
+        """NB codes have no load, so every cured band, SAVR included, is 0."""
+        mock_load_zarr.return_value = _make_mock_source_ds(np.array([[91, 99]]))
+
+        result = fbfm40_lookup("g", CURED_BANDS, MagicMock(), herbaceous_curing=0.67)
+
+        for var in result.data_vars:
+            np.testing.assert_array_equal(result[var].values, 0.0)
+
+    def test_static_model_keeps_herb_live(self):
+        """A static model with herbaceous load does not transfer it to dead."""
+        table = _load_sb40_table()
+        is_dynamic = _load_sb40_dynamic()
+        is_dynamic[102] = False
+
+        cured = _cure_sb40_table(table, is_dynamic, 1.0)
+
+        assert cured["fuel_load_live_herb"][102] == pytest.approx(1.00)
+        assert cured["fuel_load_dead_herb"][102] == 0.0
+        assert cured["fuel_load_fine_dead"][102] == pytest.approx(0.10)
+
+    def test_does_not_mutate_table(self):
+        """Curing returns new arrays and leaves the module table untouched."""
+        table = _load_sb40_table()
+        before = table["fuel_load_live_herb"].copy()
+
+        _cure_sb40_table(table, _load_sb40_dynamic(), 1.0)
+
+        np.testing.assert_array_equal(table["fuel_load_live_herb"], before)
+
+
 class TestFbfm40Lookup:
     """Tests for the fbfm40_lookup function."""
 
@@ -743,24 +881,24 @@ class TestFbfm40Lookup:
 
     @patch("griddle.handlers.lookup.load_zarr")
     def test_all_codes_all_bands(self, mock_load_zarr):
-        """Every FBFM40 code produces the correct metric value for every band.
+        """Every FBFM40 code produces the correct metric value for every table band.
 
-        Feeds all 46 codes through the full pipeline requesting all 11
-        bands, then independently computes the expected metric value
-        from the raw SB40 table + pint conversion and compares every cell.
+        Feeds all 46 codes through the full pipeline (no curing) requesting
+        all 11 table bands, then independently computes the expected metric
+        value from the raw SB40 table + pint conversion and compares every cell.
         """
         table = _load_sb40_table()
         codes = np.array([ALL_FBFM40_KEYS])  # shape (1, 46)
         mock_load_zarr.return_value = _make_mock_source_ds(codes)
         progress = MagicMock()
 
-        bands = [{"key": k} for k in FBFM40_BAND_KEYS]
+        bands = [{"key": k} for k in FBFM40_TABLE_BAND_KEYS]
         result = fbfm40_lookup("test-grid-id", bands, progress)
 
         assert isinstance(result, xr.Dataset)
-        assert set(result.data_vars) == set(FBFM40_BAND_KEYS)
+        assert set(result.data_vars) == set(FBFM40_TABLE_BAND_KEYS)
 
-        for band_key in FBFM40_BAND_KEYS:
+        for band_key in FBFM40_TABLE_BAND_KEYS:
             column = FBFM40_BAND_KEY_TO_COLUMN[band_key]
             conv_key = _get_conversion_key(column)
             src_unit, dst_unit = UNIT_CONVERSIONS[conv_key]

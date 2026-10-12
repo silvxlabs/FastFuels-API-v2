@@ -31,7 +31,7 @@
     "rhof_merge": "sum",
     "savr_merge": "weighted_avg",
     "surface_fuel_depth": {"grid_id": "PLACEHOLDER", "band": "fuel_depth"},
-    "surface_fuel_load": {"grid_id": "PLACEHOLDER", "band": "fuel_load.1hr"},
+    "surface_fuel_load": {"grid_id": "PLACEHOLDER", "band": "fuel_load.fine_dead"},
     "surface_moisture": {"grid_id": "PLACEHOLDER", "band": "fuel_moisture.1hr"},
     "surface_savr": null,
     "topography": null

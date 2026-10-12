@@ -351,12 +351,17 @@ class TestCreateTreeInventoryRequest:
         req = CreateTreeInventoryRequest(**self._minimal())
         assert req.max_bulk_density is None
 
+    def test_max_bulk_density_infinity_in_json_rejected(self):
+        body = '{"source_inventory_id": "abc123", "max_bulk_density": Infinity}'
+        with pytest.raises(ValidationError):
+            CreateTreeInventoryRequest.model_validate_json(body)
+
     def test_max_bulk_density_accepted(self):
         req = CreateTreeInventoryRequest(**self._minimal(max_bulk_density=1.5))
         assert req.max_bulk_density == 1.5
 
-    @pytest.mark.parametrize("value", [0, -1.0])
-    def test_max_bulk_density_must_be_positive(self, value):
+    @pytest.mark.parametrize("value", [0, -1.0, float("inf"), float("nan")])
+    def test_max_bulk_density_must_be_positive_and_finite(self, value):
         with pytest.raises(ValidationError):
             CreateTreeInventoryRequest(**self._minimal(max_bulk_density=value))
 
@@ -884,19 +889,22 @@ class TestCrownGeometrySource:
     def test_source_records_parametric_by_default(self):
         data = self._source().model_dump(mode="json", exclude_none=True)
         assert data["crown_geometry_source"] == {"type": "parametric"}
-        assert "source_chm_checksum" not in data
+        assert "source_chm_grid_id" not in data
+        assert "source_chm_grid_checksum" not in data
         assert "crown_geometry_counts" not in data
 
     def test_source_records_crown_feature_and_chm_checksum(self):
         data = self._source(
             crown_geometry_source=CrownFeatureCrownGeometrySource(feature_id="f1"),
-            source_chm_checksum="abc",
+            source_chm_grid_id="chm1",
+            source_chm_grid_checksum="abc",
         ).model_dump(mode="json", exclude_none=True)
         assert data["crown_geometry_source"] == {
             "type": "crown_feature",
             "feature_id": "f1",
         }
-        assert data["source_chm_checksum"] == "abc"
+        assert data["source_chm_grid_id"] == "chm1"
+        assert data["source_chm_grid_checksum"] == "abc"
 
     def test_source_accepts_worker_counts(self):
         """The completed grid's counts round-trip through the source schema."""

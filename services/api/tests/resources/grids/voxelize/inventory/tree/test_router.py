@@ -844,7 +844,8 @@ class TestCrownGeometrySource:
         assert response.status_code == 201
         source = response.json()["source"]
         assert source["crown_geometry_source"] == {"type": "parametric"}
-        assert "source_chm_checksum" not in source
+        assert "source_chm_grid_id" not in source
+        assert "source_chm_grid_checksum" not in source
 
     def test_crown_feature_records_source_and_chm_checksum(
         self,
@@ -867,7 +868,8 @@ class TestCrownGeometrySource:
             "type": "crown_feature",
             "feature_id": crown_feature_for_voxelization["id"],
         }
-        assert source["source_chm_checksum"] == chm_grid_for_crowns["checksum"]
+        assert source["source_chm_grid_id"] == chm_grid_for_crowns["id"]
+        assert source["source_chm_grid_checksum"] == chm_grid_for_crowns["checksum"]
 
     def test_inventory_without_tree_id_returns_422(
         self,
@@ -893,17 +895,16 @@ class TestCrownGeometrySource:
         assert response.status_code == 422
         assert "tree_id" in response.json()["detail"]
 
-    def test_missing_feature_returns_422(
+    def test_missing_feature_returns_404(
         self, client, domain_for_testing, tree_inventory_for_voxelization
     ):
         response = client.post(
             self.route(domain_for_testing["id"]),
             json=self.body(tree_inventory_for_voxelization["id"], "no-such-feature"),
         )
-        assert response.status_code == 422
-        assert "does not exist" in response.json()["detail"]
+        assert response.status_code == 404
 
-    def test_feature_in_other_domain_returns_422(
+    def test_feature_in_other_domain_returns_404(
         self,
         client,
         firestore_client,
@@ -926,8 +927,7 @@ class TestCrownGeometrySource:
             )
         finally:
             doc_ref.delete()
-        assert response.status_code == 422
-        assert "does not exist" in response.json()["detail"]
+        assert response.status_code == 404
 
     @pytest.mark.parametrize(
         "status,type,match",

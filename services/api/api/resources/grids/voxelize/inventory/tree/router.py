@@ -21,11 +21,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import (
-    firestore_client,
-    get_document_async,
-    set_document_async,
-)
+from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.features.schema import FeatureType
@@ -66,87 +62,6 @@ VOXELIZE_REQUIRED_COLUMNS = frozenset(
 # Of those, the allometry endpoint imputes species / diameter / crown ratio from
 # position + height; position and height themselves cannot be imputed.
 ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
-
-
-def _unprocessable(detail: str) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail
-    )
-
-
-async def _get_owned_document(
-    collection: str, document_id: str, owner_id: str, domain_id: str
-) -> dict | None:
-    """A document's data, or None when it is missing or outside this domain."""
-    snapshot = await firestore_client.collection(collection).document(document_id).get()
-    data = snapshot.to_dict() if snapshot.exists else None
-    if (
-        data is None
-        or data.get("owner_id") != owner_id
-        or data.get("domain_id") != domain_id
-    ):
-        return None
-    return data
-
-
-async def validate_crown_feature_source(
-    crown_source: CrownFeatureCrownGeometrySource,
-    inventory_id: str,
-    inventory_data: dict,
-    owner_id: str,
-    domain_id: str,
-) -> str | None:
-    """Check a `crown_feature` crown geometry source; return the CHM checksum.
-
-    Every failure is a 422, including a Feature or CHM grid that does not
-    exist: both are references in the request body, not the path (#279).
-    """
-    column_keys = {
-        c["key"] if isinstance(c, dict) else c
-        for c in inventory_data.get("columns", [])
-    }
-    if TREE_ID_COLUMN.key not in column_keys:
-        raise _unprocessable(
-            f"Inventory '{inventory_id}' has no '{TREE_ID_COLUMN.key}' column, "
-            f"so its trees cannot be matched to crowns."
-        )
-
-    feature_id = crown_source.feature_id
-    feature = await _get_owned_document(
-        FEATURES_COLLECTION, feature_id, owner_id, domain_id
-    )
-    if feature is None:
-        raise _unprocessable(f"Feature '{feature_id}' does not exist in this domain.")
-    if feature.get("type") != FeatureType.crown.value:
-        raise _unprocessable(
-            f"Feature '{feature_id}' has type '{feature.get('type')}'. "
-            f"crown_geometry_source requires a crown Feature."
-        )
-    if feature.get("status") != "completed":
-        raise _unprocessable(
-            f"Feature '{feature_id}' status is '{feature.get('status')}', "
-            f"expected 'completed'."
-        )
-
-    chm_grid_id = (feature.get("source") or {}).get("source_chm_grid_id")
-    if not chm_grid_id:
-        raise _unprocessable(
-            f"Crown Feature '{feature_id}' does not record the CHM grid it was "
-            f"built from. Build the crown Feature again from a CHM grid."
-        )
-    chm = await _get_owned_document(GRIDS_COLLECTION, chm_grid_id, owner_id, domain_id)
-    if chm is None:
-        raise _unprocessable(
-            f"CHM grid '{chm_grid_id}', which crown Feature '{feature_id}' was "
-            f"built from, no longer exists. Build the crown Feature again from "
-            f"a current CHM grid."
-        )
-    if chm.get("status") != "completed":
-        raise _unprocessable(
-            f"CHM grid '{chm_grid_id}' status is '{chm.get('status')}', "
-            f"expected 'completed'."
-        )
-    return chm.get("checksum")
 
 
 @router.post(
@@ -236,10 +151,10 @@ async def create_tree_inventory_grid(
       `max_crown_radius_source` does not apply to measured crowns, and every
       tree keeps the mass `biomass_source` gives it. Trees with no crown in
       the Feature, trees whose crown does not contain their stem, and trees
-      with no CHM height above their crown base, are drawn parametrically. Crowns of trees not in the
-      inventory are ignored. The inventory must have a `tree_id` column, the
-      Feature must be a completed crown Feature in this domain, and the CHM
-      grid it was built from must still exist.
+      with no CHM height above their crown base, are drawn parametrically.
+      Crowns of trees not in the inventory are ignored. The inventory must
+      have a `tree_id` column, the Feature must be a completed crown Feature
+      in this domain, and the CHM grid it was built from must still exist.
     - **max_bulk_density**: (optional) Upper limit on bulk density, in
       kg/m**3. In any voxel where a biomass component's bulk density, live
       and dead combined, exceeds the limit, that component's live and dead
@@ -260,13 +175,15 @@ async def create_tree_inventory_grid(
     asynchronously and updates the grid to `"completed"` with a
     `Georeference3D` when done.
 
-    With a `crown_feature` source, `source.source_chm_checksum` records the CHM
-    grid's `checksum` at creation, and the completed grid's
+    With a `crown_feature` source, `source.source_chm_grid_id` and
+    `source.source_chm_grid_checksum` record the crown Feature's CHM grid and
+    its `checksum` at creation, and the completed grid's
     `source.crown_geometry_counts` gives the number of trees drawn with a
     measured crown (`measured`) and drawn parametrically because they had no
     crown in the Feature (`parametric_no_crown`), their crown did not contain
     their stem (`parametric_stem_outside_crown`), or they had no CHM height
-    above their crown base (`parametric_no_volume`).
+    above their crown base (`parametric_no_volume`). Trees that cannot be
+    drawn at all are not counted.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
@@ -306,6 +223,8 @@ async def create_tree_inventory_grid(
     foliage = getattr(body.biomass_source, "columns", {}).get(BiomassComponent.foliage)
     if foliage is not None:
         required_columns.add(foliage.column)
+    if isinstance(body.crown_geometry_source, CrownFeatureCrownGeometrySource):
+        required_columns.add(TREE_ID_COLUMN.key)
     nullable = set()
     if isinstance(body.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource):
         required_columns.add(body.max_crown_radius_source.column)
@@ -338,15 +257,50 @@ async def create_tree_inventory_grid(
             ),
         )
 
-    source_chm_checksum = None
+    # A crown_feature source needs a completed crown Feature in this domain and
+    # the CHM grid it was built from, whose tops treevox reads.
+    source_chm_grid_id = source_chm_grid_checksum = None
     if isinstance(body.crown_geometry_source, CrownFeatureCrownGeometrySource):
-        source_chm_checksum = await validate_crown_feature_source(
-            body.crown_geometry_source,
-            body.source_inventory_id,
-            inventory_data,
-            owner_id,
-            domain_id,
+        feature_id = body.crown_geometry_source.feature_id
+        _, feature_snapshot = await get_document_async(
+            FEATURES_COLLECTION,
+            feature_id,
+            owner_id=owner_id,
+            domain_id=domain_id,
+            document_status="completed",
         )
+        feature = feature_snapshot.to_dict()
+        if feature.get("type") != FeatureType.crown.value:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Feature '{feature_id}' has type '{feature.get('type')}'. "
+                    f"crown_geometry_source requires a crown Feature."
+                ),
+            )
+        source_chm_grid_id = feature["source"]["source_chm_grid_id"]
+        try:
+            _, chm_snapshot = await get_document_async(
+                GRIDS_COLLECTION,
+                source_chm_grid_id,
+                owner_id=owner_id,
+                domain_id=domain_id,
+                document_status="completed",
+            )
+        except HTTPException as e:
+            # The request names the Feature, not its CHM grid, so a deleted
+            # CHM is a problem with the Feature rather than a missing resource.
+            if e.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"CHM grid '{source_chm_grid_id}', which crown Feature "
+                    f"'{feature_id}' was built from, no longer exists. Build the "
+                    f"crown Feature again from a current CHM grid."
+                ),
+            ) from e
+        source_chm_grid_checksum = chm_snapshot.to_dict().get("checksum")
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -361,7 +315,8 @@ async def create_tree_inventory_grid(
         max_crown_radius_source=body.max_crown_radius_source,
         crown_geometry_source=body.crown_geometry_source,
         max_bulk_density=body.max_bulk_density,
-        source_chm_checksum=source_chm_checksum,
+        source_chm_grid_id=source_chm_grid_id,
+        source_chm_grid_checksum=source_chm_grid_checksum,
         moisture_model=body.moisture_model,
         seed=body.seed,
     )

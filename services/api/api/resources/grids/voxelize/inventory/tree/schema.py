@@ -445,7 +445,11 @@ MAX_BULK_DENSITY_DESCRIPTION = (
 
 
 class CrownGeometryCounts(BaseModel):
-    """How many trees got each crown geometry."""
+    """How many trees got each crown geometry.
+
+    Trees that cannot be drawn at all, such as a species with no allometry,
+    are not counted, so the counts can sum to fewer than the inventory's trees.
+    """
 
     measured: int = Field(description="Trees drawn with a measured crown.")
     parametric_no_crown: int = Field(
@@ -588,23 +592,36 @@ class TreeInventoryVoxelizationSource(BaseModel):
     crown_profile_model: CrownProfileModel
     biomass_source: BiomassSource
     max_crown_radius_source: MaxCrownRadiusSource = AllometryMaxCrownRadiusSource()
-    crown_geometry_source: CrownGeometrySource = ParametricCrownGeometrySource()
-    max_bulk_density: PositiveFloat | None = Field(
-        default=None, description=MAX_BULK_DENSITY_DESCRIPTION
+    crown_geometry_source: CrownGeometrySource = Field(
+        default_factory=ParametricCrownGeometrySource,
+        description=CROWN_GEOMETRY_SOURCE_DESCRIPTION,
     )
-    source_chm_checksum: str | None = Field(
+    max_bulk_density: float | None = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        description=MAX_BULK_DENSITY_DESCRIPTION,
+    )
+    source_chm_grid_id: str | None = Field(
         default=None,
         description=(
-            "The crown Feature's CHM grid `checksum` at the time this grid was "
-            "created. Compare it against the CHM grid's current `checksum` to "
-            "tell whether the CHM has changed since."
+            "For a `crown_feature` crown geometry source, the CHM grid the crown "
+            "Feature was built from, whose heights give the measured crowns' tops."
+        ),
+    )
+    source_chm_grid_checksum: str | None = Field(
+        default=None,
+        description=(
+            "The CHM grid's `checksum` at the time this grid was created. "
+            "Compare it against the CHM grid's current `checksum` to tell "
+            "whether the CHM has changed since."
         ),
     )
     crown_geometry_counts: CrownGeometryCounts | None = Field(
         default=None,
         description=(
             "Set when the grid completes, for a `crown_feature` crown geometry "
-            "source only."
+            "source only. Trees that cannot be drawn at all are not counted."
         ),
     )
     moisture_model: MoistureModel | None = None
@@ -665,8 +682,11 @@ class CreateTreeInventoryRequest(BaseModel):
         default_factory=ParametricCrownGeometrySource,
         description=CROWN_GEOMETRY_SOURCE_DESCRIPTION,
     )
-    max_bulk_density: PositiveFloat | None = Field(
-        default=None, description=MAX_BULK_DENSITY_DESCRIPTION
+    max_bulk_density: float | None = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        description=MAX_BULK_DENSITY_DESCRIPTION,
     )
     moisture_model: MoistureModel | None = Field(
         default=None,

@@ -94,6 +94,35 @@ class TestProcessGridRequest:
             },
         )
 
+    @patch("treevox.main.update_metadata")
+    @patch("treevox.main.dispatch_handler")
+    @patch("treevox.main.load_domain")
+    @patch("treevox.main.update_status")
+    @patch("treevox.main.load_grid")
+    def test_source_updates_merge_into_source(
+        self,
+        mock_load_grid,
+        mock_status,
+        mock_load_domain,
+        mock_dispatch,
+        mock_update_metadata,
+    ):
+        mock_load_grid.return_value = {"id": "g1", "domain_id": "d1", "source": {}}
+        mock_load_domain.return_value = MagicMock()
+        counts = {"measured": 2, "parametric_no_crown": 1, "parametric_no_volume": 0}
+        mock_dispatch.return_value = VoxelizationResult(
+            gcs_path="gs://bucket/g1",
+            georeference={"shape": [5, 10, 10]},
+            chunk_shape=[5, 10, 10],
+            source_updates={"crown_geometry_counts": counts},
+        )
+
+        _, status = process_grid_request(MockRequest(data={"id": "g1"}))
+        assert status == 200
+        data = mock_update_metadata.call_args.args[1]
+        assert data["source.crown_geometry_counts"] == counts
+        assert "chunks" in data
+
     @patch("treevox.main.storage.delete_zarr")
     @patch("treevox.main.dispatch_handler")
     @patch("treevox.main.load_domain")

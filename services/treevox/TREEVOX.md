@@ -12,6 +12,7 @@ Mirrors griddle/standgen: a thin `dispatch.py` routes on the source triple, dele
 - `voxelize.py` — pure compute (GridSpec, chunk binning, cache, voxelize_chunk). Worker-safe imports only.
 - `storage.py` — xarray-backed zarr I/O (init_store, read/write union, masked_merge). Not imported by workers.
 - `_worker.py` — spawned worker entry. Strict imports: numpy, pandas, treevox.voxelize only.
+- `measured_crowns.py` — handler-side: crown Feature + CHM → per-tree `Footprint`s for measured crowns (#617).
 - `errors.py`, `firestore_io.py`, `inventory_io.py` — error types, Firestore helpers, parquet IO.
 
 The `handlers/` package was added for the leaflux solar-irradiance source (#424); a second source module (e.g. `handlers/leaflux.py`) slots in alongside `handlers/voxelize.py` with a new `case` in `dispatch.py`.
@@ -69,6 +70,18 @@ V1 pre-computes every tree's biomass realizations before touching zarr. Memory g
 V1 used the inventory's `TREE_ID` column as cache key — it wasn't guaranteed unique, so distinct trees accidentally shared biomass realizations. V2 inventories carry a stable, unique `tree_id` column (#611), which treevox writes into the `tree_id` band; the cache key is computed separately by binning `(fia_species_code, dbh_bin, height_bin, cr_bin)` at `DBH_BIN_CM = 2.75`, `HEIGHT_BIN_M = 1.0`, `CR_BIN = 0.1`. When `max_crown_radius_source` reads an inventory column, that radius joins the key binned at `CROWN_RADIUS_BIN_M = 0.25` (provisional, #613); each bin uses its first tree's radius.
 
 The geometric crown profiles (`cone`, `cylinder`, `single_/dual_ellipsoid`, `single_/dual_paraboloid`) need no extra key field: with the allometric radius source their maximum radius is the Purves radius, a function of the already-binned species, DBH, height, and crown ratio.
+
+## Measured crowns (#617)
+
+With `source.crown_geometry_source.type == "crown_feature"`, trees with a crown in the crown Feature get a measured crown instead of a solid of revolution.
+
+- **Parent** (`measured_crowns.py`, handler-side): reads the Feature document for its CHM grid id, the Feature's GeoParquet (`tree_id`, `geometry`) and the CHM window covering the matched crowns. Crowns match inventory trees by `tree_id`; crowns of trees not in the inventory are ignored. The polygons follow CHM cell edges, so `rasterio.features.rasterize` onto the CHM lattice recovers each crown's cells exactly. Each becomes a `voxelize.Footprint` (a bool mask and the CHM tops in its bounding box). No-data CHM cells are dropped from the footprint. The grid's `nz` reaches the highest footprint top as well as the tallest tree.
+- **Payload**: a `crown_feature` payload also carries `footprints` (the chunk's trees only) and `base_seed`. Parametric payloads are unchanged.
+- **Worker**: `plan_measured_crowns` sends a tree measured when it has a footprint with a cell above its crown base, and counts the rest as `parametric_no_crown` / `parametric_no_volume`. Measured trees skip the binned cache (every crown differs); the others build it as before. In the height-ASC loop, a measured tree is built by core's `voxelize_measured_crown` (outline = footprint, top = CHM, bottom = `crown_profile_model`), sampled with the same occupancy field and uniform density as a parametric crown, and placed at the offset core returns. Its mass is the parametric tree's mass.
+- **Seeds**: a measured crown's occupancy seed is `crc32(base_seed, tree_id)`, not the chunk RNG, so it does not depend on the chunk layout. A grid of measured crowns is identical chunked and unchunked as long as every crown fits in its chunk's halo.
+- **Counts**: workers return `crown_geometry_counts`; the handler sums them and `main.py` writes `source.crown_geometry_counts` on completion.
+
+**Halo.** A measured crown is rendered by the chunk that owns its stem and clipped to that chunk's halo, like a parametric crown. Its reach from the stem is up to the Feature's `max_crown_radius` (≤ 20 m) plus about one CHM cell, i.e. ~11 m with the defaults and ~22 m worst case, against a halo of `OVERLAP_CELLS × hr` (10 m at 1 m voxels). `_log_halo_overhang` warns with the number of crowns clipped and the largest overhang.
 
 ## Chunk padding model
 

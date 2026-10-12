@@ -10,6 +10,7 @@ biomass cache, and the per-chunk voxelization loop.
 from __future__ import annotations
 
 import math
+import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,6 +24,7 @@ from fastfuels_core.voxelization import (
     compute_crown_probability_field,
     discretize_crown_profile,
     sample_occupancy,
+    voxelize_measured_crown,
 )
 
 
@@ -81,6 +83,28 @@ class CacheEntry:
     species_code: int
 
 
+@dataclass(frozen=True)
+class Footprint:
+    """One measured crown's CHM cells, as a box on the CHM lattice (#617).
+
+    Fields
+    ------
+    mask
+        `(rows, cols)` bool, the crown's cells.
+    top
+        `(rows, cols)` float, CHM height (m) of each cell; NaN outside `mask`.
+    origin
+        `(x_west, y_north)` of `mask[0, 0]` in the grid's CRS.
+    resolution
+        CHM cell size (m).
+    """
+
+    mask: np.ndarray
+    top: np.ndarray
+    origin: tuple[float, float]
+    resolution: float
+
+
 # Constants
 
 
@@ -112,6 +136,10 @@ CROWN_PROFILE_MODEL_MAP = {
 GEOMETRIC_CROWN_PROFILES = frozenset(CROWN_PROFILE_MODEL_MAP) - {"purves", "beta"}
 # Single-lobe forms: core's dual form with the widest height at the crown base.
 SINGLE_LOBE_CROWN_PROFILES = frozenset({"single_ellipsoid", "single_paraboloid"})
+# A footprint has volume when some CHM cell rises this many vertical voxels
+# above the crown base. Core drops overlaps under 1e-9 of a voxel, so a column
+# at least this thick always reaches the output grid.
+MEASURED_VOLUME_TOLERANCE = 4e-9
 BIOMASS_DENSITY_BAND_COMPONENTS = {
     "bulk_density.foliage.live": "foliage",
     "bulk_density.foliage.dead": "foliage",
@@ -133,12 +161,17 @@ def compute_grid_dimensions(
     domain_gdf,
     df: pd.DataFrame,
     resolution: tuple[float, float, float],
+    min_top: float | None = None,
 ) -> dict:
     """Compute grid dimensions from a domain GeoDataFrame, tree DataFrame, and resolution.
 
     Snaps domain bounds outward to the nearest multiple of the horizontal
     resolution so cell boundaries align cleanly. No extra padding is added —
     the domain resource already handles spatial padding via pad_to_resolution.
+
+    The grid reaches the tallest tree, or `min_top` (m) when that is higher:
+    measured crowns take their top from the CHM, which can exceed the
+    inventory height.
 
     Returns a dict with: nx, ny, nz, hr, vr, x_origin, y_origin, z_origin,
     crs, transform, x_coords, y_coords, z_coords.
@@ -170,6 +203,8 @@ def compute_grid_dimensions(
         max_height = vr
     else:
         max_height = float(math.ceil(df["height"].max()))
+    if min_top is not None:
+        max_height = max(max_height, float(math.ceil(min_top)))
     nz = max(1, int(math.ceil(max_height / vr)))
 
     if nx * ny * nz == 0:
@@ -642,6 +677,115 @@ def build_chunk_cache(
     return cache
 
 
+# Measured crowns (#617)
+
+
+def crown_geometry_type(source_config: dict) -> str:
+    """The grid's crown geometry source type; `parametric` when absent."""
+    return (source_config.get("crown_geometry_source") or {}).get("type", "parametric")
+
+
+def footprint_has_volume(
+    footprint: Footprint, crown_base_height: float, vr: float
+) -> bool:
+    """Whether any footprint cell rises above the crown base.
+
+    Mirrors the test in core's `voxelize_measured_crown`, so a footprint that
+    passes always yields a crown there.
+    """
+    tops = footprint.top[footprint.mask]
+    return bool(np.any(tops - crown_base_height > MEASURED_VOLUME_TOLERANCE * vr))
+
+
+def plan_measured_crowns(
+    trees_in_chunk: pd.DataFrame,
+    footprints: dict[int, Footprint],
+    vr: float,
+) -> tuple[dict[int, Footprint], dict[str, int]]:
+    """Choose which trees get a measured crown, and count the rest by reason.
+
+    A tree gets a measured crown when the crown Feature holds a footprint for
+    its `tree_id` and some footprint cell rises above its crown base,
+    `height × (1 − crown_ratio)`. Every other tree is drawn parametrically.
+
+    Returns the footprints of trees drawn measured, keyed by `tree_id`, and
+    the counts `measured`, `parametric_no_crown` and `parametric_no_volume`.
+    """
+    measured: dict[int, Footprint] = {}
+    counts = {"measured": 0, "parametric_no_crown": 0, "parametric_no_volume": 0}
+    tree_ids = trees_in_chunk["tree_id"].to_numpy()
+    heights = trees_in_chunk["height"].to_numpy(dtype=float)
+    crown_ratios = trees_in_chunk["crown_ratio"].to_numpy(dtype=float)
+    for tree_id, height, crown_ratio in zip(tree_ids, heights, crown_ratios):
+        footprint = footprints.get(int(tree_id))
+        if footprint is None:
+            counts["parametric_no_crown"] += 1
+            continue
+        # Same expression as core's Tree.crown_base_height.
+        crown_base_height = height - height * crown_ratio
+        if footprint_has_volume(footprint, crown_base_height, vr):
+            measured[int(tree_id)] = footprint
+            counts["measured"] += 1
+        else:
+            counts["parametric_no_volume"] += 1
+    return measured, counts
+
+
+def measured_crown_seed(base_seed: int, tree_id: int) -> int:
+    """Occupancy seed for one measured crown.
+
+    Keyed by the tree rather than the chunk, so a measured crown is the same
+    whichever chunk layout renders it.
+    """
+    return zlib.crc32(f"{base_seed}:tree:{tree_id}".encode())
+
+
+def build_measured_biomass(
+    tree: Tree,
+    footprint: Footprint,
+    hr: float,
+    vr: float,
+    x_origin: float,
+    y_origin: float,
+    biomass_component: str,
+    seed: int,
+) -> tuple[np.ndarray, tuple[int, int, int]] | None:
+    """Voxelize one measured crown and spread the tree's mass through it.
+
+    Core's `voxelize_measured_crown` builds the crown's volume fraction on the
+    output lattice: each footprint cell is a column from its profile bottom to
+    its CHM top. The tree's mass is then placed by the same occupancy sampling
+    and uniform density as a parametric crown, so it equals the parametric
+    crown's mass.
+
+    Returns the `(nz, ny, nx)` biomass density (kg/m**3) and its `(z, row,
+    col)` offset on the output grid, or None when the crown has no volume.
+    """
+    crown = voxelize_measured_crown(
+        footprint.mask,
+        footprint.top,
+        footprint.origin,
+        footprint.resolution,
+        (tree.x, tree.y),
+        tree.crown_base_height,
+        tree.crown_profile_model,
+        (x_origin, y_origin),
+        (hr, vr),
+    )
+    if crown is None:
+        return None
+    field, n_occupied = compute_crown_probability_field(
+        crown.volume_fraction, alpha=0.5, beta=0.5
+    )
+    sampled = sample_occupancy(crown.volume_fraction, field, n_occupied, seed=seed)
+    biomass = distribute_component_biomass(
+        VoxelizedTree(tree, sampled, hr, vr), biomass_component
+    )
+    if not np.all(np.isfinite(biomass)):
+        biomass = np.nan_to_num(biomass, nan=0.0, posinf=0.0, neginf=0.0)
+    return biomass, crown.offset
+
+
 # Per-chunk voxelization
 
 
@@ -827,6 +971,26 @@ def _place_biomass(
     return (z[0], y[0], x[0]), (z[1], y[1], x[1])
 
 
+def _place_at_offset(
+    z_start: int,
+    row_start: int,
+    col_start: int,
+    biomass_shape: tuple[int, int, int],
+    buffer_shape: tuple[int, int, int],
+) -> tuple[tuple[slice, slice, slice], tuple[slice, slice, slice]] | None:
+    """Clip an array placed at buffer-local `(z, row, col)` to the buffer.
+
+    Same contract as `_place_biomass`, for crowns whose position on the grid
+    is already known (measured crowns) rather than centered on the stem.
+    """
+    z = _clip_1d(z_start, biomass_shape[0], buffer_shape[0])
+    y = _clip_1d(row_start, biomass_shape[1], buffer_shape[1])
+    x = _clip_1d(col_start, biomass_shape[2], buffer_shape[2])
+    if z is None or y is None or x is None:
+        return None
+    return (z[0], y[0], x[0]), (z[1], y[1], x[1])
+
+
 def _apply_bands(
     buffers: dict[str, np.ndarray],
     buf_slices: tuple[slice, slice, slice],
@@ -942,6 +1106,8 @@ def voxelize_chunk(
     y_origin: float,
     source_config: dict,
     rng: np.random.Generator,
+    measured: dict[int, Footprint] | None = None,
+    base_seed: int = 0,
 ) -> None:
     """Render every tree in a chunk into the per-band buffers.
 
@@ -985,10 +1151,20 @@ def voxelize_chunk(
         `_chunk_rng_seed(base_seed, row_chunk, col_chunk)` in the
         voxelize handler, so the same grid produces the same output on
         re-run.
+    measured
+        Footprints of the trees drawn with a measured crown, keyed by
+        `tree_id` (from `plan_measured_crowns`), or None for a parametric
+        grid. These trees need no `CacheEntry`: each is built on its own by
+        `build_measured_biomass`, placed at the offset core returns, and
+        clipped to the chunk buffer like any other crown.
+    base_seed
+        The job's base seed; seeds each measured crown's occupancy draw via
+        `measured_crown_seed`. Unused without `measured`.
 
     What it does
     ------------
-    For each row in `trees_in_chunk`:
+    For each row in `trees_in_chunk` with a measured footprint, builds its
+    crown as above. For every other row:
 
     1. Looks up the tree's `CacheEntry`. If missing or empty, skips.
     2. Picks one biomass realization from `entry.biomass_arrays` — the
@@ -1029,27 +1205,67 @@ def voxelize_chunk(
     buffer_shape = next(iter(buffers.values())).shape
 
     for _, row in trees_in_chunk.iterrows():
-        entry = cache.get(int(row["_cache_key"]))
-        if entry is None or not entry.biomass_arrays:
-            continue
-        arrays = entry.biomass_arrays
-        biomass_array = (
-            arrays[0] if len(arrays) == 1 else arrays[int(rng.integers(len(arrays)))]
-        )
+        footprint = measured.get(int(row["tree_id"])) if measured else None
+        if footprint is not None:
+            try:
+                tree = build_tree(row, source_config)
+            except Exception:
+                # Degenerate tree (e.g. allometric failure): skipped, as a
+                # parametric bin that fails to build is.
+                continue
+            built = build_measured_biomass(
+                tree,
+                footprint,
+                hr,
+                vr,
+                x_origin,
+                y_origin,
+                biomass_component,
+                measured_crown_seed(base_seed, int(row["tree_id"])),
+            )
+            if built is None:
+                raise RuntimeError(
+                    f"Measured crown of tree {int(row['tree_id'])} has no volume "
+                    f"although its footprint rises above the crown base."
+                )
+            biomass_array, (z_start, row_start, col_start) = built
+            placement = _place_at_offset(
+                z_start,
+                row_start - chunk_y_start,
+                col_start - chunk_x_start,
+                biomass_array.shape,
+                buffer_shape,
+            )
+            species_code = int(tree.species_code)
+            foliage_sav = float(tree.foliage_sav)
+            specific_leaf_area = float(tree.specific_leaf_area)
+        else:
+            entry = cache.get(int(row["_cache_key"]))
+            if entry is None or not entry.biomass_arrays:
+                continue
+            arrays = entry.biomass_arrays
+            biomass_array = (
+                arrays[0]
+                if len(arrays) == 1
+                else arrays[int(rng.integers(len(arrays)))]
+            )
 
-        abs_col, abs_row = _tree_cell_indices(
-            float(row["x"]), float(row["y"]), x_origin, y_origin, hr
-        )
-        placement = _place_biomass(
-            abs_col,
-            abs_row,
-            chunk_x_start,
-            chunk_y_start,
-            entry.crown_base_height,
-            biomass_array.shape,
-            buffer_shape,
-            vr,
-        )
+            abs_col, abs_row = _tree_cell_indices(
+                float(row["x"]), float(row["y"]), x_origin, y_origin, hr
+            )
+            placement = _place_biomass(
+                abs_col,
+                abs_row,
+                chunk_x_start,
+                chunk_y_start,
+                entry.crown_base_height,
+                biomass_array.shape,
+                buffer_shape,
+                vr,
+            )
+            species_code = entry.species_code
+            foliage_sav = entry.foliage_sav
+            specific_leaf_area = entry.specific_leaf_area
         if placement is None:
             continue
 
@@ -1063,15 +1279,15 @@ def voxelize_chunk(
         # `distribute_component_biomass`.
         lad_clip = None
         if "leaf_area_density" in buffers:
-            lad_clip = biomass_clip * entry.specific_leaf_area
+            lad_clip = biomass_clip * specific_leaf_area
 
         _apply_bands(
             buffers,
             buf_slices,
             biomass_clip,
             lad_clip,
-            entry.species_code,
-            entry.foliage_sav,
+            species_code,
+            foliage_sav,
             int(row["tree_id"]),
             moisture_values,
             component_state,

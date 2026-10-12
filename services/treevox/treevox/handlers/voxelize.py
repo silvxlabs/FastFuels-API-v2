@@ -30,7 +30,7 @@ import pandas as pd
 import xarray as xr
 
 from lib.inventory_io import read_inventory, require_complete_rows
-from treevox import storage, voxelize
+from treevox import measured_crowns, storage, voxelize
 from treevox._worker import run as worker_run
 from treevox.errors import ProcessingError
 
@@ -55,15 +55,21 @@ class BatchStats:
     num_trees: int = 0
     empty_chunks: int = 0
     per_batch: list[dict] = field(default_factory=list)
+    crown_geometry_counts: dict[str, int] | None = None
 
 
 @dataclass
 class VoxelizationResult:
-    """Returned by the voxelization job for persistence in Firestore."""
+    """Returned by the voxelization job for persistence in Firestore.
+
+    `source_updates` holds fields the job resolves and main.py merges into the
+    grid's `source` (the crown geometry counts of a `crown_feature` grid).
+    """
 
     gcs_path: str
     georeference: dict
     chunk_shape: list[int]
+    source_updates: dict | None = None
 
 
 @dataclass
@@ -145,15 +151,22 @@ def _load_inventory_dataframe(
     return df
 
 
-def _plan_grid_layout(grid: dict, domain_gdf, df: pd.DataFrame) -> GridLayout:
-    """Compute grid dimensions, chunk sizing, and the chunk processing order."""
+def _plan_grid_layout(
+    grid: dict, domain_gdf, df: pd.DataFrame, min_top: float | None = None
+) -> GridLayout:
+    """Compute grid dimensions, chunk sizing, and the chunk processing order.
+
+    `min_top` raises the grid to the highest measured crown top (m).
+    """
     res = grid["source"]["resolution"]
     if isinstance(res, dict):
         resolution_tuple = (res["horizontal"], res["horizontal"], res["vertical"])
     else:
         resolution_tuple = tuple(res)
     try:
-        dims = voxelize.compute_grid_dimensions(domain_gdf, df, resolution_tuple)
+        dims = voxelize.compute_grid_dimensions(
+            domain_gdf, df, resolution_tuple, min_top=min_top
+        )
     except voxelize.InvalidResolutionError as e:
         raise ProcessingError(
             code="INVALID_RESOLUTION",
@@ -224,6 +237,75 @@ def _prepare_tree_chunks(
         layout.chunk_xy,
     )
     return df
+
+
+def measured_halo_overhang(
+    df: pd.DataFrame,
+    footprints: dict[int, voxelize.Footprint],
+    layout: GridLayout,
+) -> tuple[int, int]:
+    """Count measured crowns that reach past their chunk's halo.
+
+    A crown is rendered by the chunk that owns its stem, into that chunk's
+    buffer of `chunk_xy + 2 * OVERLAP_CELLS` cells, so any part beyond the
+    halo is clipped. Overhang past the grid edge is not counted: every crown
+    is clipped there.
+
+    Returns the number of such crowns and the largest overhang, in cells.
+    """
+    dims = layout.dims
+    hr, nx, ny = dims["hr"], dims["nx"], dims["ny"]
+    x_origin, y_origin = dims["x_origin"], dims["y_origin"]
+    halo = voxelize.OVERLAP_CELLS
+    chunk_of = dict(
+        zip(
+            df["tree_id"].astype("int64"),
+            zip(df["row_chunk"].astype("int64"), df["col_chunk"].astype("int64")),
+        )
+    )
+    clipped = largest = 0
+    for tree_id, footprint in footprints.items():
+        if tree_id not in chunk_of or not footprint.mask.any():
+            continue
+        row_chunk, col_chunk = chunk_of[tree_id]
+        res = footprint.resolution
+        rows = np.flatnonzero(footprint.mask.any(axis=1))
+        cols = np.flatnonzero(footprint.mask.any(axis=0))
+        west = footprint.origin[0] + cols[0] * res
+        east = footprint.origin[0] + (cols[-1] + 1) * res
+        north = footprint.origin[1] - rows[0] * res
+        south = footprint.origin[1] - (rows[-1] + 1) * res
+        col_lo = max(0, math.floor((west - x_origin) / hr))
+        col_hi = min(nx, math.ceil((east - x_origin) / hr))
+        row_lo = max(0, math.floor((y_origin - north) / hr))
+        row_hi = min(ny, math.ceil((y_origin - south) / hr))
+        overhang = max(
+            0,
+            col_chunk * layout.chunk_xy - halo - col_lo,
+            col_hi - ((col_chunk + 1) * layout.chunk_xy + halo),
+            row_chunk * layout.chunk_xy - halo - row_lo,
+            row_hi - ((row_chunk + 1) * layout.chunk_xy + halo),
+        )
+        if overhang:
+            clipped += 1
+            largest = max(largest, overhang)
+    return clipped, largest
+
+
+def _log_halo_overhang(
+    df: pd.DataFrame,
+    footprints: dict[int, voxelize.Footprint],
+    layout: GridLayout,
+    grid_id: str,
+) -> None:
+    clipped, largest = measured_halo_overhang(df, footprints, layout)
+    if clipped:
+        logger.warning(
+            f"{clipped} measured crowns reach past their chunk halo "
+            f"({voxelize.OVERLAP_CELLS} cells) by up to {largest} cells "
+            f"({largest * layout.dims['hr']} m); the overhang is clipped",
+            extra={"grid_id": grid_id},
+        )
 
 
 def _chunk_relative_slices(
@@ -444,11 +526,14 @@ def _build_payloads(
     layout: GridLayout,
     source_config: dict,
     grid_id: str,
+    footprints: dict[int, voxelize.Footprint] | None = None,
 ) -> list[dict]:
     """Split a halo-extended union Dataset into per-chunk worker payloads.
 
     Each payload carries numpy buffers and scalar grid params only (no xarray
-    or custom objects) so it pickles cheaply into spawned workers.
+    or custom objects) so it pickles cheaply into spawned workers. For a
+    `crown_feature` grid (`footprints` not None) it also carries the
+    footprints of the chunk's trees and the job's base seed.
 
     `chunk_indices` maps `(row, col) -> np.ndarray[int64]` of row positions
     into `df` (built once in `_run_voxelization_batches` via
@@ -481,23 +566,29 @@ def _build_payloads(
         indices = chunk_indices.get((row, col))
         trees_in_chunk = df.iloc[indices] if indices is not None else df.iloc[0:0]
 
-        payloads.append(
-            {
-                "chunk_location": (row, col),
-                "buffers": buffers,
-                "trees": trees_in_chunk,
-                "hr": hr,
-                "vr": vr,
-                "x_origin": x_origin,
-                "y_origin": y_origin,
-                "source_config": source_config,
-                "chunk_y_start": chunk_y.start,
-                "chunk_x_start": chunk_x.start,
-                "y_slice": chunk_y,
-                "x_slice": chunk_x,
-                "rng_seed": _chunk_rng_seed(base_seed, row, col),
+        payload = {
+            "chunk_location": (row, col),
+            "buffers": buffers,
+            "trees": trees_in_chunk,
+            "hr": hr,
+            "vr": vr,
+            "x_origin": x_origin,
+            "y_origin": y_origin,
+            "source_config": source_config,
+            "chunk_y_start": chunk_y.start,
+            "chunk_x_start": chunk_x.start,
+            "y_slice": chunk_y,
+            "x_slice": chunk_x,
+            "rng_seed": _chunk_rng_seed(base_seed, row, col),
+        }
+        if footprints is not None:
+            payload["footprints"] = {
+                tree_id: footprints[tree_id]
+                for tree_id in map(int, trees_in_chunk["tree_id"])
+                if tree_id in footprints
             }
-        )
+            payload["base_seed"] = base_seed
+        payloads.append(payload)
     return payloads
 
 
@@ -512,6 +603,7 @@ def _process_batch(
     source: dict,
     grid_id: str,
     path: str,
+    footprints: dict[int, voxelize.Footprint] | None = None,
 ) -> dict:
     """Run one batch: union-read → split payloads → pool.map → merge → write.
 
@@ -541,7 +633,16 @@ def _process_batch(
     )
 
     payloads = _build_payloads(
-        batch, union_ds, union_y, union_x, df, chunk_indices, layout, source, grid_id
+        batch,
+        union_ds,
+        union_y,
+        union_x,
+        df,
+        chunk_indices,
+        layout,
+        source,
+        grid_id,
+        footprints,
     )
     num_trees = sum(len(p["trees"]) for p in payloads)
     empty_chunks = sum(1 for p in payloads if len(p["trees"]) == 0)
@@ -593,7 +694,7 @@ def _process_batch(
         extra={"grid_id": grid_id},
     )
 
-    return {
+    batch_stats = {
         "read_time": read_time,
         "process_time": process_time,
         "write_time": write_time,
@@ -601,6 +702,19 @@ def _process_batch(
         "empty_chunks": empty_chunks,
         "num_chunks": len(batch),
     }
+    if footprints is not None:
+        batch_stats["crown_geometry_counts"] = _sum_counts(
+            r["crown_geometry_counts"] for r in results
+        )
+    return batch_stats
+
+
+def _sum_counts(counts) -> dict[str, int]:
+    total: dict[str, int] = {}
+    for c in counts:
+        for key, value in c.items():
+            total[key] = total.get(key, 0) + int(value)
+    return total
 
 
 def _run_voxelization_batches(
@@ -610,6 +724,7 @@ def _run_voxelization_batches(
     grid_id: str,
     path: str,
     progress: Callable[[str, int | None], None],
+    footprints: dict[int, voxelize.Footprint] | None = None,
 ) -> BatchStats:
     """Create one persistent Pool and drive every batch through `_process_batch`.
 
@@ -659,8 +774,16 @@ def _run_voxelization_batches(
                 source,
                 grid_id,
                 path,
+                footprints,
             )
 
+            if footprints is not None:
+                stats.crown_geometry_counts = _sum_counts(
+                    [
+                        stats.crown_geometry_counts or {},
+                        batch_stats["crown_geometry_counts"],
+                    ]
+                )
             stats.read_time += batch_stats["read_time"]
             stats.process_time += batch_stats["process_time"]
             stats.write_time += batch_stats["write_time"]
@@ -724,8 +847,23 @@ def voxelize_inventory(
         extra={"grid_id": grid_id},
     )
 
+    measured = None
+    if voxelize.crown_geometry_type(source) == "crown_feature":
+        progress("Loading measured crowns...", 8)
+        measured = measured_crowns.load_footprints(
+            source["crown_geometry_source"]["feature_id"], df["tree_id"]
+        )
+        logger.info(
+            f"{len(measured.footprints)} trees have a crown in the Feature; "
+            f"{measured.ignored_crowns} crowns have no tree in the inventory "
+            "and are ignored",
+            extra={"grid_id": grid_id},
+        )
+
     progress("Computing grid extent...", 10)
-    layout = _plan_grid_layout(grid, domain_gdf, df)
+    layout = _plan_grid_layout(
+        grid, domain_gdf, df, min_top=measured.max_top if measured else None
+    )
 
     progress("Initializing zarr store...", 15)
     storage.init_store(
@@ -742,7 +880,12 @@ def voxelize_inventory(
     )
 
     df = _prepare_tree_chunks(df, layout, source)
-    stats = _run_voxelization_batches(df, layout, source, grid_id, path, progress)
+    footprints = measured.footprints if measured else None
+    if footprints:
+        _log_halo_overhang(df, footprints, layout, grid_id)
+    stats = _run_voxelization_batches(
+        df, layout, source, grid_id, path, progress, footprints
+    )
 
     progress("Finalizing...", 95)
     # Metadata was consolidated at init_store time; region writes during the
@@ -762,4 +905,8 @@ def voxelize_inventory(
     logger.info(f"Total phase time: {phase_total:.2f} seconds", extra=extra)
     logger.info(f"Voxelization job completed in {total_time:.2f} seconds", extra=extra)
 
-    return _build_voxelization_result(layout, path)
+    result = _build_voxelization_result(layout, path)
+    if stats.crown_geometry_counts is not None:
+        logger.info(f"Crown geometry: {stats.crown_geometry_counts}", extra=extra)
+        result.source_updates = {"crown_geometry_counts": stats.crown_geometry_counts}
+    return result

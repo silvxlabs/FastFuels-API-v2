@@ -16,7 +16,11 @@ import traceback
 
 import numpy as np
 
-from treevox.voxelize import build_chunk_cache, voxelize_chunk
+from treevox.voxelize import (
+    build_chunk_cache,
+    plan_measured_crowns,
+    voxelize_chunk,
+)
 
 
 def run(payload: dict) -> dict:
@@ -38,27 +42,38 @@ def run(payload: dict) -> dict:
       y_slice: slice absolute y range covered by the buffer (for merge placement)
       x_slice: slice absolute x range covered by the buffer
       rng_seed: int seed for deterministic stochastic sampling
+      footprints: (crown_feature grids only) {tree_id: Footprint} for this
+                  chunk's trees with a crown in the Feature
+      base_seed: (crown_feature grids only) the job's base seed
 
     Returns on success:
       {chunk_location, buffers, y_slice, x_slice, pid, num_trees,
-       process_time_s}
+       process_time_s}, plus crown_geometry_counts for crown_feature grids
     Returns on exception (never raises — the voxelize handler surfaces via
     ProcessingError(VOXELIZATION_FAILED)):
       {chunk_location, error}
     """
     start = time.monotonic()
-    num_trees = len(payload["trees"])
+    trees = payload["trees"]
+    num_trees = len(trees)
     try:
         rng = np.random.default_rng(payload["rng_seed"])
+        footprints = payload.get("footprints")
+        measured = counts = None
+        cache_trees = trees
+        if footprints is not None:
+            measured, counts = plan_measured_crowns(trees, footprints, payload["vr"])
+            # Measured crowns are all different, so they skip the binned cache.
+            cache_trees = trees[~trees["tree_id"].isin(list(measured))]
         cache = build_chunk_cache(
-            payload["trees"],
+            cache_trees,
             payload["hr"],
             payload["vr"],
             payload["source_config"],
             rng,
         )
         voxelize_chunk(
-            payload["trees"],
+            trees,
             payload["buffers"],
             cache,
             payload["chunk_y_start"],
@@ -69,8 +84,10 @@ def run(payload: dict) -> dict:
             payload["y_origin"],
             payload["source_config"],
             rng,
+            measured=measured,
+            base_seed=payload.get("base_seed", 0),
         )
-        return {
+        result = {
             "chunk_location": payload["chunk_location"],
             "buffers": payload["buffers"],
             "y_slice": payload["y_slice"],
@@ -79,6 +96,9 @@ def run(payload: dict) -> dict:
             "num_trees": num_trees,
             "process_time_s": time.monotonic() - start,
         }
+        if counts is not None:
+            result["crown_geometry_counts"] = counts
+        return result
     except NotImplementedError as e:
         return {
             "chunk_location": payload["chunk_location"],

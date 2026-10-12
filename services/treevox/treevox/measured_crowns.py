@@ -1,0 +1,177 @@
+"""Measured crown footprints for tree voxelization (#617).
+
+Handler-side module — never imported by spawned workers.
+
+A crown Feature holds one polygon per segmented crown, keyed by `tree_id` and
+traced along the edges of the CHM grid it was built from. Rasterizing the
+polygons back onto that CHM lattice recovers each crown's cells exactly; the
+CHM gives each cell's top. Workers receive one `Footprint` per tree and build
+the crown with fastfuels-core (`treevox.voxelize.build_measured_biomass`).
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from dataclasses import dataclass
+
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+import rioxarray  # noqa: F401 — registers `.rio` accessor
+import xarray as xr
+from affine import Affine
+from rasterio.features import rasterize
+
+from lib.config import FEATURES_BUCKET, GRIDS_BUCKET
+from lib.zarr_utils import load_zarr
+from treevox.errors import ProcessingError
+from treevox.firestore_io import load_feature
+from treevox.voxelize import Footprint
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MeasuredFootprints:
+    """Footprints of the inventory's trees that have a crown in the Feature.
+
+    `footprints` is keyed by `tree_id`. `max_top` is the highest CHM top among
+    them (m), or None when there are none. `ignored_crowns` counts the
+    Feature's crowns whose tree is not in the inventory.
+    """
+
+    footprints: dict[int, Footprint]
+    max_top: float | None
+    ignored_crowns: int
+
+
+def load_footprints(feature_id: str, tree_ids: pd.Series) -> MeasuredFootprints:
+    """Read a crown Feature and its CHM, and cut out each matched footprint.
+
+    A crown matches a tree by `tree_id`. Crowns whose tree is not in
+    `tree_ids` (e.g. removed by a treatment) are ignored.
+    """
+    feature = load_feature(feature_id)
+    chm_grid_id = feature["source"]["source_chm_grid_id"]
+
+    crowns = gpd.read_parquet(
+        f"gs://{FEATURES_BUCKET}/{feature['domain_id']}/{feature_id}.parquet",
+        columns=["tree_id", "geometry"],
+    )
+    crowns = crowns[crowns.geometry.notna() & ~crowns.geometry.is_empty]
+    matched = crowns[crowns["tree_id"].isin(tree_ids)].drop_duplicates("tree_id")
+    ignored = int((~crowns["tree_id"].isin(tree_ids)).sum())
+    if matched.empty:
+        return MeasuredFootprints(footprints={}, max_top=None, ignored_crowns=ignored)
+
+    chm = load_chm(chm_grid_id)
+    values, transform = read_chm_window(chm, matched.total_bounds)
+    footprints = footprints_from_crowns(
+        matched["tree_id"].to_numpy(), matched.geometry.to_numpy(), values, transform
+    )
+    tops = [np.nanmax(f.top) for f in footprints.values() if f.mask.any()]
+    return MeasuredFootprints(
+        footprints=footprints,
+        max_top=float(max(tops)) if tops else None,
+        ignored_crowns=ignored,
+    )
+
+
+def load_chm(grid_id: str) -> xr.DataArray:
+    """A grid's `chm` band, lazily, with no-data cells set to NaN."""
+    ds = load_zarr(f"gs://{GRIDS_BUCKET}/{grid_id}")
+    if "chm" not in ds.data_vars:
+        raise ProcessingError(
+            code="MISSING_BAND",
+            message=f"CHM grid {grid_id} has no 'chm' band.",
+        )
+    chm = ds["chm"]
+    nodata = chm.rio.nodata
+    if nodata is not None and not np.isnan(nodata):
+        chm = chm.where(chm != nodata)
+    return chm
+
+
+def read_chm_window(chm: xr.DataArray, bounds: np.ndarray) -> tuple[np.ndarray, Affine]:
+    """Read the CHM cells covering `bounds` (minx, miny, maxx, maxy), plus one.
+
+    Returns the float64 heights and the window's affine transform. The CHM
+    must be north-up with square cells.
+    """
+    transform = chm.rio.transform()
+    a, b, c, d, e, f = transform[:6]
+    if b != 0 or d != 0 or a <= 0 or e >= 0 or not math.isclose(a, -e):
+        raise ProcessingError(
+            code="INVALID_CHM_GRID",
+            message="The crown Feature's CHM grid is not north-up with square cells.",
+        )
+    nrows, ncols = chm.shape
+    minx, miny, maxx, maxy = bounds
+    col0 = max(0, math.floor((minx - c) / a) - 1)
+    col1 = min(ncols, math.ceil((maxx - c) / a) + 1)
+    row0 = max(0, math.floor((f - maxy) / -e) - 1)
+    row1 = min(nrows, math.ceil((f - miny) / -e) + 1)
+    row_dim, col_dim = chm.dims
+    window = chm.isel({row_dim: slice(row0, row1), col_dim: slice(col0, col1)})
+    values = np.asarray(window.values, dtype=np.float64)
+    return values, transform * Affine.translation(col0, row0)
+
+
+def footprints_from_crowns(
+    tree_ids: np.ndarray,
+    geometries: np.ndarray,
+    chm: np.ndarray,
+    transform: Affine,
+) -> dict[int, Footprint]:
+    """Rasterize crown polygons onto the CHM lattice and cut out each crown.
+
+    The polygons follow CHM cell edges, so the cells whose centers they
+    contain are exactly the crown's cells. Crowns never overlap. Cells with
+    no CHM value are left out of the footprint. Returns one `Footprint` per
+    tree, keyed by `tree_id`; a crown with no cells gets an empty footprint.
+    """
+    nrows, ncols = chm.shape
+    labels = rasterize(
+        zip(geometries, range(1, len(geometries) + 1)),
+        out_shape=(nrows, ncols),
+        transform=transform,
+        fill=0,
+        dtype="int32",
+    )
+    flat = labels.ravel()
+    cells = np.flatnonzero(flat)
+    order = np.argsort(flat[cells], kind="stable")
+    cells = cells[order]
+    starts = np.searchsorted(flat[cells], np.arange(1, len(geometries) + 2))
+    rows, cols = np.divmod(cells, ncols)
+    tops = chm.ravel()[cells]
+
+    resolution = float(transform.a)
+    footprints: dict[int, Footprint] = {}
+    for k, tree_id in enumerate(tree_ids):
+        r, c, t = (arr[starts[k] : starts[k + 1]] for arr in (rows, cols, tops))
+        valid = np.isfinite(t)
+        r, c, t = r[valid], c[valid], t[valid]
+        if r.size == 0:
+            footprints[int(tree_id)] = Footprint(
+                mask=np.zeros((1, 1), dtype=bool),
+                top=np.full((1, 1), np.nan),
+                origin=(transform.c, transform.f),
+                resolution=resolution,
+            )
+            continue
+        r0, c0 = int(r.min()), int(c.min())
+        shape = (int(r.max()) - r0 + 1, int(c.max()) - c0 + 1)
+        mask = np.zeros(shape, dtype=bool)
+        top = np.full(shape, np.nan)
+        mask[r - r0, c - c0] = True
+        top[r - r0, c - c0] = t
+        x_west, y_north = transform * (c0, r0)
+        footprints[int(tree_id)] = Footprint(
+            mask=mask,
+            top=top,
+            origin=(float(x_west), float(y_north)),
+            resolution=resolution,
+        )
+    return footprints

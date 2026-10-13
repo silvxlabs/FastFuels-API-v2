@@ -264,12 +264,17 @@ class TestFailurePaths:
     @patch("lakitu.main._load_domain")
     @patch("lakitu.main.update_status")
     @patch("lakitu.main.load_point_cloud")
-    def test_unexpected_error_returns_500(
-        self, mock_load, _mock_status, _mock_domain, mock_dispatch, point_cloud
+    def test_unexpected_error_records_failure(
+        self, mock_load, mock_status, _mock_domain, mock_dispatch, point_cloud
     ):
-        """An unexpected fault is left for the retry to make terminal."""
+        """An unexpected fault is recorded as failed immediately, not left to a
+        retry that may not exist (#664)."""
         mock_load.return_value = point_cloud
         mock_dispatch.side_effect = RuntimeError("boom")
 
-        response, code = process_point_cloud_request(MockRequest({"id": "pc-1"}))
-        assert code == 500
+        with patch("lakitu.main.delete_cloud") as mock_delete:
+            response, code = process_point_cloud_request(MockRequest({"id": "pc-1"}))
+        assert code == 200
+        assert mock_status.call_args[0] == ("pc-1", "failed")
+        assert mock_status.call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"
+        mock_delete.assert_called_once_with("pc-1")

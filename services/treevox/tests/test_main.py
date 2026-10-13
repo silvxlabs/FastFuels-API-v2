@@ -168,9 +168,11 @@ class TestProcessGridRequest:
     @patch("treevox.main.load_domain")
     @patch("treevox.main.update_status")
     @patch("treevox.main.load_grid")
-    def test_unexpected_error_returns_500(
+    def test_unexpected_error_records_failure(
         self, mock_load, mock_status, mock_domain, mock_dispatch, mock_delete
     ):
+        """An unexpected error is recorded as failed immediately, not left to a
+        retry that may not exist (#664)."""
         mock_load.return_value = {
             "id": "g1",
             "domain_id": "d1",
@@ -181,7 +183,11 @@ class TestProcessGridRequest:
         mock_dispatch.side_effect = RuntimeError("boom")
 
         _, status = process_grid_request(MockRequest(data={"id": "g1"}))
-        assert status == 500
+        assert status == 200
+        args, kwargs = mock_status.call_args
+        assert args[:2] == ("g1", "failed")
+        assert kwargs["error"]["code"] == "UNEXPECTED_FAILURE"
+        mock_delete.assert_called_once()
 
     @patch("treevox.main.storage.delete_zarr")
     @patch("treevox.main.dispatch_handler")

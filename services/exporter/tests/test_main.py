@@ -73,3 +73,16 @@ def test_retry_of_finished_export_is_left_alone(mock_load, mock_status, terminal
     )
     assert code == 200
     mock_status.assert_not_called()
+
+
+@patch("exporter.main.dispatch_handler", side_effect=RuntimeError("boom"))
+@patch("exporter.main.update_status")
+@patch("exporter.main.load_export")
+def test_unexpected_error_records_failure(mock_load, mock_status, _mock_dispatch):
+    """An unexpected error is recorded as failed immediately, not left to a
+    retry that may not exist (#664)."""
+    mock_load.return_value = {"status": "pending", "domain_id": "d"}
+    response, code = process_export_request(MockRequest({"id": "e1"}))
+    assert code == 200
+    assert mock_status.call_args[0] == ("e1", "failed")
+    assert mock_status.call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"

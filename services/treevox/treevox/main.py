@@ -189,8 +189,23 @@ def process_grid_request(request: Request):
 
     except Exception as e:
         logger.exception(f"Unexpected error: {e}", extra=ids)
+        # Record the failure now instead of leaving it to a retry: a retry
+        # exists only while attempts remain, and without one the resource
+        # would stay "running" forever (#664). If this write itself fails,
+        # the exception escapes as a 500 and the retry marks it failed.
         storage.delete_zarr(storage.gcs_path(grid_id))
-        return "Internal error", 500
+        try:
+            update_status(
+                grid_id,
+                "failed",
+                error={
+                    "code": "UNEXPECTED_FAILURE",
+                    "message": UNEXPECTED_FAILURE_MESSAGE,
+                },
+            )
+        except CancelledException:
+            pass
+        return "OK", 200
 
 
 class MockRequest:

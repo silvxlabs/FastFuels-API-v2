@@ -340,10 +340,11 @@ class TestProcessGridRequest:
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main.update_status")
     @patch("griddle.main.load_grid")
-    def test_unexpected_error_returns_500(
+    def test_unexpected_error_records_failure(
         self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
     ):
-        """Unexpected error returns 500 to trigger Cloud Tasks retry."""
+        """An unexpected error is recorded as failed immediately, not left to a
+        retry that may not exist (#664)."""
         mock_load_grid.return_value = {
             "id": "test-grid-id",
             "source": {"name": "landfire", "product": "fbfm40"},
@@ -357,7 +358,32 @@ class TestProcessGridRequest:
 
         response, status_code = process_grid_request(request)
 
-        assert status_code == 500
+        assert status_code == 200
+        args, kwargs = mock_update_status.call_args
+        assert args == ("test-grid-id", "failed")
+        assert kwargs["error"]["code"] == "UNEXPECTED_FAILURE"
+
+    @patch("griddle.main._load_domain")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.load_grid")
+    def test_unexpected_error_escapes_when_failure_write_fails(
+        self, mock_load_grid, mock_update_status, mock_dispatch, mock_load_domain
+    ):
+        """If recording the failure itself raises, the exception escapes as a
+        500 so the Cloud Tasks retry can mark the still-running grid failed."""
+        mock_load_grid.return_value = {"status": "pending", "domain_id": "d"}
+        mock_load_domain.return_value = MagicMock()
+        mock_dispatch.side_effect = RuntimeError("Unexpected error")
+
+        def update(grid_id, status, **kwargs):
+            if status == "failed":
+                raise ConnectionError("Firestore unavailable")
+
+        mock_update_status.side_effect = update
+
+        with pytest.raises(ConnectionError):
+            process_grid_request(MockRequest(json_data={"id": "test-grid-id"}))
 
     @patch("griddle.main._load_domain")
     @patch("griddle.main.dispatch_handler")

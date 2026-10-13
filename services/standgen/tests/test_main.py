@@ -251,9 +251,11 @@ def test_cancelled_during_processing(
 @patch("standgen.main.dispatch_handler")
 @patch("standgen.main.update_status")
 @patch("standgen.main.load_inventory")
-def test_unexpected_error_returns_500(
+def test_unexpected_error_records_failure(
     mock_load, mock_status, mock_dispatch, mock_load_domain, mock_inventory
 ):
+    """An unexpected error is recorded as failed immediately, not left to a
+    retry that may not exist (#664)."""
     from standgen.main import process_inventory_request
 
     mock_load.return_value = mock_inventory
@@ -263,7 +265,9 @@ def test_unexpected_error_returns_500(
     request = MockRequest({"id": "test-inventory-123"})
     response, status_code = process_inventory_request(request)
 
-    assert status_code == 500
+    assert status_code == 200
+    assert mock_status.call_args[0] == ("test-inventory-123", "failed")
+    assert mock_status.call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"
 
 
 @patch("standgen.main._load_domain")

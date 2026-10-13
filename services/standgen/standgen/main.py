@@ -301,7 +301,22 @@ def process_inventory_request(request: Request):
 
     except Exception as e:
         logger.exception(f"Unexpected error: {e}", extra=ids)
-        return "Internal error", 500
+        # Record the failure now instead of leaving it to a retry: a retry
+        # exists only while attempts remain, and without one the resource
+        # would stay "running" forever (#664). If this write itself fails,
+        # the exception escapes as a 500 and the retry marks it failed.
+        try:
+            update_status(
+                inventory_id,
+                "failed",
+                error={
+                    "code": "UNEXPECTED_FAILURE",
+                    "message": UNEXPECTED_FAILURE_MESSAGE,
+                },
+            )
+        except CancelledException:
+            delete_parquet(inventory_id)
+        return "OK", 200
 
 
 if __name__ == "__main__":

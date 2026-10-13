@@ -204,9 +204,11 @@ def test_cancelled_during_processing(
 @patch("etcher.main.dispatch_handler")
 @patch("etcher.main.update_status")
 @patch("etcher.main.load_feature")
-def test_unexpected_error_returns_500(
+def test_unexpected_error_records_failure(
     mock_load, mock_status, mock_dispatch, mock_load_domain, mock_feature
 ):
+    """An unexpected error is recorded as failed immediately, not left to a
+    retry that may not exist (#664)."""
     from etcher.main import process_feature_request
 
     mock_load.return_value = mock_feature
@@ -216,7 +218,9 @@ def test_unexpected_error_returns_500(
     request = MockRequest({"id": "test-feature-123"})
     response, status_code = process_feature_request(request)
 
-    assert status_code == 500
+    assert status_code == 200
+    assert mock_status.call_args[0] == ("test-feature-123", "failed")
+    assert mock_status.call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"
 
 
 @patch("etcher.main.update_status")

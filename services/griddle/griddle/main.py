@@ -438,10 +438,23 @@ def process_grid_request(request: Request):
         return "OK", 200
 
     except Exception as e:
-        # Unexpected error - let Cloud Tasks retry
-        # On retry, the retry_count check above will mark it as failed
         logger.exception(f"Unexpected error: {e}", extra=ids)
-        return "Internal error", 500  # Return 500 to trigger retry
+        # Record the failure now instead of leaving it to a retry: a retry
+        # exists only while attempts remain, and without one the resource
+        # would stay "running" forever (#664). If this write itself fails,
+        # the exception escapes as a 500 and the retry marks it failed.
+        try:
+            update_status(
+                grid_id,
+                "failed",
+                error={
+                    "code": "UNEXPECTED_FAILURE",
+                    "message": UNEXPECTED_FAILURE_MESSAGE,
+                },
+            )
+        except CancelledException:
+            delete_zarr(grid_id)
+        return "OK", 200
 
 
 # Local development entry point

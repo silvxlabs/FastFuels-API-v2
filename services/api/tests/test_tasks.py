@@ -13,6 +13,8 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE
 
@@ -245,6 +247,54 @@ class TestCreateHttpTaskAsync:
         call_kwargs = mock_client.create_task.call_args[1]
         body = call_kwargs["task"].http_request.body
         assert b'"id": "abc"' in body
+
+
+class TestSkipDispatch:
+    """The skip-dispatch header turns create_http_task_async into a no-op for
+    that request (#680)."""
+
+    async def test_header_reaches_the_endpoint(self, tasks_module):
+        app = FastAPI()
+        app.add_middleware(tasks_module.SkipDispatchMiddleware)
+
+        @app.get("/")
+        async def endpoint():
+            return tasks_module.skip_dispatch.get()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://t") as client:
+            header = tasks_module.SKIP_DISPATCH_HEADER
+            assert (await client.get("/", headers={header: "1"})).json() is True
+            assert (await client.get("/", headers={header: "0"})).json() is False
+            assert (await client.get("/")).json() is False
+
+    async def test_app_installs_the_middleware(self, tasks_module):
+        from api.app import app
+
+        assert any(
+            m.cls is tasks_module.SkipDispatchMiddleware for m in app.user_middleware
+        )
+
+    @patch("api.tasks.tasks_v2.CloudTasksAsyncClient")
+    @patch("api.tasks._get_service_target")
+    async def test_skips_cloud_run_and_cloud_tasks(
+        self, mock_target, mock_client_class, tasks_module, caplog
+    ):
+        token = tasks_module.skip_dispatch.set(True)
+        try:
+            with caplog.at_level("INFO", logger="api.tasks"):
+                result = await tasks_module.create_http_task_async(
+                    GRIDDLE_QUEUE, GRIDDLE_SERVICE, "grid-1", task_name="grid-1-mod"
+                )
+        finally:
+            tasks_module.skip_dispatch.reset(token)
+
+        assert result is None
+        mock_target.assert_not_called()
+        mock_client_class.assert_not_called()
+        assert GRIDDLE_QUEUE in caplog.text
+        assert GRIDDLE_SERVICE in caplog.text
+        assert "grid-1-mod" in caplog.text
 
 
 class TestCreateHttpTaskAsyncIntegration:

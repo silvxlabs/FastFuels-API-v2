@@ -20,6 +20,7 @@ from api.resources.point_clouds.router import (
     wildcard_router as point_clouds_wildcard_router,
 )
 from api.resources.users.router import router as users_router
+from api.tasks import SkipDispatchMiddleware
 from lib.config import DEPLOYMENT_ENV
 
 CORS_ORIGINS = {
@@ -172,6 +173,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=EXPOSE_HEADERS,
 )
+app.add_middleware(SkipDispatchMiddleware)
 
 api_router = APIRouter()
 

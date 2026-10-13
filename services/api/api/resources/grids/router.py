@@ -742,6 +742,9 @@ def _grid_data_json_body(
         data=payload,
     ).model_dump(mode="json")
     body["data"].update({key: _json_array(value) for key, value in arrays.items()})
+    if body["data"].get("fill_value") is not None and data.dtype.kind == "f":
+        # Print the fill in the band's own precision, matching the values.
+        body["data"]["fill_value"] = data.dtype.type(body["data"]["fill_value"])
     return orjson.dumps(body, option=orjson.OPT_SERIALIZE_NUMPY)
 
 

@@ -310,6 +310,21 @@ def test_sparse_null_fill_value_is_present():
     assert body["data"]["fill_value"] is None
 
 
+def test_sparse_float32_fill_prints_like_values():
+    data = np.array([[0.1, 0.2, 0.1], [0.3, 0.1, 0.1]], dtype=np.float32)
+    raw = _grid_data_json_body(
+        data,
+        _meta_2d(),
+        np.float32(0.1).item(),
+        GridDataArrayFormat.sparse,
+        GridDataOrder.C,
+    )
+    assert b'"fill_value":0.1,' in raw
+    body = _parse(raw)
+    assert body["data"]["values"] == [0.2, 0.3]
+    assert np.float32(body["data"]["fill_value"]) == np.float32(0.1)
+
+
 def test_non_finite_becomes_null_in_dense_values():
     data = _float_chunk_2d()
     data[1, 0] = -np.inf

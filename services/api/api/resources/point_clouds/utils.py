@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 import numpy as np
+import orjson
 import pyarrow as pa
 from fastapi import HTTPException, status
 from pydantic import ValidationError
@@ -244,7 +245,14 @@ def json_response(
 
 def json_body(selection: TileSelection, data: pa.Table) -> bytes:
     """Serialize a tile selection as the public columnar JSON body."""
-    return json_response(selection, data).model_dump_json().encode()
+    # Pydantic builds everything but the columns, which orjson reads directly.
+    body = json_response(selection, data.slice(0, 0)).model_dump(mode="json")
+    for name in selection.columns:
+        values = data.column(name).to_numpy(zero_copy_only=False)
+        body["data"][name] = np.ascontiguousarray(
+            values, dtype=values.dtype.newbyteorder("=")
+        )
+    return orjson.dumps(body, option=orjson.OPT_SERIALIZE_NUMPY)
 
 
 def check_json_size(selection: TileSelection, rows: int | None = None) -> None:

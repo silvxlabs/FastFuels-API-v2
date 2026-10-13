@@ -10,6 +10,7 @@ import math
 from datetime import datetime
 
 import numpy as np
+import orjson
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -90,27 +91,24 @@ def _check_size(actual: int, limit: int, what: str, hint: str) -> None:
         )
 
 
-def _json_values(flat: np.ndarray) -> list:
-    """Flatten a 1D array to JSON scalars, non-finite floats becoming ``None``.
+def _json_array(flat: np.ndarray) -> np.ndarray:
+    """Prepare a 1D array for ``orjson.OPT_SERIALIZE_NUMPY``.
 
-    NaN and ±Inf have no JSON representation and the response is serialized
-    with ``allow_nan=False``, so a float band's missing cells would otherwise
-    raise inside the encoder and surface as a bare 500 (issue #487). Integer
-    bands skip the scan; a float band with every cell present pays only a
-    vectorized ``isfinite`` pass, and only the offending cells are rewritten.
+    orjson reads only native-endian, C-contiguous buffers, and writes NaN and
+    ±Inf as ``null``, so a float band's missing cells need no rewrite (issue
+    #487). Bool is widened to float64 to keep the ``1.0``/``0.0`` the Pydantic
+    encoder emitted.
     """
-    values = flat.tolist()
-    if flat.dtype.kind == "f":
-        for index in np.flatnonzero(~np.isfinite(flat)).tolist():
-            values[index] = None
-    return values
+    if flat.dtype == np.bool_:
+        flat = flat.astype(np.float64)
+    return np.ascontiguousarray(flat, dtype=flat.dtype.newbyteorder("="))
 
 
 def _json_scalar(value: float | int | None) -> float | int | None:
     """``None`` for a non-finite fill value, which JSON cannot represent.
 
     Float grids are stored with ``fill_value`` NaN, so this is the scalar
-    counterpart to `_json_values`.
+    counterpart to `_json_array`.
     """
     if isinstance(value, float) and not math.isfinite(value):
         return None
@@ -711,7 +709,8 @@ def _grid_data_json_body(
     fill_value: float | int | None,
     array_format: GridDataArrayFormat,
     order: GridDataOrder,
-) -> str:
+) -> bytes:
+    # Pydantic builds everything but the arrays, which orjson reads directly.
     if array_format == GridDataArrayFormat.sparse:
         indices, values = _sparse_components(data, fill_value, order)
         _check_size(
@@ -723,9 +722,10 @@ def _grid_data_json_body(
         payload = SparseGridData(
             format="sparse",
             fill_value=_json_scalar(fill_value),
-            indices=indices.tolist(),
-            values=_json_values(values),
+            indices=[],
+            values=[],
         )
+        arrays = {"indices": indices, "values": values}
     else:
         _check_size(
             data.size,
@@ -733,16 +733,16 @@ def _grid_data_json_body(
             "Dense JSON grid data",
             "Request array_format=sparse, /binary, or a smaller chunk.",
         )
-        payload = DenseGridData(
-            format="dense",
-            values=_json_values(data.ravel(order=order.value)),
-        )
-    return GridDataResponse(
+        payload = DenseGridData(format="dense", values=[])
+        arrays = {"values": data.ravel(order=order.value)}
+    body = GridDataResponse(
         shape=list(data.shape),
         order=order.value,
         metadata=meta,
         data=payload,
-    ).model_dump_json()
+    ).model_dump(mode="json")
+    body["data"].update({key: _json_array(value) for key, value in arrays.items()})
+    return orjson.dumps(body, option=orjson.OPT_SERIALIZE_NUMPY)
 
 
 class BinaryResponse(Response):

@@ -242,6 +242,11 @@ def json_response(
     )
 
 
+def json_body(selection: TileSelection, data: pa.Table) -> bytes:
+    """Serialize a tile selection as the public columnar JSON body."""
+    return json_response(selection, data).model_dump_json().encode()
+
+
 def check_json_size(selection: TileSelection, rows: int | None = None) -> None:
     """Reject a known or actual JSON selection above the scalar limit."""
     if rows is None:

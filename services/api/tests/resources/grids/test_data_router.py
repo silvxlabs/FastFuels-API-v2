@@ -21,9 +21,10 @@ from api.resources.grids import router as grids_router
 from api.resources.grids.schema import (
     GridDataArrayFormat,
     GridDataOrder,
+    GridDataResponse,
 )
 from api.resources.grids.utils import compute_chunk_metadata
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
@@ -266,7 +267,7 @@ async def _call_handler(
     monkeypatch.setattr(grids_router, "get_document_async", fake_get_document_async)
     monkeypatch.setattr(grids_router, "get_grid_array", fake_get_grid_array)
 
-    return await handler(
+    result = await handler(
         request=SimpleNamespace(state=SimpleNamespace(id="owner-1")),
         domain={"id": "domain-1"},
         grid_id="grid-fake",
@@ -275,6 +276,22 @@ async def _call_handler(
         array_format=array_format,
         order=order,
     )
+    return _parse_json_response(result)
+
+
+def _parse_json_response(result):
+    """Parse a JSON handler's raw ``Response`` back into ``GridDataResponse``.
+
+    The body is parsed strictly (no NaN/Infinity tokens), as a client would.
+    """
+    if not (isinstance(result, Response) and result.media_type == "application/json"):
+        return result
+
+    def reject(token):
+        raise ValueError(f"non-JSON constant {token} in response body")
+
+    json.loads(result.body, parse_constant=reject)
+    return GridDataResponse.model_validate_json(result.body)
 
 
 def _route_json(response) -> dict:
@@ -620,14 +637,16 @@ class TestGetGridDataJson:
         monkeypatch.setattr(grids_router, "get_document_async", fake_get_document_async)
         monkeypatch.setattr(grids_router, "get_grid_array", fake_get_grid_array)
 
-        response = await grids_router.get_grid_data_json(
-            request=SimpleNamespace(state=SimpleNamespace(id="owner-1")),
-            domain={"id": "domain-1"},
-            grid_id="grid-3d",
-            chunk_index=5,
-            band="bulk_density.foliage.live",
-            array_format=GridDataArrayFormat.dense,
-            order=GridDataOrder.C,
+        response = _parse_json_response(
+            await grids_router.get_grid_data_json(
+                request=SimpleNamespace(state=SimpleNamespace(id="owner-1")),
+                domain={"id": "domain-1"},
+                grid_id="grid-3d",
+                chunk_index=5,
+                band="bulk_density.foliage.live",
+                array_format=GridDataArrayFormat.dense,
+                order=GridDataOrder.C,
+            )
         )
 
         assert fake_array.selection == (slice(2, 4), slice(0, 2), slice(3, 6))

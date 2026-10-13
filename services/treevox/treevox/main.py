@@ -92,28 +92,6 @@ def process_grid_request(request: Request):
         logger.error("No id in request body")
         return "Missing id", 400
 
-    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
-    if retry_count > 0:
-        logger.error(
-            "Failed on previous attempt, marking as failed",
-            extra={"grid_id": grid_id},
-        )
-        try:
-            update_status(
-                grid_id,
-                "failed",
-                error={
-                    "code": "UNEXPECTED_FAILURE",
-                    "message": UNEXPECTED_FAILURE_MESSAGE,
-                },
-            )
-            storage.delete_zarr(storage.gcs_path(grid_id))
-        except (CancelledException, DocumentNotFoundError):
-            pass
-        return "OK", 200
-
-    logger.info("Processing started", extra={"grid_id": grid_id})
-
     try:
         grid = load_grid(grid_id)
     except DocumentNotFoundError:
@@ -122,6 +100,36 @@ def process_grid_request(request: Request):
 
     domain_id = grid.get("domain_id")
     ids = {"grid_id": grid_id, "domain_id": domain_id}
+
+    # Cloud Tasks sets X-CloudTasks-TaskRetryCount on every re-dispatch. Only a
+    # grid already "running" proves the previous attempt executed and died
+    # without recording an outcome; one still "pending" was rejected by Cloud
+    # Run before any container ran and must be processed (#664). A terminal
+    # grid finished but its response was lost; leave it alone.
+    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
+    if retry_count > 0:
+        status = grid.get("status")
+        if status == "running":
+            logger.warning("Failed on previous attempt, marking as failed", extra=ids)
+            try:
+                update_status(
+                    grid_id,
+                    "failed",
+                    error={
+                        "code": "UNEXPECTED_FAILURE",
+                        "message": UNEXPECTED_FAILURE_MESSAGE,
+                    },
+                )
+                storage.delete_zarr(storage.gcs_path(grid_id))
+            except (CancelledException, DocumentNotFoundError):
+                pass
+            return "OK", 200
+        if status in ("completed", "failed"):
+            logger.info("Retry of a finished job, nothing to do", extra=ids)
+            return "OK", 200
+        logger.info("Previous attempt never ran, processing", extra=ids)
+
+    logger.info("Processing started", extra=ids)
 
     try:
         update_status(grid_id, "running")

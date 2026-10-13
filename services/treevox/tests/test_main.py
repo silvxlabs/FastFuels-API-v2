@@ -28,7 +28,12 @@ class TestProcessGridRequest:
 
     @patch("treevox.main.storage.delete_zarr")
     @patch("treevox.main.update_status")
-    def test_retry_marks_failed_and_returns_200(self, mock_update, mock_delete):
+    @patch("treevox.main.load_grid")
+    def test_retry_of_running_grid_marks_it_failed(
+        self, mock_load, mock_update, mock_delete
+    ):
+        """A retry against a "running" grid means the previous attempt died."""
+        mock_load.return_value = {"status": "running", "domain_id": "d"}
         request = MockRequest(
             data={"id": "g1"}, headers={"X-CloudTasks-TaskRetryCount": "1"}
         )
@@ -40,6 +45,45 @@ class TestProcessGridRequest:
         assert kwargs["error"]["code"] == "UNEXPECTED_FAILURE"
         # Partial zarr should be cleaned up on retry-failure path.
         mock_delete.assert_called_once()
+
+    @patch("treevox.main.storage.delete_zarr")
+    @patch("treevox.main.update_status")
+    @patch("treevox.main.load_grid")
+    def test_retry_of_pending_grid_is_processed(
+        self, mock_load, mock_update, mock_delete
+    ):
+        """A retry against a "pending" grid never ran (Cloud Run rejected the
+        first dispatch before any container started, #664) and must be
+        processed, not failed."""
+        mock_load.return_value = {"status": "pending", "domain_id": "d"}
+        # Cancel at the "running" transition so the test stops before the
+        # handler pipeline, which is covered elsewhere.
+        mock_update.side_effect = CancelledException("stop here")
+        request = MockRequest(
+            data={"id": "g1"}, headers={"X-CloudTasks-TaskRetryCount": "1"}
+        )
+        response, status = process_grid_request(request)
+        assert status == 200
+        mock_update.assert_called_once_with("g1", "running")
+        mock_delete.assert_not_called()
+
+    @pytest.mark.parametrize("terminal", ["completed", "failed"])
+    @patch("treevox.main.storage.delete_zarr")
+    @patch("treevox.main.update_status")
+    @patch("treevox.main.load_grid")
+    def test_retry_of_finished_grid_is_left_alone(
+        self, mock_load, mock_update, mock_delete, terminal
+    ):
+        """A retry against a terminal grid means the previous attempt finished
+        but its response was lost; the data and outcome must survive."""
+        mock_load.return_value = {"status": terminal, "domain_id": "d"}
+        request = MockRequest(
+            data={"id": "g1"}, headers={"X-CloudTasks-TaskRetryCount": "1"}
+        )
+        response, status = process_grid_request(request)
+        assert status == 200
+        mock_update.assert_not_called()
+        mock_delete.assert_not_called()
 
     @patch("treevox.main.load_grid")
     def test_grid_not_found_returns_200(self, mock_load_grid):

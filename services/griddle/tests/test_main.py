@@ -5,12 +5,14 @@ Tests for Griddle main module.
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 import rioxarray  # noqa: F401
 import xarray as xr
 from affine import Affine
 from griddle.main import _band_nodata, process_grid_request
 
 from lib.config import GRIDS_COLLECTION
+from lib.errors import CancelledException
 
 
 def _ds_with_band(name, data, nodata):
@@ -84,8 +86,12 @@ class TestProcessGridRequest:
         assert status_code == 400
 
     @patch("griddle.main.update_status")
-    def test_retry_marks_job_failed(self, mock_update_status):
-        """On retry (retry_count > 0), mark job as failed and return 200."""
+    @patch("griddle.main.load_grid")
+    def test_retry_of_running_grid_marks_it_failed(
+        self, mock_load_grid, mock_update_status
+    ):
+        """A retry against a "running" grid means the previous attempt died."""
+        mock_load_grid.return_value = {"status": "running", "domain_id": "d"}
         request = MockRequest(
             json_data={"id": "test-grid-id"},
             headers={"X-CloudTasks-TaskRetryCount": "1"},
@@ -99,6 +105,47 @@ class TestProcessGridRequest:
         assert call_args[0][0] == "test-grid-id"
         assert call_args[0][1] == "failed"
         assert "UNEXPECTED_FAILURE" in call_args[1]["error"]["code"]
+
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.load_grid")
+    def test_retry_of_pending_grid_is_processed(
+        self, mock_load_grid, mock_update_status
+    ):
+        """A retry against a "pending" grid never ran (Cloud Run rejected the
+        first dispatch before any container started, #664) and must be
+        processed, not failed."""
+        mock_load_grid.return_value = {"status": "pending", "domain_id": "d"}
+        # Cancel at the "running" transition so the test stops before the
+        # handler pipeline, which is covered elsewhere.
+        mock_update_status.side_effect = CancelledException("stop here")
+        request = MockRequest(
+            json_data={"id": "test-grid-id"},
+            headers={"X-CloudTasks-TaskRetryCount": "1"},
+        )
+
+        response, status_code = process_grid_request(request)
+
+        assert status_code == 200
+        mock_update_status.assert_called_once_with("test-grid-id", "running")
+
+    @pytest.mark.parametrize("terminal", ["completed", "failed"])
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.load_grid")
+    def test_retry_of_finished_grid_is_left_alone(
+        self, mock_load_grid, mock_update_status, terminal
+    ):
+        """A retry against a terminal grid means the previous attempt finished
+        but its response was lost; the recorded outcome must survive."""
+        mock_load_grid.return_value = {"status": terminal, "domain_id": "d"}
+        request = MockRequest(
+            json_data={"id": "test-grid-id"},
+            headers={"X-CloudTasks-TaskRetryCount": "1"},
+        )
+
+        response, status_code = process_grid_request(request)
+
+        assert status_code == 200
+        mock_update_status.assert_not_called()
 
     @patch("griddle.main.load_grid")
     def test_grid_not_found_returns_200(self, mock_load_grid):

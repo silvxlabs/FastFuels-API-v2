@@ -9,6 +9,7 @@ from api.app import app
 from api.dependencies import get_verified_domain
 from api.resources.point_clouds import router as point_clouds_router
 from api.resources.point_clouds import utils as point_cloud_utils
+from api.resources.point_clouds.schema import PointCloudTileDataResponse
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
@@ -273,7 +274,7 @@ class TestJsonTile:
         }
         calls = _install_storage(monkeypatch, data=data)
 
-        response = await point_clouds_router.get_point_cloud_data_json(
+        raw = await point_clouds_router.get_point_cloud_data_json(
             request=_request(),
             domain={"id": "domain-1"},
             point_cloud_id="cloud-1",
@@ -283,6 +284,8 @@ class TestJsonTile:
             classes="5,2,5",
             columns="Z,classification",
         )
+        assert raw.media_type == "application/json"
+        response = PointCloudTileDataResponse.model_validate_json(raw.body)
 
         assert response.lod == 4
         assert response.classes == [2, 5]

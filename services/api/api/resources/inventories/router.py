@@ -5,6 +5,7 @@ Router for the Inventory resource with standard CRUD endpoints.
 Algorithm-specific creation endpoints are in their respective subdirectories.
 """
 
+import asyncio
 import io
 import logging
 import traceback
@@ -769,6 +770,15 @@ async def get_inventory_data_json(
         request, domain, inventory_id, partition_index, columns
     )
 
+    body = await asyncio.to_thread(
+        _inventory_json_body, df, partition_index, json_orientation
+    )
+    return Response(content=body, media_type="application/json")
+
+
+def _inventory_json_body(
+    df, partition_index: int, json_orientation: InventoryJsonOrientation
+) -> str:
     if json_orientation == InventoryJsonOrientation.records:
         data = df.to_dict(orient="records")
     else:
@@ -779,7 +789,7 @@ async def get_inventory_data_json(
         num_rows=len(df),
         columns=list(df.columns),
         data=data,
-    )
+    ).model_dump_json()
 
 
 class CsvResponse(Response):
@@ -842,10 +852,9 @@ async def get_inventory_data_csv(
         request, domain, inventory_id, partition_index, columns
     )
 
-    buf = io.StringIO()
-    df.to_csv(buf, index=False)
+    content = await asyncio.to_thread(_inventory_csv_body, df)
     return CsvResponse(
-        content=buf.getvalue(),
+        content=content,
         headers={
             "X-Partition-Index": str(partition_index),
             "X-Row-Count": str(len(df)),
@@ -853,6 +862,12 @@ async def get_inventory_data_csv(
             "X-Num-Partitions": str(meta.num_partitions),
         },
     )
+
+
+def _inventory_csv_body(df) -> str:
+    buf = io.StringIO()
+    df.to_csv(buf, index=False)
+    return buf.getvalue()
 
 
 router.include_router(tree_router, prefix="/tree")

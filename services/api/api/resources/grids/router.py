@@ -5,6 +5,7 @@ Router for the Grid resource with standard CRUD endpoints.
 Product-specific endpoints (FBFM40, Topography, etc.) are in their respective subdirectories.
 """
 
+import asyncio
 import math
 from datetime import datetime
 
@@ -696,10 +697,22 @@ async def get_grid_data_json(
     data, array, meta = await _read_grid_chunk(
         request, domain, grid_id, band, chunk_index
     )
+    raw_fill = getattr(getattr(array, "metadata", None), "fill_value", None)
+    fill_value = raw_fill.item() if hasattr(raw_fill, "item") else raw_fill
+    body = await asyncio.to_thread(
+        _grid_data_json_body, data, meta, fill_value, array_format, order
+    )
+    return Response(content=body, media_type="application/json")
 
+
+def _grid_data_json_body(
+    data: np.ndarray,
+    meta: GridDataChunkMetadata,
+    fill_value: float | int | None,
+    array_format: GridDataArrayFormat,
+    order: GridDataOrder,
+) -> str:
     if array_format == GridDataArrayFormat.sparse:
-        raw_fill = getattr(getattr(array, "metadata", None), "fill_value", None)
-        fill_value = raw_fill.item() if hasattr(raw_fill, "item") else raw_fill
         indices, values = _sparse_components(data, fill_value, order)
         _check_size(
             2 * len(indices),
@@ -707,33 +720,29 @@ async def get_grid_data_json(
             "Sparse JSON grid data",
             "Request /binary or a smaller chunk.",
         )
-        return GridDataResponse(
-            shape=list(data.shape),
-            order=order.value,
-            metadata=meta,
-            data=SparseGridData(
-                format="sparse",
-                fill_value=_json_scalar(fill_value),
-                indices=indices.tolist(),
-                values=_json_values(values),
-            ),
+        payload = SparseGridData(
+            format="sparse",
+            fill_value=_json_scalar(fill_value),
+            indices=indices.tolist(),
+            values=_json_values(values),
         )
-
-    _check_size(
-        data.size,
-        MAX_JSON_SCALARS,
-        "Dense JSON grid data",
-        "Request array_format=sparse, /binary, or a smaller chunk.",
-    )
+    else:
+        _check_size(
+            data.size,
+            MAX_JSON_SCALARS,
+            "Dense JSON grid data",
+            "Request array_format=sparse, /binary, or a smaller chunk.",
+        )
+        payload = DenseGridData(
+            format="dense",
+            values=_json_values(data.ravel(order=order.value)),
+        )
     return GridDataResponse(
         shape=list(data.shape),
         order=order.value,
         metadata=meta,
-        data=DenseGridData(
-            format="dense",
-            values=_json_values(data.ravel(order=order.value)),
-        ),
-    )
+        data=payload,
+    ).model_dump_json()
 
 
 class BinaryResponse(Response):

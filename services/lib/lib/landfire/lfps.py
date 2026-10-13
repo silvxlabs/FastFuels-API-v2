@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import cache
 
 import geopandas as gpd
 import requests
@@ -250,7 +251,7 @@ def _parse_job(data: dict) -> LfpsJob:
 # Checks whether a domain falls inside LANDFIRE's current coverage for the
 # requested product/version. CONUS-wide products skip the GeoArea check.
 #
-# Boundaries are loaded at import time in EPSG:5070. Callers must pass
+# Boundaries are loaded on first use (network I/O) in EPSG:5070. Callers must pass
 # `geometry` already reprojected to that CRS.
 
 _BOUNDARY_CRS_EPSG = 5070
@@ -267,13 +268,14 @@ def _load_boundaries(filename: str, key: str) -> dict[str, BaseGeometry]:
     return dict(zip(gdf[key], gdf.geometry))
 
 
-GEOAREA_BOUNDARIES: dict[str, BaseGeometry] = _load_boundaries(
-    "LF_GeoAreas.parquet", key="geoArea"
-)
+@cache
+def _geoarea_boundaries() -> dict[str, BaseGeometry]:
+    return _load_boundaries("LF_GeoAreas.parquet", key="geoArea")
 
-SEASONAL_BOUNDARIES: dict[str, BaseGeometry] = _load_boundaries(
-    "LF_SeasonalRegions.parquet", key="season"
-)
+
+@cache
+def _seasonal_boundaries() -> dict[str, BaseGeometry]:
+    return _load_boundaries("LF_SeasonalRegions.parquet", key="season")
 
 
 class CoverageStatus(StrEnum):
@@ -317,7 +319,7 @@ def covers_annual(product: str, version: str, geometry: BaseGeometry) -> Coverag
 
     remaining = geometry
     touched_covered = False
-    for code, boundary in GEOAREA_BOUNDARIES.items():
+    for code, boundary in _geoarea_boundaries().items():
         if not boundary.intersects(geometry):
             continue
         if code in covered_geoareas:
@@ -379,7 +381,7 @@ def covers_seasonal(
             `LfpsProduct.acronym` (e.g. "fbfm40" matches "FBFM40").
         version: LANDFIRE version year (e.g. "2025") -- matched against
             LFPS's "LF{version}" format.
-        season: A key in SEASONAL_BOUNDARIES (e.g. "SP").
+        season: A key in the seasonal boundaries (e.g. "SP").
         geometry: Domain geometry, already reprojected to EPSG:5070.
 
     Returns:
@@ -389,7 +391,7 @@ def covers_seasonal(
     if resolve_lf_product(product, version, season) is None:
         return CoverageStatus.NO_SUCH_PRODUCT
 
-    boundary = SEASONAL_BOUNDARIES[season]
+    boundary = _seasonal_boundaries()[season]
     if not boundary.intersects(geometry):
         return CoverageStatus.NONE
     remaining = geometry.difference(boundary)

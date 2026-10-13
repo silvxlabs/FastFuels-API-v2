@@ -9,4 +9,4 @@ WORKDIR /app/api
 
 RUN uv sync --locked
 
-ENTRYPOINT ["uv", "run", "gunicorn", "-w", "8", "-k", "uvicorn.workers.UvicornWorker", "api.main:app"]
+ENTRYPOINT ["uv", "run", "--no-sync", "gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--timeout", "0", "--preload", "api.main:app"]

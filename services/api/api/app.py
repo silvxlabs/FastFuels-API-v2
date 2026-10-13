@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
@@ -5,6 +8,7 @@ from fastapi.routing import APIRoute
 from api.auth import authenticate_user
 from api.resources.applications.router import router as applications_router
 from api.resources.domains.router import router as domain_router
+from api.resources.domains.validate import validate_domain
 from api.resources.exports.router import router as exports_router
 from api.resources.features.router import router as features_router
 from api.resources.features.router import wildcard_router as features_wildcard_router
@@ -115,7 +119,51 @@ OPENAPI_TAGS = [
 ]
 
 
+logger = logging.getLogger(__name__)
+
+_WARMUP_GEOJSON = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-121.50, 38.50],
+                        [-121.49, 38.50],
+                        [-121.49, 38.51],
+                        [-121.50, 38.51],
+                        [-121.50, 38.50],
+                    ]
+                ],
+            },
+        }
+    ],
+}
+
+
+def _warm_startup_costs() -> None:
+    """Pay per-process one-time setup costs before the first request does."""
+    try:
+        app.openapi()
+    except Exception:
+        logger.warning("OpenAPI warm-up failed", exc_info=True)
+    try:
+        validate_domain(_WARMUP_GEOJSON)
+    except Exception:
+        logger.warning("Domain validation warm-up failed", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _warm_startup_costs()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="FastFuels API",
     summary="3D fuels for next-generation fire behavior models.",
     description=API_DESCRIPTION,

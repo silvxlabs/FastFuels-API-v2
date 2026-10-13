@@ -131,9 +131,11 @@ def test_missing_body():
 
 @patch("standgen.main.update_status")
 @patch("standgen.main.load_inventory")
-def test_retry_marks_failed(mock_load, mock_status):
+def test_retry_of_running_inventory_marks_it_failed(mock_load, mock_status):
+    """A retry against a "running" inventory means the previous attempt died."""
     from standgen.main import process_inventory_request
 
+    mock_load.return_value = {"status": "running", "domain_id": "d"}
     request = MockRequest(
         {"id": "test-123"},
         headers={"X-CloudTasks-TaskRetryCount": "1"},
@@ -144,6 +146,47 @@ def test_retry_marks_failed(mock_load, mock_status):
     mock_status.assert_called_once()
     call_args = mock_status.call_args
     assert call_args[0][1] == "failed"
+    assert call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"
+
+
+@patch("standgen.main.update_status")
+@patch("standgen.main.load_inventory")
+def test_retry_of_pending_inventory_is_processed(mock_load, mock_status):
+    """A retry against a "pending" inventory never ran (Cloud Run rejected the
+    first dispatch before any container started, #664) and must be processed."""
+    from standgen.main import process_inventory_request
+
+    mock_load.return_value = {"status": "pending", "domain_id": "d"}
+    # Cancel at the "running" transition so the test stops before the handler
+    # pipeline, which is covered elsewhere.
+    mock_status.side_effect = CancelledException("stop here")
+    request = MockRequest(
+        {"id": "test-123"},
+        headers={"X-CloudTasks-TaskRetryCount": "1"},
+    )
+    response, status_code = process_inventory_request(request)
+
+    assert status_code == 200
+    mock_status.assert_called_once_with("test-123", "running")
+
+
+@pytest.mark.parametrize("terminal", ["completed", "failed"])
+@patch("standgen.main.update_status")
+@patch("standgen.main.load_inventory")
+def test_retry_of_finished_inventory_is_left_alone(mock_load, mock_status, terminal):
+    """A retry against a terminal inventory means the previous attempt finished
+    but its response was lost; the recorded outcome must survive."""
+    from standgen.main import process_inventory_request
+
+    mock_load.return_value = {"status": terminal, "domain_id": "d"}
+    request = MockRequest(
+        {"id": "test-123"},
+        headers={"X-CloudTasks-TaskRetryCount": "1"},
+    )
+    response, status_code = process_inventory_request(request)
+
+    assert status_code == 200
+    mock_status.assert_not_called()
 
 
 @patch("standgen.main.load_inventory")
@@ -208,9 +251,11 @@ def test_cancelled_during_processing(
 @patch("standgen.main.dispatch_handler")
 @patch("standgen.main.update_status")
 @patch("standgen.main.load_inventory")
-def test_unexpected_error_returns_500(
+def test_unexpected_error_records_failure(
     mock_load, mock_status, mock_dispatch, mock_load_domain, mock_inventory
 ):
+    """An unexpected error is recorded as failed immediately, not left to a
+    retry that may not exist (#664)."""
     from standgen.main import process_inventory_request
 
     mock_load.return_value = mock_inventory
@@ -220,7 +265,9 @@ def test_unexpected_error_returns_500(
     request = MockRequest({"id": "test-inventory-123"})
     response, status_code = process_inventory_request(request)
 
-    assert status_code == 500
+    assert status_code == 200
+    assert mock_status.call_args[0] == ("test-inventory-123", "failed")
+    assert mock_status.call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"
 
 
 @patch("standgen.main._load_domain")

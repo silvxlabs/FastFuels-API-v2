@@ -244,13 +244,17 @@ def process_grid_request(request: Request):
     Triggered by Cloud Tasks HTTP request containing {"id": "..."}.
 
     Cloud Tasks retry behavior:
-    - max_attempts=2: First attempt processes normally, second attempt marks as failed
     - X-CloudTasks-TaskRetryCount header indicates retry count (0 on first attempt)
+    - A retry against a grid still "pending" is processed normally: the first
+      dispatch was rejected by Cloud Run before any container ran (#664)
+    - A retry against a grid in "running" marks it failed: the previous
+      attempt died without recording an outcome
+    - A retry against a terminal grid is acknowledged and left untouched
 
     Flow:
-    1. Check if this is a retry (previous attempt crashed)
-    2. Parse request to get grid_id
-    3. Load grid document from Firestore
+    1. Parse request to get grid_id
+    2. Load grid document from Firestore
+    3. If this is a retry, decide from the grid's status (see above)
     4. Update status to "running"
     5. Either dispatch to the source handler, or — when the doc carries
        pending_modifications (#277) — load the grid's own zarr and apply
@@ -272,28 +276,6 @@ def process_grid_request(request: Request):
         logger.error("No id in request body")
         return "Missing id", 400
 
-    # Check if this is a retry (previous attempt crashed without updating status)
-    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
-    if retry_count > 0:
-        logger.error(
-            "Failed on previous attempt, marking as failed",
-            extra={"grid_id": grid_id},
-        )
-        try:
-            update_status(
-                grid_id,
-                "failed",
-                error={
-                    "code": "UNEXPECTED_FAILURE",
-                    "message": UNEXPECTED_FAILURE_MESSAGE,
-                },
-            )
-        except (CancelledException, DocumentNotFoundError):
-            pass  # Grid was deleted, nothing to update
-        return "OK", 200  # Return 200 to prevent further retries
-
-    logger.info("Processing started", extra={"grid_id": grid_id})
-
     # Load grid document
     try:
         grid = load_grid(grid_id)
@@ -303,6 +285,37 @@ def process_grid_request(request: Request):
 
     domain_id = grid.get("domain_id")
     ids = {"grid_id": grid_id, "domain_id": domain_id}
+
+    # Cloud Tasks sets X-CloudTasks-TaskRetryCount on every re-dispatch, but
+    # only a grid already in "running" proves the previous attempt executed and
+    # died without recording an outcome. A grid still "pending" was never
+    # processed: Cloud Run rejected the first dispatch before any container ran
+    # (429/500 "no available instance", 503 quota), which Cloud Tasks still
+    # counts as an attempt (#664). A terminal grid means the previous attempt
+    # finished but its response was lost; leave it alone.
+    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
+    if retry_count > 0:
+        status = grid.get("status")
+        if status == "running":
+            logger.warning("Failed on previous attempt, marking as failed", extra=ids)
+            try:
+                update_status(
+                    grid_id,
+                    "failed",
+                    error={
+                        "code": "UNEXPECTED_FAILURE",
+                        "message": UNEXPECTED_FAILURE_MESSAGE,
+                    },
+                )
+            except (CancelledException, DocumentNotFoundError):
+                pass  # Grid was deleted, nothing to update
+            return "OK", 200  # Return 200 to prevent further retries
+        if status in ("completed", "failed"):
+            logger.info("Retry of a finished job, nothing to do", extra=ids)
+            return "OK", 200
+        logger.info("Previous attempt never ran, processing", extra=ids)
+
+    logger.info("Processing started", extra=ids)
 
     # Update status to running
     try:
@@ -423,10 +436,23 @@ def process_grid_request(request: Request):
         return "OK", 200
 
     except Exception as e:
-        # Unexpected error - let Cloud Tasks retry
-        # On retry, the retry_count check above will mark it as failed
         logger.exception(f"Unexpected error: {e}", extra=ids)
-        return "Internal error", 500  # Return 500 to trigger retry
+        # Record the failure now instead of leaving it to a retry: a retry
+        # exists only while attempts remain, and without one the resource
+        # would stay "running" forever (#664). If this write itself fails,
+        # the exception escapes as a 500 and the retry marks it failed.
+        try:
+            update_status(
+                grid_id,
+                "failed",
+                error={
+                    "code": "UNEXPECTED_FAILURE",
+                    "message": UNEXPECTED_FAILURE_MESSAGE,
+                },
+            )
+        except CancelledException:
+            delete_zarr(grid_id)
+        return "OK", 200
 
 
 # Local development entry point

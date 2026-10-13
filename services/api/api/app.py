@@ -147,10 +147,13 @@ _WARMUP_GEOJSON = {
 def _warm_startup_costs() -> None:
     """Pay per-process one-time setup costs before the first request does."""
     try:
-        validate_domain(_WARMUP_GEOJSON)
         app.openapi()
     except Exception:
-        logger.warning("Startup warm-up failed", exc_info=True)
+        logger.warning("OpenAPI warm-up failed", exc_info=True)
+    try:
+        validate_domain(_WARMUP_GEOJSON)
+    except Exception:
+        logger.warning("Domain validation warm-up failed", exc_info=True)
 
 
 @asynccontextmanager

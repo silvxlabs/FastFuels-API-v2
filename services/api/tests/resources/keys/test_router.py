@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from api.auth import hash_api_key
-from api.resources.keys.router import create_key
+from api.resources.keys.router import create_key, delete_key, get_key_by_id
 from api.resources.keys.schema import CreateKeyRequest
 from fastapi import HTTPException
 
@@ -26,6 +26,76 @@ class TestGuestCreateKey:
         with pytest.raises(HTTPException) as exc:
             await create_key(request, CreateKeyRequest(name="k"))
         assert exc.value.status_code == 403
+
+
+def _legacy_key_data(owner_id="legacy-owner"):
+    """Key document in the old stored shape, with no ``access`` field."""
+    data = make_key_data(owner_id=owner_id, name="Legacy Key")
+    data.pop("_test_secret")
+    data.pop("access")
+    return data
+
+
+class TestKeyWithoutAccessField:
+    """Stored keys missing ``access`` are treated as personal (schema default)."""
+
+    @staticmethod
+    def _patch_lookup(monkeypatch, data):
+        async def fake_get(collection, doc_id):
+            return None, SimpleNamespace(to_dict=lambda: dict(data))
+
+        monkeypatch.setattr("api.resources.keys.router.get_document_async", fake_get)
+
+    @staticmethod
+    def _request(uid):
+        request = MagicMock()
+        request.state = SimpleNamespace(id=uid)
+        return request
+
+    @pytest.mark.anyio
+    async def test_get_by_owner(self, monkeypatch):
+        data = _legacy_key_data()
+        self._patch_lookup(monkeypatch, data)
+        key = await get_key_by_id(self._request("legacy-owner"), data["id"])
+        assert key.id == data["id"]
+        assert key.access == "personal"
+
+    @pytest.mark.anyio
+    async def test_get_by_other_owner_404(self, monkeypatch):
+        data = _legacy_key_data()
+        self._patch_lookup(monkeypatch, data)
+        with pytest.raises(HTTPException) as exc:
+            await get_key_by_id(self._request("someone-else"), data["id"])
+        assert exc.value.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_delete_by_owner(self, monkeypatch):
+        data = _legacy_key_data()
+        self._patch_lookup(monkeypatch, data)
+        deleted = []
+
+        async def fake_delete(collection, doc_id):
+            deleted.append(doc_id)
+
+        async def fake_invalidate(doc_id):
+            pass
+
+        monkeypatch.setattr(
+            "api.resources.keys.router.delete_document_async", fake_delete
+        )
+        monkeypatch.setattr(
+            "api.resources.keys.router.invalidate_key_cache", fake_invalidate
+        )
+        await delete_key(self._request("legacy-owner"), data["id"])
+        assert deleted == [data["id"]]
+
+    @pytest.mark.anyio
+    async def test_delete_by_other_owner_404(self, monkeypatch):
+        data = _legacy_key_data()
+        self._patch_lookup(monkeypatch, data)
+        with pytest.raises(HTTPException) as exc:
+            await delete_key(self._request("someone-else"), data["id"])
+        assert exc.value.status_code == 404
 
 
 class TestCreateKey:
@@ -254,6 +324,36 @@ class TestGetKey:
         finally:
             key_ref.delete()
 
+    def test_missing_access_field_returns_200(self, client, firestore_client):
+        """A stored key without ``access`` is treated as personal."""
+        key_data = make_key_data(name="Legacy Key")
+        key_data.pop("_test_secret")
+        key_data.pop("access")
+        key_ref = firestore_client.collection(KEYS_COLLECTION).document(key_data["id"])
+        key_ref.set(key_data)
+
+        try:
+            response = client.get(f"{self.route}/{key_data['id']}")
+            assert response.status_code == 200
+            assert response.json()["access"] == "personal"
+        finally:
+            key_ref.delete()
+
+    def test_missing_access_field_wrong_owner_returns_404(
+        self, client, firestore_client
+    ):
+        key_data = make_key_data(owner_id="different-owner", name="Legacy Key")
+        key_data.pop("_test_secret")
+        key_data.pop("access")
+        key_ref = firestore_client.collection(KEYS_COLLECTION).document(key_data["id"])
+        key_ref.set(key_data)
+
+        try:
+            response = client.get(f"{self.route}/{key_data['id']}")
+            assert response.status_code == 404
+        finally:
+            key_ref.delete()
+
     def test_unowned_app_key_returns_404(
         self, client, firestore_client, application_with_different_owner
     ):
@@ -304,6 +404,34 @@ class TestDeleteKey:
 
         key_data = make_key_data(owner_id="different-owner", name="Other User Key")
         key_data.pop("_test_secret")
+        key_ref = firestore_client.collection(KEYS_COLLECTION).document(key_data["id"])
+        key_ref.set(key_data)
+
+        try:
+            response = client.delete(f"{self.route}/{key_data['id']}")
+            assert response.status_code == 404
+        finally:
+            key_ref.delete()
+
+    def test_missing_access_field_returns_204(self, client, firestore_client):
+        key_data = make_key_data(name="Legacy Key")
+        key_data.pop("_test_secret")
+        key_data.pop("access")
+        key_ref = firestore_client.collection(KEYS_COLLECTION).document(key_data["id"])
+        key_ref.set(key_data)
+
+        try:
+            response = client.delete(f"{self.route}/{key_data['id']}")
+            assert response.status_code == 204
+        finally:
+            key_ref.delete()
+
+    def test_missing_access_field_wrong_owner_returns_404(
+        self, client, firestore_client
+    ):
+        key_data = make_key_data(owner_id="different-owner", name="Legacy Key")
+        key_data.pop("_test_secret")
+        key_data.pop("access")
         key_ref = firestore_client.collection(KEYS_COLLECTION).document(key_data["id"])
         key_ref.set(key_data)
 

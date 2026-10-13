@@ -154,6 +154,26 @@ def handle_landfire(
     alignment = source.get("alignment") or {"target": "domain"}
     target_grid_doc = _load_target_grid_doc(alignment)
 
+    # A disturbance plan stored on a fuel model grid's source means the grid is
+    # built from the plan; the API decides it, griddle only executes it.
+    disturbance = source.get("disturbance")
+    if disturbance and product in ("fbfm13", "fbfm40", "fccs"):
+        version = source.get("version", LANDFIRE_VERSIONS[product]["default"])
+        progress(f"Fetching LANDFIRE {product} v{version} with disturbance...", 10)
+        return landfire.fetch_disturbed_fuel(
+            domain_gdf,
+            product,
+            version,
+            disturbance,
+            progress,
+            remove_non_burnable=source.get("remove_non_burnable"),
+            remove_bare_ground=source.get("remove_bare_ground", False),
+            boundary_scatter=source.get("boundary_scatter"),
+            extent_buffer_cells=extent_buffer_cells,
+            alignment=alignment,
+            target_grid_doc=target_grid_doc,
+        )
+
     match product:
         case "annual_disturbance":
             version = source.get(

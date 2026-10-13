@@ -8,7 +8,7 @@ feature type and source product.
 import geopandas as gpd
 
 from etcher.errors import ProcessingError
-from etcher.handlers import road, water
+from etcher.handlers import crown, road, water
 
 
 def dispatch_handler(
@@ -49,9 +49,22 @@ def dispatch_handler(
                         suggestion="Currently only 'osm' is supported for water.",
                     )
 
+        case "crown":
+            match product:
+                case "chm":
+                    return crown.handle_chm(
+                        feature, source, domain_gdf, progress_callback
+                    )
+                case _:
+                    raise ProcessingError(
+                        code="UNKNOWN_PRODUCT",
+                        message=f"Unknown product '{product}' for crown features.",
+                        suggestion="Currently only 'chm' is supported for crowns.",
+                    )
+
         case _:
             raise ProcessingError(
                 code="UNKNOWN_FEATURE_TYPE",
                 message=f"Unknown feature type: {feature_type}",
-                suggestion="Supported feature types are 'road' and 'water'.",
+                suggestion="Supported feature types are 'road', 'water' and 'crown'.",
             )

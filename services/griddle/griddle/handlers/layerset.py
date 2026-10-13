@@ -30,6 +30,10 @@ from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import FEATURES_BUCKET
 from lib.errors import ProcessingError
 
+# Fixed seed so random cover/cluster placement is reproducible from the stored
+# layerset (matches the default seed used by other griddle handlers).
+_RASTERIZE_SEED = 42
+
 # Maps the API-surface OverlapMethod string values to numpy callables.
 # Keep keys in sync with api.resources.grids.rasterize.layerset.schema.OverlapMethod.
 # Limited to mean/min/max because fastfuels_core.rasterize_layerset raises
@@ -156,6 +160,7 @@ def fetch_layerset(
         gdf,
         resolution=resolution,
         overlap_method=overlap_callable,
+        seed=_RASTERIZE_SEED,
     )
 
     if _needs_post_reproject(alignment):

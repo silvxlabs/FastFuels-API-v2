@@ -253,11 +253,16 @@ def _compute_slope_aspect(
         cell_size: Cell size in meters
 
     Returns:
-        Tuple of (slope_da, aspect_da) in degrees, same coords/CRS as input
+        Tuple of (slope_da, aspect_da) in degrees, same coords/CRS as input,
+        NaN (and NaN nodata) wherever the stencil touches DEM nodata
     """
     values = dem_da.values.astype(np.float64)
+    nodata = dem_da.rio.nodata
+    if nodata is not None and not np.isnan(nodata):
+        values[values == nodata] = np.nan
 
-    # numpy.gradient computes central differences
+    # numpy.gradient computes central differences; NaN propagates to every
+    # cell whose stencil touches a nodata cell
     dy, dx = np.gradient(values, cell_size)
 
     # Slope: arctan of the magnitude of the gradient vector
@@ -271,10 +276,10 @@ def _compute_slope_aspect(
     # Normalize to [0, 360)
     aspect_deg = np.where(aspect_deg < 0, aspect_deg + 360, aspect_deg)
 
-    slope_da = dem_da.copy(data=slope_deg)
+    slope_da = dem_da.copy(data=slope_deg).rio.write_nodata(np.nan)
     slope_da.name = "slope"
 
-    aspect_da = dem_da.copy(data=aspect_deg)
+    aspect_da = dem_da.copy(data=aspect_deg).rio.write_nodata(np.nan)
     aspect_da.name = "aspect"
 
     return slope_da, aspect_da

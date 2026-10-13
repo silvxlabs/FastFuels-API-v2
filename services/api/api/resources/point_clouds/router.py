@@ -9,6 +9,7 @@ tile reads for completed point clouds. Point parsing and reprojection remain in
 worker services; the API read path uses only the GDAL-free Parquet reader.
 """
 
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Path, Query, Request, Response, status
@@ -347,7 +348,7 @@ async def get_point_cloud_data_json(
             "Omit to return every public stored column."
         ),
     ),
-) -> PointCloudTileDataResponse:
+) -> Response:
     """
     # Get Point-Cloud Tile Data as JSON
 
@@ -454,7 +455,8 @@ async def get_point_cloud_data_json(
     utils.check_json_size(selection)
     data = await utils.read_tile(selection)
     utils.check_json_size(selection, data.num_rows)
-    return utils.json_response(selection, data)
+    body = await asyncio.to_thread(utils.json_body, selection, data)
+    return Response(content=body, media_type="application/json")
 
 
 class PointCloudBinaryResponse(Response):

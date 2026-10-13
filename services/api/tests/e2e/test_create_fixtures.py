@@ -178,14 +178,14 @@ def test_create_blue_mtn_lookup_fbfm40(
     create_static_fixture, client, blue_mountain_domain
 ):
     """Create FBFM40 lookup grid at 2 m with the three surface roles
-    QUIC-Fire needs (fuel_load.1hr, fuel_depth, savr.1hr)."""
+    QUIC-Fire needs (fuel_load.fine_dead, fuel_depth, savr.fine_dead)."""
     create_static_fixture(
         client=client,
         domain_id=blue_mountain_domain["id"],
         endpoint="/grids/lookup/fbfm40",
         body={
             "source_grid_id": "static-test-blue-mtn-landfire-fbfm40",
-            "bands": ["fuel_load.1hr", "fuel_depth", "savr.1hr"],
+            "bands": ["fuel_load.fine_dead", "fuel_depth", "savr.fine_dead"],
         },
         static_name="static-test-blue-mtn-lookup-fbfm40",
         dependencies={"grids": ["static-test-blue-mtn-landfire-fbfm40"]},

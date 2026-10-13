@@ -161,7 +161,7 @@ EXAMPLE_INVENTORY_CANOPY_LIDAR_CROWNS = {
     "source_inventory_id": "9c1f2ab4708d4290a8ab6ecf35f21ab4",
     "max_crown_radius_source": {
         "type": "inventory_column",
-        "column": "crown_radius_m",
+        "column": "crown_radius",
         "unit": "m",
     },
 }

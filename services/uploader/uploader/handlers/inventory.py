@@ -7,6 +7,7 @@ against the inventory schema, and writes Parquet to INVENTORIES_BUCKET.
 
 import math
 import os
+from contextlib import suppress
 from datetime import UTC, datetime
 
 import dask.dataframe as dd
@@ -18,7 +19,7 @@ from pandera.typing import Series
 
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_BUCKET, INVENTORIES_COLLECTION
 from lib.domain_utils import parse_domain_gdf
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
 from lib.firestore import get_document
 from lib.gcs import delete_file, download_file, storage_size
 from uploader.main import update_resource
@@ -33,6 +34,7 @@ _V2_COLUMNS = {
     "fia_crown_class_code",
     "dbh",
     "crown_ratio",
+    "crown_radius",
 }
 
 # Doc metadata (type, unit) per v2 column, in canonical order. Only x, y, and
@@ -50,11 +52,13 @@ _COLUMN_METADATA = {
     "dbh": ("continuous", "cm"),
     "height": ("continuous", "m"),
     "crown_ratio": ("continuous", None),
+    "crown_radius": ("continuous", "m"),
 }
 
 
 # tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
 MAX_TREE_ID = 2_147_483_647
+MAX_CROWN_RADIUS_M = 20.0
 
 
 class _InventorySchema(pa.DataFrameModel):
@@ -70,6 +74,9 @@ class _InventorySchema(pa.DataFrameModel):
     )
     dbh: Series[float] | None = pa.Field(ge=0, nullable=True)
     crown_ratio: Series[float] | None = pa.Field(ge=0, le=1, nullable=True)
+    crown_radius: Series[float] | None = pa.Field(
+        gt=0, le=MAX_CROWN_RADIUS_M, nullable=True
+    )
 
     class Config:
         coerce = True
@@ -165,11 +172,16 @@ def handle_inventory(
             },
         )
 
-    finally:
-        try:
+    except (ProcessingError, CancelledException, FileNotFoundError):
+        # Terminal in main.py. Any other error is retried by Eventarc and the
+        # retry needs the upload, so it is kept.
+        with suppress(Exception):
             delete_file(f"gs://{bucket}/{object_name}")
-        except Exception:
-            pass
+        raise
+    else:
+        with suppress(Exception):
+            delete_file(f"gs://{bucket}/{object_name}")
+    finally:
         if os.path.exists(local_path):
             os.remove(local_path)
 

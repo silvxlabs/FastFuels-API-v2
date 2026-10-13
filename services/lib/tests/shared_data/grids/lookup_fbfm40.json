@@ -17,6 +17,24 @@
       "key": "fuel_depth",
       "type": "continuous",
       "unit": "m"
+    },
+    {
+      "index": 3,
+      "key": "fuel_load.dead_herb",
+      "type": "continuous",
+      "unit": "kg/m**2"
+    },
+    {
+      "index": 4,
+      "key": "fuel_load.fine_dead",
+      "type": "continuous",
+      "unit": "kg/m**2"
+    },
+    {
+      "index": 5,
+      "key": "savr.fine_dead",
+      "type": "continuous",
+      "unit": "1/m"
     }
   ],
   "chunks": {
@@ -37,7 +55,8 @@
     "name": "lookup",
     "source_band": "fbfm",
     "source_grid_id": "PLACEHOLDER",
-    "table": "fbfm40"
+    "table": "fbfm40",
+    "herbaceous_curing": 0.67
   },
   "status": "pending",
   "tags": []

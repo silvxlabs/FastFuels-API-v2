@@ -2,15 +2,23 @@
 CHM (Canopy Height Model) extraction handler.
 
 Generates tree inventories by applying stem isolation algorithms (LMF or VWF)
-to Canopy Height Model grids.
+to Canopy Height Model grids, optionally followed by crown segmentation to
+measure each tree's crown radius.
 """
 
 import logging
+import math
 
+import dask
+import dask.array as da
+import dask.dataframe as dd
 import geopandas as gpd
+import numpy as np
 import pandas as pd
+import xarray as xr
 
 # --- FASTFUELS CORE IMPORTS ---
+from fastfuels_core.itd.crown_segmentation import dalponte2016
 from fastfuels_core.itd.local_maxima_filter import (
     fixed_window_filter,
     variable_window_filter,
@@ -85,6 +93,9 @@ def handle_chm(
         )
 
     chm_da = grid_ds["chm"]
+    # Crown segmentation reads the unfilled band: its own height range excludes
+    # NaN nodata and over-max returns.
+    raw_chm_da = chm_da
 
     # Neutralize invalid CHM pixels (nodata = NaN, the continuous-grid convention)
     # to a deterministic sub-min_height value before detection. scipy's maximum_filter
@@ -141,8 +152,8 @@ def handle_chm(
                 chm_da=chm_da,
                 min_height=algorithm_config.get("min_height", 2.0),
                 spatial_resolution=spatial_res,
-                crown_ratio=algorithm_config.get("crown_ratio", 0.10),
-                crown_offset=algorithm_config.get("crown_offset", 1.0),
+                crown_ratio=algorithm_config.get("crown_ratio", 0.05),
+                crown_offset=algorithm_config.get("crown_offset", 3.0),
             )
         except ValueError as e:
             raise ProcessingError(code="INVALID_ALGORITHM_PARAMS", message=str(e))
@@ -151,6 +162,13 @@ def handle_chm(
         raise ProcessingError(
             code="UNSUPPORTED_ALGORITHM",
             message=f"Algorithm '{alg_name}' is not supported.",
+        )
+
+    crown_segmentation = source.get("crown_segmentation")
+    if crown_segmentation:
+        progress("Segmenting crowns...", 50)
+        ddf = _measure_crown_radii(
+            ddf, raw_chm_da, algorithm_config, crown_segmentation
         )
 
     # --- 3. DISTRIBUTED SPATIAL PROCESSING ---
@@ -174,9 +192,10 @@ def handle_chm(
             df["x"], df["y"] = transformer.transform(df["x"].values, df["y"].values)
             return df
 
-        ddf = ddf.map_partitions(
-            reproject_partition, meta={"x": "f8", "y": "f8", "height": "f8"}
-        )
+        meta = {"x": "f8", "y": "f8", "height": "f8"}
+        if crown_segmentation:
+            meta["crown_radius"] = "f8"
+        ddf = ddf.map_partitions(reproject_partition, meta=meta)
 
     # --- 4. FORMATTING & STORAGE ---
     # Number the trees before modifications, so a tree removed at creation
@@ -229,3 +248,85 @@ def handle_chm(
         ],
         "forestry_metrics": forestry_metrics,
     }
+
+
+def _measure_crown_radii(
+    ddf: dd.DataFrame,
+    chm_da: xr.DataArray,
+    algorithm_config: dict,
+    crown_segmentation: dict,
+) -> dd.DataFrame:
+    """Segment crowns around the detected treetops and add ``crown_radius``.
+
+    Materializes the treetop table (the detection graph's only compute), grows
+    ``dalponte2016`` crowns on the CHM, and sets each tree's radius to
+    sqrt(area / pi) of its crown. Treetops stay in the CHM's CRS.
+
+    Where several treetops share a CHM cell, the tallest seeds the crown (ties
+    go to the first) and the others keep a one-cell crown.
+    """
+    npartitions = ddf.npartitions
+    treetops = ddf.compute().reset_index(drop=True)
+    transform = chm_da.rio.transform()
+    seeds = _seed_mask(treetops, transform)
+
+    try:
+        labels = dalponte2016(
+            chm_da,
+            treetops[seeds],
+            min_height=algorithm_config.get("min_height", 2.0),
+            max_height=algorithm_config.get("max_height"),
+            min_relative_height=crown_segmentation["min_relative_height"],
+            min_relative_crown_height=crown_segmentation["min_relative_crown_height"],
+            max_crown_radius=crown_segmentation["max_crown_radius"],
+        )
+    except ValueError as e:
+        raise ProcessingError(code="INVALID_SEGMENTATION_PARAMS", message=str(e))
+
+    cell_counts = np.ones(len(treetops))
+    cell_counts[seeds] = _count_labels(labels.data, int(seeds.sum()))[1:]
+    a, b, _, d, e, _ = transform[:6]
+    cell_area = abs(a * e - b * d)
+    # A crown's whole cells can cover slightly more than pi * max_crown_radius**2.
+    treetops["crown_radius"] = np.minimum(
+        np.sqrt(cell_counts * cell_area / math.pi),
+        crown_segmentation["max_crown_radius"],
+    )
+    return dd.from_pandas(treetops, npartitions=max(1, npartitions))
+
+
+def _seed_mask(treetops: pd.DataFrame, transform) -> np.ndarray:
+    """True for the tallest treetop in each CHM cell, ties to the first."""
+    inv = ~transform
+    x = treetops["x"].to_numpy(dtype=np.float64)
+    y = treetops["y"].to_numpy(dtype=np.float64)
+    cells = pd.DataFrame(
+        {
+            "row": np.floor(inv.d * x + inv.e * y + inv.f),
+            "col": np.floor(inv.a * x + inv.b * y + inv.c),
+            "height": treetops["height"].to_numpy(),
+        }
+    )
+    kept = cells.sort_values("height", ascending=False, kind="stable")
+    kept = kept.drop_duplicates(["row", "col"])
+    mask = np.zeros(len(treetops), dtype=bool)
+    mask[kept.index] = True
+    return mask
+
+
+def _count_labels(labels, n: int) -> np.ndarray:
+    """Cells per label 0 … n, counted block by block for dask arrays.
+
+    Each block reports only the labels it contains, so memory scales with the
+    labels per block rather than blocks × trees.
+    """
+    if not isinstance(labels, da.Array):
+        return np.bincount(np.asarray(labels).ravel(), minlength=n + 1)
+    parts = [
+        dask.delayed(np.unique)(block, return_counts=True)
+        for block in labels.to_delayed().ravel()
+    ]
+    counts = np.zeros(n + 1, dtype=np.int64)
+    for values, block_counts in dask.compute(*parts):
+        counts[values] += block_counts
+    return counts

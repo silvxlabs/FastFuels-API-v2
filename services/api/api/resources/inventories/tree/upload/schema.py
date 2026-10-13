@@ -63,6 +63,13 @@ class InventoryColumnMapping(BaseModel):
         None,
         description="Live crown ratio: fraction of total height with live crown (0-1).",
     )
+    crown_radius: str | None = Field(
+        None,
+        description=(
+            "Measured crown radius (m), > 0 and <= 20. Null for trees without a "
+            "measurement."
+        ),
+    )
 
 
 class CreateInventoryUploadRequest(BaseModel):

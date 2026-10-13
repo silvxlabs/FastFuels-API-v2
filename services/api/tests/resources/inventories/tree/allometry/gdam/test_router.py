@@ -103,6 +103,7 @@ class TestCreateGdamInventory:
         assert data["description"] == ""
         assert data["tags"] == []
         assert data["georeference"] is None
+        assert isinstance(data["checksum"], str) and len(data["checksum"]) == 32
 
         # Source records the lineage, including the source checksum at create time.
         assert data["source"]["name"] == "gdam"

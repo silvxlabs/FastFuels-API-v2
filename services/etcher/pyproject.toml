@@ -10,7 +10,8 @@ dependencies = [
     "geopandas>=1.1.3",
     "pyogrio>=0.12.0",
     "pyarrow>=18.0.0",
-    "lib[firestore,gcs]",
+    "lib[firestore,gcs,zarr,raster]",
+    "fastfuels-core>=0.16.0",
 ]
 
 [project.optional-dependencies]

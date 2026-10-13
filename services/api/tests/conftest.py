@@ -3,7 +3,7 @@ Pytest configuration for API tests.
 
 Provides shared fixtures:
 - test_owner_id: Lazy lookup of owner from pre-seeded test key in Firestore
-- client: HTTP client for API requests
+- client: HTTP client for API requests; skips worker dispatch (see below)
 - firestore_client: Firestore client for direct database operations
 - domain_for_testing: A domain owned by test-owner for tests that need a domain
 - domain_with_different_owner: A domain owned by different-owner for ownership tests
@@ -12,6 +12,10 @@ Leaked ``test-``-prefixed resources are reclaimed nightly by walle (by id
 prefix, with an age guard), so there is no pre-run owner sweep here. A broad
 ``owner_id ==`` delete with no age guard raced concurrent suites (#353); the
 suite tolerates accumulation (list assertions use ``>=`` / membership).
+
+The shared clients send ``SKIP_DISPATCH_HEADER``, so creates return and persist
+as usual but queue no worker task (#680). Tests that need a job to run use a
+client without it (``tests/e2e`` overrides ``client``).
 """
 
 import os
@@ -20,6 +24,7 @@ from uuid import uuid4
 
 import pytest
 from api.auth import hash_api_key
+from api.tasks import SKIP_DISPATCH_HEADER
 from google.cloud import firestore
 from httpx import Client
 
@@ -39,6 +44,7 @@ from tests.fixtures import (
 
 TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080")
 TEST_API_KEY = os.environ.get("TEST_API_KEY", "")
+SKIP_DISPATCH = {SKIP_DISPATCH_HEADER: "1"}
 
 
 @pytest.fixture(scope="session")
@@ -60,7 +66,7 @@ def client(test_owner_id):
     Depends on ``test_owner_id`` so ``fixtures.DEFAULT_OWNER_ID`` is populated
     before any test seeds data through the shared client.
     """
-    headers = {"API-KEY": TEST_API_KEY}
+    headers = {"API-KEY": TEST_API_KEY, **SKIP_DISPATCH}
     with Client(base_url=TEST_URL, headers=headers, timeout=30.0) as client:
         yield client
 
@@ -106,7 +112,8 @@ def isolated_owner(firestore_client):
         tracked.append((collection, doc["id"]))
         return doc
 
-    with Client(base_url=TEST_URL, headers={"API-KEY": secret}, timeout=30.0) as c:
+    headers = {"API-KEY": secret, **SKIP_DISPATCH}
+    with Client(base_url=TEST_URL, headers=headers, timeout=30.0) as c:
         yield c, owner_id, seed
 
     for collection, doc_id in tracked:

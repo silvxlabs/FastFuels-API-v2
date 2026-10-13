@@ -26,6 +26,7 @@ import zarr
 
 from lib.config import GRIDS_BUCKET
 from lib.gcs import delete_directory
+from treevox.voxelize import BULK_DENSITY_TOTAL_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,25 @@ BAND_SPECS: dict[str, tuple[str, float | int]] = {
     "tree_id": ("int32", 0),
     "irradiance.canopy.relative": ("float32", np.nan),
     "irradiance.surface.relative": ("float32", np.nan),
+    BULK_DENSITY_TOTAL_KEY: ("float32", 0.0),
 }
 
 ADDITIVE_BANDS = frozenset(
     {
         "volume_fraction",
+        "bulk_density.foliage.live",
+        "bulk_density.foliage.dead",
+        "bulk_density.branchwood.live",
+        "bulk_density.branchwood.dead",
+        "bulk_density.fine.live",
+        "bulk_density.fine.dead",
+        "leaf_area_density",
+        BULK_DENSITY_TOTAL_KEY,
+    }
+)
+# Bands scaled by `cap_bulk_density` with the bulk density they derive from.
+CAPPED_BANDS = frozenset(
+    {
         "bulk_density.foliage.live",
         "bulk_density.foliage.dead",
         "bulk_density.branchwood.live",
@@ -211,6 +226,39 @@ def masked_merge(
                 target[mask] = buffer[mask]
             merged[key].values[:, rel_y, rel_x] = target
     return merged
+
+
+def cap_bulk_density(path: str, max_bulk_density: float) -> None:
+    """Scale every voxel's bulk density down to `max_bulk_density`, then drop
+    the scratch total band.
+
+    Runs once every batch is written, because a voxel's bulk density is only
+    final when every chunk whose halo covers it has been merged. The scratch
+    band holds the distributed component's live + dead bulk density. Where it
+    exceeds the cap, every band in `CAPPED_BANDS` is multiplied by
+    cap / total, which keeps the live/dead split and scales leaf area density
+    with the foliage it comes from. Treevox distributes one biomass component
+    per grid, so this caps each component.
+
+    Reads and writes on the store's own chunks, so every write is disjoint.
+    """
+    ds = xr.open_zarr(path, consolidated=True)
+    total = ds[BULK_DENSITY_TOTAL_KEY]
+    scale = max_bulk_density / total.clip(min=max_bulk_density)
+    keys = [key for key in ds.data_vars if key in CAPPED_BANDS]
+    if keys:
+        capped = ds[keys] * scale.astype("float32")
+        capped.drop_vars(["x", "y", "z", "spatial_ref"], errors="ignore").to_zarr(
+            path, mode="r+", consolidated=False
+        )
+
+    group = zarr.open_group(path, mode="r+", use_consolidated=False)
+    del group[BULK_DENSITY_TOTAL_KEY]
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore", message="Consolidated metadata", category=UserWarning
+        )
+        zarr.consolidate_metadata(path)
 
 
 def consolidate_metadata(path: str) -> None:

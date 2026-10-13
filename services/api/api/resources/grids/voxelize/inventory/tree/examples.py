@@ -146,8 +146,20 @@ EXAMPLE_WITH_INVENTORY_CROWN_RADIUS = {
     "bands": ["bulk_density.foliage.live"],
     "max_crown_radius_source": {
         "type": "inventory_column",
-        "column": "max_crown_radius",
+        "column": "crown_radius",
         "unit": "m",
+    },
+}
+
+# Measured crowns from a crown Feature built on a CHM.
+EXAMPLE_WITH_MEASURED_CROWNS = {
+    "source_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "resolution": {"horizontal": 1.0, "vertical": 1.0},
+    "bands": ["bulk_density.foliage.live"],
+    "crown_profile_model": "dual_ellipsoid",
+    "crown_geometry_source": {
+        "type": "crown_feature",
+        "feature_id": "PLACEHOLDER_CROWN_FEATURE_ID",
     },
 }
 
@@ -198,7 +210,7 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
             "`volume_fraction`. `fuel_moisture.live` defaults to a uniform "
             "100% because no `moisture_model` is provided. `spcd` and "
             "`tree_id` record which species and inventory record occupy "
-            "each voxel (tallest tree wins when crowns overlap). "
+            "each voxel. "
             "`volume_fraction` sums per-tree crown occupancy and exceeds "
             "1.0 where crowns overlap — useful for diagnosing dense canopy. "
             "Branchwood and fine bands are accepted by the API but currently "
@@ -294,12 +306,25 @@ CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES = {
         "summary": "Use per-tree max crown radius from inventory",
         "description": (
             "Reads each tree's maximum crown radius (m) from the "
-            "`max_crown_radius` inventory column instead of estimating it "
+            "`crown_radius` inventory column (measured by CHM crown "
+            "segmentation, or uploaded) instead of estimating it "
             "from the crown profile model. The crown profile model still "
             "drives the crown shape — the supplied radius rescales the "
-            "profile so its peak matches the per-tree value. Useful when "
-            "max crown radius has been measured externally (e.g. from "
-            "LiDAR) and is more reliable than the allometric estimate."
+            "profile so its peak matches the per-tree value. The inventory "
+            "must list the column."
+        ),
+    },
+    "with_measured_crowns": {
+        "value": EXAMPLE_WITH_MEASURED_CROWNS,
+        "summary": "Draw crowns from a crown Feature",
+        "description": (
+            "Draws each tree that has a crown in the crown Feature from its "
+            "measured crown: the crown's CHM cells give the outline, their "
+            "heights give the top, and the `dual_ellipsoid` profile gives a "
+            "bottom that rises from the crown base toward the crown's edge. "
+            "Other trees are drawn as dual ellipsoids. Use the inventory the "
+            "Feature was built from, or one derived from it (for example by "
+            "`tree/allometry/gdam`), so the trees keep their `tree_id`."
         ),
     },
     "with_seed": {
@@ -346,6 +371,7 @@ ALL_TREE_INVENTORY_EXAMPLE_VALUES = [
     ("with_branchwood_biomass", EXAMPLE_WITH_BRANCHWOOD_BIOMASS),
     ("with_derived_fine_biomass", EXAMPLE_WITH_DERIVED_FINE_BIOMASS),
     ("with_inventory_crown_radius", EXAMPLE_WITH_INVENTORY_CROWN_RADIUS),
+    ("with_measured_crowns", EXAMPLE_WITH_MEASURED_CROWNS),
     ("with_seed", EXAMPLE_WITH_SEED),
     ("with_leaf_area_density", EXAMPLE_WITH_LAD),
 ]

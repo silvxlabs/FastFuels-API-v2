@@ -24,6 +24,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.features.schema import FeatureType
 from api.resources.grids.schema import Grid
 from api.resources.grids.utils import incomplete_inventory_columns
 from api.resources.grids.voxelize.inventory.tree.examples import (
@@ -32,12 +33,16 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
 from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassComponent,
     CreateTreeInventoryRequest,
+    CrownFeatureCrownGeometrySource,
+    InventoryColumnMaxCrownRadiusSource,
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )
+from api.resources.inventories.schema import TREE_ID_COLUMN
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
+    FEATURES_COLLECTION,
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,
     TREEVOX_QUEUE,
@@ -130,6 +135,32 @@ async def create_tree_inventory_grid(
       The crown profile model still controls the crown shape — only the peak
       radius is rescaled. A tree with a null in that column uses its
       allometric radius.
+    - **crown_geometry_source**: (optional) Where crown shapes come from.
+      `{"type": "parametric"}` (default) draws every crown from
+      `crown_profile_model`. `{"type": "crown_feature", "feature_id": <id>}`
+      gives each tree with a crown in that crown Feature a measured crown,
+      matched by `tree_id`:
+      - Outline: the crown's CHM cells.
+      - Top: each cell's CHM height.
+      - Bottom: `crown_profile_model`, going up from the crown base. Profiles
+        widest at the crown base give a flat bottom there; `beta` and the
+        dual profiles give a bottom that rises toward the crown's edge. Each
+        cell's bottom is at least one voxel below its top, but never below
+        the crown base.
+
+      `max_crown_radius_source` does not apply to measured crowns, and every
+      tree keeps the mass `biomass_source` gives it. Trees with no crown in
+      the Feature, trees whose crown does not contain their stem, and trees
+      with no CHM height above their crown base, are drawn parametrically.
+      Crowns of trees not in the inventory are ignored. The inventory must
+      have a `tree_id` column, the Feature must be a completed crown Feature
+      in this domain, and the CHM grid it was built from must still exist.
+    - **max_bulk_density**: (optional) Upper limit on bulk density, in
+      kg/m**3. In any voxel where a biomass component's bulk density, live
+      and dead combined, exceeds the limit, that component's live and dead
+      bulk density are scaled down to it, keeping their live/dead split, and
+      `leaf_area_density` is scaled with foliage. Fuel above the limit is
+      removed from the grid. Omit for no limit.
     - **moisture_model**: (optional) Live/dead fuel moisture configuration.
       Required shape: `{"live": {"method": "uniform", "value": <percent>}}`
       and/or `{"dead": {"method": "uniform", "value": <percent>}}`.
@@ -143,6 +174,16 @@ async def create_tree_inventory_grid(
     `georeference: null`. The Treevox backend performs voxelization
     asynchronously and updates the grid to `"completed"` with a
     `Georeference3D` when done.
+
+    With a `crown_feature` source, `source.source_chm_grid_id` and
+    `source.source_chm_grid_checksum` record the crown Feature's CHM grid and
+    its `checksum` at creation, and the completed grid's
+    `source.crown_geometry_counts` gives the number of trees drawn with a
+    measured crown (`measured`) and drawn parametrically because they had no
+    crown in the Feature (`parametric_no_crown`), their crown did not contain
+    their stem (`parametric_stem_outside_crown`), or they had no CHM height
+    above their crown base (`parametric_no_volume`). Trees that cannot be
+    drawn at all are not counted.
     """
     owner_id = request.state.id
     domain_id = domain["id"]
@@ -175,12 +216,22 @@ async def create_tree_inventory_grid(
     # + height only) or an upload that omitted or left gaps in the optional
     # morphology columns — so tailor the guidance to which columns are missing
     # rather than assuming a source. Reject early rather than dispatching a job
-    # that fails. A null crown radius is allowed: it falls back to allometry.
+    # that fails. A radius column must be listed (uploads store an all-null
+    # column for unmapped optional columns), but a null radius is allowed: it
+    # falls back to allometry.
     required_columns = set(VOXELIZE_REQUIRED_COLUMNS)
     foliage = getattr(body.biomass_source, "columns", {}).get(BiomassComponent.foliage)
     if foliage is not None:
         required_columns.add(foliage.column)
-    missing_columns = incomplete_inventory_columns(inventory_data, required_columns)
+    if isinstance(body.crown_geometry_source, CrownFeatureCrownGeometrySource):
+        required_columns.add(TREE_ID_COLUMN.key)
+    nullable = set()
+    if isinstance(body.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource):
+        required_columns.add(body.max_crown_radius_source.column)
+        nullable.add(body.max_crown_radius_source.column)
+    missing_columns = incomplete_inventory_columns(
+        inventory_data, required_columns, nullable
+    )
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
@@ -206,6 +257,51 @@ async def create_tree_inventory_grid(
             ),
         )
 
+    # A crown_feature source needs a completed crown Feature in this domain and
+    # the CHM grid it was built from, whose tops treevox reads.
+    source_chm_grid_id = source_chm_grid_checksum = None
+    if isinstance(body.crown_geometry_source, CrownFeatureCrownGeometrySource):
+        feature_id = body.crown_geometry_source.feature_id
+        _, feature_snapshot = await get_document_async(
+            FEATURES_COLLECTION,
+            feature_id,
+            owner_id=owner_id,
+            domain_id=domain_id,
+            document_status="completed",
+        )
+        feature = feature_snapshot.to_dict()
+        if feature.get("type") != FeatureType.crown.value:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Feature '{feature_id}' has type '{feature.get('type')}'. "
+                    f"crown_geometry_source requires a crown Feature."
+                ),
+            )
+        source_chm_grid_id = feature["source"]["source_chm_grid_id"]
+        try:
+            _, chm_snapshot = await get_document_async(
+                GRIDS_COLLECTION,
+                source_chm_grid_id,
+                owner_id=owner_id,
+                domain_id=domain_id,
+                document_status="completed",
+            )
+        except HTTPException as e:
+            # The request names the Feature, not its CHM grid, so a deleted
+            # CHM is a problem with the Feature rather than a missing resource.
+            if e.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"CHM grid '{source_chm_grid_id}', which crown Feature "
+                    f"'{feature_id}' was built from, no longer exists. Build the "
+                    f"crown Feature again from a current CHM grid."
+                ),
+            ) from e
+        source_chm_grid_checksum = chm_snapshot.to_dict().get("checksum")
+
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
 
@@ -217,6 +313,10 @@ async def create_tree_inventory_grid(
         crown_profile_model=body.crown_profile_model,
         biomass_source=body.biomass_source,
         max_crown_radius_source=body.max_crown_radius_source,
+        crown_geometry_source=body.crown_geometry_source,
+        max_bulk_density=body.max_bulk_density,
+        source_chm_grid_id=source_chm_grid_id,
+        source_chm_grid_checksum=source_chm_grid_checksum,
         moisture_model=body.moisture_model,
         seed=body.seed,
     )

@@ -43,6 +43,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
+import rioxarray  # noqa: F401
 import xarray as xr
 from google.cloud import storage as gcs_storage
 from scipy.io import FortranFile
@@ -75,6 +76,9 @@ def export_quicfire(
     def load_band(role: dict, *, rank: int) -> np.ndarray:
         """Load a band, crop to the fire-grid extent, return a float32 array.
 
+        Nodata (NaN or the band's ``rio.nodata``) becomes 0 so a missing
+        value contributes nothing to the k=0 merge.
+
         The validator already enforced lattice alignment and coverage, so the
         offsets here are integers within tolerance — `round` cleans the
         floating-point residual.
@@ -99,7 +103,11 @@ def export_quicfire(
                 suggestion=f"Available bands: {list(ds.data_vars)}",
             )
         dims = ("z", "y", "x") if rank == 3 else ("y", "x")
-        arr = ds[band].transpose(*dims).values.astype(np.float32, copy=False)
+        da = ds[band].transpose(*dims)
+        raw = da.values
+        arr = np.nan_to_num(raw.astype(np.float32))
+        if da.rio.nodata is not None:
+            arr[raw == da.rio.nodata] = 0.0
 
         # x coords ascend (west→east), y coords descend (north→south).
         # Coordinates are cell centers; offset back to cell origin by dx/2.

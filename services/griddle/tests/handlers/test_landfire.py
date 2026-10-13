@@ -17,6 +17,7 @@ import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 from fastfuels_core.fuel_models import update_fuel_models
+from griddle.handlers import landfire as landfire_handler
 from griddle.handlers.landfire import (
     FBFM_NON_BURNABLE,
     FCCS_BARE_GROUND,
@@ -330,6 +331,97 @@ class TestFetchLandfireRasterCoastalEdge:
         assert (values == self.DECLARED).any()
         assert valid.size > 0
         np.testing.assert_array_equal(np.unique(valid), [self.VALID])
+
+
+class TestFetchTopographyAspectResampling:
+    """Aspect defaults to nearest, so resampling never blends angles or flat
+    (-1) cells into new directions; flat cells are stored as 0."""
+
+    DECLARED = 32767
+
+    @pytest.fixture
+    def aspect_raster(self, tmp_path):
+        """30 m EPSG:5070 raster: quadrants of 350, 10, flat (-1), nodata."""
+        values = np.full((40, 40), 350, dtype=np.int16)
+        values[:20, 20:] = 10
+        values[20:, :20] = -1
+        values[20:, 20:] = self.DECLARED
+        path = tmp_path / "aspect.tif"
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            height=40,
+            width=40,
+            count=1,
+            dtype="int16",
+            crs="EPSG:5070",
+            transform=from_origin(0.0, 1200.0, 30.0, 30.0),
+            nodata=self.DECLARED,
+        ) as dst:
+            dst.write(values, 1)
+        return str(path)
+
+    @pytest.mark.parametrize(
+        ("roi_crs", "alignment"),
+        [
+            ("EPSG:5070", {"target": "domain"}),
+            ("EPSG:5070", {"target": "native", "resolution": 10.0}),
+            ("EPSG:32614", {"target": "native"}),
+        ],
+        ids=["domain", "native-resolution", "native-reproject"],
+    )
+    def test_aspect_keeps_source_values(self, aspect_raster, roi_crs, alignment):
+        roi = gpd.GeoDataFrame(
+            geometry=[box(307.0, 307.0, 907.0, 907.0)], crs="EPSG:5070"
+        ).to_crs(roi_crs)
+
+        with patch(
+            "griddle.handlers.landfire._landfire_cog_url", return_value=aspect_raster
+        ):
+            result = fetch_topography(
+                roi=roi,
+                version="2020",
+                bands=["aspect"],
+                progress=MagicMock(),
+                alignment=alignment,
+            )
+
+        aspect = result["aspect"]
+        assert aspect.dtype == np.int16
+        assert aspect.rio.nodata == self.DECLARED
+        np.testing.assert_array_equal(
+            np.unique(aspect.values), [0, 10, 350, self.DECLARED]
+        )
+
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_only_aspect_defaults_to_nearest(self, mock_fetch, roi):
+        mock_fetch.return_value = (
+            xr.DataArray(
+                np.zeros((2, 2)),
+                dims=("y", "x"),
+                coords={"y": [45.0, 15.0], "x": [15.0, 45.0]},
+            )
+            .rio.write_crs("EPSG:5070")
+            .rio.write_transform(from_origin(0.0, 60.0, 30.0, 30.0))
+        )
+
+        fetch_topography(
+            roi=roi,
+            version="2020",
+            bands=["elevation", "slope", "aspect"],
+            progress=MagicMock(),
+        )
+
+        categorical_by_band = {
+            call.args[1].rsplit("_", 2)[1]: call.kwargs["is_categorical"]
+            for call in mock_fetch.call_args_list
+        }
+        assert categorical_by_band == {
+            "elevation": False,
+            "slope": False,
+            "aspect": True,
+        }
 
 
 class TestNeedsLfps:
@@ -1603,6 +1695,32 @@ class TestRemoveNonBurnableBlocks:
         grid[8:12, 8:12] = 99  # 4x4 bare ground block
         result = _remove_non_burnable_blocks(grid, [99])
         assert not np.any(np.isin(result, [99]))
+
+    def test_nodata_is_never_a_fill_source(self):
+        """Non-burnable cells bordering nodata fill from burnable neighbours only."""
+        grid = np.full((10, 10), 101, dtype=np.int16)
+        grid[:, :6] = -9999
+        grid[:, 6:8] = 99
+        result = _remove_non_burnable_blocks(grid, [99], nodata=-9999)
+        np.testing.assert_array_equal(result[:, 6:8], 101)
+        np.testing.assert_array_equal(result[:, :6], -9999)
+
+    @pytest.mark.parametrize("nodata_cols", [0, 3])
+    def test_stops_when_no_fill_source_exists(self, nodata_cols):
+        """Non-burnable cells with no burnable neighbour are left as-is, promptly."""
+        grid = np.full((5, 5), 99, dtype=np.int16)
+        grid[:, :nodata_cols] = -9999
+        real_filter = landfire_handler.generic_filter
+        calls = []
+
+        def capped_filter(*args, **kwargs):
+            calls.append(1)
+            assert len(calls) <= 2, "filter kept running without progress"
+            return real_filter(*args, **kwargs)
+
+        with patch.object(landfire_handler, "generic_filter", capped_filter):
+            result = _remove_non_burnable_blocks(grid, [99], nodata=-9999)
+        np.testing.assert_array_equal(result, grid)
 
 
 def _make_canopy_raster(

@@ -99,12 +99,23 @@ _DEAD_FUEL_COLUMNS = [
     "fuel_depth",
 ]
 
-FBFM40_QUANTITY_COLUMNS = _DEAD_FUEL_COLUMNS + [
+FBFM40_TABLE_COLUMNS = _DEAD_FUEL_COLUMNS + [
     "fuel_load_live_herb",
     "fuel_load_live_woody",
     "savr_live_herb",
     "savr_live_woody",
 ]
+
+# Derived from the table columns and the herbaceous curing fraction; see
+# _cure_sb40_table.
+FBFM40_CURED_COLUMNS = [
+    "fuel_load_dead_herb",
+    "fuel_load_fine_dead",
+    "savr_dead_herb",
+    "savr_fine_dead",
+]
+
+FBFM40_QUANTITY_COLUMNS = FBFM40_TABLE_COLUMNS + FBFM40_CURED_COLUMNS
 
 FBFM13_QUANTITY_COLUMNS = _DEAD_FUEL_COLUMNS + [
     "fuel_load_live_foliage",
@@ -202,7 +213,7 @@ def _load_sb40_table() -> dict[str, np.ndarray]:
     # Initialize arrays with zeros (size MAX_FBFM40_KEY + 1 for direct indexing)
     arrays = {
         col: np.zeros(MAX_FBFM40_KEY + 1, dtype=np.float32)
-        for col in FBFM40_QUANTITY_COLUMNS
+        for col in FBFM40_TABLE_COLUMNS
     }
 
     with open(csv_path, newline="") as f:
@@ -211,10 +222,65 @@ def _load_sb40_table() -> dict[str, np.ndarray]:
             key = int(row["key"])
             if key > MAX_FBFM40_KEY:
                 continue
-            for col in FBFM40_QUANTITY_COLUMNS:
+            for col in FBFM40_TABLE_COLUMNS:
                 arrays[col][key] = float(row[col])
 
     return arrays
+
+
+def _load_sb40_dynamic() -> np.ndarray:
+    """Load the SB40 fuel model type as a boolean array indexed by FBFM key.
+
+    True for dynamic models, whose live herbaceous load transfers to dead
+    herbaceous as it cures (Scott & Burgan 2005, p. 6).
+    """
+    is_dynamic = np.zeros(MAX_FBFM40_KEY + 1, dtype=bool)
+
+    with open(DATA_DIR / "sb40_fbfm40.csv", newline="") as f:
+        for row in csv.DictReader(f):
+            key = int(row["key"])
+            if key <= MAX_FBFM40_KEY:
+                is_dynamic[key] = row["is_dynamic"] == "true"
+
+    return is_dynamic
+
+
+def _cure_sb40_table(
+    table: dict[str, np.ndarray],
+    is_dynamic: np.ndarray,
+    herbaceous_curing: float,
+) -> dict[str, np.ndarray]:
+    """Apply herbaceous curing to the SB40 table (Scott & Burgan 2005, p. 6).
+
+    In dynamic models the cured fraction of the live herbaceous load moves to
+    a dead herbaceous class that keeps the herbaceous SAVR. Static models keep
+    their herbaceous load live. ``fine_dead`` is the dead portion of Scott &
+    Burgan's fine fuel: 1-hr plus dead herbaceous, with a load-weighted SAVR
+    that falls back to the 1-hr SAVR where both loads are zero.
+    """
+    curing = np.where(is_dynamic, herbaceous_curing, 0.0).astype(np.float32)
+    herb = table["fuel_load_live_herb"]
+    dead_herb = herb * curing
+    fine_dead = table["fuel_load_1hr"] + dead_herb
+
+    weighted_savr = (
+        table["fuel_load_1hr"] * table["savr_1hr"] + dead_herb * table["savr_live_herb"]
+    )
+    savr_fine_dead = np.divide(
+        weighted_savr,
+        fine_dead,
+        out=table["savr_1hr"].copy(),
+        where=fine_dead > 0,
+    )
+
+    return {
+        **table,
+        "fuel_load_live_herb": herb - dead_herb,
+        "fuel_load_dead_herb": dead_herb,
+        "fuel_load_fine_dead": fine_dead,
+        "savr_dead_herb": table["savr_live_herb"],
+        "savr_fine_dead": savr_fine_dead,
+    }
 
 
 def _load_fccs_table() -> dict:
@@ -250,6 +316,7 @@ def _load_fccs_table() -> dict:
 # Load tables once at module level
 _FBFM13_TABLE = _load_fbfm13_table()
 _SB40_TABLE = _load_sb40_table()
+_SB40_IS_DYNAMIC = _load_sb40_dynamic()
 
 
 def _convert_to_metric(values: np.ndarray, column_name: str) -> np.ndarray:
@@ -291,7 +358,7 @@ def fbfm13_lookup(
 
     try:
         source_ds = load_zarr(source_grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="SOURCE_GRID_NOT_FOUND",
             message=f"Could not load source grid {source_grid_id}: {e}",
@@ -390,6 +457,7 @@ def fbfm40_lookup(
     source_grid_id: str,
     bands: list[dict],
     progress,
+    herbaceous_curing: float = 0.0,
 ) -> xr.Dataset:
     """Convert FBFM40 codes to fuel parameters using SB40 lookup tables.
 
@@ -397,6 +465,8 @@ def fbfm40_lookup(
         source_grid_id: ID of the grid containing FBFM40 codes
         bands: List of band dicts with "key" fields (dot-notation band keys)
         progress: Callback for progress reporting
+        herbaceous_curing: Fraction (0-1) of herbaceous load cured in
+            dynamic fuel models
 
     Returns:
         Dataset with one variable per band, each with dims (y, x)
@@ -405,7 +475,7 @@ def fbfm40_lookup(
 
     try:
         source_ds = load_zarr(source_grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="SOURCE_GRID_NOT_FOUND",
             message=f"Could not load source grid {source_grid_id}: {e}",
@@ -463,6 +533,7 @@ def fbfm40_lookup(
 
     progress("Looking up fuel parameters...", 40)
 
+    table = _cure_sb40_table(_SB40_TABLE, _SB40_IS_DYNAMIC, herbaceous_curing)
     band_keys = [b["key"] for b in bands]
     result_bands = []
 
@@ -476,7 +547,7 @@ def fbfm40_lookup(
             )
 
         # Vectorized lookup: imperial values
-        imperial_vals = _SB40_TABLE[column][fbfm_codes]
+        imperial_vals = table[column][fbfm_codes]
 
         # Convert to metric, then mask no-fuel-model cells back out to NaN.
         metric_vals = _convert_to_metric(imperial_vals, column).astype(np.float32)
@@ -534,7 +605,7 @@ def fccs_lookup(
 
     try:
         source_ds = load_zarr(source_grid_id)
-    except Exception as e:
+    except FileNotFoundError as e:
         raise ProcessingError(
             code="SOURCE_GRID_NOT_FOUND",
             message=f"Could not load source grid {source_grid_id}: {e}",

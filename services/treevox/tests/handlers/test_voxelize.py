@@ -172,6 +172,27 @@ class TestPlanGridLayout:
             handler._plan_grid_layout(grid, _fake_domain(), _sample_df())
         assert exc.value.code == "INVALID_RESOLUTION"
 
+    def test_crown_wider_than_max_halo_raises(self):
+        grid = _base_grid()
+        grid["source"]["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+        }
+        df = _sample_df().assign(crown_radius=1e6)
+        with pytest.raises(ProcessingError) as exc:
+            handler._plan_grid_layout(grid, _fake_domain(), df)
+        assert exc.value.code == "CROWN_TOO_WIDE"
+
+    def test_crown_at_max_halo_is_allowed(self):
+        grid = _base_grid()
+        grid["source"]["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+        }
+        df = _sample_df().assign(crown_radius=float(handler.voxelize.MAX_HALO_CELLS))
+        layout = handler._plan_grid_layout(grid, _fake_domain(), df)
+        assert layout.halo_cells == handler.voxelize.MAX_HALO_CELLS
+
 
 class TestPrepareTreeChunks:
     def test_attaches_cache_key_and_chunk_columns(self):
@@ -551,7 +572,7 @@ class TestBuildPayloadsZeroTrees:
             dims["ny"],
             dims["nx"],
             layout.chunk_xy,
-            overlap_cells=handler.voxelize.OVERLAP_CELLS,
+            overlap_cells=layout.halo_cells,
         )
         union_ds = xr.Dataset(
             {
@@ -879,7 +900,7 @@ class TestHaloMergeAcrossChunks:
             layout.dims["ny"],
             layout.dims["nx"],
             layout.chunk_xy,
-            overlap_cells=handler.voxelize.OVERLAP_CELLS,
+            overlap_cells=layout.halo_cells,
         )
         span_y = union_y.stop - union_y.start
         span_x = union_x.stop - union_x.start
@@ -1061,3 +1082,254 @@ class TestHaloMergeAcrossChunks:
         # Species code present on both sides of the seam.
         assert (spcd[:, :, 17:20] == 131).any()
         assert (spcd[:, :, 20:22] == 131).any()
+
+
+class TestHaloCoversWideCrowns:
+    """#666: crowns wider than the halo must not lose foliage at chunk edges.
+
+    Runs the real handler batch path (`_process_batch` -> `_build_payloads` ->
+    `worker_run` -> `masked_merge`) with real fastfuels-core against an
+    in-memory store, one chunk per batch. The same tree rendered with its stem
+    one cell inside a chunk edge must match the mid-chunk render, shifted.
+    """
+
+    CHUNK_XY = 60
+
+    def _render(self, monkeypatch, df, source, hr, bands):
+        from treevox import storage
+
+        monkeypatch.setattr(handler.voxelize, "CHUNK_SIZE_HORIZONTAL", self.CHUNK_XY)
+        # Same RNG in every chunk so both placements draw the same realization.
+        monkeypatch.setattr(handler, "_chunk_rng_seed", lambda *a: 7)
+
+        domain = SimpleNamespace(
+            total_bounds=np.array(
+                [0.0, 0.0, 2 * self.CHUNK_XY * hr, self.CHUNK_XY * hr]
+            ),
+            crs="EPSG:32610",
+        )
+        grid = {"id": "g-666", "source": source, "bands": [{"key": k} for k in bands]}
+        layout = handler._plan_grid_layout(grid, domain, df)
+        assert layout.chunk_xy == self.CHUNK_XY
+        assert len(layout.chunk_locations) == 2
+
+        dims = layout.dims
+        shape = (dims["nz"], dims["ny"], dims["nx"])
+        store = xr.Dataset(
+            {
+                k: (
+                    ("z", "y", "x"),
+                    np.full(shape, storage.BAND_SPECS[k][1], storage.BAND_SPECS[k][0]),
+                )
+                for k in bands
+            }
+        )
+
+        def read_union(path, y, x):
+            return store.isel(y=y, x=x).copy(deep=True)
+
+        def write_union(path, merged, y, x):
+            for k in bands:
+                store[k].values[:, y, x] = merged[k].values
+
+        monkeypatch.setattr(handler.storage, "read_union", read_union)
+        monkeypatch.setattr(handler.storage, "write_union", write_union)
+
+        df = df.assign(tree_id=np.arange(1, len(df) + 1, dtype="int32"))
+        df = handler._prepare_tree_chunks(df, layout, source)
+        chunk_indices = df.groupby(["row_chunk", "col_chunk"], sort=False).indices
+        pool = SimpleNamespace(map=lambda fn, payloads: [fn(p) for p in payloads])
+        for i, loc in enumerate(layout.chunk_locations):
+            handler._process_batch(
+                pool,
+                [loc],
+                i + 1,
+                len(layout.chunk_locations),
+                df,
+                chunk_indices,
+                layout,
+                source,
+                grid["id"],
+                "mem://g-666",
+            )
+        return {k: store[k].values for k in bands}
+
+    def _tree(self, col, row, hr, **extra):
+        y_max = self.CHUNK_XY * hr
+        return pd.DataFrame(
+            {
+                "x": [(col + 0.5) * hr],
+                "y": [y_max - (row + 0.5) * hr],
+                "fia_species_code": [131],
+                "fia_status_code": [1],
+                "dbh": [80.0],
+                "height": [20.0],
+                "crown_ratio": [0.6],
+                **{k: [v] for k, v in extra.items()},
+            }
+        )
+
+    def _assert_edge_matches_mid(self, monkeypatch, source, hr, reach_cells, **extra):
+        assert reach_cells > handler.voxelize.OVERLAP_CELLS
+        bands = ["volume_fraction", "bulk_density.foliage.live", "spcd", "tree_id"]
+        mid_col = self.CHUNK_XY // 2
+        row = self.CHUNK_XY // 2
+
+        mid = self._render(
+            monkeypatch, self._tree(mid_col, row, hr, **extra), source, hr, bands
+        )
+        vf = mid["volume_fraction"]
+        occupied = np.nonzero(vf.any(axis=(0, 1)))[0]
+        # The crown reaches past the default halo on both sides, and exactly
+        # `reach_cells` west (east may be a cell shorter).
+        assert mid_col - occupied.min() == reach_cells
+        assert occupied.max() - mid_col > handler.voxelize.OVERLAP_CELLS
+
+        # First cell of chunk (0, 1), overhanging west into chunk (0, 0), and
+        # last cell of chunk (0, 0), overhanging east into chunk (0, 1). With
+        # the stem on the chunk's outermost cell, a halo one cell short of the
+        # crown's reach loses foliage.
+        for edge_col in (self.CHUNK_XY, self.CHUNK_XY - 1):
+            edge = self._render(
+                monkeypatch, self._tree(edge_col, row, hr, **extra), source, hr, bands
+            )
+            shift = edge_col - mid_col
+            assert not vf[:, :, -shift:].any()
+            for key in bands:
+                expected = np.zeros_like(mid[key])
+                expected[:, :, shift:] = mid[key][:, :, :-shift]
+                np.testing.assert_array_equal(
+                    edge[key],
+                    expected,
+                    err_msg=f"band {key} lost crown overhang (stem col {edge_col})",
+                )
+
+    def test_allometric_crown_wider_than_default_halo(self, monkeypatch):
+        """Purves radius ~5.5 m at 0.25 m resolution reaches 22 cells."""
+        source = _base_grid()["source"]
+        source["resolution"] = (0.25, 0.25, 1.0)
+        self._assert_edge_matches_mid(monkeypatch, source, hr=0.25, reach_cells=22)
+
+    def test_inventory_crown_radius_10m_at_half_meter(self, monkeypatch):
+        """10 m `crown_radius` column at 0.5 m resolution reaches 20 cells."""
+        source = _base_grid()["source"]
+        source["resolution"] = (0.5, 0.5, 1.0)
+        source["max_crown_radius_source"] = {
+            "type": "inventory_column",
+            "column": "crown_radius",
+        }
+        self._assert_edge_matches_mid(
+            monkeypatch, source, hr=0.5, reach_cells=20, crown_radius=10.0
+        )
+
+
+class TestMaxBulkDensity:
+    """`max_bulk_density` caps each voxel after every chunk is merged."""
+
+    def _run(self, tmp_path, monkeypatch, cap):
+        from treevox import storage
+
+        halo = TestHaloMergeAcrossChunks()
+        halo._patch_fastfuels(monkeypatch, biomass_shape=(2, 5, 5), biomass_value=1.0)
+        halo._force_chunk_xy(monkeypatch, chunk_xy=20)
+
+        # Stems either side of the seam at col 20; crowns overlap at cols 19-20.
+        df = pd.DataFrame(
+            {
+                "x": [18.5, 21.5],
+                "y": [10.0, 10.0],
+                "fia_species_code": [131, 131],
+                "fia_status_code": [1, 1],
+                "dbh": [20.0, 20.0],
+                "height": [5.0, 5.0],
+                "crown_ratio": [0.5, 0.5],
+                "tree_id": np.array([1, 2], dtype="int32"),
+            }
+        )
+        keys = [
+            "volume_fraction",
+            "bulk_density.foliage.live",
+            "bulk_density.foliage.dead",
+            "leaf_area_density",
+        ]
+        grid = halo._grid(bands=keys)
+        grid["source"]["biomass_source"]["component_states"] = {
+            "foliage": {"live": 0.6, "dead": 0.4}
+        }
+        grid["source"]["max_bulk_density"] = cap
+        layout = handler._plan_grid_layout(grid, halo._tiny_domain(), df)
+        assert handler.voxelize.BULK_DENSITY_TOTAL_KEY in layout.requested_keys
+
+        path = str(tmp_path / "grid.zarr")
+        storage.init_store(
+            path,
+            x_coords=layout.dims["x_coords"],
+            y_coords=layout.dims["y_coords"],
+            z_coords=layout.dims["z_coords"],
+            hr=layout.dims["hr"],
+            vr=layout.dims["vr"],
+            crs=layout.dims["crs"],
+            z_origin=layout.dims["z_origin"],
+            requested_keys=layout.requested_keys,
+            chunk_shape=layout.chunk_shape,
+        )
+        df = handler._prepare_tree_chunks(df, layout, grid["source"])
+        chunk_indices = df.groupby(["row_chunk", "col_chunk"], sort=False).indices
+
+        class SerialPool:
+            def map(self, fn, items):
+                return [fn(item) for item in items]
+
+        # One chunk per batch, so the overlap is summed across batches.
+        for i, loc in enumerate(layout.chunk_locations):
+            handler._process_batch(
+                SerialPool(),
+                [loc],
+                i + 1,
+                len(layout.chunk_locations),
+                df,
+                chunk_indices,
+                layout,
+                grid["source"],
+                grid["id"],
+                path,
+            )
+        storage.cap_bulk_density(path, cap)
+        return xr.open_zarr(path, consolidated=True).load()
+
+    def test_caps_overlap_summed_across_chunks(self, tmp_path, monkeypatch):
+        ds = self._run(tmp_path, monkeypatch, cap=1.5)
+        live = ds["bulk_density.foliage.live"].values
+        dead = ds["bulk_density.foliage.dead"].values
+        total = live + dead
+        assert total.max() == pytest.approx(1.5)
+        # Overlap columns are scaled to the cap with the live/dead split kept.
+        assert np.allclose(live[:, :, 19:21][total[:, :, 19:21] > 0], 0.9)
+        assert np.allclose(dead[:, :, 19:21][total[:, :, 19:21] > 0], 0.6)
+        # Voxels under the cap are untouched.
+        assert np.allclose(total[:, :, 16:19][total[:, :, 16:19] > 0], 1.0)
+        # Leaf area density keeps its ratio to foliage.
+        occupied = total > 0
+        assert np.allclose(
+            ds["leaf_area_density"].values[occupied], 5.0 * total[occupied]
+        )
+        # Occupancy is not a bulk density, so it is not scaled.
+        assert ds["volume_fraction"].values.max() == 2.0
+
+    def test_no_scratch_band_without_a_band_to_cap(self):
+        grid = _base_grid(bands=[{"key": "volume_fraction"}, {"key": "spcd"}])
+        grid["source"]["max_bulk_density"] = 1.5
+        layout = handler._plan_grid_layout(grid, _fake_domain(), _sample_df())
+        assert handler.voxelize.BULK_DENSITY_TOTAL_KEY not in layout.requested_keys
+
+    def test_scratch_band_is_removed(self, tmp_path, monkeypatch):
+        ds = self._run(tmp_path, monkeypatch, cap=1.5)
+        assert handler.voxelize.BULK_DENSITY_TOTAL_KEY not in ds.data_vars
+
+    def test_cap_above_every_voxel_changes_nothing(self, tmp_path, monkeypatch):
+        ds = self._run(tmp_path, monkeypatch, cap=10.0)
+        total = (
+            ds["bulk_density.foliage.live"].values
+            + ds["bulk_density.foliage.dead"].values
+        )
+        assert total.max() == pytest.approx(2.0)

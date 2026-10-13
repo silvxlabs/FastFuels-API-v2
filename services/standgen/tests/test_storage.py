@@ -8,6 +8,7 @@ No GCP I/O.
 import math
 
 import dask.dataframe as dd
+import fsspec
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -152,3 +153,83 @@ def test_load_tree_table_unsupported_version():
     with pytest.raises(ProcessingError) as exc_info:
         storage.load_tree_table("1999", np.array([1]))
     assert exc_info.value.code == "UNSUPPORTED_VERSION"
+
+
+class TestReplaceSwapRecovery:
+    """The in-place swap deletes live before copying staging over it, so after a
+    failed copy staging is the only complete copy and a retry must not delete it
+    (#647). Runs against a local filesystem standing in for the bucket."""
+
+    @pytest.fixture
+    def bucket(self, monkeypatch, tmp_path):
+        fs = fsspec.filesystem("file")
+
+        def local(uri):
+            return uri.removeprefix("gs://")
+
+        monkeypatch.setattr(storage, "INVENTORIES_BUCKET", str(tmp_path))
+        monkeypatch.setattr(storage, "get_gcsfs_client", lambda: fs)
+        monkeypatch.setattr(storage, "exists", lambda uri: fs.exists(local(uri)))
+        monkeypatch.setattr(
+            storage, "delete_directory", lambda uri: fs.rm(local(uri), recursive=True)
+        )
+        monkeypatch.setattr(
+            storage,
+            "_build_delayed_graph",
+            lambda ddf, path, *a: (
+                _write_parquet(ddf, local(path)).compute(),
+                {},
+                None,
+            )[1:],
+        )
+        return tmp_path
+
+    def test_retry_after_failed_copy_keeps_only_complete_copy(
+        self, bucket, inventory_df, monkeypatch
+    ):
+        live = bucket / "inv"
+        staging = bucket / "inv__rev"
+        _write_parquet(dd.from_pandas(inventory_df, npartitions=1), str(live)).compute()
+        modified = inventory_df.assign(height=inventory_df["height"] * 2)
+
+        fs = storage.get_gcsfs_client()
+
+        def copy_one_file_then_fail(src, dst, recursive):
+            fs.makedirs(dst, exist_ok=True)
+            fs.cp_file(f"{src}/_metadata", f"{dst}/_metadata")
+            raise OSError("transient copy failure")
+
+        with monkeypatch.context() as m:
+            m.setattr(fs, "copy", copy_one_file_then_fail)
+            with pytest.raises(OSError):
+                storage.save_parquet_replace_with_summary(
+                    "inv", dd.from_pandas(modified, npartitions=2), []
+                )
+
+        # Cloud Tasks retry: the handler re-reads the (now partial) live data.
+        with pytest.raises(ProcessingError) as exc_info:
+            storage.save_parquet_replace_with_summary(
+                "inv", dd.from_pandas(inventory_df.iloc[:1], npartitions=1), []
+            )
+
+        assert exc_info.value.code == "INVENTORY_REWRITE_INCOMPLETE"
+        recovered = dd.read_parquet(str(staging)).compute().reset_index(drop=True)
+        pd.testing.assert_frame_equal(recovered, modified)
+
+    def test_unfinished_staging_from_failed_write_is_cleared(
+        self, bucket, inventory_df
+    ):
+        live = bucket / "inv"
+        staging = bucket / "inv__rev"
+        _write_parquet(dd.from_pandas(inventory_df, npartitions=1), str(live)).compute()
+        staging.mkdir()
+        (staging / "part.7.parquet").write_bytes(b"partial")  # died before _metadata
+        modified = inventory_df.assign(height=inventory_df["height"] * 2)
+
+        storage.save_parquet_replace_with_summary(
+            "inv", dd.from_pandas(modified, npartitions=2), []
+        )
+
+        assert not staging.exists()
+        result = dd.read_parquet(str(live)).compute().reset_index(drop=True)
+        pd.testing.assert_frame_equal(result, modified)

@@ -77,7 +77,7 @@ async def create_landfire_topography(
     Available bands:
     - **elevation**: meters above sea level
     - **slope**: degrees (0-90)
-    - **aspect**: degrees clockwise from north (0-360)
+    - **aspect**: degrees clockwise from north (0-360); flat cells are 0
 
     By default all three bands are included. Use the `bands` field to select
     a subset.
@@ -171,7 +171,7 @@ async def create_3dep_topography(
     Available bands:
     - **elevation**: meters above sea level (default)
     - **slope**: degrees (0-90)
-    - **aspect**: degrees clockwise from north (0-360)
+    - **aspect**: degrees clockwise from north (0-360); flat cells are 0
 
     Slope and aspect are computed locally from the DEM using Horn's method.
 

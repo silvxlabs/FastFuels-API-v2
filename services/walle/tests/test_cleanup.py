@@ -6,7 +6,9 @@ and GCS touching helpers are exercised with monkeypatched clients. The full
 and would act on real project data — its behaviour is covered piece-wise.
 """
 
+import ast
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from walle import cleanup, layouts
 from walle.cleanup import (
@@ -217,12 +219,40 @@ def test_resolve_owner_ttls_bulk(monkeypatch):
     assert result == {"a1": (None, 14), "u1": (30, 14), "x1": (180, 14)}
 
 
+def _api_ttl_contract() -> tuple[dict, dict]:
+    """(Quotas TTL defaults, per-tier TTL presets) parsed from api/quota.py."""
+    path = Path(__file__).parents[2] / "api" / "api" / "quota.py"
+    tree = ast.parse(path.read_text())
+    defaults, tiers = {}, {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "Quotas":
+            for st in node.body:
+                if isinstance(st, ast.AnnAssign) and st.target.id.endswith("ttl_days"):
+                    defaults[st.target.id] = ast.literal_eval(st.value)
+        if isinstance(node, ast.AnnAssign) and node.target.id == "TIER_PRESETS":
+            for tier, preset in zip(node.value.keys, node.value.values):
+                if not isinstance(preset, ast.Dict):  # suspended: dict comp
+                    tiers[tier.value] = {}
+                    continue
+                tiers[tier.value] = {
+                    k.value: ast.literal_eval(v)
+                    for k, v in zip(preset.keys, preset.values)
+                    if k.value.endswith("ttl_days")
+                }
+    return defaults, tiers
+
+
 def test_ttl_defaults_match_api_contract():
-    # Pinned to api/quota.py Quotas defaults; changing either requires updating
-    # both (the two services can't import each other — see cleanup.py).
-    assert cleanup.DEFAULT_RESOURCE_TTL_DAYS == 180
-    assert cleanup.DEFAULT_FAILED_RESOURCE_TTL_DAYS == 14
-    assert cleanup._TIER_TTL_OVERRIDES["application"]["resource_ttl_days"] is None
+    # Read from api/quota.py by path (the services can't import each other), so
+    # drift in a default or in any tier's TTL fields fails here.
+    defaults, tiers = _api_ttl_contract()
+    assert defaults == {
+        "resource_ttl_days": cleanup.DEFAULT_RESOURCE_TTL_DAYS,
+        "failed_resource_ttl_days": cleanup.DEFAULT_FAILED_RESOURCE_TTL_DAYS,
+    }
+    assert tiers["guest"] == {"resource_ttl_days": 1}
+    for tier, preset in tiers.items():
+        assert cleanup._TIER_TTL_OVERRIDES.get(tier, {}) == preset, tier
 
 
 # --- orphaned blobs (with the batched re-check) ---------------------------
@@ -253,8 +283,38 @@ def test_orphan_blob_diff_and_recheck(monkeypatch):
         lambda refs: [_Snap(r.id, r.id == "b") for r in refs],
     )
 
+    monkeypatch.setattr(cleanup, "artifact_mtime", lambda _p: NOW - timedelta(days=5))
+
     # "live" is filtered by the id set; "b" is spared by the re-check; only "a".
-    assert find_orphan_blobs(layout, artifacts, {"live"}) == {"a": "b/a"}
+    assert find_orphan_blobs(layout, artifacts, {"live"}, NOW) == {"a": "b/a"}
+
+
+def test_orphan_blob_spares_staging_dirs_and_young_artifacts(monkeypatch):
+    # #647: standgen's "<id>__rev" staging prefix never has a doc and may be the
+    # only surviving copy after INVENTORY_REWRITE_INCOMPLETE, so it is never an
+    # orphan however old. Doc-less test fixtures mid-run are young, so a recent
+    # GCS write spares them.
+    layout = next(x for x in RESOURCE_LAYOUTS if x.name == "inventories")
+    ages = {"i/old": 5, "i/old__rev": 30, "i/young": 0.01}
+    monkeypatch.setattr(cleanup.firestore_client, "get_all", lambda refs: [])
+    monkeypatch.setattr(
+        cleanup, "artifact_mtime", lambda p: NOW - timedelta(days=ages[p])
+    )
+    artifacts = {"old": "i/old", "old__rev": "i/old__rev", "young": "i/young"}
+    assert find_orphan_blobs(layout, artifacts, set(), NOW) == {"old": "i/old"}
+
+
+def test_artifact_mtime_is_newest_object(monkeypatch):
+    class _FS:
+        def find(self, path, detail):
+            assert detail
+            return {
+                f"{path}/a": {"mtime": NOW - timedelta(days=3)},
+                f"{path}/b": {"mtime": NOW - timedelta(hours=1)},
+            }
+
+    monkeypatch.setattr(layouts, "get_gcsfs_client", lambda: _FS())
+    assert layouts.artifact_mtime("bucket/x") == NOW - timedelta(hours=1)
 
 
 def test_exports_layout_exempt_from_orphan_docs():
@@ -272,7 +332,7 @@ def test_static_test_fixtures_protected_both_directions(monkeypatch):
     # orphan — the empty result proves it was excluded before the re-check.
     monkeypatch.setattr(cleanup.firestore_client, "get_all", lambda refs: [])
     artifacts = {"static-test-blue-mtn": "b/static-test-blue-mtn"}
-    assert find_orphan_blobs(layout, artifacts, set()) == {}
+    assert find_orphan_blobs(layout, artifacts, set(), NOW) == {}
 
     # A static-test doc must not be reaped as an orphaned child (domain gone)...
     orphan = rec(

@@ -23,7 +23,7 @@ from tests.fixtures import make_domain_data, make_inventory_data
 # Columns the documented examples read beyond the standard morphology set.
 _EXTRA_COLUMNS = [
     {"key": "available_canopy_fuel_kg", "type": "continuous", "unit": "kg"},
-    {"key": "crown_radius_m", "type": "continuous", "unit": "m"},
+    {"key": "crown_radius", "type": "continuous", "unit": "m"},
 ]
 
 

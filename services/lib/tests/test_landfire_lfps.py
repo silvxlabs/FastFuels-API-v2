@@ -331,7 +331,7 @@ SW = box(0, 0, 10, 10)
 NW = box(10, 0, 20, 10)
 GEOAREAS = {"SW": SW, "NW": NW}
 
-# Two adjacent Seasonal Fuels regions, keyed the same way SEASONAL_BOUNDARIES
+# Two adjacent Seasonal Fuels regions, keyed the same way _seasonal_boundaries()
 # is: raw two-letter season codes.
 ES_REGION = box(0, 0, 10, 10)
 SP_REGION = box(10, 0, 20, 10)
@@ -364,7 +364,7 @@ class TestCoversAnnual:
     """Tests for annual product/version coverage."""
 
     def test_no_matching_product_returns_no_such_product(self):
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=[]):
                 status = covers_annual("fbfm40", "2024", box(1, 1, 2, 2))
 
@@ -372,7 +372,7 @@ class TestCoversAnnual:
 
     def test_geo_areas_all_returns_full_regardless_of_geometry(self):
         products = [_make_coverage_product("FBFM40", "LF2024", geo_areas="All")]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 # Geometry entirely outside every known GeoArea.
                 status = covers_annual("fbfm40", "2024", box(100, 100, 101, 101))
@@ -381,7 +381,7 @@ class TestCoversAnnual:
 
     def test_covered_geoarea_returns_full(self):
         products = [_make_coverage_product("FBFM40", "LF2024", geo_areas="SW")]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 status = covers_annual("fbfm40", "2024", box(1, 1, 2, 2))
 
@@ -391,7 +391,7 @@ class TestCoversAnnual:
         """Geometry sits entirely inside a real, known GeoArea (NW) that this
         product just doesn't serve -- not FULL, not PARTIAL, just NONE."""
         products = [_make_coverage_product("FBFM40", "LF2024", geo_areas="SW")]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 status = covers_annual("fbfm40", "2024", box(11, 1, 12, 2))
 
@@ -399,7 +399,7 @@ class TestCoversAnnual:
 
     def test_geometry_spanning_covered_and_uncovered_geoarea_is_partial(self):
         products = [_make_coverage_product("FBFM40", "LF2024", geo_areas="SW")]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 spanning = box(5, 1, 15, 2)  # crosses the SW/NW boundary at x=10
                 status = covers_annual("fbfm40", "2024", spanning)
@@ -408,7 +408,7 @@ class TestCoversAnnual:
 
     def test_geometry_outside_all_known_geoareas_returns_none(self):
         products = [_make_coverage_product("FBFM40", "LF2024", geo_areas="SW")]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 status = covers_annual("fbfm40", "2024", box(1000, 1000, 1001, 1001))
 
@@ -416,7 +416,7 @@ class TestCoversAnnual:
 
     def test_product_matched_case_insensitively(self):
         products = [_make_coverage_product("FBFM40", "LF2024", geo_areas="SW")]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 status = covers_annual("FbFm40", "2024", box(1, 1, 2, 2))
 
@@ -424,7 +424,7 @@ class TestCoversAnnual:
 
     def test_bare_year_version_matches_lf_prefixed_catalog_entry(self):
         products = [_make_coverage_product("FBFM40", "LF2024", geo_areas="SW")]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 miss = covers_annual("fbfm40", "2025", box(1, 1, 2, 2))
                 hit = covers_annual("fbfm40", "2024", box(1, 1, 2, 2))
@@ -444,7 +444,7 @@ class TestCoversAnnual:
             ),
             _make_coverage_product("FBFM40", "LF2025", geo_areas="SW", theme="Fuels"),
         ]
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 status = covers_annual("fbfm40", "2025", box(11, 1, 12, 2))
 
@@ -460,7 +460,7 @@ class TestCoversSeasonal:
                 "FBFM40", "LF2025", theme="Seasonal Fuels", season="SP"
             )
         ]
-        with patch("lib.landfire.lfps.SEASONAL_BOUNDARIES", SEASONAL):
+        with patch("lib.landfire.lfps._seasonal_boundaries", return_value=SEASONAL):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 # FA isn't in the live catalog -- e.g. fall not published yet.
                 status = covers_seasonal("fbfm40", "2025", "FA", box(1, 1, 2, 2))
@@ -473,7 +473,7 @@ class TestCoversSeasonal:
                 "FBFM40", "LF2025", theme="Seasonal Fuels", season="ES"
             )
         ]
-        with patch("lib.landfire.lfps.SEASONAL_BOUNDARIES", SEASONAL):
+        with patch("lib.landfire.lfps._seasonal_boundaries", return_value=SEASONAL):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 status = covers_seasonal("fbfm40", "2025", "ES", box(1, 1, 2, 2))
 
@@ -485,7 +485,7 @@ class TestCoversSeasonal:
                 "FBFM40", "LF2025", theme="Seasonal Fuels", season="ES"
             )
         ]
-        with patch("lib.landfire.lfps.SEASONAL_BOUNDARIES", SEASONAL):
+        with patch("lib.landfire.lfps._seasonal_boundaries", return_value=SEASONAL):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 status = covers_seasonal(
                     "fbfm40", "2025", "ES", box(1000, 1000, 1001, 1001)
@@ -499,7 +499,7 @@ class TestCoversSeasonal:
                 "FBFM40", "LF2025", theme="Seasonal Fuels", season="ES"
             )
         ]
-        with patch("lib.landfire.lfps.SEASONAL_BOUNDARIES", SEASONAL):
+        with patch("lib.landfire.lfps._seasonal_boundaries", return_value=SEASONAL):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 spanning = box(5, 1, 15, 2)  # crosses the ES/SP boundary at x=10
                 status = covers_seasonal("fbfm40", "2025", "ES", spanning)
@@ -513,7 +513,7 @@ class TestCoversSeasonal:
                 "FBFM40", "LF2025", theme="Seasonal Fuels", season="SP"
             )
         ]
-        with patch("lib.landfire.lfps.SEASONAL_BOUNDARIES", SEASONAL):
+        with patch("lib.landfire.lfps._seasonal_boundaries", return_value=SEASONAL):
             with patch("lib.landfire.lfps.list_products", return_value=products):
                 wrong_version = covers_seasonal("fbfm40", "2026", "SP", box(1, 1, 2, 2))
                 wrong_product = covers_seasonal("fccs", "2025", "SP", box(1, 1, 2, 2))
@@ -640,8 +640,10 @@ def _patched_releases(products, product="fbfm40", geometry=None, seasons=()):
     """Run list_releases with the registry, catalog, and boundaries patched."""
     geometry = geometry if geometry is not None else box(1, 1, 2, 2)
     with patch("lib.landfire.lfps.LANDFIRE_VERSIONS", RELEASE_REGISTRY):
-        with patch("lib.landfire.lfps.GEOAREA_BOUNDARIES", GEOAREAS):
-            with patch("lib.landfire.lfps.SEASONAL_BOUNDARIES", ALL_SEASONS):
+        with patch("lib.landfire.lfps._geoarea_boundaries", return_value=GEOAREAS):
+            with patch(
+                "lib.landfire.lfps._seasonal_boundaries", return_value=ALL_SEASONS
+            ):
                 with patch("lib.landfire.lfps.list_products", return_value=products):
                     return list_releases(product, geometry, seasons)
 

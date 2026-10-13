@@ -3,25 +3,35 @@ Tests for LANDFIRE handler.
 """
 
 import json
+import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
+from fastfuels_core.fuel_models import update_fuel_models
 from griddle.handlers.landfire import (
+    FBFM_NON_BURNABLE,
+    FCCS_BARE_GROUND,
     LANDFIRE_EXTRA_NODATA,
     _fetch_fuel_model,
     _fetch_landfire_raster,
+    _fuel_rulesets,
+    _ldist_attributes,
     _lf_map_zones,
     _lookup_lf_zones,
     _most_frequent,
     _needs_lfps,
     _remove_non_burnable_blocks,
     fetch_annual_disturbance,
+    fetch_disturbed_fuel,
     fetch_fbfm13,
     fetch_fbfm40,
     fetch_fccs,
@@ -32,6 +42,7 @@ from pyproj import Transformer
 from rasterio.transform import from_origin
 from shapely.geometry import box
 
+from lib.errors import ProcessingError
 from lib.landfire import UnknownLandfireVersionError
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 
@@ -443,6 +454,177 @@ class TestLfMapZones:
         assert mock_read.call_args[0][0].startswith("gs://")
         assert mock_read.call_args[0][0].endswith("/LF_MapZones.parquet")
         assert first is second
+
+
+class TestFuelRulesets:
+    """Unit tests for the Master_Rulesets loader."""
+
+    def setup_method(self):
+        _fuel_rulesets.cache_clear()
+
+    def teardown_method(self):
+        _fuel_rulesets.cache_clear()
+
+    @staticmethod
+    def _raw(**overrides) -> pd.DataFrame:
+        """One raw-export row per list entry, in the export's column layout."""
+        columns = {
+            "Zone": [1],
+            "EVT": [7000],
+            "DIST": [111],
+            "Cover_Low": [0],
+            "Cover_High": [999],
+            "Height_Low": [0],
+            "Height_High": [999],
+            "BPSRF": ["any"],
+            "Wildcard": ["any"],
+            "OnOff": ["On"],
+            "FBFM13": [8],
+            "FBFM40": ["GR1 / 101"],
+            "FCCS": [338],
+        }
+        return pd.DataFrame({**columns, **overrides})
+
+    @patch("griddle.handlers.landfire.pd.read_parquet")
+    def test_reads_the_tables_bucket_parquet_once(self, mock_read):
+        mock_read.return_value = self._raw()
+
+        first = _fuel_rulesets()
+        second = _fuel_rulesets()
+
+        mock_read.assert_called_once()
+        assert mock_read.call_args[0][0].startswith("gs://")
+        assert mock_read.call_args[0][0].endswith("/LF_fuel_rulesets.parquet")
+        assert first is second
+
+    @patch("griddle.handlers.landfire.pd.read_parquet")
+    def test_strips_whitespace_from_the_columns_core_compares(self, mock_read):
+        mock_read.return_value = self._raw(
+            BPSRF=[" any "], Wildcard=["any "], OnOff=[" On"]
+        )
+
+        rules = _fuel_rulesets()
+
+        assert rules["BPSRF"].tolist() == ["any"]
+        assert rules["Wildcard"].tolist() == ["any"]
+        assert rules["OnOff"].tolist() == ["On"]
+
+    @patch("griddle.handlers.landfire.pd.read_parquet")
+    def test_splits_fbfm40_into_a_label_and_an_integer_code(self, mock_read):
+        mock_read.return_value = self._raw(
+            Zone=[1, 1, 1],
+            FBFM40=["SH2 / 142", "NB9 / 099", "NB9 / 99"],
+            FBFM13=[2, 99, 99],
+            FCCS=[1, 2, 3],
+            EVT=[1, 2, 3],
+            DIST=[1, 1, 1],
+            Cover_Low=[0, 0, 0],
+            Cover_High=[999, 999, 999],
+            Height_Low=[0, 0, 0],
+            Height_High=[999, 999, 999],
+            BPSRF=["any"] * 3,
+            Wildcard=["any"] * 3,
+            OnOff=["On"] * 3,
+        )
+
+        rules = _fuel_rulesets()
+
+        assert "FBFM40" not in rules.columns
+        assert rules["FBFM40_label"].tolist() == ["SH2", "NB9", "NB9"]
+        assert rules["FBFM40_code"].tolist() == [142, 99, 99]
+        assert rules["FBFM40_code"].dtype == pd.Int64Dtype()
+
+    @patch("griddle.handlers.landfire.pd.read_parquet")
+    def test_leaves_the_numeric_columns_alone(self, mock_read):
+        mock_read.return_value = self._raw()
+
+        rules = _fuel_rulesets()
+
+        assert rules["FBFM13"].tolist() == [8]
+        assert rules["FCCS"].tolist() == [338]
+        assert rules["Zone"].tolist() == [1]
+
+    @patch("griddle.handlers.landfire.pd.read_parquet")
+    def test_prepped_table_works_with_core(self, mock_read):
+        """The strip matters to core: a padded " On" would rank like "Off", and
+        the earlier row (the Off rule) would win. After loading, the On rule
+        is the one chosen."""
+        mock_read.return_value = self._raw(
+            Zone=[1, 1],
+            EVT=[7000, 7000],
+            DIST=[111, 111],
+            Cover_Low=[0, 0],
+            Cover_High=[999, 999],
+            Height_Low=[0, 0],
+            Height_High=[999, 999],
+            BPSRF=["any", "any"],
+            Wildcard=["any", "any"],
+            OnOff=["Off", " On"],
+            FBFM13=[2, 8],
+            FBFM40=["GR2 / 102", "GR1 / 101"],
+            FCCS=[1, 2],
+        )
+        one = np.ones((1, 1), dtype=np.int16)
+
+        output, updated = update_fuel_models(
+            np.array([[5]], dtype=np.int16),
+            fuel_model="FBFM40_code",
+            dist=one * 111,
+            zone=one,
+            fvt=one * 7000,
+            fvc=one * 150,
+            fvh=one * 110,
+            bps=one * 11,
+            rules=_fuel_rulesets(),
+        )
+
+        assert output.tolist() == [[101]]
+        assert updated.tolist() == [[True]]
+
+
+class TestLdistAttributes:
+    """Unit tests for the LDist attribute table loader."""
+
+    def setup_method(self):
+        _ldist_attributes.cache_clear()
+
+    def teardown_method(self):
+        _ldist_attributes.cache_clear()
+
+    @patch("griddle.handlers.landfire.pd.read_csv")
+    def test_reads_that_versions_csv_once(self, mock_read):
+        mock_read.return_value = pd.DataFrame(
+            {"VALUE": [2882], "DIST_TYPE": ["Wildfire"], "SEVERITY": ["Moderate"]}
+        )
+
+        first = _ldist_attributes("2025")
+        second = _ldist_attributes("2025")
+
+        mock_read.assert_called_once()
+        assert mock_read.call_args[0][0].startswith("gs://")
+        assert mock_read.call_args[0][0].endswith("/LF2025_LDist_attributes.csv")
+        assert first is second
+
+    @patch("griddle.handlers.landfire.pd.read_csv")
+    def test_each_version_has_its_own_table(self, mock_read):
+        mock_read.side_effect = lambda path: pd.DataFrame({"path": [path]})
+
+        table_2025 = _ldist_attributes("2025")
+        table_2026 = _ldist_attributes("2026")
+
+        assert mock_read.call_count == 2
+        assert table_2025["path"][0].endswith("LF2025_LDist_attributes.csv")
+        assert table_2026["path"][0].endswith("LF2026_LDist_attributes.csv")
+
+    @patch("griddle.handlers.landfire.pd.read_csv")
+    def test_missing_table_raises_a_clear_error(self, mock_read):
+        mock_read.side_effect = FileNotFoundError
+
+        with pytest.raises(ProcessingError) as exc_info:
+            _ldist_attributes("2026")
+
+        assert exc_info.value.code == "LDIST_ATTRIBUTES_NOT_AVAILABLE"
+        assert "LF2026_LDist_attributes.csv" in exc_info.value.suggestion
 
 
 class TestFetchAnnualDisturbance:
@@ -965,6 +1147,266 @@ class TestFetchFccsLfpsPath:
         progress = MagicMock()
         fetch_fccs(roi, progress, version="2023")
         mock_fetch_lfps.assert_not_called()
+
+
+@pytest.fixture
+def env(roi):
+    """Everything fetch_disturbed_fuel reaches for, patched; core stays real.
+
+    Set `env.values[layer]` to change a layer's pixels, `env.previous_values`
+    to change the staged fuel model, and `env.shape` for the grid size. Layers
+    left alone get a default, so a bare test needs no setup. After a call,
+    `env.submitted` holds the layers sent in the LFPS batch.
+    """
+    defaults = {"fvt": 7000, "fvc": 150, "fvh": 110, "bps": 11}
+    state = SimpleNamespace(
+        shape=(2, 2),
+        values={},
+        previous_values=None,
+        submitted={},
+        rules=pd.DataFrame(
+            {
+                "Zone": [1],
+                "EVT": [7000],
+                "DIST": [121],
+                "Cover_Low": [0],
+                "Cover_High": [999],
+                "Height_Low": [0],
+                "Height_High": [999],
+                "BPSRF": ["any"],
+                "Wildcard": ["any"],
+                "OnOff": ["On"],
+                "FBFM13": [2],
+                "FBFM40_code": pd.array([101], dtype="Int64"),
+                "FCCS": [338],
+            }
+        ),
+        ldist_table=pd.DataFrame(
+            {
+                "VALUE": [0, 2882, 2971],
+                "DIST_TYPE": [None, "Wildfire", "Herbicide"],
+                "SEVERITY": [None, "Moderate", "Low"],
+            }
+        ),
+    )
+
+    @contextmanager
+    def fake_multi(roi, layers, *args):
+        state.submitted = dict(layers)
+        yield "/tmp/lfps_xyz/result.tif"
+
+    def fake_raster(
+        roi, url, buffer_cells, alignment, target_grid_doc, is_categorical, band
+    ):
+        name = list(state.submitted)[band - 1]
+        values = state.values.get(name, np.full(state.shape, defaults.get(name, 0)))
+        return _make_canopy_raster(np.asarray(values), nodata=-9999)
+
+    def fake_previous(*args):
+        values = state.previous_values
+        if values is None:
+            values = np.full(state.shape, 5)
+        return _make_canopy_raster(np.asarray(values))
+
+    zones = gpd.GeoDataFrame(
+        {"ZONE_NUM": [1]}, geometry=[box(-100, -100, 100, 100)], crs="EPSG:5070"
+    )
+    state.fetch_fuel_model = MagicMock(side_effect=fake_previous)
+    state.ldist_attributes = MagicMock(side_effect=lambda version: state.ldist_table)
+
+    with (
+        patch(
+            "griddle.handlers.landfire.landfire_lfps.fetch_lfps_multi", new=fake_multi
+        ),
+        patch("griddle.handlers.landfire._fetch_landfire_raster", new=fake_raster),
+        patch("griddle.handlers.landfire._fetch_fuel_model", state.fetch_fuel_model),
+        patch("griddle.handlers.landfire._ldist_attributes", state.ldist_attributes),
+        patch("griddle.handlers.landfire._lf_map_zones", return_value=zones),
+        patch("griddle.handlers.landfire._fuel_rulesets", lambda: state.rules),
+    ):
+        yield state
+
+
+class TestFetchDisturbedFuel:
+    """Unit tests for fetch_disturbed_fuel."""
+
+    COMBINED = {
+        "source": "landfire",
+        "mode": "ldist_and_last_year_fdist",
+        "ldist_version": "2025",
+        "fdist_version": "2024",
+    }
+    FDIST_ONLY = {"source": "landfire", "mode": "fdist", "fdist_version": "2025"}
+
+    # --- what gets fetched ---
+
+    def test_combined_mode_batches_fdist_ldist_and_vegetation(self, roi, env):
+        progress = MagicMock()
+
+        fetch_disturbed_fuel(roi, "fbfm40", "2024", self.COMBINED, progress)
+
+        assert list(env.submitted.items()) == [
+            ("fdist", "2024"),
+            ("annual_disturbance", "2025"),
+            ("fvt", "2024"),
+            ("fvc", "2024"),
+            ("fvh", "2024"),
+            ("bps", "2020"),
+        ]
+        env.fetch_fuel_model.assert_called_once_with(
+            roi, "fbfm40", "2024", progress, 0, {"target": "domain"}, None
+        )
+
+    def test_fdist_mode_has_no_ldist(self, roi, env):
+        fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FDIST_ONLY, MagicMock())
+
+        assert list(env.submitted) == ["fdist", "fvt", "fvc", "fvh", "bps"]
+        assert env.submitted["fdist"] == "2025"
+        env.ldist_attributes.assert_not_called()
+
+    def test_lfps_only_previous_joins_the_batch(self, roi, env):
+        """fbfm13 2025 is LFPS-only, so it rides in the same job instead of a
+        second one, and nothing is fetched separately."""
+        fetch_disturbed_fuel(roi, "fbfm13", "2025", self.COMBINED, MagicMock())
+
+        assert list(env.submitted)[-1] == "fbfm13"
+        assert env.submitted["fbfm13"] == "2025"
+        env.fetch_fuel_model.assert_not_called()
+
+    def test_ldist_attributes_follow_the_planned_ldist_version(self, roi, env):
+        fetch_disturbed_fuel(roi, "fbfm40", "2024", self.COMBINED, MagicMock())
+
+        env.ldist_attributes.assert_called_once_with("2025")
+
+    # --- the result, with real core ---
+
+    def test_disturbed_pixel_takes_the_rule_value_and_the_rest_keep_previous(
+        self, roi, env, caplog
+    ):
+        """A moderate wildfire in LDist becomes FDist 121, which the one rule
+        maps to fuel model 101; the herbicide pixel has no FDist equivalent, so
+        it stays undisturbed and keeps the previous value (5)."""
+        env.values["annual_disturbance"] = [[2882, 0], [0, 2971]]
+
+        with caplog.at_level(logging.INFO, logger="griddle.handlers.landfire"):
+            result = fetch_disturbed_fuel(
+                roi, "fbfm40", "2024", self.COMBINED, MagicMock()
+            )
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+        assert result["fbfm"].dtype == np.int16
+        assert "treated as undisturbed: [2971]" in caplog.text
+        assert "1 of 1 disturbed pixels were mapped to a new fuel model" in caplog.text
+
+    def test_disturbed_pixel_with_no_matching_rule_keeps_previous(
+        self, roi, env, caplog
+    ):
+        env.values["annual_disturbance"] = [[2882, 0], [0, 0]]
+        env.values["fvt"] = np.full((2, 2), 9999)  # no rule for this vegetation
+
+        with caplog.at_level(logging.INFO, logger="griddle.handlers.landfire"):
+            result = fetch_disturbed_fuel(
+                roi, "fbfm40", "2024", self.COMBINED, MagicMock()
+            )
+
+        assert result["fbfm"].values.tolist() == [[5, 5], [5, 5]]
+        assert "0 of 1 disturbed pixels were mapped to a new fuel model" in caplog.text
+
+    def test_fdist_mode_uses_the_fdist_raster_directly(self, roi, env):
+        env.values["fdist"] = [[121, 0], [0, 0]]
+
+        result = fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", self.FDIST_ONLY, MagicMock()
+        )
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+
+    @pytest.mark.parametrize(
+        ("fuel_model", "version", "band_key"),
+        [
+            ("fbfm13", "2024", "fbfm13"),
+            ("fbfm40", "2024", "fbfm"),
+            ("fccs", "2023", "fccs"),
+        ],
+    )
+    def test_output_band_matches_the_plain_fetch(
+        self, roi, env, fuel_model, version, band_key
+    ):
+        result = fetch_disturbed_fuel(
+            roi, fuel_model, version, self.FDIST_ONLY, MagicMock()
+        )
+
+        assert list(result.data_vars) == [band_key]
+
+    # --- post-processing, with core stubbed so the output is exact ---
+
+    @pytest.fixture
+    def stub_core(self, env, monkeypatch):
+        """Core returns a 10x10 grid of 101 with one isolated cell set by the test."""
+        env.shape = (10, 10)
+        env.previous_values = np.full((10, 10), 101)
+        state = SimpleNamespace(codes=np.full((10, 10), 101, dtype=np.int16))
+        monkeypatch.setattr(
+            "griddle.handlers.landfire.build_fdist_raster",
+            lambda mode, **kw: (np.zeros((10, 10), dtype=np.int32), []),
+        )
+        monkeypatch.setattr(
+            "griddle.handlers.landfire.update_fuel_models",
+            lambda previous, **kw: (state.codes, np.zeros((10, 10), dtype=bool)),
+        )
+        return state
+
+    def test_remove_non_burnable_is_applied_to_the_output(self, roi, stub_core):
+        stub_core.codes[5, 5] = 99
+
+        result = fetch_disturbed_fuel(
+            roi,
+            "fbfm40",
+            "2024",
+            self.FDIST_ONLY,
+            MagicMock(),
+            remove_non_burnable=["NB9"],
+        )
+
+        assert result["fbfm"].values[5, 5] == 101
+
+    def test_remove_bare_ground_is_applied_to_the_output(self, roi, stub_core):
+        stub_core.codes[5, 5] = 0
+
+        result = fetch_disturbed_fuel(
+            roi, "fccs", "2023", self.FDIST_ONLY, MagicMock(), remove_bare_ground=True
+        )
+
+        assert result["fccs"].values[5, 5] == 101
+
+    @pytest.mark.parametrize(
+        ("fuel_model", "version", "protected"),
+        [
+            ("fbfm13", "2024", FBFM_NON_BURNABLE),
+            ("fbfm40", "2024", FBFM_NON_BURNABLE),
+            ("fccs", "2023", FCCS_BARE_GROUND),
+        ],
+    )
+    def test_boundary_scatter_protects_the_products_codes(
+        self, roi, stub_core, fuel_model, version, protected
+    ):
+        scatter = {"depth": 5, "seed": 1}
+
+        with patch(
+            "griddle.handlers.landfire._apply_boundary_scatter",
+            side_effect=lambda data, *a, **kw: data,
+        ) as mock_scatter:
+            fetch_disturbed_fuel(
+                roi,
+                fuel_model,
+                version,
+                self.FDIST_ONLY,
+                MagicMock(),
+                boundary_scatter=scatter,
+            )
+
+        assert mock_scatter.call_args[0][1] == scatter
+        assert mock_scatter.call_args[0][2] == protected
 
 
 class TestFetchTopography:

@@ -9,8 +9,10 @@ LFPS's real request/response shape still hold.
 import json
 
 import geopandas as gpd
+import numpy as np
 import pytest
 import rasterio
+import rioxarray  # noqa: F401
 from griddle.handlers import landfire, landfire_lfps
 
 from lib.landfire import LANDFIRE_VERSIONS, list_products
@@ -144,3 +146,57 @@ def test_multi_layer_job_returns_bands_in_submission_order(roi):
         }
 
     assert len(shapes) == 1
+
+
+@pytest.fixture
+def disturbance_roi() -> gpd.GeoDataFrame:
+    """The NAIP two-tile domain: the only shared test domain with disturbance in
+    LANDFIRE's 2025 data (insect and mechanical treatments)."""
+    with open(SHARED_TEST_DOMAINS_DIR / "naip_chm_2_tiles.json") as f:
+        domain = json.load(f)
+    crs = domain["crs"]["properties"]["name"]
+    return gpd.GeoDataFrame.from_features(domain["features"], crs=crs)
+
+
+def test_fbfm40_disturbed_combined_mode(disturbance_roi):
+    """2025 LDist plus 2024 FDist update the 2024 FBFM40."""
+    plan = {
+        "source": "landfire",
+        "mode": "ldist_and_last_year_fdist",
+        "ldist_version": "2025",
+        "fdist_version": "2024",
+    }
+
+    ds = landfire.fetch_disturbed_fuel(
+        disturbance_roi, "fbfm40", "2024", plan, lambda *a, **k: None
+    )
+    plain = landfire.fetch_fbfm40(disturbance_roi, lambda *a, **k: None, version="2024")
+
+    assert list(ds.data_vars) == ["fbfm"]
+    assert ds["fbfm"].dims == ("y", "x")
+    assert ds["fbfm"].dtype == plain["fbfm"].dtype
+    assert ds["fbfm"].rio.nodata is not None
+    # Same grid as the plain fetch of the same product, so the two line up.
+    # The values aren't compared: this domain's disturbance is low-severity
+    # insects and mechanical treatment, which the rules map to the fuel model
+    # the pixels already have.
+    assert ds["fbfm"].shape == plain["fbfm"].shape
+    assert np.array_equal(ds.x, plain.x) and np.array_equal(ds.y, plain.y)
+
+
+def test_fccs_disturbed_fdist_mode(disturbance_roi):
+    """The 2025 FDist alone updates the 2023 FCCS."""
+    plan = {"source": "landfire", "mode": "fdist", "fdist_version": "2025"}
+
+    ds = landfire.fetch_disturbed_fuel(
+        disturbance_roi, "fccs", "2023", plan, lambda *a, **k: None
+    )
+    plain = landfire.fetch_fccs(disturbance_roi, lambda *a, **k: None, version="2023")
+
+    assert list(ds.data_vars) == ["fccs"]
+    assert ds["fccs"].dims == ("y", "x")
+    assert ds["fccs"].dtype == plain["fccs"].dtype
+    assert ds["fccs"].rio.nodata is not None
+    assert ds["fccs"].shape == plain["fccs"].shape
+    assert np.array_equal(ds.x, plain.x) and np.array_equal(ds.y, plain.y)
+    assert (ds["fccs"].values != plain["fccs"].values).any()

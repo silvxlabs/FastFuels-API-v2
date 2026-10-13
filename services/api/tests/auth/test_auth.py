@@ -259,7 +259,11 @@ class TestAuthenticateUser:
         with patch(
             "api.auth.resolve_api_key", new_callable=AsyncMock, return_value=key
         ):
-            result = await authenticate_user(request, api_key="some-key", bearer=bearer)
+            result = await authenticate_user(
+                request,
+                api_key="some-key",  # gitleaks:allow
+                bearer=bearer,
+            )
             assert result.state.id == "owner"
 
     @pytest.mark.asyncio

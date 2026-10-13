@@ -41,6 +41,7 @@ from lib.testing import (
     SHARED_TEST_INVENTORIES_DIR,
     SHARED_TEST_POINT_CLOUDS_DIR,
 )
+from tests.conftest import TEST_API_KEY, TEST_URL
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +298,15 @@ def _overwrite_static_dir(fs: gcsfs.GCSFileSystem, src: str, dst: str) -> None:
     fs.cp(src_files, dst_files)
     if stale:
         fs.rm(stale)
+
+
+@pytest.fixture(scope="session")
+def client(test_owner_id):
+    """Overrides the shared ``client`` without the skip-dispatch header: these
+    tests need the worker jobs to actually run."""
+    headers = {"API-KEY": TEST_API_KEY}
+    with httpx.Client(base_url=TEST_URL, headers=headers, timeout=30.0) as client:
+        yield client
 
 
 @pytest.fixture

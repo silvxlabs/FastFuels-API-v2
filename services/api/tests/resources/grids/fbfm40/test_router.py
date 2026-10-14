@@ -10,6 +10,7 @@ from api.resources.grids.fbfm40.examples import (
     LFPS_FBFM40_EXAMPLE_VALUES,
     STAGED_FBFM40_EXAMPLE_VALUES,
 )
+from api.resources.grids.providers.landfire import LANDFIRE_DISTURBANCE_RELEASES
 
 from lib.landfire import LANDFIRE_VERSIONS, SEASON_CODES
 
@@ -207,6 +208,41 @@ class TestSeasonalCoverage:
         source = response.json()["source"]
         assert source["season"] is None
         assert source["year"] == 2024  # default version
+
+
+class TestDisturbance:
+    """Disturbance requests are rejected unless the baseline and coverage fit."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/fbfm40/landfire"
+
+    def test_unknown_source_rejected(self, client, domain_for_testing):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"disturbance": {"source": "feature"}},
+        )
+        assert response.status_code == 422
+
+    def test_non_baseline_version_rejected(self, client, domain_for_testing):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"version": "2023", "disturbance": {"source": "landfire"}},
+        )
+        baseline = LANDFIRE_DISTURBANCE_RELEASES["fbfm40"]["baseline"]
+        assert response.status_code == 422
+        assert f"'{baseline}'" in response.json()["detail"]
+
+    def test_domain_fully_covered_by_newest_release_rejected(
+        self, client, lfps_covered_domain
+    ):
+        """The Kingman domain is fully covered by the 2025 release, so
+        disturbance adjustment is redundant there."""
+        response = client.post(
+            self.route(lfps_covered_domain["id"]),
+            json={"disturbance": {"source": "landfire"}},
+        )
+        assert response.status_code == 422
+        assert "already fully covers" in response.json()["detail"]
 
 
 class TestLandfireCoverage:

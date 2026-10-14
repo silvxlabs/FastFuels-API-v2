@@ -30,7 +30,7 @@ from api.resources.features.crown.schema import (
 from api.resources.features.schema import Feature, FeatureType
 from api.resources.grids.utils import (
     validate_band_unit,
-    validate_grid_has_band,
+    validate_grid_input,
     validate_grid_resolution,
 )
 from api.resources.inventories.schema import TREE_ID_COLUMN
@@ -147,7 +147,7 @@ async def create_chm_crown_feature(
         document_status="completed",
     )
     grid_data = grid_snapshot.to_dict()
-    validate_grid_has_band(grid_data, body.source_chm_grid_id, "chm")
+    validate_grid_input(body, "source_chm_grid_id", grid_data)
     validate_band_unit(grid_data, body.source_chm_grid_id, "chm", "m")
     validate_grid_resolution(
         grid_data, body.source_chm_grid_id, MAX_CROWN_SEGMENTATION_RESOLUTION_M

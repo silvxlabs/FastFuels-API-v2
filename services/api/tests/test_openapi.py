@@ -33,3 +33,23 @@ def test_generator_sensitive_schema_titles_are_stable():
     assert schemas["Domain"]["title"] == "Domain"
     assert "PointCloudThreeDepCoverageResponse" in titles
     assert "TopographyThreeDepCoverageResponse" in titles
+
+
+def test_published_input_extensions_are_documented():
+    """Every x- key on a request field is one INPUT_REQUIREMENTS_DOC explains."""
+    from api.resources.input_requirements import INPUT_REQUIREMENTS_DOC
+
+    found = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            found.update(k for k in node if k.startswith("x-"))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(app.openapi()["components"]["schemas"])
+    assert found
+    assert all(f"`{key}`" in INPUT_REQUIREMENTS_DOC for key in found)

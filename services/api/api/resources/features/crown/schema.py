@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from api.resources.crown_segmentation import CrownSegmentationBase
 from api.resources.features.schema import CreateFeatureRequestBase, FeatureType
+from api.resources.input_requirements import grid_input, inventory_input
+from api.resources.inventories.schema import TREE_ID_COLUMN
 
 
 class ChmCrownSegmentation(CrownSegmentationBase):
@@ -75,12 +77,14 @@ class CreateChmCrownFeatureRequest(CreateFeatureRequestBase):
             "`POST /inventories/tree/chm` from `source_chm_grid_id`. Each tree "
             "seeds one crown at its `x`, `y`."
         ),
+        json_schema_extra=inventory_input([TREE_ID_COLUMN.key]),
     )
     source_chm_grid_id: str = Field(
         description=(
             "ID of a completed grid in this domain with a `chm` band in metres, "
             "at 2 m resolution or finer."
         ),
+        json_schema_extra=grid_input(bands=["chm"]),
     )
     crown_segmentation: ChmCrownSegmentation = Field(
         default_factory=ChmCrownSegmentation,

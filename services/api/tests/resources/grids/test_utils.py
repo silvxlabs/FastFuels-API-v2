@@ -11,13 +11,17 @@ from unittest.mock import patch
 import pytest
 from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.alignment import GridLatticeGridTarget
+from api.resources.grids.lookup.fbfm40.schema import CreateFbfm40LookupRequest
 from api.resources.grids.utils import (
     incomplete_inventory_columns,
+    validate_band_of,
     validate_format_supports_grid,
+    validate_grid_input,
     validate_grids_share_horizontal_lattice,
     validate_lfps_coverage,
     validate_target_grid_alignment,
 )
+from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
 from fastapi import HTTPException
 
 from lib.landfire import CoverageStatus
@@ -303,3 +307,54 @@ class TestIncompleteInventoryColumns:
         """Older inventories have no summaries; the worker backstop covers them."""
         inv = {"columns": [{"key": "dbh"}, "x"]}
         assert incomplete_inventory_columns(inv, {"dbh", "x"}) == set()
+
+
+def _input_grid(bands, source="pim", shape=(4, 4)):
+    return {
+        "source": {"name": source},
+        "bands": [{"key": key} for key in bands],
+        "georeference": {"shape": list(shape)},
+    }
+
+
+class TestValidateGridInput:
+    body = CreatePimInventoryRequest(source_pim_grid_id="g1")
+
+    def test_declared_requirements_met(self):
+        validate_grid_input(self.body, "source_pim_grid_id", _input_grid(["tm_id"]))
+
+    def test_wrong_source_rejected(self):
+        with pytest.raises(HTTPException, match="'pim' grid"):
+            validate_grid_input(
+                self.body,
+                "source_pim_grid_id",
+                _input_grid(["tm_id"], source="compose"),
+            )
+
+    def test_missing_band_rejected(self):
+        with pytest.raises(HTTPException, match="missing required bands"):
+            validate_grid_input(
+                self.body, "source_pim_grid_id", _input_grid(["plt_cn"])
+            )
+
+
+class TestValidateBandOf:
+    def _body(self, band):
+        return CreateFbfm40LookupRequest(
+            source_grid_id="g1", source_band=band, bands=["fuel_load.1hr"]
+        )
+
+    def test_band_of_declared_quantity_accepted(self):
+        grid = _input_grid(["fbfm", "fbfm.2019"])
+        validate_band_of(self._body("fbfm.2019"), "source_band", grid)
+
+    def test_band_of_other_quantity_rejected(self):
+        grid = _input_grid(["fbfm", "elevation"])
+        with pytest.raises(HTTPException, match=r"must name a 'fbfm' band.*\['fbfm'\]"):
+            validate_band_of(self._body("elevation"), "source_band", grid)
+
+    def test_missing_band_rejected(self):
+        with pytest.raises(HTTPException, match="missing required bands"):
+            validate_band_of(
+                self._body("fbfm.2019"), "source_band", _input_grid(["fbfm"])
+            )

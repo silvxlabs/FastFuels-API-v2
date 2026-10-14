@@ -18,6 +18,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import grid_input
 
 
 class DuetBand(StrEnum):
@@ -400,6 +401,7 @@ class CreateDuetRequest(DuetSourceBase):
             "ID of a completed 3D tree grid carrying the "
             "`bulk_density.foliage.live`, `spcd`, and `fuel_moisture.live` bands."
         ),
+        json_schema_extra=grid_input(bands=DUET_REQUIRED_SOURCE_BANDS, dims=3),
     )
     bands: list[DuetBand] = Field(
         default_factory=_default_bands,

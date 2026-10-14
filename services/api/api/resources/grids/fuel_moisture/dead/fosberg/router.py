@@ -25,8 +25,7 @@ from api.resources.grids.fuel_moisture.dead.fosberg.schema import (
 )
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
-    validate_grid_dimensionality,
-    validate_grid_has_band,
+    validate_grid_input,
     validate_grids_share_horizontal_lattice,
 )
 from api.schema import JobStatus
@@ -36,8 +35,6 @@ from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
-
-SURFACE_IRRADIANCE_KEY = "irradiance.surface.relative"
 
 
 @router.post(
@@ -98,14 +95,7 @@ async def create_fosberg_fuel_moisture_grid(
         document_status="completed",
     )
     topo_grid = topo_snapshot.to_dict()
-    validate_grid_dimensionality(
-        grid_data=topo_grid, grid_id=body.source_topography_grid_id, expected=2
-    )
-    validate_grid_has_band(
-        grid_data=topo_grid,
-        grid_id=body.source_topography_grid_id,
-        required=["slope", "aspect"],
-    )
+    validate_grid_input(body, "source_topography_grid_id", topo_grid)
 
     # Irradiance grid: owned, completed, in this domain, surface band present.
     _, irr_snapshot = await get_document_async(
@@ -116,11 +106,7 @@ async def create_fosberg_fuel_moisture_grid(
         document_status="completed",
     )
     irr_grid = irr_snapshot.to_dict()
-    validate_grid_has_band(
-        grid_data=irr_grid,
-        grid_id=body.source_irradiance_grid_id,
-        required=SURFACE_IRRADIANCE_KEY,
-    )
+    validate_grid_input(body, "source_irradiance_grid_id", irr_grid)
 
     # The moisture surface is derived cell-for-cell from both grids and inherits
     # the topography grid's georeference, so the irradiance grid must sit on the

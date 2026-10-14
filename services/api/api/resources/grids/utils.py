@@ -7,6 +7,7 @@ Shared validation and computation utilities for grid endpoints.
 from math import ceil, hypot, isclose
 
 from fastapi import HTTPException, status
+from pydantic import BaseModel
 
 from api.db.documents import firestore_client, get_document_async
 from api.resources.exports.schema import GridExportFormat
@@ -21,7 +22,15 @@ from api.resources.grids.modification_models import (
     GridModification,
 )
 from api.resources.grids.schema import BandType, GridDataChunkMetadata
+from api.resources.input_requirements import (
+    X_BAND_OF,
+    X_DIMS,
+    X_REQUIRED_BANDS,
+    X_SOURCE,
+    declared,
+)
 from api.resources.modifications import stringify_modification_coordinates
+from lib.band_quantities import band_quantity
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
@@ -262,6 +271,55 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(f"Grid {grid_id} is {rank}D, expected {expected}D for this role."),
+        )
+
+
+def validate_grid_input(body: BaseModel, field: str, grid_data: dict) -> None:
+    """Check an input grid against what request ``field`` declares.
+
+    Raises:
+        HTTPException(422): If the grid comes from the wrong source, has the
+            wrong rank, or lacks a required band.
+    """
+    req = declared(type(body), field)
+    grid_id = getattr(body, field)
+    source = (grid_data.get("source") or {}).get("name")
+    if X_SOURCE in req and source != req[X_SOURCE]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"`{field}` must name a {req[X_SOURCE]!r} grid; grid {grid_id} "
+                f"comes from {source!r}."
+            ),
+        )
+    if X_DIMS in req:
+        validate_grid_dimensionality(grid_data, grid_id, req[X_DIMS])
+    if X_REQUIRED_BANDS in req:
+        validate_grid_has_band(grid_data, grid_id, req[X_REQUIRED_BANDS])
+
+
+def validate_band_of(body: BaseModel, field: str, grid_data: dict) -> None:
+    """Check that band ``field`` is on its grid and has the declared quantity.
+
+    Raises:
+        HTTPException(422): If the band is missing or holds another quantity.
+    """
+    req = declared(type(body), field)[X_BAND_OF]
+    band_key = getattr(body, field)
+    grid_id = getattr(body, req["grid"])
+    validate_grid_has_band(grid_data, grid_id, band_key)
+    if band_quantity(band_key) != req["quantity"]:
+        matching = [
+            b["key"]
+            for b in grid_data.get("bands", [])
+            if band_quantity(b["key"]) == req["quantity"]
+        ]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"`{field}` must name a {req['quantity']!r} band; {band_key!r} "
+                f"is not. {req['quantity']!r} bands on grid {grid_id}: {matching}."
+            ),
         )
 
 

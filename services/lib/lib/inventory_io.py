@@ -237,6 +237,10 @@ def require_complete_rows(
         )
 
 
+# Columns every inventory-canopy request reads: position and crown interval.
+CANOPY_BASE_COLUMNS = frozenset({"x", "y", "height", "crown_ratio"})
+
+
 def canopy_required_columns(source: dict) -> set[str]:
     """Morphology columns an inventory-canopy source's methods read from the tree
     inventory.
@@ -256,7 +260,7 @@ def canopy_required_columns(source: dict) -> set[str]:
     they cannot disagree about which columns a request needs — the mismatch that
     would otherwise let the API accept a request the worker then fails.
     """
-    required = {"x", "y", "height", "crown_ratio"}
+    required = set(CANOPY_BASE_COLUMNS)
     if source["biomass_source"]["type"] == "allometry":
         required |= {"dbh", "fia_species_code"}
     radius_type = source["max_crown_radius_source"]["type"]

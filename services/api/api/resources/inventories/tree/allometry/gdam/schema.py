@@ -12,10 +12,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from api.resources.input_requirements import inventory_input
 from api.resources.inventories.schema import (
     BASE_INVENTORY_COLUMNS,
     CreateInventoryRequestBase,
 )
+
+# Columns GDAM needs on the source inventory to make a prediction.
+GDAM_REQUIRED_SOURCE_COLUMNS = ("x", "y", "height")
 
 # The morphology columns GDAM can impute. The caller selects a subset of these.
 ImputableColumn = Literal["dbh", "crown_ratio", "fia_species_code"]
@@ -68,6 +72,7 @@ class CreateGdamInventoryRequest(CreateInventoryRequestBase):
             "(dbh, crown ratio, species) GDAM will fill in. Existing values are "
             "preserved; only missing cells are imputed."
         ),
+        json_schema_extra=inventory_input(GDAM_REQUIRED_SOURCE_COLUMNS),
     )
     impute_columns: list[ImputableColumn] = Field(
         default_factory=lambda: list(_DEFAULT_IMPUTE_COLUMNS),

@@ -280,7 +280,7 @@ class TestCreatePimInventory:
                 },
             )
             assert response.status_code == 422
-            assert "not a pim grid" in response.json()["detail"].lower()
+            assert "'pim' grid" in response.json()["detail"]
         finally:
             doc_ref.delete()
 

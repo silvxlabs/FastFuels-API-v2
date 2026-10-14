@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from api.resources.input_requirements import grid_input
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase, PointProcess
 from api.resources.inventories.treatment_models import InventoryTreatment
@@ -105,9 +106,11 @@ class CreatePimChmFusionInventoryRequest(CreateInventoryRequestBase):
 
     source_pim_grid_id: str = Field(
         description="ID of a completed PIM grid to use as the primary source.",
+        json_schema_extra=grid_input(bands=["tm_id"], source="pim"),
     )
     source_chm_grid_id: str = Field(
-        description="ID of a completed CHM grid used to condition the PIM.",
+        description="ID of a completed 2D grid with a `chm` band.",
+        json_schema_extra=grid_input(bands=["chm"], dims=2),
     )
     method: FusionMethod = Field(
         default_factory=ReimputationMethod,

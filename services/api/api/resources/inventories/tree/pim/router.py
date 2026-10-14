@@ -12,7 +12,6 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Body,
-    HTTPException,
     Request,
     Response,
     status,
@@ -21,6 +20,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.grids.utils import validate_grid_input
 from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.pim.examples import CREATE_PIM_OPENAPI_EXAMPLES
 from api.resources.inventories.tree.pim.schema import (
@@ -129,33 +129,8 @@ async def create_pim_inventory(
     )
     source_grid_data = source_snapshot.to_dict()
 
-    # Verify it is a PIM grid (source.name == "pim")
-    grid_source = source_grid_data.get("source", {})
-    if grid_source.get("name") != "pim":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"Grid '{body.source_pim_grid_id}' is not a PIM grid. "
-                f"This endpoint requires a PIM grid as the source."
-            ),
-        )
-
-    # Validate the grid contains the plot ID band needed for expansion
-    product = grid_source.get("product", "treemap")
-    required_bands = {"treemap": "tm_id"}
-    required_band = required_bands.get(product)
-    if required_band:
-        grid_bands = source_grid_data.get("bands", [])
-        band_keys = [b["key"] if isinstance(b, dict) else b for b in grid_bands]
-        if required_band not in band_keys:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    f"Source PIM grid is missing the required '{required_band}' band. "
-                    f"Available bands: {band_keys}. "
-                    f"Create a PIM grid that includes '{required_band}' for inventory expansion."
-                ),
-            )
+    # tm_id codes index the TreeMap tree table of the PIM grid's version.
+    validate_grid_input(body, "source_pim_grid_id", source_grid_data)
 
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now()

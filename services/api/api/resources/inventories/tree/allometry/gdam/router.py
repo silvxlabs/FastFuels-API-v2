@@ -26,6 +26,7 @@ from api.resources.inventories.tree.allometry.gdam.examples import (
     CREATE_GDAM_OPENAPI_EXAMPLES,
 )
 from api.resources.inventories.tree.allometry.gdam.schema import (
+    GDAM_REQUIRED_SOURCE_COLUMNS,
     CreateGdamInventoryRequest,
     GdamInventorySource,
     resolve_gdam_columns,
@@ -41,9 +42,6 @@ from lib.config import (
 router = APIRouter()
 
 COLLECTION = INVENTORIES_COLLECTION
-
-# Columns GDAM needs on the source inventory to make a prediction.
-_REQUIRED_SOURCE_COLUMNS = ("x", "y", "height")
 
 
 @router.post(
@@ -143,13 +141,13 @@ async def create_gdam_inventory(
     # Must carry the columns GDAM needs (position + height).
     source_columns = source_data.get("columns", [])
     column_keys = [c["key"] if isinstance(c, dict) else c for c in source_columns]
-    missing = [c for c in _REQUIRED_SOURCE_COLUMNS if c not in column_keys]
+    missing = [c for c in GDAM_REQUIRED_SOURCE_COLUMNS if c not in column_keys]
     if missing:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Source inventory is missing required column(s) {missing}. "
-                f"GDAM allometry imputation requires {list(_REQUIRED_SOURCE_COLUMNS)}. "
+                f"GDAM allometry imputation requires {list(GDAM_REQUIRED_SOURCE_COLUMNS)}. "
                 f"Available columns: {column_keys}."
             ),
         )

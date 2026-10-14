@@ -31,6 +31,7 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
     CREATE_TREE_INVENTORY_OPENAPI_EXAMPLES,
 )
 from api.resources.grids.voxelize.inventory.tree.schema import (
+    VOXELIZE_REQUIRED_COLUMNS,
     BiomassComponent,
     CreateTreeInventoryRequest,
     CrownFeatureCrownGeometrySource,
@@ -53,13 +54,7 @@ router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 
-# Columns a fastfuels-core Tree needs per row. `fia_status_code` is intentionally
-# excluded — treevox treats an absent status as live.
-VOXELIZE_REQUIRED_COLUMNS = frozenset(
-    {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
-)
-
-# Of those, the allometry endpoint imputes species / diameter / crown ratio from
+# Of VOXELIZE_REQUIRED_COLUMNS, the allometry endpoint imputes species / diameter / crown ratio from
 # position + height; position and height themselves cannot be imputed.
 ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
 

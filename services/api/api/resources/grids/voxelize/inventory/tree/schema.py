@@ -21,6 +21,13 @@ from pydantic import (
 )
 
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import inventory_input
+
+# Columns a fastfuels-core Tree needs per row. `fia_status_code` is intentionally
+# excluded — treevox treats an absent status as live.
+VOXELIZE_REQUIRED_COLUMNS = frozenset(
+    {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
+)
 
 
 class TreeBand(StrEnum):
@@ -654,6 +661,7 @@ class CreateTreeInventoryRequest(BaseModel):
 
     source_inventory_id: str = Field(
         description="ID of a completed tree inventory to voxelize.",
+        json_schema_extra=inventory_input(VOXELIZE_REQUIRED_COLUMNS),
     )
     resolution: Resolution3D = Field(
         default_factory=_default_resolution,

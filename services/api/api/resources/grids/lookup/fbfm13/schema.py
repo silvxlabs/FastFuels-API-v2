@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import band_of
 
 
 class Fbfm13LookupSource(LookupSource):
@@ -55,7 +56,8 @@ class CreateFbfm13LookupRequest(BaseModel):
     source_grid_id: str = Field(..., description="Grid containing FBFM13 codes")
     source_band: str = Field(
         default="fbfm13",
-        description="Band in source grid containing FBFM13 codes",
+        description="A `fbfm13` band of the source grid holding the FBFM13 codes.",
+        json_schema_extra=band_of("source_grid_id", "fbfm13"),
     )
     bands: list[Fbfm13LookupBand] = Field(..., min_length=1)
     name: str = Field("", max_length=255)

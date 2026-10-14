@@ -15,7 +15,6 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Body,
-    HTTPException,
     Request,
     Response,
     status,
@@ -26,13 +25,12 @@ from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.duet.examples import CREATE_DUET_OPENAPI_EXAMPLES
 from api.resources.grids.duet.schema import (
-    DUET_REQUIRED_SOURCE_BANDS,
     CreateDuetRequest,
     DuetSource,
     build_duet_bands,
 )
 from api.resources.grids.schema import Grid
-from api.resources.grids.utils import validate_grid_has_band
+from api.resources.grids.utils import validate_grid_input
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
@@ -137,26 +135,10 @@ async def create_duet_grid(
     )
     source_grid_data = source_snapshot.to_dict()
 
-    # DUET reads a 3D canopy. A 2D grid carries no crowns to drop litter from,
-    # and would fail in the handler on an opaque shape mismatch.
-    source_config = source_grid_data.get("source", {})
-    if source_config.get("entity") != "tree":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"Grid '{body.source_grid_id}' is not a 3D tree grid. DUET "
-                f"distributes litter from tree crowns, so its source must be a "
-                f"tree grid created with POST /domains/{domain_id}/grids/"
-                f"voxelize/inventory/tree."
-            ),
-        )
-
-    # Reject early rather than dispatching a job that fails on an opaque read.
+    # DUET reads a 3D canopy: a 2D grid carries no crowns to drop litter from.
     # `spcd` is the band users most often lack: voxelize defaults to foliage
-    # bulk density alone, so a grid built for any other purpose won't have it.
-    validate_grid_has_band(
-        source_grid_data, body.source_grid_id, list(DUET_REQUIRED_SOURCE_BANDS)
-    )
+    # bulk density alone.
+    validate_grid_input(body, "source_grid_id", source_grid_data)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.resources.crown_segmentation import CrownSegmentationBase
+from api.resources.input_requirements import grid_input
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
 from api.resources.inventories.treatment_models import InventoryTreatment
@@ -146,7 +147,8 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
     """Request body for creating an inventory via CHM extraction."""
 
     source_chm_grid_id: str = Field(
-        description="ID of a completed CHM grid to use as the source.",
+        description="ID of a completed grid with a `chm` band to use as the source.",
+        json_schema_extra=grid_input(bands=["chm"]),
     )
     algorithm: StemIsolationAlgorithm = Field(
         default_factory=StemIsolationLmf,

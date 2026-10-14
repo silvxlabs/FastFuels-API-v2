@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import band_of
 
 
 class FccsLookupSource(LookupSource):
@@ -62,7 +63,8 @@ class CreateFccsLookupRequest(BaseModel):
     source_grid_id: str = Field(..., description="Grid containing FCCS codes")
     source_band: str = Field(
         default="fccs",
-        description="Band in source grid containing FCCS codes",
+        description="A `fccs` band of the source grid holding the FCCS codes.",
+        json_schema_extra=band_of("source_grid_id", "fccs"),
     )
     bands: list[FccsLookupBand] = Field(..., min_length=1)
     name: str = Field("", max_length=255)

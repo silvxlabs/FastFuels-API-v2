@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import grid_input
 
 
 class LeafluxBand(StrEnum):
@@ -115,6 +116,7 @@ class CreateLeafluxIrradianceRequest(BaseModel):
             "the band it consumes so it reads unambiguously alongside "
             "`source_terrain_grid_id`."
         ),
+        json_schema_extra=grid_input(bands=["leaf_area_density"], dims=3),
     )
 
     source_terrain_grid_id: str | None = Field(
@@ -126,6 +128,9 @@ class CreateLeafluxIrradianceRequest(BaseModel):
             "drape the surface irradiance band over real terrain instead of a "
             "flat plane. Resample the terrain with the LAD grid as its "
             "alignment target when their lattices differ."
+        ),
+        json_schema_extra=grid_input(
+            bands=["elevation"], dims=2, same_lattice_as="source_lad_grid_id"
         ),
     )
     bands: list[LeafluxBand] = Field(

@@ -200,6 +200,7 @@ class TestSubmitJob:
             "Email": "test@example.com",
             "Layer_List": "LF2024_FBFM40;LF2024_FBFM13",
             "Area_of_Interest": "-114.2 46.8 -114.1 46.9",
+            "Output_Projection": 5070,
         }
 
     def test_parses_the_submitted_job(self):

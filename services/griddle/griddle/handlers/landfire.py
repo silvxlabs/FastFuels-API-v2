@@ -5,21 +5,35 @@ Pure functions that fetch LANDFIRE data for a domain extent.
 All handlers return xr.Dataset where each variable name is a band name.
 """
 
+import logging
 from collections.abc import Callable
 from contextlib import nullcontext
+from functools import cache, lru_cache
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import xarray as xr
+from affine import Affine
+from fastfuels_core.fuel_models import (
+    build_fdist_raster,
+    update_fuel_models,
+)
 from numpy import ndarray
+from rasterio.features import rasterize
+from rasterio.transform import array_bounds
 from scipy.ndimage import generic_filter
+from shapely.geometry import box
 from xarray import DataArray
 
 from griddle.handlers import landfire_lfps
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
-from lib.config import RASTERS_BUCKET
+from lib.config import RASTERS_BUCKET, TABLES_BUCKET
+from lib.errors import ProcessingError
 from lib.landfire import LANDFIRE_VERSIONS, NB_CODE_MAP, validate_landfire_version
 from lib.raster import RasterConnection, cog_env
+
+logger = logging.getLogger(__name__)
 
 CATEGORICAL_DEFAULT = "nearest"
 CONTINUOUS_DEFAULT = "bilinear"
@@ -47,6 +61,12 @@ LANDFIRE_CANOPY_SCALE_FACTORS: dict[str, float] = {
 # reprojection, or resampling blends -9999 into valid neighbours.
 LANDFIRE_EXTRA_NODATA: int = -9999
 
+# product: (column in the rules table, name of the output band)
+_DISTURBED_FUEL_MODELS = {
+    "fbfm13": ("FBFM13", "fbfm13"),
+    "fbfm40": ("FBFM40_code", "fbfm"),
+    "fccs": ("FCCS", "fccs"),
+}
 # LANDFIRE aspect marks flat cells (slope 0-2 deg) with -1. Topography grids
 # store flat as 0, matching 3DEP.
 LANDFIRE_FLAT_ASPECT: int = -1
@@ -64,6 +84,111 @@ def _needs_lfps(product: str, version: str) -> bool:
     return version in LANDFIRE_VERSIONS[product].get("lfps_available", ())
 
 
+@lru_cache(maxsize=1)
+def _lf_map_zones() -> gpd.GeoDataFrame:
+    """LANDFIRE CONUS map zone polygons, with the zone number in ``ZONE_NUM``.
+
+    Read from the rasters bucket on first use and cached. Not loaded at import:
+    only disturbance update requests need it.
+    """
+    return gpd.read_parquet(f"gs://{RASTERS_BUCKET}/LF_MapZones.parquet")
+
+
+def _lookup_lf_zones(
+    zones: gpd.GeoDataFrame,
+    transform: Affine,
+    shape: tuple[int, int],
+    crs,
+    nodata: int = -9999,
+) -> np.ndarray:
+    """LANDFIRE map zone number for every cell of a grid.
+
+    Args:
+        zones: Map zone polygons with the zone number in ``ZONE_NUM``, in
+            any CRS.
+        transform: The grid's transform, e.g. ``da.rio.transform()``.
+        shape: Grid shape, ``(ny, nx)``.
+        crs: The grid's CRS, e.g. ``da.rio.crs``.
+        nodata: Value for cells outside every map zone.
+
+    Returns:
+        int16 zone numbers, shape ``shape``.
+
+    Most grids fall inside a single zone, which is filled directly. Only a
+    grid that crosses a zone boundary or the CONUS edge is rasterized. Each
+    cell gets the zone containing its center.
+
+    Only the grid's outline is reprojected to find the zones it touches. Its
+    edges can bend slightly after reprojection, but over typical grid sizes
+    the error is well under one 30 m cell.
+    """
+    outline = (
+        gpd.GeoSeries([box(*array_bounds(*shape, transform))], crs=crs)
+        .to_crs(zones.crs)
+        .iloc[0]
+    )
+    touching = zones.iloc[zones.sindex.query(outline, predicate="intersects")]
+
+    if touching.empty:
+        return np.full(shape, nodata, dtype=np.int16)
+    if len(touching) == 1 and touching.geometry.iloc[0].contains(outline):
+        return np.full(shape, int(touching["ZONE_NUM"].iloc[0]), dtype=np.int16)
+
+    touching = touching.to_crs(crs)
+    return rasterize(
+        zip(touching.geometry, touching["ZONE_NUM"].astype(int)),
+        out_shape=shape,
+        transform=transform,
+        fill=nodata,
+        dtype="int16",
+    )
+
+
+@lru_cache(maxsize=1)
+def _fuel_rulesets() -> pd.DataFrame:
+    """LANDFIRE's Master_Rulesets table, prepped for fastfuels-core.
+
+    Read from the tables bucket on first use and cached. The raw export
+    is used as is except for:
+
+    - Whitespace stripped from ``BPSRF``, ``Wildcard`` and ``OnOff``. Core
+      compares them to "any" and "On" exactly, so padding would silently
+      select the wrong rules.
+    - ``FBFM40``, stored as ``"SH2 / 142"``, split into ``FBFM40_label``
+      and an ``Int64`` ``FBFM40_code``. ``FBFM13`` and ``FCCS`` are already
+      numeric. Core needs the numeric code column.
+    """
+    rules = pd.read_parquet(f"gs://{TABLES_BUCKET}/LF_fuel_rulesets.parquet")
+
+    for column in ("BPSRF", "Wildcard", "OnOff"):
+        rules[column] = rules[column].str.strip()
+
+    parts = rules["FBFM40"].str.split("/", n=1, expand=True)
+    rules["FBFM40_label"] = parts[0].str.strip()
+    rules["FBFM40_code"] = pd.to_numeric(parts[1].str.strip()).astype("Int64")
+    return rules.drop(columns="FBFM40")
+
+
+@cache
+def _ldist_attributes(version: str) -> pd.DataFrame:
+    """LANDFIRE's LDist attribute table for a release, cached per version.
+
+    Read from the tables bucket. Core uses its ``VALUE``, ``DIST_TYPE`` and
+    ``SEVERITY`` columns to convert LDist codes to FDist codes.
+
+    Raises:
+        ProcessingError: The bucket has no table for ``version``.
+    """
+    try:
+        return pd.read_csv(f"gs://{TABLES_BUCKET}/LF{version}_LDist_attributes.csv")
+    except FileNotFoundError:
+        raise ProcessingError(
+            code="LDIST_ATTRIBUTES_NOT_AVAILABLE",
+            message=f"No LDist attribute table for version {version} is available.",
+            suggestion=f"Upload LF{version}_LDist_attributes.csv to the tables bucket.",
+        )
+
+
 def _fetch_landfire_raster(
     roi: gpd.GeoDataFrame,
     url: str,
@@ -71,6 +196,7 @@ def _fetch_landfire_raster(
     alignment: dict,
     target_grid_doc: dict | None,
     is_categorical: bool,
+    band: int = 1,
 ) -> DataArray:
     """Fetch a single LANDFIRE raster product.
 
@@ -88,6 +214,9 @@ def _fetch_landfire_raster(
         is_categorical: Drives the role-aware default for the resampling
             method when ``alignment.method`` is unset (categorical →
             ``nearest``; continuous → ``bilinear``).
+        band: Which band to read (1-indexed). The default, 1, is the only
+            band a single-product source has; a multi-band source (a batched
+            LFPS download) passes the band its caller wants.
 
     Returns:
         DataArray with dims (y, x)
@@ -114,9 +243,67 @@ def _fetch_landfire_raster(
             else None,
             **dest,
         )
-        data = data.squeeze("band", drop=True)
+        data = data.sel(band=band, drop=True)
 
         return _consolidate_landfire_nodata(data)
+
+
+def _fetch_fuel_model(
+    roi: gpd.GeoDataFrame,
+    product: str,
+    version: str,
+    progress: Callable[[str, int | None], None],
+    extent_buffer_cells: int,
+    alignment: dict,
+    target_grid_doc: dict | None,
+    season: str | None = None,
+) -> DataArray:
+    """Fetch one fuel model product's raw raster, from a staged COG or on
+    demand via LFPS.
+
+    Shared by fetch_fbfm13/40/fccs, which each apply their own
+    post-processing (remove_non_burnable, boundary_scatter) on top.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest.
+        product: "fbfm13", "fbfm40", or "fccs".
+        version: LANDFIRE version year.
+        progress: Progress callback, only used when this version is
+            fetched via LFPS.
+        extent_buffer_cells: Result-grid cells of buffer around the ROI.
+        alignment: Alignment specification dict.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+        season: LANDFIRE Seasonal Fuels code (fbfm40 only). Forces an LFPS
+            fetch regardless of `version`.
+
+    Returns:
+        DataArray with dims (y, x), categorical fuel model codes.
+    """
+    if season is not None or _needs_lfps(product, version):
+        source = landfire_lfps.fetch_lfps(
+            roi,
+            product,
+            version,
+            alignment,
+            target_grid_doc,
+            extent_buffer_cells,
+            progress,
+            season,
+        )
+    else:
+        validate_landfire_version(product, version)
+        source = nullcontext(_landfire_cog_url(product, version))
+
+    with source as url:
+        return _fetch_landfire_raster(
+            roi,
+            url,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+            is_categorical=True,
+        )
 
 
 def _consolidate_landfire_nodata(data: DataArray) -> DataArray:
@@ -315,30 +502,15 @@ def fetch_fbfm13(
         1-13 plus non-burnable 91/92/93/98/99)
     """
     alignment = alignment or {"target": "domain"}
-    product = "fbfm13"
-    if _needs_lfps(product, version):
-        source = landfire_lfps.fetch_lfps(
-            roi,
-            product,
-            version,
-            alignment,
-            target_grid_doc,
-            extent_buffer_cells,
-            progress,
-        )
-    else:
-        validate_landfire_version(product, version)
-        source = nullcontext(_landfire_cog_url(product, version))
-
-    with source as url:
-        data = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=True,
-        )
+    data = _fetch_fuel_model(
+        roi,
+        "fbfm13",
+        version,
+        progress,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+    )
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
@@ -386,32 +558,16 @@ def fetch_fbfm40(
         Dataset with a single "fbfm" variable (int16 categorical codes)
     """
     alignment = alignment or {"target": "domain"}
-    product = "fbfm40"
-    if season is not None or _needs_lfps(product, version):
-        source = landfire_lfps.fetch_lfps(
-            roi,
-            product,
-            version,
-            alignment,
-            target_grid_doc,
-            extent_buffer_cells,
-            progress,
-            season,
-        )
-    else:
-        validate_landfire_version(product, version)
-        source = nullcontext(_landfire_cog_url(product, version))
-
-    with source as url:
-        # `url` is the gs:// or local path `_fetch_landfire_raster` opens
-        data = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=True,
-        )
+    data = _fetch_fuel_model(
+        roi,
+        "fbfm40",
+        version,
+        progress,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+        season,
+    )
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
@@ -456,30 +612,15 @@ def fetch_fccs(
         Dataset with a single "fccs" variable (int32 categorical codes)
     """
     alignment = alignment or {"target": "domain"}
-    product = "fccs"
-    if _needs_lfps(product, version):
-        source = landfire_lfps.fetch_lfps(
-            roi,
-            product,
-            version,
-            alignment,
-            target_grid_doc,
-            extent_buffer_cells,
-            progress,
-        )
-    else:
-        validate_landfire_version(product, version)
-        source = nullcontext(_landfire_cog_url(product, version))
-
-    with source as url:
-        data = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=True,
-        )
+    data = _fetch_fuel_model(
+        roi,
+        "fccs",
+        version,
+        progress,
+        extent_buffer_cells,
+        alignment,
+        target_grid_doc,
+    )
 
     if remove_bare_ground:
         filtered = _remove_non_burnable_blocks(data.values, [0], data.rio.nodata)
@@ -554,6 +695,152 @@ def _most_frequent(x: ndarray, non_burnable_keys: list[int]) -> float:
         if val not in non_burnable_keys:
             return val
     return central
+
+
+def fetch_disturbed_fuel(
+    roi: gpd.GeoDataFrame,
+    fuel_model: str,
+    version: str,
+    disturbance: dict,
+    progress: Callable[[str, int | None], None],
+    remove_non_burnable: list[str] | None = None,
+    remove_bare_ground: bool = False,
+    boundary_scatter: dict | None = None,
+    extent_buffer_cells: int = 0,
+    alignment: dict | None = None,
+    target_grid_doc: dict | None = None,
+) -> xr.Dataset:
+    """Fetch a LANDFIRE fuel model grid updated for disturbance.
+
+    Each disturbed pixel is matched against LANDFIRE's Master_Rulesets and
+    takes the matched rule's fuel model; every other pixel keeps its value
+    from the `version` release of `fuel_model`.
+
+    Args:
+        roi: GeoDataFrame defining the region of interest.
+        fuel_model: "fbfm13", "fbfm40", or "fccs" -- the output product.
+        version: LANDFIRE version of `fuel_model` whose values undisturbed
+            pixels keep.
+        disturbance: The plan the API stored on the grid's source, e.g.
+            ``{"source": "landfire", "mode": "ldist_and_last_year_fdist",
+            "ldist_version": "2025", "fdist_version": "2024"}`` or
+            ``{"source": "landfire", "mode": "fdist", "fdist_version": "2026"}``.
+        progress: Progress callback.
+        remove_non_burnable: fbfm13/fbfm40 only -- as in fetch_fbfm13/40,
+            applied to the updated grid.
+        remove_bare_ground: fccs only -- as in fetch_fccs, applied to the
+            updated grid.
+        boundary_scatter: As in fetch_fbfm13/40/fccs, applied to the updated grid.
+        extent_buffer_cells: Result-grid cells of buffer around the ROI.
+        alignment: Alignment specification dict. Defaults to
+            ``{"target": "domain"}``.
+        target_grid_doc: Loaded grid document used when
+            ``alignment["target"] == "grid"``.
+
+    Returns:
+        Dataset with a single band, named as `fuel_model`'s plain fetch names
+        it (e.g. "fbfm" for fbfm40).
+    """
+    alignment = alignment or {"target": "domain"}
+    rules_column, band_key = _DISTURBED_FUEL_MODELS[fuel_model]
+    combined = disturbance["mode"] != "fdist"
+
+    # One LFPS job for every layer it serves. `previous` joins it only when
+    # its version is LFPS-only; a staged one is fetched on its own below.
+    layers = {"fdist": disturbance["fdist_version"]}
+    if combined:
+        layers["annual_disturbance"] = disturbance["ldist_version"]
+    for product in ("fvt", "fvc", "fvh", "bps"):
+        layers[product] = LANDFIRE_VERSIONS[product]["default"]
+    previous_needs_lfps = _needs_lfps(fuel_model, version)
+    if previous_needs_lfps:
+        layers[fuel_model] = version
+
+    with landfire_lfps.fetch_lfps_multi(
+        roi, layers, alignment, target_grid_doc, extent_buffer_cells, progress
+    ) as path:
+        bands = {
+            name: _fetch_landfire_raster(
+                roi,
+                path,
+                extent_buffer_cells,
+                alignment,
+                target_grid_doc,
+                is_categorical=True,
+                band=i + 1,
+            )
+            for i, name in enumerate(layers)
+        }
+
+    if previous_needs_lfps:
+        previous = bands[fuel_model]
+    else:
+        progress(f"Fetching LANDFIRE {fuel_model} v{version}...", 75)
+        previous = _fetch_fuel_model(
+            roi,
+            fuel_model,
+            version,
+            progress,
+            extent_buffer_cells,
+            alignment,
+            target_grid_doc,
+        )
+
+    progress("Matching disturbance rulesets...", 85)
+    fdist_inputs = {"fdist": bands["fdist"].values}
+    if combined:
+        fdist_inputs["ldist"] = bands["annual_disturbance"].values
+        fdist_inputs["ldist_attribute_table"] = _ldist_attributes(
+            disturbance["ldist_version"]
+        )
+    dist, unconverted = build_fdist_raster(disturbance["mode"], **fdist_inputs)
+
+    zone = _lookup_lf_zones(
+        _lf_map_zones(), previous.rio.transform(), previous.shape, previous.rio.crs
+    )
+    output, updated = update_fuel_models(
+        previous.values,
+        fuel_model=rules_column,
+        dist=dist,
+        zone=zone,
+        fvt=bands["fvt"].values,
+        fvc=bands["fvc"].values,
+        fvh=bands["fvh"].values,
+        bps=bands["bps"].values,
+        rules=_fuel_rulesets(),
+    )
+
+    disturbed = int((dist > 0).sum())
+    mapped = int(updated.sum())
+    if unconverted:
+        logger.info(
+            "LDist codes with no FDist equivalent, treated as undisturbed: %s",
+            unconverted,
+        )
+    logger.info(
+        "%d of %d disturbed pixels were mapped to a new fuel model", mapped, disturbed
+    )
+
+    data = previous.copy(data=output)
+
+    if remove_non_burnable:
+        non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
+        data = data.copy(
+            data=_remove_non_burnable_blocks(
+                data.values, non_burnable_keys, data.rio.nodata
+            )
+        )
+
+    if remove_bare_ground:
+        data = data.copy(
+            data=_remove_non_burnable_blocks(data.values, [0], data.rio.nodata)
+        )
+
+    if boundary_scatter:
+        protected = FCCS_BARE_GROUND if fuel_model == "fccs" else FBFM_NON_BURNABLE
+        data = _apply_boundary_scatter(data, boundary_scatter, protected)
+
+    return _to_dataset({band_key: data})
 
 
 def fetch_topography(

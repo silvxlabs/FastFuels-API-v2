@@ -307,6 +307,80 @@ class TestHandleLandfire:
         assert "LANDFIRE" in call_args[0]
         assert "fccs" in call_args[0]
 
+    @pytest.mark.parametrize(
+        ("product", "options", "expected"),
+        [
+            ("fbfm13", {}, {"remove_non_burnable": None, "remove_bare_ground": False}),
+            (
+                "fbfm40",
+                {"remove_non_burnable": ["NB9"]},
+                {"remove_non_burnable": ["NB9"], "remove_bare_ground": False},
+            ),
+            (
+                "fccs",
+                {"remove_bare_ground": True},
+                {"remove_non_burnable": None, "remove_bare_ground": True},
+            ),
+        ],
+    )
+    @patch("griddle.dispatch.landfire.fetch_fccs")
+    @patch("griddle.dispatch.landfire.fetch_fbfm40")
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    @patch("griddle.dispatch.landfire.fetch_disturbed_fuel")
+    def test_disturbance_routes_to_fetch_disturbed_fuel(
+        self,
+        mock_disturbed,
+        mock_fbfm13,
+        mock_fbfm40,
+        mock_fccs,
+        product,
+        options,
+        expected,
+    ):
+        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        progress = MagicMock()
+        plan = {
+            "source": "landfire",
+            "mode": "ldist_and_last_year_fdist",
+            "ldist_version": "2025",
+            "fdist_version": "2024",
+        }
+        source = {
+            "product": product,
+            "version": "2024",
+            "disturbance": plan,
+            **options,
+        }
+
+        result = handle_landfire(mock_gdf, source, progress)
+
+        mock_disturbed.assert_called_once_with(
+            mock_gdf,
+            product,
+            "2024",
+            plan,
+            progress,
+            boundary_scatter=None,
+            extent_buffer_cells=0,
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+            **expected,
+        )
+        assert result == mock_disturbed.return_value
+        mock_fbfm13.assert_not_called()
+        mock_fbfm40.assert_not_called()
+        mock_fccs.assert_not_called()
+
+    @patch("griddle.dispatch.landfire.fetch_disturbed_fuel")
+    @patch("griddle.dispatch.landfire.fetch_fbfm13")
+    def test_null_disturbance_is_a_plain_fetch(self, mock_fetch, mock_disturbed):
+        source = {"product": "fbfm13", "version": "2024", "disturbance": None}
+
+        handle_landfire(MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+
+        mock_fetch.assert_called_once()
+        mock_disturbed.assert_not_called()
+
     @patch("griddle.dispatch.landfire.fetch_topography")
     def test_routes_topography_to_handler(self, mock_fetch):
         """handle_landfire routes topography product to fetch_topography."""

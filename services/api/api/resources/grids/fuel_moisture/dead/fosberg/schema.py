@@ -3,7 +3,7 @@ api/v2/resources/grids/fuel_moisture/dead/fosberg/schema.py
 
 Schema models for the Fosberg 1-hour dead fuel moisture content (DFMC) grid.
 
-This is a derived grid: it computes a single 2-D `fuel_moisture.dead.1hr` band
+This is a derived grid: it computes a single 2-D `fuel_moisture.1hr` band
 from a topography grid (slope + aspect) and a leaflux irradiance grid
 (surface shading) using the Fosberg & Deeming (1971) model in
 `fastfuels_core.fuel_moisture.fosberg`.
@@ -15,6 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.resources.grids.schema import Band, BandType
+from api.resources.input_requirements import grid, input_requirements
 
 
 class FuelMoistureMonth(StrEnum):
@@ -91,7 +92,17 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
     inherits the topography grid's domain, CRS, transform, and georeference.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra=input_requirements(
+            grid("source_topography_grid_id", bands=["slope", "aspect"], dims=2),
+            grid(
+                "source_irradiance_grid_id",
+                bands=["irradiance.surface.relative"],
+                same_lattice_as="source_topography_grid_id",
+            ),
+        ),
+    )
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
@@ -160,7 +171,7 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
 
 
 DEAD_1HR_BAND = Band(
-    key="fuel_moisture.dead.1hr",
+    key="fuel_moisture.1hr",
     name="1-hour Dead Fuel Moisture",
     description=(
         "1-hour timelag dead fuel moisture content from the Fosberg & Deeming "

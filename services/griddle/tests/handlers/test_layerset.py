@@ -16,18 +16,20 @@ from unittest.mock import MagicMock, patch
 import geopandas as gpd
 import numpy as np
 import pytest
+import xarray as xr
+import zarr
 from affine import Affine
 from fastfuels_core.layersets import rasterize_layerset
 from griddle.handlers.layerset import (
-    _LAYERSET_BAND_DEFS,
     OVERLAP_METHODS,
-    build_layerset_bands,
     fetch_layerset,
+    flatten_layerset,
 )
 
 from lib.errors import ProcessingError
+from lib.layerset_bands import LAYERSET_PROPERTIES
 from lib.testing import SHARED_TEST_FEATURES_DIR
-from lib.units import validate_unit
+from lib.zarr_utils import load_zarr, save_zarr
 
 # Shared example layerset (also used by the integration tests). Polygon shapes
 # derived from a Lubrecht site layerset, translated into the bounds of the
@@ -125,7 +127,7 @@ class TestRealRasterizeLayerset:
 
     Protects against silent drift in the published library: variable layout,
     dim ordering, and band coord values are all assumptions baked into
-    ``build_layerset_bands``.
+    ``flatten_layerset``.
     """
 
     def test_output_shape_matches_published_contract(self):
@@ -154,65 +156,102 @@ class TestRealRasterizeLayerset:
 
 
 class TestLayersetBandUnits:
-    """Drift guard for ``_LAYERSET_BAND_DEFS``.
-
-    Mirrors the convention in `uniform/test_schema.py`,
-    `topography/test_schema.py`, etc.: each hardcoded band-metadata dict in
-    the codebase carries a test that re-validates every unit through
-    `lib.units.validate_unit`, so a typo or non-canonical form is caught
-    in CI rather than at runtime.
-    """
-
-    def test_all_units_are_canonical(self):
-        for defn in _LAYERSET_BAND_DEFS.values():
-            validate_unit(defn["unit"])
+    """Drift guard for ``lib.layerset_bands.LAYERSET_PROPERTIES``: every
+    rasterizer property has a definition."""
 
     def test_all_defs_have_name_and_description(self):
-        for defn in _LAYERSET_BAND_DEFS.values():
+        for defn in LAYERSET_PROPERTIES.values():
             assert defn["name"]
             assert defn["description"]
 
+    def test_every_rasterizer_property_is_defined(self):
+        ds = rasterize_layerset(gpd.read_file(FIXTURE_PATH), resolution=10.0)
+        for name in ds.data_vars:
+            assert set(ds[name].coords["band"].values) == set(LAYERSET_PROPERTIES)
 
-class TestBuildLayersetBands:
-    """Tests for ``build_layerset_bands`` — derives the Grid's bands field
-    from the rasterized output Dataset."""
 
-    def test_bands_match_dataset_layout(self):
+def _layer_ds(fuel_types: list[str]) -> xr.Dataset:
+    """A rasterizer-shaped Dataset: one (band, y, x) variable per fuel type."""
+    props = list(LAYERSET_PROPERTIES)
+    data = {
+        ft: xr.DataArray(
+            np.full((len(props), 2, 2), i + 1, dtype=np.float32),
+            dims=("band", "y", "x"),
+            coords={"band": props, "y": [1.0, 0.0], "x": [0.0, 1.0]},
+        )
+        for i, ft in enumerate(fuel_types)
+    }
+    return xr.Dataset(data).rio.write_crs("EPSG:32612")
+
+
+class TestFlattenLayerset:
+    """``flatten_layerset`` stores one variable per band, named by its key."""
+
+    def test_bands_match_flat_dataset(self):
         gdf = gpd.read_file(FIXTURE_PATH)
         ds = rasterize_layerset(gdf, resolution=10.0)
 
-        bands = build_layerset_bands(ds)
-        # 3 variables × 5 bands = 15 entries
+        flat, bands = flatten_layerset(ds)
+        # 3 fuel types x 5 properties = 15 bands, one 2D variable each
         assert len(bands) == 15
-
-        # Indices are contiguous from 0
         assert [b["index"] for b in bands] == list(range(15))
-
-        # Every band is continuous
+        assert [b["key"] for b in bands] == list(flat.data_vars)
+        for key in flat.data_vars:
+            assert flat[key].dims == ("y", "x")
         assert {b["type"] for b in bands} == {"continuous"}
 
-        # Keys are "<var>.<band>"; spot-check a few
-        keys = [b["key"] for b in bands]
-        assert "shrub.loading" in keys
-        assert "herb.height" in keys
-        assert "litter.heat_of_combustion" in keys
-
-        # Units track the rasterizer's per-band documentation
         unit_for = {b["key"]: b["unit"] for b in bands}
-        assert unit_for["shrub.loading"] == "kg/m**2"
-        assert unit_for["shrub.height"] == "m"
-        assert unit_for["shrub.live_fuel_moisture"] == "%"
-        assert unit_for["shrub.heat_of_combustion"] == "kJ/kg"
+        assert unit_for["fuel_load.shrub"] == "kg/m**2"
+        assert unit_for["fuel_depth.herb"] == "m"
+        assert unit_for["fuel_moisture.live.shrub"] == "%"
+        assert unit_for["fuel_moisture.dead.litter"] == "%"
+        assert unit_for["heat_content.litter"] == "kJ/kg"
 
-        # Names/descriptions are populated and prefixed with the fuel type
         name_for = {b["key"]: b["name"] for b in bands}
-        assert name_for["shrub.loading"] == "Shrub Fuel Loading"
-        assert name_for["litter.heat_of_combustion"] == "Litter Heat of Combustion"
-        assert all(b["name"] for b in bands)
-        assert all(b["description"] for b in bands)
-        # Descriptions carry the fuel-type context
+        assert name_for["fuel_load.shrub"] == "Shrub Fuel Load"
+        assert name_for["heat_content.litter"] == "Litter Heat Content"
         desc_for = {b["key"]: b["description"] for b in bands}
-        assert "fuel type: shrub" in desc_for["shrub.loading"]
+        assert "fuel type: shrub" in desc_for["fuel_load.shrub"]
+
+        # Values and spatial metadata survive the split.
+        np.testing.assert_array_equal(
+            flat["fuel_load.litter"].values, ds["litter"].sel(band="loading").values
+        )
+        assert flat.rio.crs == ds.rio.crs
+        assert np.isnan(flat["fuel_load.litter"].rio.nodata)
+
+    def test_fuel_types_are_sanitized(self):
+        flat, bands = flatten_layerset(_layer_ds(["Shrub Layer", "TL.3"]))
+        keys = {b["key"] for b in bands}
+        assert "fuel_load.shrub_layer" in keys
+        assert "fuel_depth.tl_3" in keys
+        assert "Shrub Layer" in bands[0]["description"]
+
+    def test_fuel_types_colliding_after_sanitizing_rejected(self):
+        with pytest.raises(ProcessingError) as exc:
+            flatten_layerset(_layer_ds(["Shrub", "shrub "]))
+        assert exc.value.code == "INVALID_FUEL_TYPE"
+
+    def test_fuel_type_without_key_safe_characters_rejected(self):
+        with pytest.raises(ProcessingError) as exc:
+            flatten_layerset(_layer_ds(["---"]))
+        assert exc.value.code == "INVALID_FUEL_TYPE"
+
+    def test_flat_bands_readable_by_key_from_zarr(self, tmp_path):
+        """New layerset grids are read the way the API chunk endpoint
+        (zarr group ``getitem(band_key)``) and the QUIC-Fire / Landscape
+        exporters (``load_zarr(...)[band]``) read every other grid."""
+        flat, bands = flatten_layerset(_layer_ds(["shrub", "litter"]))
+        path = str(tmp_path / "grid.zarr")
+        save_zarr(path, flat, chunk_shape=(512, 512))
+
+        group = zarr.open_group(path, mode="r")
+        loaded = load_zarr(path)
+        for band in bands:
+            key = band["key"]
+            np.testing.assert_array_equal(group[key][:], flat[key].values)
+            arr = loaded[key].transpose("y", "x").values
+            np.testing.assert_array_equal(arr, flat[key].values)
 
 
 class TestFetchLayerset:

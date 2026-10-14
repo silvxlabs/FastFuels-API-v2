@@ -324,12 +324,13 @@ def handle_layerset(
         target_grid_doc=target_grid_doc,
     )
 
-    # Persist the real bands list — see docstring above.
-    bands = layerset.build_layerset_bands(ds)
+    # Store one variable per band, named by its key, and persist the real
+    # bands list — see docstring above.
+    flat, bands = layerset.flatten_layerset(ds)
     update_grid_metadata(grid["id"], {"bands": bands})
     grid["bands"] = bands  # keep the in-memory dict consistent for the caller
 
-    return ds
+    return flat
 
 
 def handle_lookup(
@@ -346,6 +347,7 @@ def handle_lookup(
         case "fbfm13":
             return lookup.fbfm13_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
             )
@@ -355,6 +357,7 @@ def handle_lookup(
             curing = source.get("herbaceous_curing")
             return lookup.fbfm40_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
                 herbaceous_curing=0.0 if curing is None else curing,
@@ -362,6 +365,7 @@ def handle_lookup(
         case "fccs":
             return lookup.fccs_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
             )

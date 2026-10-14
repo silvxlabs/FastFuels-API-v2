@@ -30,7 +30,7 @@ pytestmark = pytest.mark.integration
 
 CRS = "EPSG:32611"
 SURFACE_KEY = "irradiance.surface.relative"
-OUTPUT_KEY = "fuel_moisture.dead.1hr"
+OUTPUT_KEY = "fuel_moisture.1hr"
 OWNER = "test-owner"
 
 

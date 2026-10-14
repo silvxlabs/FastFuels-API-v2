@@ -46,6 +46,8 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassUnit,
     InventoryColumnMaxCrownRadiusSource,
 )
+from api.resources.input_requirements import input_requirements, inventory
+from lib.inventory_io import CANOPY_BASE_COLUMNS
 
 # Cell size applied when the request's domain-target alignment omits
 # `resolution`. An inventory has no native raster cell size to inherit, so
@@ -845,7 +847,12 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
     metrics.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra=input_requirements(
+            inventory("source_inventory_id", columns=CANOPY_BASE_COLUMNS),
+        ),
+    )
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)

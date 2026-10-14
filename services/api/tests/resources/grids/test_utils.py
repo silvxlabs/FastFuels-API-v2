@@ -11,13 +11,21 @@ from unittest.mock import patch
 import pytest
 from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.alignment import GridLatticeGridTarget
+from api.resources.grids.lookup.fbfm40.schema import CreateFbfm40LookupRequest
 from api.resources.grids.utils import (
     incomplete_inventory_columns,
+    validate_band_of,
     validate_format_supports_grid,
+    validate_grid_input,
     validate_grids_share_horizontal_lattice,
     validate_lfps_coverage,
     validate_target_grid_alignment,
 )
+from api.resources.grids.voxelize.inventory.tree.schema import (
+    CreateTreeInventoryRequest,
+)
+from api.resources.input_requirements import requirements_for
+from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
 from fastapi import HTTPException
 
 from lib.landfire import CoverageStatus
@@ -303,3 +311,71 @@ class TestIncompleteInventoryColumns:
         """Older inventories have no summaries; the worker backstop covers them."""
         inv = {"columns": [{"key": "dbh"}, "x"]}
         assert incomplete_inventory_columns(inv, {"dbh", "x"}) == set()
+
+
+def _input_grid(bands, source="pim", shape=(4, 4)):
+    return {
+        "source": {"name": source},
+        "bands": [{"key": key} for key in bands],
+        "georeference": {"shape": list(shape)},
+    }
+
+
+class TestValidateGridInput:
+    body = CreatePimInventoryRequest(source_pim_grid_id="g1")
+
+    def test_declared_requirements_met(self):
+        validate_grid_input(self.body, "source_pim_grid_id", _input_grid(["tm_id"]))
+
+    def test_wrong_source_rejected(self):
+        with pytest.raises(HTTPException, match="'pim' grid"):
+            validate_grid_input(
+                self.body,
+                "source_pim_grid_id",
+                _input_grid(["tm_id"], source="compose"),
+            )
+
+    def test_missing_band_rejected(self):
+        with pytest.raises(HTTPException, match="missing required bands"):
+            validate_grid_input(
+                self.body, "source_pim_grid_id", _input_grid(["plt_cn"])
+            )
+
+
+class TestValidateBandOf:
+    def _body(self, band):
+        return CreateFbfm40LookupRequest(
+            source_grid_id="g1", source_band=band, bands=["fuel_load.1hr"]
+        )
+
+    def test_band_of_declared_quantity_accepted(self):
+        grid = _input_grid(["chm", "fbfm"])
+        validate_band_of(self._body("fbfm"), "source_band", grid)
+
+    def test_band_of_other_quantity_rejected(self):
+        grid = _input_grid(["chm", "fbfm"])
+        with pytest.raises(HTTPException, match=r"must name a 'fbfm' band.*\['fbfm'\]"):
+            validate_band_of(self._body("chm"), "source_band", grid)
+
+    def test_missing_band_rejected(self):
+        with pytest.raises(HTTPException, match="missing required bands"):
+            validate_band_of(self._body("fbfm"), "source_band", _input_grid(["chm"]))
+
+
+class TestRequirementsFor:
+    def test_when_applies_only_to_matching_requests(self):
+        parametric = CreateTreeInventoryRequest(source_inventory_id="i1")
+        measured = CreateTreeInventoryRequest(
+            source_inventory_id="i1",
+            crown_geometry_source={"type": "crown_feature", "feature_id": "f1"},
+        )
+
+        def columns(body):
+            return [
+                c
+                for r in requirements_for(body, "source_inventory_id")
+                for c in r["columns"]
+            ]
+
+        assert "tree_id" not in columns(parametric)
+        assert "tree_id" in columns(measured)

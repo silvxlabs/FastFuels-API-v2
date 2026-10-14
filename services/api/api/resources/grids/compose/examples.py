@@ -43,14 +43,13 @@ EXAMPLE_COMPOSE_SINGLE_GRID_MATH = {
     "name": "FCCS with combined 1hr fuels",
     "inputs": [{"grid_id": "grid_fccs", "alias": "a"}],
     "select": [
-        {"output": "fuel_depth", "from": "a.fuel_depth"},
-        {"output": "moisture_of_extinction", "from": "a.moisture_of_extinction"},
+        {"output": "duff_depth", "from": "a.duff_depth"},
     ],
     "compute": [
         {
             "output": "fuel_load.1hr",
             "operator": "add",
-            "operands": ["a.dead_grass", "a.litter"],
+            "operands": ["a.fuel_load.1hr", "a.fuel_load.litter"],
         }
     ],
 }
@@ -266,9 +265,9 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
         "description": (
             "Uses compose with a single input grid. This is useful when one "
             "source already contains the component bands needed to create a "
-            "new aggregate band. Here `fuel_depth` and "
-            "`moisture_of_extinction` are copied through unchanged while "
-            "`dead_grass + litter` becomes the composed `fuel_load.1hr` band. "
+            "new aggregate band. Here `duff_depth` is copied through unchanged "
+            "while `fuel_load.1hr + fuel_load.litter` becomes the composed "
+            "`fuel_load.1hr` band. "
             "A single-grid compose still creates a new async Grid with normal "
             "lineage and derived band metadata."
         ),

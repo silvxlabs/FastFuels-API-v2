@@ -381,11 +381,11 @@ class TestCreatePimChmFusionInventory:
         finally:
             doc_ref.delete()
 
-    def test_composed_grid_with_plot_id_band_is_accepted(
+    def test_composed_grid_with_plot_id_band_returns_422(
         self, client, firestore_client, domain_for_testing, chm_grid_for_fusion
     ):
-        """A grid carrying tm_id but not made by the PIM pipeline is accepted —
-        the endpoint gates on the band contract, not on provenance."""
+        """A grid carrying tm_id but not made by PIM is rejected: only a PIM grid
+        records the TreeMap version its tm_id codes index."""
         grid_data = make_grid_data(
             domain_id=domain_for_testing["id"],
             name="Composed grid with tm_id",
@@ -405,8 +405,8 @@ class TestCreatePimChmFusionInventory:
                     "source_chm_grid_id": chm_grid_for_fusion["id"],
                 },
             )
-            assert response.status_code == 201
-            assert response.json()["source"]["name"] == "pim"
+            assert response.status_code == 422
+            assert "'pim' grid" in response.json()["detail"]
         finally:
             doc_ref.delete()
 

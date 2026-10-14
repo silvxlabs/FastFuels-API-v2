@@ -33,3 +33,40 @@ def test_generator_sensitive_schema_titles_are_stable():
     assert schemas["Domain"]["title"] == "Domain"
     assert "PointCloudThreeDepCoverageResponse" in titles
     assert "TopographyThreeDepCoverageResponse" in titles
+
+
+def test_input_requirements_are_documented_and_name_real_fields():
+    """Every requirement names a field of its request, using documented keys."""
+    from api.resources.input_requirements import (
+        INPUT_REQUIREMENTS_DOC,
+        X_INPUT_REQUIREMENTS,
+    )
+
+    schemas = app.openapi()["components"]["schemas"]
+
+    def resolve(schema, path):
+        for part in path.split("."):
+            if "$ref" in schema:
+                schema = schemas[schema["$ref"].split("/")[-1]]
+            variants = schema.get("oneOf") or schema.get("anyOf") or [schema]
+            schema = next(
+                v["properties"][part]
+                for v in (
+                    schemas[x["$ref"].split("/")[-1]] if "$ref" in x else x
+                    for x in variants
+                )
+                if part in v.get("properties", {})
+            )
+        return schema
+
+    entries = [
+        (name, entry)
+        for name, schema in schemas.items()
+        for entry in schema.get(X_INPUT_REQUIREMENTS, [])
+    ]
+    assert entries
+    for name, entry in entries:
+        resolve(schemas[name], entry["field"])
+        for path in entry.get("when", {}):
+            resolve(schemas[name], path)
+        assert all(f"`{key}`" in INPUT_REQUIREMENTS_DOC for key in entry), entry

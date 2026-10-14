@@ -73,10 +73,13 @@ async def create_netcdf_upload(
     ## Bands
 
     Unlike the GeoTIFF route, the request body has **no `bands` field**.
-    netCDF data variable names are the canonical band keys — they are
-    extracted directly from the file and become the variable names in the
-    output Zarr store. Per-band `units` (if set on the variable) and dtype
-    drive the stored band metadata.
+    Each data variable's name is its band key, `<quantity>` or
+    `<quantity>.<label>` (e.g. `fbfm`, `fuel_load.1hr`), and becomes the
+    variable name in the output Zarr store. The quantity sets the band's type
+    and unit. A `units` attribute is optional but must match the quantity's
+    unit, and categorical codes must be stored as integers. Otherwise the
+    upload fails with `INVALID_BAND_KEY`, `INVALID_BAND_UNITS` or
+    `INVALID_BAND_DTYPE`.
 
     ## Dimensions
 

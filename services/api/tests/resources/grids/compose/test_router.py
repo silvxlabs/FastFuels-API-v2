@@ -158,7 +158,7 @@ class TestCreateCompose:
     def test_missing_band_returns_422(self, client, domain_for_testing, complete_grid):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [{"output": "missing", "from": "a.missing"}],
+            "select": [{"output": "fuel_load.1hr", "from": "a.missing"}],
         }
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
@@ -191,7 +191,10 @@ class TestCreateCompose:
 
         assert response.status_code == 404
 
-    def test_unit_override_succeeds(self, client, domain_for_testing, complete_grid):
+    def test_unit_override_contradicting_quantity_returns_422(
+        self, client, domain_for_testing, complete_grid
+    ):
+        """A fuel_load band is always kg/m**2, so a g/m**2 output is rejected."""
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
             "compute": [
@@ -206,8 +209,8 @@ class TestCreateCompose:
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
-        assert response.status_code == 201, response.json()
-        assert response.json()["bands"][0]["unit"] == "g/m**2"
+        assert response.status_code == 422
+        assert "kg/m**2" in response.json()["detail"]
 
     def test_incompatible_unit_override_returns_422(
         self, client, domain_for_testing, complete_grid
@@ -362,7 +365,7 @@ class TestCreateCompose:
             "inputs": [{"grid_id": complete_percent_grid["id"], "alias": "a"}],
             "compute": [
                 {
-                    "output": "moisture",
+                    "output": "fuel_moisture.1hr",
                     "operator": "multiply",
                     "operands": ["a.moisture", 0.5],
                 }

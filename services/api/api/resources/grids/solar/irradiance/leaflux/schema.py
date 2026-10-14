@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import grid, input_requirements
 
 
 class LeafluxBand(StrEnum):
@@ -101,7 +102,18 @@ class CreateLeafluxIrradianceRequest(BaseModel):
     grid's geometry, so there is no resolution input.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra=input_requirements(
+            grid("source_lad_grid_id", bands=["leaf_area_density"], dims=3),
+            grid(
+                "source_terrain_grid_id",
+                bands=["elevation"],
+                dims=2,
+                same_lattice_as="source_lad_grid_id",
+            ),
+        ),
+    )
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)

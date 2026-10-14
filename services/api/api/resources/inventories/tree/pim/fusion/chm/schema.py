@@ -12,8 +12,9 @@ a new ``method`` member here and never a new URL.
 from random import randint
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from api.resources.input_requirements import grid, input_requirements
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase, PointProcess
 from api.resources.inventories.treatment_models import InventoryTreatment
@@ -103,11 +104,18 @@ class PimChmFusionInventorySource(BaseModel):
 class CreatePimChmFusionInventoryRequest(CreateInventoryRequestBase):
     """Request body for creating an inventory by fusing a PIM with a CHM."""
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            grid("source_pim_grid_id", bands=["tm_id"], source="pim"),
+            grid("source_chm_grid_id", bands=["chm"], dims=2),
+        ),
+    )
+
     source_pim_grid_id: str = Field(
         description="ID of a completed PIM grid to use as the primary source.",
     )
     source_chm_grid_id: str = Field(
-        description="ID of a completed CHM grid used to condition the PIM.",
+        description="ID of a completed 2D grid with a `chm` band.",
     )
     method: FusionMethod = Field(
         default_factory=ReimputationMethod,

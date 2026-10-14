@@ -14,6 +14,7 @@ from api.resources.features.router import router as features_router
 from api.resources.features.router import wildcard_router as features_wildcard_router
 from api.resources.grids.router import router as grids_router
 from api.resources.grids.router import wildcard_router as grids_wildcard_router
+from api.resources.input_requirements import INPUT_REQUIREMENTS_DOC
 from api.resources.inventories.router import router as inventories_router
 from api.resources.inventories.router import (
     wildcard_router as inventories_wildcard_router,
@@ -74,7 +75,11 @@ Read the design philosophy and resource guides in the
 [FastFuels-API-v2 repository](https://github.com/silvxlabs/FastFuels-API-v2)
 before integrating — v2 favors explicit, reproducible primitives over the
 convenience helpers that shipped in v1.
+"""
 
+API_DESCRIPTION += INPUT_REQUIREMENTS_DOC
+
+API_DESCRIPTION += """
 ## Feedback
 
 Found a bug or have a request? Open an issue on

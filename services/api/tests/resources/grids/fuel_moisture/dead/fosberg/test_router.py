@@ -122,7 +122,7 @@ class TestCreateFosbergFuelMoistureGrid:
         assert source["elevation"] == "near"
 
         assert len(data["bands"]) == 1
-        assert data["bands"][0]["key"] == "fuel_moisture.dead.1hr"
+        assert data["bands"][0]["key"] == "fuel_moisture.1hr"
         assert data["bands"][0]["type"] == "continuous"
         assert data["bands"][0]["unit"] == "%"
         assert data["bands"][0]["index"] == 0

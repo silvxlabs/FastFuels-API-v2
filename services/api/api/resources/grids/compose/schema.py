@@ -18,7 +18,7 @@ from api.resources.grids.modification_models import (
     GridGeometrySpatialCondition,
     GridModification,
 )
-from api.resources.grids.schema import Band, validate_no_duplicates
+from api.resources.grids.schema import Band, BandKey, validate_no_duplicates
 from lib.units import validate_unit
 
 
@@ -203,7 +203,7 @@ class ComposeSelect(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str = Field(..., description="Output band key, e.g. `fuel_load.1hr`.")
+    output: BandKey
     from_: str = Field(
         ..., alias="from", description="Alias-qualified source band ref."
     )
@@ -234,7 +234,7 @@ class ComposeCompute(InlineCompute):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str = Field(..., description="Output band key, e.g. `fuel_load.1hr`.")
+    output: BandKey
     name: str | None = Field(
         None, max_length=255, description="Optional display name for the output band."
     )

@@ -10,11 +10,12 @@ fuel parameters using the FOFEM FCCS fuelbed lookup table.
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import band, input_requirements
 
 
 class FccsLookupSource(LookupSource):
@@ -59,10 +60,16 @@ class CreateFccsLookupRequest(BaseModel):
     because derived grids carry the same domain reference as their source.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            band("source_band", of="source_grid_id", quantity="fccs"),
+        ),
+    )
+
     source_grid_id: str = Field(..., description="Grid containing FCCS codes")
     source_band: str = Field(
         default="fccs",
-        description="Band in source grid containing FCCS codes",
+        description="A `fccs` band of the source grid holding the FCCS codes.",
     )
     bands: list[FccsLookupBand] = Field(..., min_length=1)
     name: str = Field("", max_length=255)

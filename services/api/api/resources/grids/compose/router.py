@@ -48,6 +48,7 @@ from api.resources.grids.utils import (
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.band_quantities import band_mismatch
 from lib.config import (
     FEATURES_COLLECTION,
     GRIDDLE_QUEUE,
@@ -499,6 +500,13 @@ async def create_compose_grid(
     _validate_alignment(source_grids, input_by_alias)
 
     bands = _build_output_bands(body, source_grids, input_by_alias)
+    for band in bands:
+        if reason := band_mismatch(band.key, band.type.value, band.unit):
+            raise _http_422(
+                f"Output band {band.key!r} doesn't match what this operation "
+                f"produces: {reason}. Name the output after what it holds, or "
+                f"set `unit` on a compute to convert."
+            )
     output_band_types = {band.key: band.type.value for band in bands}
     resolve_modification_fuel_model_labels(body.modifications, output_band_types)
 

@@ -22,7 +22,7 @@ must hold:
 | `x-source` | grid ID | The `source.name` the grid must come from, e.g. `pim`. |
 | `x-same-lattice-as` | grid ID | Another grid ID field whose horizontal lattice (CRS, y/x shape, transform) this grid must share. A 3D grid may share a 2D grid's lattice. |
 | `x-band-of` | band key | `{"grid": f, "quantity": q}`: a band of grid field `f` whose key has quantity `q`. |
-| `x-required-columns` | inventory ID | Columns the inventory must have, at least. Methods chosen in the request can need more. |
+| `x-required-columns` | inventory ID | Columns the inventory must have, with a value in every row (`columns[].summary.null_count == 0`). Methods chosen in the request can need more. |
 
 Band keys are `<quantity>` or `<quantity>.<label>`; the GeoTIFF upload `bands[].key` description lists the quantities.
 

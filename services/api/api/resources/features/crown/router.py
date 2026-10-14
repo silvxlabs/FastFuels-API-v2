@@ -29,6 +29,7 @@ from api.resources.features.crown.schema import (
 )
 from api.resources.features.schema import Feature, FeatureType
 from api.resources.grids.utils import (
+    incomplete_inventory_columns,
     validate_band_unit,
     validate_grid_input,
     validate_grid_resolution,
@@ -126,16 +127,12 @@ async def create_chm_crown_feature(
                 f"'{inventory_data.get('type')}'. Crowns require a tree inventory."
             ),
         )
-    column_keys = {
-        c["key"] if isinstance(c, dict) else c
-        for c in inventory_data.get("columns", [])
-    }
-    if TREE_ID_COLUMN.key not in column_keys:
+    if incomplete_inventory_columns(inventory_data, {TREE_ID_COLUMN.key}):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Inventory '{body.source_inventory_id}' has no "
-                f"'{TREE_ID_COLUMN.key}' column."
+                f"'{TREE_ID_COLUMN.key}' column, or it has empty values."
             ),
         )
 

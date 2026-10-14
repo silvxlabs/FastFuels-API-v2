@@ -11,37 +11,31 @@ Used by griddle, which writes the bands. Pure Python.
 
 import re
 
-# Rasterizer property -> band key prefix, unit, and display metadata. Units
-# match the canonical keys of the same quantity (fuel_load.* kg/m**2,
-# fuel_depth.* m, fuel_moisture.* %).
+# Rasterizer property -> band key prefix and display metadata. Type and unit
+# follow from the prefix's quantity (lib.band_quantities).
 LAYERSET_PROPERTIES: dict[str, dict] = {
     "loading": {
         "prefix": "fuel_load",
-        "unit": "kg/m**2",
         "name": "Fuel Load",
         "description": "Oven-dry fuel mass per unit area.",
     },
     "height": {
         "prefix": "fuel_depth",
-        "unit": "m",
         "name": "Fuel Depth",
         "description": "Height of the fuel bed above the surface.",
     },
     "live_fuel_moisture": {
         "prefix": "fuel_moisture.live",
-        "unit": "%",
         "name": "Live Fuel Moisture",
         "description": "Moisture content of live fuels (% of oven-dry weight).",
     },
     "dead_fuel_moisture": {
         "prefix": "fuel_moisture.dead",
-        "unit": "%",
         "name": "Dead Fuel Moisture",
         "description": "Moisture content of dead fuels (% of oven-dry weight).",
     },
     "heat_of_combustion": {
         "prefix": "heat_content",
-        "unit": "kJ/kg",
         "name": "Heat Content",
         "description": "Energy released per unit mass of fuel consumed.",
     },

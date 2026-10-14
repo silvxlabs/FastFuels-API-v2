@@ -25,6 +25,7 @@ import xarray as xr
 from fastfuels_core.layersets import rasterize_layerset
 
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
+from lib.band_quantities import check_band_key
 from lib.config import FEATURES_BUCKET
 from lib.errors import ProcessingError
 from lib.layerset_bands import (
@@ -251,14 +252,15 @@ def flatten_layerset(ds: xr.Dataset) -> tuple[xr.Dataset, list[dict]]:
                     suggestion="Report this; the rasterizer output changed.",
                 )
             key = layerset_band_key(str(property_name), fuel_type)
+            quantity = check_band_key(key)
             variables[key] = ds[var_name].sel(band=property_name).drop_vars("band")
             bands.append(
                 {
                     "key": key,
                     "name": f"{fuel_label} {prop['name']}",
                     "description": f"{prop['description']} (fuel type: {fuel_type})",
-                    "type": "continuous",
-                    "unit": prop["unit"],
+                    "type": quantity.type,
+                    "unit": quantity.unit,
                     "index": len(bands),
                 }
             )

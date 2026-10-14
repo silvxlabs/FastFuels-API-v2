@@ -6,6 +6,7 @@ from api.resources.grids.compose.schema import (
     ComposeAttributeCondition,
     ComposeCompute,
     ComposeLiteral,
+    ComposeSelect,
     CreateComposeRequest,
     InlineCompute,
 )
@@ -110,7 +111,7 @@ class TestComputationOperands:
 
     def test_compose_compute_inherits_operand_validation(self):
         with pytest.raises(ValidationError, match="exactly two operands"):
-            ComposeCompute(output="z", operator="subtract", operands=["a.x"])
+            ComposeCompute(output="fuel_load", operator="subtract", operands=["a.x"])
 
 
 class TestAttributeConditionShape:
@@ -137,3 +138,9 @@ class TestExamplesValidateAgainstSchema:
         request = CreateComposeRequest(**example_value)
         assert request.inputs, example_name
         assert request.select or request.compute, example_name
+
+
+class TestOutputKey:
+    def test_unknown_quantity_rejected(self):
+        with pytest.raises(ValidationError, match="not a band key"):
+            ComposeSelect.model_validate({"output": "moisture", "from": "a.x"})

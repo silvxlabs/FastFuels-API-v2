@@ -29,7 +29,6 @@ from griddle.handlers.layerset import (
 from lib.errors import ProcessingError
 from lib.layerset_bands import LAYERSET_PROPERTIES
 from lib.testing import SHARED_TEST_FEATURES_DIR
-from lib.units import validate_unit
 from lib.zarr_utils import load_zarr, save_zarr
 
 # Shared example layerset (also used by the integration tests). Polygon shapes
@@ -157,12 +156,8 @@ class TestRealRasterizeLayerset:
 
 
 class TestLayersetBandUnits:
-    """Drift guard for ``lib.layerset_bands.LAYERSET_PROPERTIES``: every unit is
-    canonical, and every rasterizer property has a definition."""
-
-    def test_all_units_are_canonical(self):
-        for defn in LAYERSET_PROPERTIES.values():
-            validate_unit(defn["unit"])
+    """Drift guard for ``lib.layerset_bands.LAYERSET_PROPERTIES``: every
+    rasterizer property has a definition."""
 
     def test_all_defs_have_name_and_description(self):
         for defn in LAYERSET_PROPERTIES.values():

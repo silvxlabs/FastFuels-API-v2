@@ -52,7 +52,7 @@ class TestUploadBandDefinition:
         band = UploadBandDefinition(
             key="irradiance.surface.relative", type="continuous", unit=unit
         )
-        assert band.unit == unit
+        assert band.unit is None
 
     def test_non_canonical_unit_raises(self):
         with pytest.raises(ValidationError):
@@ -145,3 +145,28 @@ class TestOpenApiExamples:
         """Every OpenAPI example must parse without error."""
         req = CreateGeoTIFFUploadRequest(**example_value)
         assert len(req.bands) >= 1
+
+
+class TestTypeAndUnitFromKey:
+    def test_omitted_type_and_unit_come_from_the_quantity(self):
+        band = UploadBandDefinition(key="fuel_load.mass_1_2m")
+        assert (band.type, band.unit) == ("continuous", "kg/m**2")
+        assert UploadBandDefinition(key="fbfm").type == "categorical"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"key": "fbfm", "type": "continuous", "unit": "m"},
+            {"key": "fuel_load.1hr", "type": "categorical"},
+            {"key": "chm", "unit": "ft"},
+            {"key": "fuel_load.1hr", "unit": None},
+        ],
+    )
+    def test_contradicting_type_or_unit_rejected(self, body):
+        with pytest.raises(ValidationError, match="bands are"):
+            UploadBandDefinition(**body)
+
+    @pytest.mark.parametrize("key", ["moisture", "custom.x", "fuel_load.Shrub"])
+    def test_unknown_or_malformed_key_rejected(self, key):
+        with pytest.raises(ValidationError, match="not a band key"):
+            UploadBandDefinition(key=key)

@@ -5,12 +5,10 @@ from __future__ import annotations
 import pytest
 
 from lib.layerset_bands import (
-    LAYERSET_PROPERTIES,
     fuel_type_token,
     layerset_band_key,
     split_legacy_layerset_key,
 )
-from lib.units import validate_unit
 
 
 class TestFuelTypeToken:
@@ -49,10 +47,6 @@ class TestBandKeys:
     )
     def test_key_is_quantity_first(self, prop, key):
         assert layerset_band_key(prop, "Shrub Layer") == key
-
-    def test_units_are_canonical(self):
-        for prop in LAYERSET_PROPERTIES.values():
-            validate_unit(prop["unit"])
 
 
 class TestLegacySplit:

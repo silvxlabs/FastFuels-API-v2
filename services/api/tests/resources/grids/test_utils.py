@@ -345,16 +345,14 @@ class TestValidateBandOf:
         )
 
     def test_band_of_declared_quantity_accepted(self):
-        grid = _input_grid(["fbfm", "fbfm.2019"])
-        validate_band_of(self._body("fbfm.2019"), "source_band", grid)
+        grid = _input_grid(["chm", "fbfm"])
+        validate_band_of(self._body("fbfm"), "source_band", grid)
 
     def test_band_of_other_quantity_rejected(self):
-        grid = _input_grid(["fbfm", "elevation"])
+        grid = _input_grid(["chm", "fbfm"])
         with pytest.raises(HTTPException, match=r"must name a 'fbfm' band.*\['fbfm'\]"):
-            validate_band_of(self._body("elevation"), "source_band", grid)
+            validate_band_of(self._body("chm"), "source_band", grid)
 
     def test_missing_band_rejected(self):
         with pytest.raises(HTTPException, match="missing required bands"):
-            validate_band_of(
-                self._body("fbfm.2019"), "source_band", _input_grid(["fbfm"])
-            )
+            validate_band_of(self._body("fbfm"), "source_band", _input_grid(["chm"]))

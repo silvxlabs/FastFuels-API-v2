@@ -20,11 +20,11 @@ must hold:
 | `x-required-bands` | grid ID | Band keys the grid must have. |
 | `x-dims` | grid ID | `2` (y, x) or `3` (z, y, x). |
 | `x-source` | grid ID | The `source.name` the grid must come from, e.g. `pim`. |
-| `x-same-lattice-as` | grid ID | Another grid ID field whose cells (CRS, shape, transform) this grid must share. |
+| `x-same-lattice-as` | grid ID | Another grid ID field whose horizontal lattice (CRS, y/x shape, transform) this grid must share. A 3D grid may share a 2D grid's lattice. |
 | `x-band-of` | band key | `{"grid": f, "quantity": q}`: a band of grid field `f` whose key has quantity `q`. |
 | `x-required-columns` | inventory ID | Columns the inventory must have, at least. Methods chosen in the request can need more. |
 
-Band keys are `<quantity>` or `<quantity>.<label>`; see `BandKey`.
+Band keys are `<quantity>` or `<quantity>.<label>`; the GeoTIFF upload `bands[].key` description lists the quantities.
 
 These cover the common reasons an input is rejected. A request can still fail
 other checks, which the operation's description lists.

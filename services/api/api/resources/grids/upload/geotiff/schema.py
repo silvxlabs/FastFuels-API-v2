@@ -5,7 +5,7 @@ from typing import Self
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.resources.grids.schema import BandKey, BandType
-from lib.band_quantities import band_mismatch, check_band_key
+from lib.band_quantities import BAND_QUANTITIES, band_mismatch, band_quantity
 from lib.units import validate_unit
 
 
@@ -33,9 +33,9 @@ class UploadBandDefinition(BaseModel):
 
     @model_validator(mode="after")
     def _type_and_unit_from_key(self) -> Self:
-        quantity = check_band_key(self.key)
-        given_type = self.type if "type" in self.model_fields_set else quantity.type
-        given_unit = self.unit if "unit" in self.model_fields_set else quantity.unit
+        quantity = BAND_QUANTITIES[band_quantity(self.key)]
+        given_type = quantity.type if self.type is None else self.type
+        given_unit = quantity.unit if self.unit is None else self.unit
         if reason := band_mismatch(self.key, given_type, given_unit):
             raise ValueError(f"Band {self.key!r}: {reason}.")
         self.type = BandType(quantity.type)

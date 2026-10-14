@@ -159,12 +159,15 @@ class TestTypeAndUnitFromKey:
             {"key": "fbfm", "type": "continuous", "unit": "m"},
             {"key": "fuel_load.1hr", "type": "categorical"},
             {"key": "chm", "unit": "ft"},
-            {"key": "fuel_load.1hr", "unit": None},
         ],
     )
     def test_contradicting_type_or_unit_rejected(self, body):
         with pytest.raises(ValidationError, match="bands are"):
             UploadBandDefinition(**body)
+
+    def test_null_type_and_unit_count_as_omitted(self):
+        band = UploadBandDefinition(key="fuel_load.1hr", type=None, unit=None)
+        assert (band.type, band.unit) == ("continuous", "kg/m**2")
 
     @pytest.mark.parametrize("key", ["moisture", "custom.x", "fuel_load.Shrub"])
     def test_unknown_or_malformed_key_rejected(self, key):

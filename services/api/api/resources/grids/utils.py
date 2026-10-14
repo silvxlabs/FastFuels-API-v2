@@ -263,7 +263,7 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Grid {grid_id} has no georeference. The grid must be fully "
-                f"processed before it can be used in a combined export."
+                f"processed before it can be used as an input."
             ),
         )
     rank = len(georeference.get("shape", []))

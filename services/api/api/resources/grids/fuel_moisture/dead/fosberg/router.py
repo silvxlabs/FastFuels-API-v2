@@ -2,7 +2,7 @@
 api/v2/resources/grids/fuel_moisture/dead/fosberg/router.py
 
 Router for the Fosberg 1-hour dead fuel moisture content grid. Derives a
-single 2-D `fuel_moisture.dead.1hr` band in griddle from a topography grid
+single 2-D `fuel_moisture.1hr` band in griddle from a topography grid
 (slope + aspect) and a leaflux irradiance grid (surface shading).
 """
 
@@ -60,7 +60,7 @@ async def create_fosberg_fuel_moisture_grid(
     """
     # Create Fosberg 1-hour Dead Fuel Moisture Grid
 
-    Creates a grid with a single continuous band, `fuel_moisture.dead.1hr`
+    Creates a grid with a single continuous band, `fuel_moisture.1hr`
     (percent), computed with the Fosberg & Deeming (1971) 1-hour dead fuel
     moisture model.
 

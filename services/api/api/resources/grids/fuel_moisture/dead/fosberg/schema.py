@@ -3,7 +3,7 @@ api/v2/resources/grids/fuel_moisture/dead/fosberg/schema.py
 
 Schema models for the Fosberg 1-hour dead fuel moisture content (DFMC) grid.
 
-This is a derived grid: it computes a single 2-D `fuel_moisture.dead.1hr` band
+This is a derived grid: it computes a single 2-D `fuel_moisture.1hr` band
 from a topography grid (slope + aspect) and a leaflux irradiance grid
 (surface shading) using the Fosberg & Deeming (1971) model in
 `fastfuels_core.fuel_moisture.fosberg`.
@@ -160,7 +160,7 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
 
 
 DEAD_1HR_BAND = Band(
-    key="fuel_moisture.dead.1hr",
+    key="fuel_moisture.1hr",
     name="1-hour Dead Fuel Moisture",
     description=(
         "1-hour timelag dead fuel moisture content from the Fosberg & Deeming "

@@ -12,6 +12,7 @@ from api.resources.grids.fbfm13.schema import (
     CreateLandfireFbfm13Request,
     LandfireFbfm13Source,
 )
+from api.resources.grids.providers.landfire import LandfireDisturbancePlan
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
@@ -200,3 +201,39 @@ class TestRemoveNonBurnable:
         source = LandfireFbfm13Source(version="2023")
         data = source.model_dump()
         assert data["remove_non_burnable"] is None
+
+
+class TestDisturbance:
+    """Tests for disturbance on the FBFM13 request/source models."""
+
+    def test_request_defaults_to_none(self):
+        assert CreateLandfireFbfm13Request().disturbance is None
+
+    def test_request_accepts_landfire_source(self):
+        request = CreateLandfireFbfm13Request(disturbance={"source": "landfire"})
+        assert request.disturbance.source == "landfire"
+
+    def test_request_rejects_unknown_source(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm13Request(disturbance={"source": "feature"})
+
+    def test_request_rejects_missing_source(self):
+        with pytest.raises(ValidationError):
+            CreateLandfireFbfm13Request(disturbance={})
+
+    def test_source_defaults_to_none(self):
+        assert LandfireFbfm13Source(version="2024").model_dump()["disturbance"] is None
+
+    def test_source_stores_resolved_plan(self):
+        source = LandfireFbfm13Source(
+            version="2024",
+            disturbance=LandfireDisturbancePlan(
+                ldist_version="2025", fdist_version="2024"
+            ),
+        )
+        assert source.model_dump()["disturbance"] == {
+            "source": "landfire",
+            "mode": "ldist_and_last_year_fdist",
+            "ldist_version": "2025",
+            "fdist_version": "2024",
+        }

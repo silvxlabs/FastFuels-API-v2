@@ -7,10 +7,10 @@ Schema models for CHM extraction inventory creation.
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.resources.crown_segmentation import CrownSegmentationBase
-from api.resources.input_requirements import grid_input
+from api.resources.input_requirements import grid, input_requirements
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
 from api.resources.inventories.treatment_models import InventoryTreatment
@@ -146,9 +146,14 @@ class ChmInventorySource(BaseModel):
 class CreateChmInventoryRequest(CreateInventoryRequestBase):
     """Request body for creating an inventory via CHM extraction."""
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            grid("source_chm_grid_id", bands=["chm"]),
+        ),
+    )
+
     source_chm_grid_id: str = Field(
         description="ID of a completed grid with a `chm` band to use as the source.",
-        json_schema_extra=grid_input(bands=["chm"]),
     )
     algorithm: StemIsolationAlgorithm = Field(
         default_factory=StemIsolationLmf,

@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.resources.grids.schema import Band, BandType
-from api.resources.input_requirements import grid_input
+from api.resources.input_requirements import grid, input_requirements
 
 
 class FuelMoistureMonth(StrEnum):
@@ -92,7 +92,17 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
     inherits the topography grid's domain, CRS, transform, and georeference.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra=input_requirements(
+            grid("source_topography_grid_id", bands=["slope", "aspect"], dims=2),
+            grid(
+                "source_irradiance_grid_id",
+                bands=["irradiance.surface.relative"],
+                same_lattice_as="source_topography_grid_id",
+            ),
+        ),
+    )
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
@@ -103,7 +113,6 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
             "ID of a completed 2D topography grid with `slope` and `aspect` "
             "bands (both in degrees)."
         ),
-        json_schema_extra=grid_input(bands=["slope", "aspect"], dims=2),
     )
     source_irradiance_grid_id: str = Field(
         description=(
@@ -113,10 +122,6 @@ class CreateFosbergFuelMoistureRequest(BaseModel):
             "transform). Per-cell shading is derived as "
             "1 - irradiance.surface.relative. Resample one grid onto the other "
             "when their lattices differ."
-        ),
-        json_schema_extra=grid_input(
-            bands=["irradiance.surface.relative"],
-            same_lattice_as="source_topography_grid_id",
         ),
     )
 

@@ -46,7 +46,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassUnit,
     InventoryColumnMaxCrownRadiusSource,
 )
-from api.resources.input_requirements import inventory_input
+from api.resources.input_requirements import input_requirements, inventory
 from lib.inventory_io import CANOPY_BASE_COLUMNS
 
 # Cell size applied when the request's domain-target alignment omits
@@ -847,7 +847,12 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
     metrics.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra=input_requirements(
+            inventory("source_inventory_id", columns=CANOPY_BASE_COLUMNS),
+        ),
+    )
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
@@ -858,7 +863,6 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
             "ID of a completed tree inventory in this domain to derive "
             "canopy metrics from."
         ),
-        json_schema_extra=inventory_input(CANOPY_BASE_COLUMNS),
     )
     bands: list[InventoryCanopyBand] = Field(
         default_factory=_default_bands,

@@ -10,9 +10,9 @@ caller can narrow that with `impute_columns`.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from api.resources.input_requirements import inventory_input
+from api.resources.input_requirements import input_requirements, inventory
 from api.resources.inventories.schema import (
     BASE_INVENTORY_COLUMNS,
     CreateInventoryRequestBase,
@@ -66,13 +66,18 @@ class GdamInventorySource(BaseModel):
 class CreateGdamInventoryRequest(CreateInventoryRequestBase):
     """Request body for creating an inventory via GDAM allometry imputation."""
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            inventory("source_tree_inventory_id", columns=GDAM_REQUIRED_SOURCE_COLUMNS),
+        ),
+    )
+
     source_tree_inventory_id: str = Field(
         description=(
             "ID of a completed tree inventory whose missing morphology columns "
             "(dbh, crown ratio, species) GDAM will fill in. Existing values are "
             "preserved; only missing cells are imputed."
         ),
-        json_schema_extra=inventory_input(GDAM_REQUIRED_SOURCE_COLUMNS),
     )
     impute_columns: list[ImputableColumn] = Field(
         default_factory=lambda: list(_DEFAULT_IMPUTE_COLUMNS),

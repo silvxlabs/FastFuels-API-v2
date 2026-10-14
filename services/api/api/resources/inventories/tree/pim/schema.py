@@ -7,9 +7,9 @@ Schema models for PIM expansion inventory creation.
 from random import randint
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from api.resources.input_requirements import grid_input
+from api.resources.input_requirements import grid, input_requirements
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase, PointProcess
 from api.resources.inventories.treatment_models import InventoryTreatment
@@ -43,9 +43,14 @@ class PimInventorySource(BaseModel):
 class CreatePimInventoryRequest(CreateInventoryRequestBase):
     """Request body for creating an inventory via PIM expansion."""
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            grid("source_pim_grid_id", bands=["tm_id"], source="pim"),
+        ),
+    )
+
     source_pim_grid_id: str = Field(
         description="ID of a completed PIM grid to use as the source.",
-        json_schema_extra=grid_input(bands=["tm_id"], source="pim"),
     )
     seed: int = Field(
         default_factory=_generate_random_seed,

@@ -21,6 +21,10 @@ from api.resources.grids.utils import (
     validate_lfps_coverage,
     validate_target_grid_alignment,
 )
+from api.resources.grids.voxelize.inventory.tree.schema import (
+    CreateTreeInventoryRequest,
+)
+from api.resources.input_requirements import requirements_for
 from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
 from fastapi import HTTPException
 
@@ -356,3 +360,22 @@ class TestValidateBandOf:
     def test_missing_band_rejected(self):
         with pytest.raises(HTTPException, match="missing required bands"):
             validate_band_of(self._body("fbfm"), "source_band", _input_grid(["chm"]))
+
+
+class TestRequirementsFor:
+    def test_when_applies_only_to_matching_requests(self):
+        parametric = CreateTreeInventoryRequest(source_inventory_id="i1")
+        measured = CreateTreeInventoryRequest(
+            source_inventory_id="i1",
+            crown_geometry_source={"type": "crown_feature", "feature_id": "f1"},
+        )
+
+        def columns(body):
+            return [
+                c
+                for r in requirements_for(body, "source_inventory_id")
+                for c in r["columns"]
+            ]
+
+        assert "tree_id" not in columns(parametric)
+        assert "tree_id" in columns(measured)

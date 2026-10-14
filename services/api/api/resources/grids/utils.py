@@ -20,6 +20,13 @@ from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
     GridModification,
 )
+from api.resources.grids.providers.landfire import (
+    LANDFIRE_DISTURBANCE_FDIST_VERSION,
+    LANDFIRE_DISTURBANCE_LDIST_VERSION,
+    LANDFIRE_DISTURBANCE_RELEASES,
+    LandfireDisturbancePlan,
+    LandfireDisturbanceRequest,
+)
 from api.resources.grids.schema import BandType, GridDataChunkMetadata
 from api.resources.modifications import stringify_modification_coordinates
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
@@ -89,6 +96,58 @@ def validate_lfps_coverage(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Can't fetch {product!r} version {version!r}{season_clause}: {reason}; {info}.",
         )
+
+
+def resolve_disturbance_plan(
+    product: str,
+    version: str,
+    domain: dict,
+    disturbance: LandfireDisturbanceRequest | None,
+) -> LandfireDisturbancePlan | None:
+    """Resolve a disturbance request into the plan stored on the grid.
+
+    Disturbance adjustment only applies to a domain LANDFIRE's newest
+    release doesn't fully cover yet, starting from `product`'s baseline
+    version.
+
+    This is a plain sync function -- `covers_annual` makes a real HTTP call
+    to LFPS, so async callers should wrap it with `asyncio.to_thread(...)`.
+
+    Raises:
+        HTTPException(422): `version` isn't the baseline for `product`, or
+            the newest release already fully covers the domain.
+    """
+    if not isinstance(disturbance, LandfireDisturbanceRequest):
+        return None
+
+    releases = LANDFIRE_DISTURBANCE_RELEASES[product]
+    baseline, newest = releases["baseline"], releases["newest"]
+
+    if version != baseline:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Disturbance adjustment for {product!r} starts from version "
+                f"{baseline!r}, not {version!r}; omit `version` or set it to "
+                f"{baseline!r}."
+            ),
+        )
+
+    geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
+    if covers_annual(product, newest, geometry) is CoverageStatus.FULL:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Disturbance adjustment isn't needed: {product!r} version "
+                f"{newest!r} already fully covers this domain; create the grid "
+                f"with that version instead."
+            ),
+        )
+
+    return LandfireDisturbancePlan(
+        ldist_version=LANDFIRE_DISTURBANCE_LDIST_VERSION,
+        fdist_version=LANDFIRE_DISTURBANCE_FDIST_VERSION,
+    )
 
 
 def resolve_modification_fuel_model_labels(

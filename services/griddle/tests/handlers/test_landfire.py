@@ -1500,6 +1500,58 @@ class TestFetchDisturbedFuel:
         assert mock_scatter.call_args[0][1] == scatter
         assert mock_scatter.call_args[0][2] == protected
 
+    def test_remove_non_burnable_never_fills_with_nodata(self, roi, stub_core):
+        """A non-burnable cell near the edge of the data is filled from its real
+        neighbors, never with nodata.
+
+        The non-burnable cell (99) sits in a window that is mostly nodata (N).
+        Nodata is the most common value around it, but it isn't a fuel model,
+        so the 102 cells win. Window (rows 3-7, columns 3-7 of the grid):
+
+            N  N  N   N  N
+            N  N  102 N  N
+            N  N  99  102 N
+            N  N  N   N  N
+            N  N  N   N  N
+        """
+        nodata = 32767
+        stub_core.codes[:] = nodata
+        stub_core.codes[4, 5] = 102
+        stub_core.codes[5, 5] = 99
+        stub_core.codes[5, 6] = 102
+
+        expected = stub_core.codes.copy()
+        expected[5, 5] = 102  # the only cell that should change
+
+        result = fetch_disturbed_fuel(
+            roi,
+            "fbfm40",
+            "2024",
+            self.FDIST_ONLY,
+            MagicMock(),
+            remove_non_burnable=["NB9"],
+        )
+
+        np.testing.assert_array_equal(result["fbfm"].values, expected)
+
+    def test_remove_bare_ground_never_fills_with_nodata(self, roi, stub_core):
+        """The same window for FCCS, where the cell to remove is bare ground (0)
+        and its neighbors are fuelbed 150."""
+        nodata = 32767
+        stub_core.codes[:] = nodata
+        stub_core.codes[4, 5] = 150
+        stub_core.codes[5, 5] = 0
+        stub_core.codes[5, 6] = 150
+
+        expected = stub_core.codes.copy()
+        expected[5, 5] = 150
+
+        result = fetch_disturbed_fuel(
+            roi, "fccs", "2023", self.FDIST_ONLY, MagicMock(), remove_bare_ground=True
+        )
+
+        np.testing.assert_array_equal(result["fccs"].values, expected)
+
 
 class TestFetchTopography:
     """Integration tests for fetch_topography."""

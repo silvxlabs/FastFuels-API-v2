@@ -826,11 +826,15 @@ def fetch_disturbed_fuel(
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
         data = data.copy(
-            data=_remove_non_burnable_blocks(data.values, non_burnable_keys)
+            data=_remove_non_burnable_blocks(
+                data.values, non_burnable_keys, data.rio.nodata
+            )
         )
 
     if remove_bare_ground:
-        data = data.copy(data=_remove_non_burnable_blocks(data.values, [0]))
+        data = data.copy(
+            data=_remove_non_burnable_blocks(data.values, [0], data.rio.nodata)
+        )
 
     if boundary_scatter:
         protected = FCCS_BARE_GROUND if fuel_model == "fccs" else FBFM_NON_BURNABLE

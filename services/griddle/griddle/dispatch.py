@@ -304,12 +304,13 @@ def handle_layerset(
         target_grid_doc=target_grid_doc,
     )
 
-    # Persist the real bands list — see docstring above.
-    bands = layerset.build_layerset_bands(ds)
+    # Store one variable per band, named by its key, and persist the real
+    # bands list — see docstring above.
+    flat, bands = layerset.flatten_layerset(ds)
     update_grid_metadata(grid["id"], {"bands": bands})
     grid["bands"] = bands  # keep the in-memory dict consistent for the caller
 
-    return ds
+    return flat
 
 
 def handle_lookup(

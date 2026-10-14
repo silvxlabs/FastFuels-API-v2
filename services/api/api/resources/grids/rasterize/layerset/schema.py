@@ -87,8 +87,8 @@ def build_layerset_bands() -> list[Band]:
     ``fuel_type`` values in the uploaded layerset GeoJSON — the API has no
     visibility into that at create time. The griddle worker reads the
     GeoJSON, runs ``fastfuels_core.rasterize_layerset``, and writes the
-    full band list (one entry per ``fuel_type × {loading, height,
-    live_fuel_moisture, dead_fuel_moisture, heat_of_combustion}``) back
-    to the Firestore grid doc once rasterization completes.
+    full band list back to the Firestore grid doc once rasterization
+    completes: one band per fuel type and property, keyed
+    ``<quantity>.<fuel type token>`` (see ``lib.layerset_bands``).
     """
     return []

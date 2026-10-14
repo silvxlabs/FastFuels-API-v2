@@ -445,6 +445,15 @@ def test_resolve_band_layerset():
     assert coord == "loading"
 
 
+def test_resolve_band_legacy_layerset_splits_on_last_dot():
+    """Pre-#672 keys are `<fuel_type>.<property>`; a dotted fuel type keeps
+    its dots, matching summarize's split."""
+    ds = _layerset_dataset().rename({"shrub": "tl.3"})
+    var, coord = _resolve_band(ds, "tl.3.loading")
+    assert var == "tl.3"
+    assert coord == "loading"
+
+
 def test_resolve_band_unknown_raises():
     ds = _flat_dataset()
     with pytest.raises(ProcessingError) as exc:

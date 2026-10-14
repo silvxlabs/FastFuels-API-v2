@@ -44,6 +44,11 @@ EXAMPLE_FCCS_LATEST_RELEASE = {
     "version": LANDFIRE_VERSIONS["fccs"]["lfps_available"][0],
 }
 
+EXAMPLE_FCCS_DISTURBANCE = {
+    "name": "FCCS with recent disturbance",
+    "disturbance": {"source": "landfire"},
+}
+
 CREATE_LANDFIRE_FCCS_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_FCCS_MINIMAL,
@@ -108,6 +113,17 @@ CREATE_LANDFIRE_FCCS_OPENAPI_EXAMPLES = {
             "Product Service as it becomes available region by region — "
             "more current landscape conditions than the staged national release. "
             "See https://landfire.gov/data for the delivery schedule."
+        ),
+    },
+    "with_disturbance": {
+        "value": EXAMPLE_FCCS_DISTURBANCE,
+        "summary": "Updated for recent disturbance",
+        "description": (
+            "For domains the newest LANDFIRE release doesn't fully cover yet, "
+            "updates the previous release's fuelbed IDs for recent LANDFIRE "
+            "disturbance. Rejected with 422 where the newest release already "
+            "fully covers the domain. Check coverage first with "
+            "/grids/fccs/landfire/coverage."
         ),
     },
 }

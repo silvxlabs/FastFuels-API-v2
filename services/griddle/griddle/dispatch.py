@@ -327,6 +327,7 @@ def handle_lookup(
         case "fbfm13":
             return lookup.fbfm13_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
             )
@@ -336,6 +337,7 @@ def handle_lookup(
             curing = source.get("herbaceous_curing")
             return lookup.fbfm40_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
                 herbaceous_curing=0.0 if curing is None else curing,
@@ -343,6 +345,7 @@ def handle_lookup(
         case "fccs":
             return lookup.fccs_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
             )

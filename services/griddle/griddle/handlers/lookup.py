@@ -342,6 +342,7 @@ def fbfm13_lookup(
     source_grid_id: str,
     bands: list[dict],
     progress,
+    source_band: str = "fbfm13",
 ) -> xr.Dataset:
     """Convert FBFM13 codes to fuel parameters using the Anderson 13 lookup table.
 
@@ -349,6 +350,7 @@ def fbfm13_lookup(
         source_grid_id: ID of the grid containing FBFM13 codes
         bands: List of band dicts with "key" fields (dot-notation band keys)
         progress: Callback for progress reporting
+        source_band: Band in the source grid holding the codes
 
     Returns:
         Dataset with one variable per band, each with dims (y, x)
@@ -366,10 +368,9 @@ def fbfm13_lookup(
         )
 
     try:
-        var_names = list(source_ds.data_vars)
-        if not var_names:
-            raise ValueError("Dataset has no data variables")
-        fbfm_codes = source_ds[var_names[0]].values
+        if source_band not in source_ds.data_vars:
+            raise ValueError(f"Source grid has no band {source_band!r}")
+        fbfm_codes = source_ds[source_band].values
     except Exception as e:
         raise ProcessingError(
             code="SOURCE_GRID_READ_ERROR",
@@ -380,7 +381,7 @@ def fbfm13_lookup(
     if fbfm_codes.ndim == 3 and fbfm_codes.shape[0] == 1:
         fbfm_codes = fbfm_codes[0]
 
-    nodata = source_ds[var_names[0]].rio.nodata
+    nodata = source_ds[source_band].rio.nodata
     nodata_mask = (
         np.zeros(fbfm_codes.shape, dtype=bool)
         if nodata is None
@@ -427,7 +428,7 @@ def fbfm13_lookup(
 
     progress("Building output dataset...", 70)
 
-    source_var = source_ds[var_names[0]]
+    source_var = source_ds[source_band]
     y_coords = source_var.coords["y"].values
     x_coords = source_var.coords["x"].values
 
@@ -458,6 +459,7 @@ def fbfm40_lookup(
     bands: list[dict],
     progress,
     herbaceous_curing: float = 0.0,
+    source_band: str = "fbfm",
 ) -> xr.Dataset:
     """Convert FBFM40 codes to fuel parameters using SB40 lookup tables.
 
@@ -465,6 +467,7 @@ def fbfm40_lookup(
         source_grid_id: ID of the grid containing FBFM40 codes
         bands: List of band dicts with "key" fields (dot-notation band keys)
         progress: Callback for progress reporting
+        source_band: Band in the source grid holding the codes
         herbaceous_curing: Fraction (0-1) of herbaceous load cured in
             dynamic fuel models
 
@@ -484,11 +487,9 @@ def fbfm40_lookup(
 
     # Extract the FBFM code array from the dataset
     try:
-        # load_zarr returns a Dataset; get the single data variable
-        var_names = list(source_ds.data_vars)
-        if not var_names:
-            raise ValueError("Dataset has no data variables")
-        fbfm_codes = source_ds[var_names[0]].values
+        if source_band not in source_ds.data_vars:
+            raise ValueError(f"Source grid has no band {source_band!r}")
+        fbfm_codes = source_ds[source_band].values
     except Exception as e:
         raise ProcessingError(
             code="SOURCE_GRID_READ_ERROR",
@@ -503,7 +504,7 @@ def fbfm40_lookup(
     # Cells with no fuel model (the source nodata sentinel) are not looked up;
     # they pass through as nodata (NaN) in every output band. Grids load raw
     # (mask_and_scale=False), so nodata appears as the integer sentinel here.
-    nodata = source_ds[var_names[0]].rio.nodata
+    nodata = source_ds[source_band].rio.nodata
     nodata_mask = (
         np.zeros(fbfm_codes.shape, dtype=bool)
         if nodata is None
@@ -558,7 +559,7 @@ def fbfm40_lookup(
     progress("Building output dataset...", 70)
 
     # Get spatial coordinates from source
-    source_var = source_ds[var_names[0]]
+    source_var = source_ds[source_band]
     y_coords = source_var.coords["y"].values
     x_coords = source_var.coords["x"].values
 
@@ -590,6 +591,7 @@ def fccs_lookup(
     source_grid_id: str,
     bands: list[dict],
     progress,
+    source_band: str = "fccs",
 ) -> xr.Dataset:
     """Convert FCCS codes to fuel parameters using the FOFEM lookup table.
 
@@ -597,6 +599,7 @@ def fccs_lookup(
         source_grid_id: ID of the grid containing FCCS codes
         bands: List of band dicts with "key" fields (dot-notation band keys)
         progress: Callback for progress reporting
+        source_band: Band in the source grid holding the codes
 
     Returns:
         Dataset with one variable per band, each with dims (y, x)
@@ -613,10 +616,9 @@ def fccs_lookup(
         )
 
     try:
-        var_names = list(source_ds.data_vars)
-        if not var_names:
-            raise ValueError("Dataset has no data variables")
-        fccs_codes = source_ds[var_names[0]].values
+        if source_band not in source_ds.data_vars:
+            raise ValueError(f"Source grid has no band {source_band!r}")
+        fccs_codes = source_ds[source_band].values
     except Exception as e:
         raise ProcessingError(
             code="SOURCE_GRID_READ_ERROR",
@@ -627,7 +629,7 @@ def fccs_lookup(
     if fccs_codes.ndim == 3 and fccs_codes.shape[0] == 1:
         fccs_codes = fccs_codes[0]
 
-    nodata = source_ds[var_names[0]].rio.nodata
+    nodata = source_ds[source_band].rio.nodata
     fccs_codes = fccs_codes.astype(np.int64)  # headroom during arithmetic below
     nodata_mask = (
         np.zeros(fccs_codes.shape, dtype=bool)
@@ -706,7 +708,7 @@ def fccs_lookup(
 
     progress("Building output dataset...", 70)
 
-    source_var = source_ds[var_names[0]]
+    source_var = source_ds[source_band]
     y_coords = source_var.coords["y"].values
     x_coords = source_var.coords["x"].values
 

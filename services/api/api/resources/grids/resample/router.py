@@ -72,7 +72,7 @@ async def create_resample(
 
     - **source_grid_id**: (required) Grid to resample. Must have status
       "completed" and a georeference.
-    - **alignment**: Output alignment target. Default ``target="domain"``.
+    - **alignment**: (required) Output alignment target.
       ``alignment.resolution`` is required for ``target="domain"`` and
       ``target="native"``; optional for ``target="grid"`` (defaults to the
       target grid's exact transform/shape).
@@ -92,16 +92,6 @@ async def create_resample(
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     alignment = body.alignment
-
-    # alignment.resolution is required for non-grid targets.
-    if alignment.target in ("domain", "native") and alignment.resolution is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"alignment.resolution is required when alignment.target is "
-                f"'{alignment.target}'."
-            ),
-        )
 
     # Validate source grid: exists, owned, in this domain, and completed.
     _, source_snapshot = await get_document_async(

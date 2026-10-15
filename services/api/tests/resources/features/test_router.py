@@ -319,6 +319,15 @@ class TestUpdateFeature:
         assert data["domain_id"] == feature_for_update["domain_id"]
         assert data["type"] == feature_for_update["type"]
 
+    def test_update_null_description_clears(
+        self, client, feature_for_update, domain_for_testing
+    ):
+        url = f"{self.route(domain_for_testing['id'])}/{feature_for_update['id']}"
+        response = client.patch(url, json={"description": None})
+        assert response.status_code == 200
+        assert response.json()["description"] == ""
+        assert client.get(url).json()["description"] == ""
+
 
 # DELETE /domains/{domain_id}/features/{feature_id} Tests
 

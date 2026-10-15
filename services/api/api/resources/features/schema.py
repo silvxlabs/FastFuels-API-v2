@@ -9,7 +9,15 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
+from api.schema import (
+    JobError,
+    JobProgress,
+    JobStatus,
+    PaginatedResponse,
+    UpdateDescription,
+    UpdateName,
+    UpdateTags,
+)
 
 
 class FeatureType(StrEnum):
@@ -41,9 +49,9 @@ class CreateFeatureRequestBase(BaseModel):
 class UpdateFeatureRequestBody(BaseModel):
     """Request body for updating feature metadata."""
 
-    name: str | None = Field(None, max_length=255)
-    description: str | None = Field(None, max_length=2000)
-    tags: list[str] | None = Field(None, max_length=50)
+    name: UpdateName = None
+    description: UpdateDescription = None
+    tags: UpdateTags = None
 
 
 class FeatureGeoreference(BaseModel):

@@ -1256,6 +1256,27 @@ class TestUpdateDomain:
         data = response.json()
         assert data["tags"] == []
 
+    def test_update_null_description_clears(self, client, domain_for_update):
+        """An explicit null clears the description (#712)."""
+        domain_id = domain_for_update["id"]
+
+        response = client.patch(f"{self.route}/{domain_id}", json={"description": None})
+        assert response.status_code == 200
+        assert response.json()["description"] == ""
+
+        response = client.get(f"{self.route}/{domain_id}")
+        assert response.status_code == 200
+        assert response.json()["description"] == ""
+
+    @pytest.mark.parametrize("field", ["name", "tags"])
+    def test_update_null_name_or_tags_returns_422(
+        self, client, domain_for_update, field
+    ):
+        domain_id = domain_for_update["id"]
+
+        response = client.patch(f"{self.route}/{domain_id}", json={field: None})
+        assert response.status_code == 422
+
 
 class TestCreateDomainStyle:
     """Style behavior on POST /domains."""
@@ -1514,6 +1535,37 @@ class TestUpdateDomainStyle:
             json={"style": {"fill_color": "#abcdef"}},
         )
         assert response.status_code == 404
+
+    def test_patch_null_style_subfield_clears_it(self, client, styled_domain):
+        domain_id = styled_domain["id"]
+
+        response = client.patch(
+            f"{self.route}/{domain_id}", json={"style": {"fill_color": None}}
+        )
+        assert response.status_code == 200
+
+        style = client.get(f"{self.route}/{domain_id}").json()["style"]
+        assert style["fill_color"] is None
+        assert style["stroke_color"] == "#111111"
+
+    def test_patch_null_style_clears_it(self, client, styled_domain):
+        domain_id = styled_domain["id"]
+
+        response = client.patch(f"{self.route}/{domain_id}", json={"style": None})
+        assert response.status_code == 200
+        assert response.json()["style"] is None
+
+        response = client.get(f"{self.route}/{domain_id}")
+        assert response.status_code == 200
+        assert response.json()["style"] is None
+
+        # The list endpoint still validates a domain with a cleared style.
+        response = client.get(
+            self.route,
+            params={"sort_by": "modified_on", "sort_order": "descending", "size": 10},
+        )
+        assert response.status_code == 200
+        assert domain_id in [d["id"] for d in response.json()["domains"]]
 
 
 class TestDeleteDomain:

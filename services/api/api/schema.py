@@ -5,8 +5,26 @@ Shared schema models for the v2 API.
 """
 
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
+
+
+def _omit_default(schema: dict) -> None:
+    # Optional but not nullable: a `"default": null` would contradict the type.
+    schema.pop("default", None)
+
+
+# Metadata fields shared by PATCH bodies. Dump with `exclude_unset=True` so
+# omitted fields are untouched; an explicit null clears `description` to "",
+# its create-time default. `name` and `tags` reject null (clear tags with []).
+UpdateName = Annotated[str, Field(max_length=255, json_schema_extra=_omit_default)]
+UpdateDescription = Annotated[
+    str | None,
+    Field(max_length=2000),
+    AfterValidator(lambda v: "" if v is None else v),
+]
+UpdateTags = Annotated[list[str], Field(max_length=50, json_schema_extra=_omit_default)]
 
 
 class JobStatus(StrEnum):

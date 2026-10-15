@@ -13,7 +13,15 @@ from pydantic import BaseModel, Field, model_validator
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.treatment_models import InventoryTreatment
 from api.resources.modifications import parse_modification_coordinates
-from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
+from api.schema import (
+    JobError,
+    JobProgress,
+    JobStatus,
+    PaginatedResponse,
+    UpdateDescription,
+    UpdateName,
+    UpdateTags,
+)
 
 
 class InventoryType(StrEnum):
@@ -48,9 +56,9 @@ class CreateInventoryRequestBase(BaseModel):
 class UpdateInventoryRequestBody(BaseModel):
     """Request body for updating inventory metadata."""
 
-    name: str | None = Field(None, max_length=255)
-    description: str | None = Field(None, max_length=2000)
-    tags: list[str] | None = Field(None, max_length=50)
+    name: UpdateName = None
+    description: UpdateDescription = None
+    tags: UpdateTags = None
 
 
 class DuplicateInventoryRequest(BaseModel):

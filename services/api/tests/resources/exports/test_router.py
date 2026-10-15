@@ -278,6 +278,13 @@ class TestUpdateExport:
         data = response.json()
         assert data["modified_on"] != export_in_firestore["modified_on"].isoformat()
 
+    def test_update_null_description_clears(self, client, export_in_firestore):
+        url = f"{ROUTE}/{export_in_firestore['id']}"
+        response = client.patch(url, json={"description": None})
+        assert response.status_code == 200
+        assert response.json()["description"] == ""
+        assert client.get(url).json()["description"] == ""
+
 
 # DELETE /exports/{export_id} Tests
 

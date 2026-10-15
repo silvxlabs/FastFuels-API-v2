@@ -49,21 +49,30 @@ class TestUpdateApplicationRequest:
         assert req.name is None
         assert req.description == "New Desc"
 
-    def test_model_dump_exclude_none(self):
+    def test_model_dump_exclude_unset(self):
         req = UpdateApplicationRequest(name="New Name")
-        dumped = req.model_dump(exclude_none=True)
+        dumped = req.model_dump(exclude_unset=True)
         assert dumped == {"name": "New Name"}
         assert "description" not in dumped
 
-    def test_model_dump_exclude_none_all_fields(self):
+    def test_model_dump_exclude_unset_all_fields(self):
         req = UpdateApplicationRequest(name="Name", description="Desc")
-        dumped = req.model_dump(exclude_none=True)
+        dumped = req.model_dump(exclude_unset=True)
         assert dumped == {"name": "Name", "description": "Desc"}
 
-    def test_model_dump_exclude_none_empty(self):
+    def test_model_dump_exclude_unset_empty(self):
         req = UpdateApplicationRequest()
-        dumped = req.model_dump(exclude_none=True)
+        dumped = req.model_dump(exclude_unset=True)
         assert dumped == {}
+
+    def test_null_description_dumped(self):
+        """An explicit null is kept so the PATCH clears the description."""
+        req = UpdateApplicationRequest.model_validate({"description": None})
+        assert req.model_dump(exclude_unset=True) == {"description": None}
+
+    def test_null_name_rejected(self):
+        with pytest.raises(Exception):
+            UpdateApplicationRequest.model_validate({"name": None})
 
 
 class TestApplication:

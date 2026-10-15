@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.schema import PaginatedResponse
+from api.schema import PaginatedResponse, UpdateName
 
 
 class CreateApplicationRequest(BaseModel):
@@ -29,11 +29,11 @@ class UpdateApplicationRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = Field(
-        None, max_length=255, description="New name for the application."
-    )
+    name: UpdateName = Field(None, description="New name for the application.")
     description: str | None = Field(
-        None, max_length=2000, description="New description for the application."
+        None,
+        max_length=2000,
+        description="New description for the application. Null clears it.",
     )
 
 

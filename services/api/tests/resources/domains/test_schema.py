@@ -539,9 +539,9 @@ class TestUpdateDomainRequestBody:
         assert body.style.stroke_color is None
 
     def test_style_dump_excludes_none_subfields(self):
-        """exclude_none on the body drops the None sub-fields inside style."""
+        """exclude_unset on the body drops the unset sub-fields inside style."""
         body = UpdateDomainRequestBody(style={"fill_color": "#abcdef"})
-        dumped = body.model_dump(exclude_none=True)
+        dumped = body.model_dump(exclude_unset=True)
         assert dumped == {"style": {"fill_color": "#abcdef"}}
 
     def test_style_out_of_range_opacity_raises(self):
@@ -594,27 +594,53 @@ class TestUpdateDomainRequestBody:
         body = UpdateDomainRequestBody(tags=[])
         assert body.tags == []
 
+    def test_null_style_dumped(self):
+        body = UpdateDomainRequestBody.model_validate({"style": None})
+        assert body.model_dump(exclude_unset=True) == {"style": None}
+
+    def test_null_style_subfield_dumped(self):
+        body = UpdateDomainRequestBody.model_validate(
+            {"style": {"fill_color": None, "stroke_width": 2}}
+        )
+        assert body.model_dump(exclude_unset=True) == {
+            "style": {"fill_color": None, "stroke_width": 2}
+        }
+
+    def test_cleared_document_validates(self, sample_feature_collection):
+        """A stored domain with cleared fields still builds the response model."""
+        domain = Domain(
+            **sample_feature_collection,
+            id="abc",
+            description="",
+            tags=[],
+            style=None,
+        )
+        assert domain.description == ""
+        assert domain.style is None
+        domain = Domain(**sample_feature_collection, style={"fill_color": None})
+        assert domain.style.fill_color is None
+
     def test_pad_to_resolution_not_in_update_model(self):
         """pad_to_resolution is immutable; UpdateDomainRequestBody should not have it."""
         assert "pad_to_resolution" not in UpdateDomainRequestBody.model_fields
 
-    def test_model_dump_exclude_none(self):
-        """model_dump with exclude_none should only include provided fields."""
+    def test_model_dump_exclude_unset(self):
+        """model_dump with exclude_unset should only include provided fields."""
         body = UpdateDomainRequestBody(name="New Name")
-        dumped = body.model_dump(exclude_none=True)
+        dumped = body.model_dump(exclude_unset=True)
 
         assert dumped == {"name": "New Name"}
         assert "description" not in dumped
         assert "tags" not in dumped
 
-    def test_model_dump_exclude_none_all_fields(self):
-        """model_dump with exclude_none includes all provided fields."""
+    def test_model_dump_exclude_unset_all_fields(self):
+        """model_dump with exclude_unset includes all provided fields."""
         body = UpdateDomainRequestBody(
             name="Name",
             description="Desc",
             tags=["tag"],
         )
-        dumped = body.model_dump(exclude_none=True)
+        dumped = body.model_dump(exclude_unset=True)
 
         assert dumped == {
             "name": "Name",

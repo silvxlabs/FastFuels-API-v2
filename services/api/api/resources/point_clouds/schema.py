@@ -16,7 +16,15 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
+from api.schema import (
+    JobError,
+    JobProgress,
+    JobStatus,
+    PaginatedResponse,
+    UpdateDescription,
+    UpdateName,
+    UpdateTags,
+)
 
 
 class PointCloudType(StrEnum):
@@ -294,19 +302,13 @@ class UpdatePointCloudRequestBody(BaseModel):
     `checksum`.
     """
 
-    name: str | None = Field(
+    name: UpdateName = Field(None, description="New name. Omit to leave unchanged.")
+    description: UpdateDescription = Field(
         None,
-        max_length=255,
-        description="New name. Omit to leave unchanged.",
+        description="New description. Omit to leave unchanged; null clears it.",
     )
-    description: str | None = Field(
+    tags: UpdateTags = Field(
         None,
-        max_length=2000,
-        description="New description. Omit to leave unchanged.",
-    )
-    tags: list[str] | None = Field(
-        None,
-        max_length=50,
         description="New tags (replaces the existing list). Omit to leave unchanged.",
     )
 

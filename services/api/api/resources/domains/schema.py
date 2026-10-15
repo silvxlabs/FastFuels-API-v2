@@ -23,7 +23,12 @@ from pydantic import (
 )
 
 # Internal imports
-from api.schema import PaginatedResponse
+from api.schema import (
+    PaginatedResponse,
+    UpdateDescription,
+    UpdateName,
+    UpdateTags,
+)
 
 
 class GeoJsonCRSProperties(BaseModel):
@@ -238,21 +243,20 @@ class UpdateDomainRequestBody(BaseModel):
     Geometry (features) and CRS cannot be modified after creation.
     """
 
-    name: str | None = Field(
-        None, max_length=255, description="The name of the domain."
+    name: UpdateName = Field(None, description="The name of the domain.")
+    description: UpdateDescription = Field(
+        None, description="A description of the domain. Null clears it."
     )
-    description: str | None = Field(
-        None, max_length=2000, description="A description of the domain."
-    )
-    tags: list[str] | None = Field(
-        None, max_length=50, description="A list of tags associated with the domain."
+    tags: UpdateTags = Field(
+        None, description="A list of tags associated with the domain."
     )
     style: DomainStyle | None = Field(
         None,
         description=(
             "Update visual style fields. Only provided sub-fields are merged "
             "into the existing style; unspecified sub-fields preserve their "
-            "current values."
+            "current values, and a null sub-field clears it. Null clears the "
+            "whole style."
         ),
     )
 

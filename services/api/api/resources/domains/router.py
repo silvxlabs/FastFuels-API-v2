@@ -681,8 +681,13 @@ async def update_domain(
 
     - **name**: (string, optional) The new name for the domain.
     - **description**: (string, optional) The new description for the domain.
+      `null` clears it.
     - **tags**: (array of strings, optional) The new tags for the domain.
-      This replaces the existing tags array entirely.
+      This replaces the existing tags array entirely; `[]` clears it.
+    - **style**: (object, optional) Merged into the existing style; a `null`
+      sub-field clears that sub-field, and `null` clears the whole style.
+
+    `name` and `tags` cannot be `null`.
 
     ## What Cannot Be Updated
 
@@ -729,11 +734,11 @@ async def update_domain(
     existing_data = document_snapshot.to_dict()
 
     # Build update data from provided fields only
-    update_data = body.model_dump(exclude_none=True)
+    update_data = body.model_dump(exclude_unset=True)
 
     # Merge style sub-fields with the existing stored style; a top-level write
     # would replace the whole `style` object and clobber unspecified sub-fields.
-    if "style" in update_data:
+    if update_data.get("style") is not None:
         existing_style = existing_data.get("style") or {}
         update_data["style"] = {**existing_style, **update_data["style"]}
 

@@ -343,7 +343,7 @@ async def update_feature(
     )
     feature_data = snapshot.to_dict()
 
-    update_data = body.model_dump(exclude_none=True)
+    update_data = body.model_dump(exclude_unset=True)
     update_data["modified_on"] = datetime.now()
 
     await update_document_async(

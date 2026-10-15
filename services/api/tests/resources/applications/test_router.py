@@ -372,6 +372,21 @@ class TestUpdateApplication:
         response = client.patch(f"{self.route}/{app_id}", json={"name": "Should Fail"})
         assert response.status_code == 404
 
+    def test_update_null_description_clears(self, client, app_for_update):
+        app_id = app_for_update["id"]
+        response = client.patch(f"{self.route}/{app_id}", json={"description": None})
+        assert response.status_code == 200
+        assert "description" not in response.json()
+
+        response = client.get(f"{self.route}/{app_id}")
+        assert response.status_code == 200
+        assert "description" not in response.json()
+
+    def test_update_null_name_returns_422(self, client, app_for_update):
+        app_id = app_for_update["id"]
+        response = client.patch(f"{self.route}/{app_id}", json={"name": None})
+        assert response.status_code == 422
+
 
 class TestDeleteApplication:
     route = "/applications"

@@ -706,6 +706,15 @@ class TestUpdateGrid:
         data = response.json()
         assert "owner_id" not in data
 
+    def test_update_null_description_clears(
+        self, client, grid_for_update, domain_for_testing
+    ):
+        url = f"{self.route(domain_for_testing['id'])}/{grid_for_update['id']}"
+        response = client.patch(url, json={"description": None})
+        assert response.status_code == 200
+        assert response.json()["description"] == ""
+        assert client.get(url).json()["description"] == ""
+
 
 # DELETE /domains/{domain_id}/grids/{grid_id} Tests
 

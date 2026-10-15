@@ -163,11 +163,7 @@ async def update_application(
     )
     app_data = snapshot.to_dict()
 
-    update_data = {}
-    if body.name is not None:
-        update_data["name"] = body.name
-    if body.description is not None:
-        update_data["description"] = body.description
+    update_data = body.model_dump(exclude_unset=True)
 
     if not update_data:
         return Application(**app_data)

@@ -427,7 +427,7 @@ async def update_grid(
     grid_data = snapshot.to_dict()
 
     # Build update data from provided fields only
-    update_data = body.model_dump(exclude_none=True)
+    update_data = body.model_dump(exclude_unset=True)
 
     # Always update modified_on timestamp
     update_data["modified_on"] = datetime.now()

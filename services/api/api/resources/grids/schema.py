@@ -18,7 +18,15 @@ from api.resources.grids.alignment import (
 )
 from api.resources.grids.modification_models import GridModification
 from api.resources.modifications import parse_modification_coordinates
-from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
+from api.schema import (
+    JobError,
+    JobProgress,
+    JobStatus,
+    PaginatedResponse,
+    UpdateDescription,
+    UpdateName,
+    UpdateTags,
+)
 from lib.band_quantities import BAND_KEY_PATTERN, BAND_QUANTITIES, check_band_key
 
 CHUNK_SHAPE = [512, 512]
@@ -272,9 +280,9 @@ class CreateSourceGridRequestBase(CreateGridRequestBase):
 class UpdateGridRequestBody(BaseModel):
     """Request body for updating grid metadata."""
 
-    name: str | None = Field(None, max_length=255)
-    description: str | None = Field(None, max_length=2000)
-    tags: list[str] | None = Field(None, max_length=50)
+    name: UpdateName = None
+    description: UpdateDescription = None
+    tags: UpdateTags = None
 
 
 class Grid(BaseModel):

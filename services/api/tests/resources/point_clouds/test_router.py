@@ -504,6 +504,15 @@ class TestUpdatePointCloud:
         assert response.status_code == 200
         assert "owner_id" not in response.json()
 
+    def test_update_null_description_clears(
+        self, client, point_cloud_for_update, domain_for_testing
+    ):
+        url = f"{self.route(domain_for_testing['id'])}/{point_cloud_for_update['id']}"
+        response = client.patch(url, json={"description": None})
+        assert response.status_code == 200
+        assert response.json()["description"] == ""
+        assert client.get(url).json()["description"] == ""
+
 
 # DELETE /domains/{domain_id}/pointclouds/{point_cloud_id} Tests
 

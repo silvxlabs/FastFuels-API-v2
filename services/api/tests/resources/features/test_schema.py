@@ -144,9 +144,9 @@ class TestUpdateFeatureRequestBody:
         assert body.description == "New Description"
         assert body.tags == ["new", "tags"]
 
-    def test_model_dump_exclude_none(self):
+    def test_model_dump_exclude_unset(self):
         body = UpdateFeatureRequestBody(name="New Name")
-        data = body.model_dump(exclude_none=True)
+        data = body.model_dump(exclude_unset=True)
         assert data == {"name": "New Name"}
         assert "description" not in data
         assert "tags" not in data

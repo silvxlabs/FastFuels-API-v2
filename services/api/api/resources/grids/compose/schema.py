@@ -1,7 +1,7 @@
 """Schema models for grid compose operations."""
 
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -18,7 +18,8 @@ from api.resources.grids.modification_models import (
     GridGeometrySpatialCondition,
     GridModification,
 )
-from api.resources.grids.schema import Band, validate_no_duplicates
+from api.resources.grids.schema import Band, BandKey, validate_no_duplicates
+from api.resources.input_requirements import grid, input_requirements
 from lib.units import validate_unit
 
 
@@ -203,7 +204,10 @@ class ComposeSelect(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str = Field(..., description="Output band key, e.g. `fuel_load.1hr`.")
+    type: Literal["select"] = Field(
+        ..., description='Discriminator selecting this operation. Must be `"select"`.'
+    )
+    output: BandKey
     from_: str = Field(
         ..., alias="from", description="Alias-qualified source band ref."
     )
@@ -234,7 +238,10 @@ class ComposeCompute(InlineCompute):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    output: str = Field(..., description="Output band key, e.g. `fuel_load.1hr`.")
+    type: Literal["compute"] = Field(
+        ..., description='Discriminator selecting this operation. Must be `"compute"`.'
+    )
+    output: BandKey
     name: str | None = Field(
         None, max_length=255, description="Optional display name for the output band."
     )
@@ -264,22 +271,38 @@ class ComposeCompute(InlineCompute):
         return self
 
 
+ComposeOperation = Annotated[
+    ComposeSelect | ComposeCompute, Field(discriminator="type")
+]
+
+
 class ComposeSource(BaseModel):
     """Persisted source metadata for grids created via compose."""
 
     name: Literal["compose"] = "compose"
     inputs: list[ComposeSourceInput]
     bands: list[Band]
-    select: list[ComposeSelect] = Field(default_factory=list)
-    compute: list[ComposeCompute] = Field(default_factory=list)
+    operations: list[ComposeOperation]
 
 
 class CreateComposeRequest(BaseModel):
     """Request to create a grid by composing one or more existing grids."""
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            grid("inputs.*.grid_id", dims=2, same_lattice_as="inputs.*.grid_id"),
+        ),
+    )
+
     inputs: list[ComposeInput] = Field(..., min_length=1)
-    select: list[ComposeSelect] = Field(default_factory=list)
-    compute: list[ComposeCompute] = Field(default_factory=list)
+    operations: list[ComposeOperation] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Select and compute operations, one per output band. Output bands "
+            "follow this order."
+        ),
+    )
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
@@ -292,12 +315,8 @@ class CreateComposeRequest(BaseModel):
         validate_no_duplicates([inp.grid_id for inp in v])
         return v
 
-    @model_validator(mode="after")
-    def _has_unique_operations(self):
-        operation_outputs = [op.output for op in self.select] + [
-            op.output for op in self.compute
-        ]
-        if not operation_outputs:
-            raise ValueError("At least one select or compute operation is required.")
-        validate_no_duplicates(operation_outputs)
-        return self
+    @field_validator("operations")
+    @classmethod
+    def _outputs_are_unique(cls, v: list[ComposeOperation]) -> list[ComposeOperation]:
+        validate_no_duplicates([op.output for op in v])
+        return v

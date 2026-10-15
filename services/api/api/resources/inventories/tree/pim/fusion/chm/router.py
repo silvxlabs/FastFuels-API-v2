@@ -23,9 +23,8 @@ from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.utils import (
     validate_band_unit,
-    validate_grid_dimensionality,
-    validate_grid_has_band,
     validate_grid_has_georeference,
+    validate_grid_input,
 )
 from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.pim.fusion.chm.examples import (
@@ -53,10 +52,6 @@ from lib.config import (
 router = APIRouter()
 
 COLLECTION = INVENTORIES_COLLECTION
-
-# The plot-id band a PIM grid must carry for expansion. Keyed like the base
-# tree/pim endpoint; TreeMap is the only PIM product today.
-PLOT_ID_BAND = "tm_id"
 
 
 def _grid_cell_size(grid_data: dict) -> float:
@@ -146,9 +141,9 @@ async def create_pim_chm_fusion_inventory(
     )
     pim_grid_data = pim_snapshot.to_dict()
 
-    # Gate on the band contract, not on provenance: any grid carrying the plot-id
-    # band can drive PIM expansion, whoever produced it. Standgen reads this band.
-    validate_grid_has_band(pim_grid_data, body.source_pim_grid_id, PLOT_ID_BAND)
+    # Only a PIM grid records the TreeMap version its tm_id codes index;
+    # standgen reads the tree table for that version.
+    validate_grid_input(body, "source_pim_grid_id", pim_grid_data)
 
     # Validate the source CHM grid: owned, in this domain, completed, with a
     # `chm` band in meters (the reimputation cover step compares heights to a
@@ -161,11 +156,10 @@ async def create_pim_chm_fusion_inventory(
         document_status="completed",
     )
     chm_grid_data = chm_snapshot.to_dict()
-    validate_grid_has_band(chm_grid_data, body.source_chm_grid_id, "chm")
-    validate_band_unit(chm_grid_data, body.source_chm_grid_id, "chm", "m")
     # A CHM is a surface: the cover step reads a single height per cell, so a
     # volumetric (3-D) grid is rejected rather than silently mis-read.
-    validate_grid_dimensionality(chm_grid_data, body.source_chm_grid_id, 2)
+    validate_grid_input(body, "source_chm_grid_id", chm_grid_data)
+    validate_band_unit(chm_grid_data, body.source_chm_grid_id, "chm", "m")
 
     # Reimputation resamples the PIM to `resolution` and reads CHM cover there, so
     # the resolution can be no finer than the CHM cell (no cover detail to gain)

@@ -716,12 +716,14 @@ class TestHandleLookup:
         source = {
             "table": "fbfm13",
             "source_grid_id": "test-source-grid-id",
+            "source_band": "fbfm13",
         }
 
         result = handle_lookup(grid, source, progress)
 
         mock_fbfm13_lookup.assert_called_once_with(
             source_grid_id="test-source-grid-id",
+            source_band=source["source_band"],
             bands=grid["bands"],
             progress=progress,
         )
@@ -740,6 +742,7 @@ class TestHandleLookup:
         source = {
             "table": "fbfm40",
             "source_grid_id": "test-source-grid-id",
+            "source_band": "fbfm",
             "herbaceous_curing": 0.5,
         }
 
@@ -747,6 +750,7 @@ class TestHandleLookup:
 
         mock_fbfm40_lookup.assert_called_once_with(
             source_grid_id="test-source-grid-id",
+            source_band=source["source_band"],
             bands=grid["bands"],
             progress=progress,
             herbaceous_curing=0.5,
@@ -757,7 +761,11 @@ class TestHandleLookup:
     def test_fbfm40_without_curing_keeps_herb_live(self, mock_fbfm40_lookup):
         """A pre-#675 fbfm40 source (no herbaceous_curing) runs with no curing."""
         grid = {"bands": [{"key": "fuel_load.live_herb"}]}
-        source = {"table": "fbfm40", "source_grid_id": "test-source-grid-id"}
+        source = {
+            "table": "fbfm40",
+            "source_grid_id": "test-source-grid-id",
+            "source_band": "fbfm",
+        }
 
         handle_lookup(grid, source, MagicMock())
 
@@ -776,12 +784,14 @@ class TestHandleLookup:
         source = {
             "table": "fccs",
             "source_grid_id": "test-source-grid-id",
+            "source_band": "fccs",
         }
 
         result = handle_lookup(grid, source, progress)
 
         mock_fccs_lookup.assert_called_once_with(
             source_grid_id="test-source-grid-id",
+            source_band=source["source_band"],
             bands=grid["bands"],
             progress=progress,
         )
@@ -806,7 +816,7 @@ class TestHandleLookup:
         progress = MagicMock()
 
         grid = {"bands": [{"key": "fuel_load.1hr"}]}
-        source = {"table": "fbfm40", "source_grid_id": "id"}
+        source = {"table": "fbfm40", "source_grid_id": "id", "source_band": "fbfm"}
 
         handle_lookup(grid, source, progress)
 

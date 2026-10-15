@@ -1,23 +1,26 @@
 """Schema models for the GeoTIFF grid upload endpoint."""
 
-from pydantic import BaseModel, Field, field_validator
+from typing import Self
 
-from api.resources.grids.schema import BandType
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from api.resources.grids.schema import BandKey, BandType
+from lib.band_quantities import BAND_QUANTITIES, band_mismatch, band_quantity
 from lib.units import validate_unit
 
 
 class UploadBandDefinition(BaseModel):
-    key: str = Field(
-        ..., description="Dot-notation variable name, e.g. 'bulk_density.foliage'"
+    key: BandKey
+    type: BandType | None = Field(
+        None,
+        description="Optional; set by the key's quantity. If given, it must match.",
     )
-    type: BandType
     unit: str | None = Field(
         None,
         description=(
-            "Physical unit of the band's pixel values, in UDUNITS-2-conformant "
-            "ASCII form with `**` for exponents (e.g. `kg/m**3`, `1/m`, `%`). "
-            "Optional for categorical/identifier bands. Non-canonical forms "
-            "(`kg/m³`, `kg/m^3`, `kg/m3`) are rejected. See docs/units.md."
+            "Optional; set by the key's quantity. If given, it must match, in "
+            "UDUNITS-2-conformant ASCII form with `**` for exponents (e.g. "
+            "`kg/m**3`, `1/m`, `%`). See docs/units.md."
         ),
         examples=["kg/m**3", "1/m", "%", "m"],
     )
@@ -27,6 +30,17 @@ class UploadBandDefinition(BaseModel):
     def _check_canonical_unit(cls, v: str | None) -> str | None:
         validate_unit(v)
         return v
+
+    @model_validator(mode="after")
+    def _type_and_unit_from_key(self) -> Self:
+        quantity = BAND_QUANTITIES[band_quantity(self.key)]
+        given_type = quantity.type if self.type is None else self.type
+        given_unit = quantity.unit if self.unit is None else self.unit
+        if reason := band_mismatch(self.key, given_type, given_unit):
+            raise ValueError(f"Band {self.key!r}: {reason}.")
+        self.type = BandType(quantity.type)
+        self.unit = quantity.unit
+        return self
 
 
 class CreateGeoTIFFUploadRequest(BaseModel):

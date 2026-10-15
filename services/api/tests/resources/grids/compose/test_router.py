@@ -71,8 +71,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "compute": [
+            "operations": [
                 {
+                    "type": "compute",
                     "output": "fuel_load.1hr",
                     "operator": "multiply",
                     "operands": ["a.fuel_load.1hr", 0.5],
@@ -98,8 +99,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "compute": [
+            "operations": [
                 {
+                    "type": "compute",
                     "output": "fuel_load.1hr",
                     "operator": "multiply",
                     "operands": ["a.fuel_load.1hr", 0.5],
@@ -121,7 +123,7 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [{"output": "fbfm", "from": "a.fbfm"}],
+            "operations": [{"type": "select", "output": "fbfm", "from": "a.fbfm"}],
         }
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
@@ -131,6 +133,43 @@ class TestCreateCompose:
         assert band["type"] == "categorical"
         assert band["unit"] is None
 
+    def test_bands_and_stored_operations_follow_operations_order(
+        self, client, domain_for_testing, complete_grid
+    ):
+        body = {
+            "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
+            "operations": [
+                {
+                    "type": "compute",
+                    "output": "fuel_load.1hr",
+                    "operator": "multiply",
+                    "operands": ["a.fuel_load.1hr", 0.5],
+                },
+                {"type": "select", "output": "fbfm", "from": "a.fbfm"},
+            ],
+        }
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+
+        assert response.status_code == 201, response.json()
+        data = response.json()
+        assert [b["key"] for b in data["bands"]] == ["fuel_load.1hr", "fbfm"]
+        assert [op["type"] for op in data["source"]["operations"]] == [
+            "compute",
+            "select",
+        ]
+        assert "select" not in data["source"]
+        assert "compute" not in data["source"]
+
+    def test_missing_operations_rejected(
+        self, client, domain_for_testing, complete_grid
+    ):
+        body = {"inputs": [{"grid_id": complete_grid["id"], "alias": "a"}]}
+
+        response = client.post(_route(domain_for_testing["id"]), json=body)
+
+        assert response.status_code == 422
+
     def test_multi_grid_compute_records_source_checksums(
         self, client, domain_for_testing, complete_grid, complete_grid_b
     ):
@@ -139,8 +178,9 @@ class TestCreateCompose:
                 {"grid_id": complete_grid["id"], "alias": "a"},
                 {"grid_id": complete_grid_b["id"], "alias": "b"},
             ],
-            "compute": [
+            "operations": [
                 {
+                    "type": "compute",
                     "output": "fuel_load.1hr",
                     "operator": "add",
                     "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
@@ -158,7 +198,9 @@ class TestCreateCompose:
     def test_missing_band_returns_422(self, client, domain_for_testing, complete_grid):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [{"output": "missing", "from": "a.missing"}],
+            "operations": [
+                {"type": "select", "output": "fuel_load.1hr", "from": "a.missing"}
+            ],
         }
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
@@ -171,7 +213,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": pending_grid["id"], "alias": "a"}],
-            "select": [{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
+            "operations": [
+                {"type": "select", "output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}
+            ],
         }
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
@@ -184,18 +228,24 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": grid_in_different_domain["id"], "alias": "a"}],
-            "select": [{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
+            "operations": [
+                {"type": "select", "output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}
+            ],
         }
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
         assert response.status_code == 404
 
-    def test_unit_override_succeeds(self, client, domain_for_testing, complete_grid):
+    def test_unit_override_contradicting_quantity_returns_422(
+        self, client, domain_for_testing, complete_grid
+    ):
+        """A fuel_load band is always kg/m**2, so a g/m**2 output is rejected."""
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "compute": [
+            "operations": [
                 {
+                    "type": "compute",
                     "output": "fuel_load.1hr",
                     "operator": "multiply",
                     "operands": ["a.fuel_load.1hr", 0.5],
@@ -206,16 +256,17 @@ class TestCreateCompose:
 
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
-        assert response.status_code == 201, response.json()
-        assert response.json()["bands"][0]["unit"] == "g/m**2"
+        assert response.status_code == 422
+        assert "kg/m**2" in response.json()["detail"]
 
     def test_incompatible_unit_override_returns_422(
         self, client, domain_for_testing, complete_grid
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "compute": [
+            "operations": [
                 {
+                    "type": "compute",
                     "output": "fuel_load.1hr",
                     "operator": "multiply",
                     "operands": ["a.fuel_load.1hr", 0.5],
@@ -234,8 +285,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [
+            "operations": [
                 {
+                    "type": "select",
                     "output": "fuel_load.1hr",
                     "from": "a.fuel_load.1hr",
                     "conditions": [{"band": "a.fbfm", "operator": "gt", "value": 90}],
@@ -254,8 +306,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [
+            "operations": [
                 {
+                    "type": "select",
                     "output": "fuel_load.1hr",
                     "from": "a.fuel_load.1hr",
                     "conditions": [
@@ -269,7 +322,7 @@ class TestCreateCompose:
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
         assert response.status_code == 201, response.json()
-        stored = response.json()["source"]["select"][0]["conditions"][0]["value"]
+        stored = response.json()["source"]["operations"][0]["conditions"][0]["value"]
         assert stored == 101
 
     def test_unknown_fbfm_label_returns_422(
@@ -277,8 +330,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [
+            "operations": [
                 {
+                    "type": "select",
                     "output": "fuel_load.1hr",
                     "from": "a.fuel_load.1hr",
                     "conditions": [
@@ -299,8 +353,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [
+            "operations": [
                 {
+                    "type": "select",
                     "output": "fuel_load.1hr",
                     "from": "a.fuel_load.1hr",
                     "conditions": [{"band": "a.fbfm", "operator": "in", "value": 101}],
@@ -321,8 +376,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [
+            "operations": [
                 {
+                    "type": "select",
                     "output": "fbfm",
                     "from": "a.fbfm",
                     "conditions": [{"band": "a.fbfm", "operator": "eq", "value": 91}],
@@ -334,15 +390,16 @@ class TestCreateCompose:
         response = client.post(_route(domain_for_testing["id"]), json=body)
 
         assert response.status_code == 201, response.json()
-        assert response.json()["source"]["select"][0]["else"] == 102
+        assert response.json()["source"]["operations"][0]["else"] == 102
 
     def test_numeric_categorical_fallback_is_allowed(
         self, client, domain_for_testing, complete_grid
     ):
         body = {
             "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
-            "select": [
+            "operations": [
                 {
+                    "type": "select",
                     "output": "fbfm",
                     "from": "a.fbfm",
                     "conditions": [{"band": "a.fbfm", "operator": "ne", "value": 91}],
@@ -360,9 +417,10 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_percent_grid["id"], "alias": "a"}],
-            "compute": [
+            "operations": [
                 {
-                    "output": "moisture",
+                    "type": "compute",
+                    "output": "fuel_moisture.1hr",
                     "operator": "multiply",
                     "operands": ["a.moisture", 0.5],
                 }
@@ -382,8 +440,9 @@ class TestCreateCompose:
                 {"grid_id": complete_grid["id"], "alias": "a"},
                 {"grid_id": complete_unitless_grid["id"], "alias": "b"},
             ],
-            "compute": [
+            "operations": [
                 {
+                    "type": "compute",
                     "output": "fuel_load.1hr",
                     "operator": "add",
                     "operands": ["a.fuel_load.1hr", "b.ratio"],
@@ -401,7 +460,9 @@ class TestCreateCompose:
     ):
         body = {
             "inputs": [{"grid_id": complete_grid_no_georeference["id"], "alias": "a"}],
-            "select": [{"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}],
+            "operations": [
+                {"type": "select", "output": "fuel_load.1hr", "from": "a.fuel_load.1hr"}
+            ],
         }
 
         response = client.post(_route(domain_for_testing["id"]), json=body)

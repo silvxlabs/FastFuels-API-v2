@@ -21,11 +21,13 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.grids.utils import incomplete_inventory_columns
 from api.resources.inventories.schema import Inventory
 from api.resources.inventories.tree.allometry.gdam.examples import (
     CREATE_GDAM_OPENAPI_EXAMPLES,
 )
 from api.resources.inventories.tree.allometry.gdam.schema import (
+    GDAM_REQUIRED_SOURCE_COLUMNS,
     CreateGdamInventoryRequest,
     GdamInventorySource,
     resolve_gdam_columns,
@@ -41,9 +43,6 @@ from lib.config import (
 router = APIRouter()
 
 COLLECTION = INVENTORIES_COLLECTION
-
-# Columns GDAM needs on the source inventory to make a prediction.
-_REQUIRED_SOURCE_COLUMNS = ("x", "y", "height")
 
 
 @router.post(
@@ -140,16 +139,19 @@ async def create_gdam_inventory(
             ),
         )
 
-    # Must carry the columns GDAM needs (position + height).
+    # GDAM predicts from position and height, so every tree needs both.
     source_columns = source_data.get("columns", [])
-    column_keys = [c["key"] if isinstance(c, dict) else c for c in source_columns]
-    missing = [c for c in _REQUIRED_SOURCE_COLUMNS if c not in column_keys]
+    missing = sorted(
+        incomplete_inventory_columns(source_data, set(GDAM_REQUIRED_SOURCE_COLUMNS))
+    )
     if missing:
+        column_keys = [c["key"] if isinstance(c, dict) else c for c in source_columns]
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Source inventory is missing required column(s) {missing}. "
-                f"GDAM allometry imputation requires {list(_REQUIRED_SOURCE_COLUMNS)}. "
+                f"Source inventory is missing, or has empty values in, column(s) "
+                f"{missing}. GDAM allometry imputation needs a value for every "
+                f"tree in {list(GDAM_REQUIRED_SOURCE_COLUMNS)}. "
                 f"Available columns: {column_keys}."
             ),
         )

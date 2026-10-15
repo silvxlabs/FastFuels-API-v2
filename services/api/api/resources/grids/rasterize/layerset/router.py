@@ -89,6 +89,23 @@ async def create_layerset_rasterize(
       polygon coverage are populated with the rasterizer's fill value.
     - **name**, **description**, **tags**, **modifications**: standard grid metadata.
 
+    ## Bands
+
+    The band list is empty until rasterization completes; it depends on the
+    layerset's `fuel_type` values. Each fuel type yields five continuous
+    bands keyed `<quantity>.<fuel type>`:
+
+    - `fuel_load.<fuel type>` (kg/m**2)
+    - `fuel_depth.<fuel type>` (m)
+    - `fuel_moisture.live.<fuel type>` (%)
+    - `fuel_moisture.dead.<fuel type>` (%)
+    - `heat_content.<fuel type>` (kJ/kg)
+
+    The fuel type in a key is lowercased, with each run of characters other
+    than `a-z`, `0-9` and `_` replaced by `_` (`"Shrub Layer"` →
+    `shrub_layer`). Two fuel types that reduce to the same key, or one with
+    no letters or digits, fail the job with `INVALID_FUEL_TYPE`.
+
     ## Response
 
     Returns the created Grid resource with status `pending`. The backend

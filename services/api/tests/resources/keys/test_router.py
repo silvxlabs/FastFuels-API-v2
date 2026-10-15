@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from api.auth import hash_api_key
 from api.resources.keys.router import create_key, delete_key, get_key_by_id
-from api.resources.keys.schema import CreateKeyRequest
+from api.resources.keys.schema import CreatePersonalKeyRequest
 from fastapi import HTTPException
 
 from lib.config import APPLICATIONS_COLLECTION, KEYS_COLLECTION
@@ -24,7 +24,7 @@ class TestGuestCreateKey:
         request = MagicMock()
         request.state = SimpleNamespace(id="guest-uid", is_guest=True)
         with pytest.raises(HTTPException) as exc:
-            await create_key(request, CreateKeyRequest(name="k"))
+            await create_key(request, CreatePersonalKeyRequest(name="k"))
         assert exc.value.status_code == 403
 
 

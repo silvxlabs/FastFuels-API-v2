@@ -12,9 +12,10 @@ Used at: POST /v2/domains/{domain_id}/grids/exports/landscape
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.resources.grids.schema import Georeference
+from api.resources.input_requirements import grid, input_requirements
 
 
 class LandscapeFieldSource(BaseModel):
@@ -50,6 +51,8 @@ class LandscapeExportAlignmentGridTarget(BaseModel):
     chained off a `target="native"` master grid). The referenced grid's
     CRS, transform, and shape become the landscape lattice.
     """
+
+    model_config = ConfigDict(json_schema_extra=input_requirements(grid("grid_id")))
 
     target: Literal["grid"]
     grid_id: str = Field(

@@ -6,10 +6,12 @@ Schema models for Crown feature creation from a CHM.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.resources.crown_segmentation import CrownSegmentationBase
 from api.resources.features.schema import CreateFeatureRequestBase, FeatureType
+from api.resources.input_requirements import grid, input_requirements, inventory
+from api.resources.inventories.schema import TREE_ID_COLUMN
 
 
 class ChmCrownSegmentation(CrownSegmentationBase):
@@ -67,6 +69,17 @@ class ChmCrownSource(BaseModel):
 
 class CreateChmCrownFeatureRequest(CreateFeatureRequestBase):
     """Request body for creating a crown feature from a CHM."""
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            inventory(
+                "source_inventory_id",
+                columns=[TREE_ID_COLUMN.key],
+                derived_from="source_chm_grid_id",
+            ),
+            grid("source_chm_grid_id", bands=["chm"]),
+        ),
+    )
 
     type: Literal[FeatureType.crown] = FeatureType.crown
     source_inventory_id: str = Field(

@@ -287,6 +287,41 @@ class TestCreateGdamInventory:
         finally:
             doc_ref.delete()
 
+    def test_source_with_empty_heights_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A height column with empty values returns 422: GDAM needs every tree's."""
+        inventory_data = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Source with empty heights",
+            status="completed",
+            inventory_type="tree",
+        )
+        inventory_data["columns"] = [
+            {"key": "x", "type": "continuous", "unit": "m"},
+            {"key": "y", "type": "continuous", "unit": "m"},
+            {
+                "key": "height",
+                "type": "continuous",
+                "unit": "m",
+                "summary": {"null_count": 3},
+            },
+        ]
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inventory_data["id"]
+        )
+        doc_ref.set(inventory_data)
+
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"source_tree_inventory_id": inventory_data["id"]},
+            )
+            assert response.status_code == 422
+            assert "empty values" in response.json()["detail"]
+        finally:
+            doc_ref.delete()
+
     def test_non_tree_source_returns_422(
         self, client, firestore_client, domain_for_testing
     ):

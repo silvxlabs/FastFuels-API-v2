@@ -20,10 +20,20 @@ from pydantic import (
     model_validator,
 )
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
+from api.resources.features.schema import FeatureType
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import feature, input_requirements, inventory
+from api.resources.inventories.schema import TREE_ID_COLUMN
+
+# Columns a fastfuels-core Tree needs per row. `fia_status_code` is intentionally
+# excluded — treevox treats an absent status as live.
+VOXELIZE_REQUIRED_COLUMNS = frozenset(
+    {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
+)
 
 
-class TreeBand(StrEnum):
+class TreeBand(BandEnum):
     """Available output bands for tree fuel grids.
 
     Each value is the band's dot-notation key as it appears in the stored
@@ -485,6 +495,9 @@ class MoistureModel(BaseModel):
     dead: UniformMoistureValue | None = None
 
 
+publish_band_defs(TreeBand, TREE_BAND_DEFS)
+
+
 def build_tree_bands(requested: list[TreeBand]) -> list[Band]:
     """Build Band objects for requested tree bands with indices in request order."""
     return [Band(index=i, **TREE_BAND_DEFS[band]) for i, band in enumerate(requested)]
@@ -646,7 +659,18 @@ class CreateTreeInventoryRequest(BaseModel):
     voxelization, not to the resulting voxel grid.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra=input_requirements(
+            inventory("source_inventory_id", columns=VOXELIZE_REQUIRED_COLUMNS),
+            feature("crown_geometry_source.feature_id", type=FeatureType.crown.value),
+            inventory(
+                "source_inventory_id",
+                columns=[TREE_ID_COLUMN.key],
+                when={"crown_geometry_source.type": "crown_feature"},
+            ),
+        ),
+    )
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)

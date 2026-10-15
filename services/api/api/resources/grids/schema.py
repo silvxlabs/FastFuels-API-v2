@@ -4,8 +4,16 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_serializer, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_serializer,
+    model_validator,
+)
 
+from api.resources.band_metadata import BAND_QUANTITIES_SCHEMA
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
     GridAlignmentSpecification,
@@ -13,6 +21,7 @@ from api.resources.grids.alignment import (
 from api.resources.grids.modification_models import GridModification
 from api.resources.modifications import parse_modification_coordinates
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
+from lib.band_quantities import BAND_KEY_PATTERN, BAND_QUANTITIES, check_band_key
 
 CHUNK_SHAPE = [512, 512]
 
@@ -48,6 +57,31 @@ class BandType(StrEnum):
     categorical = "categorical"
 
 
+def _check_band_key(key: str) -> str:
+    check_band_key(key)
+    return key
+
+
+BandKey = Annotated[
+    str,
+    AfterValidator(_check_band_key),
+    Field(
+        description=(
+            "Band key `<quantity>` or `<quantity>.<label>`, e.g. `fbfm`, "
+            "`fuel_load.1hr`, `fuel_moisture.live.shrub`. The quantity sets the "
+            "band's type and unit: "
+            + ", ".join(
+                f"`{name}` ({q.type}{', ' + q.unit if q.unit else ''})"
+                for name, q in BAND_QUANTITIES.items()
+            )
+            + ". The label is lowercase letters, digits and underscores."
+        ),
+        json_schema_extra={"pattern": BAND_KEY_PATTERN},
+    ),
+]
+"""A band key a client names (upload bands, compose outputs)."""
+
+
 class ContinuousBandSummary(BaseModel):
     type: Literal["continuous"]
     count: int  # non-nodata cells
@@ -81,6 +115,8 @@ class GridSortField(StrEnum):
 
 class Band(BaseModel):
     """A single band in a grid."""
+
+    model_config = ConfigDict(json_schema_extra=BAND_QUANTITIES_SCHEMA)
 
     key: str = Field(..., description="Dot-notation key (e.g., 'fuel_load.1hr')")
     name: str | None = Field(

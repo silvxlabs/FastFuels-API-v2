@@ -8,15 +8,13 @@ rasterizes it via ``fastfuels_core.layersets.rasterize_layerset``,
 and reprojects the result to the request's alignment destination when one
 is asked for.
 
-Output shape (one DataArray per unique ``fuel_type``):
-    dims:       (band, y, x)
-    band coord: ["loading", "height", "live_fuel_moisture",
-                 "dead_fuel_moisture", "heat_of_combustion"]
-    dtype:      float32
-
-The Grid resource's ``bands`` field is derived from the output Dataset by
-``build_layerset_bands`` and written back to Firestore by ``handle_layerset``
-in ``griddle.dispatch``.
+``fetch_layerset`` returns the rasterizer's own shape (one ``(band, y, x)``
+variable per unique ``fuel_type``); ``flatten_layerset`` then splits it into
+one 2D variable per band, named by its band key ``<quantity>.<fuel type
+token>`` (see ``lib.layerset_bands``), which is the layout griddle stores and
+every reader addresses directly. The Grid's ``bands`` field comes from the same
+call and is written back to Firestore by ``handle_layerset`` in
+``griddle.dispatch``.
 """
 
 from collections.abc import Callable
@@ -27,8 +25,14 @@ import xarray as xr
 from fastfuels_core.layersets import rasterize_layerset
 
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
+from lib.band_quantities import check_band_key
 from lib.config import FEATURES_BUCKET
 from lib.errors import ProcessingError
+from lib.layerset_bands import (
+    LAYERSET_PROPERTIES,
+    fuel_type_token,
+    layerset_band_key,
+)
 
 # Fixed seed so random cover/cluster placement is reproducible from the stored
 # layerset (matches the default seed used by other griddle handlers).
@@ -42,42 +46,6 @@ OVERLAP_METHODS: dict[str, Callable] = {
     "mean": np.mean,
     "max": np.max,
     "min": np.min,
-}
-
-# Per-sub-band metadata for the 5-band output of
-# fastfuels_core.layersets.rasterize_layerset. Keep keys in sync with the
-# published band coord. ``unit`` values must be in canonical ASCII UDUNITS-2
-# form (see docs/units.md); the drift guard is in
-# tests/handlers/test_layerset.py::TestLayersetBandUnits. ``name`` and
-# ``description`` give the webapp human-readable labels (parallels the
-# *_BAND_DEFS tables in the API's uniform/topography/lookup/canopy/voxelize
-# schemas). The per-fuel-type prefix is added in build_layerset_bands.
-_LAYERSET_BAND_DEFS: dict[str, dict] = {
-    "loading": {
-        "unit": "kg/m**2",
-        "name": "Fuel Loading",
-        "description": "Oven-dry fuel mass per unit area.",
-    },
-    "height": {
-        "unit": "m",
-        "name": "Fuel Height",
-        "description": "Height of the fuel bed above the surface.",
-    },
-    "live_fuel_moisture": {
-        "unit": "%",
-        "name": "Live Fuel Moisture",
-        "description": "Moisture content of live fuels (% of oven-dry weight).",
-    },
-    "dead_fuel_moisture": {
-        "unit": "%",
-        "name": "Dead Fuel Moisture",
-        "description": "Moisture content of dead fuels (% of oven-dry weight).",
-    },
-    "heat_of_combustion": {
-        "unit": "kJ/kg",
-        "name": "Heat of Combustion",
-        "description": "Energy released per unit mass of fuel consumed.",
-    },
 }
 
 # Default reprojection method when caller does not override; all layerset
@@ -225,40 +193,78 @@ def _reproject_dataset(ds: xr.Dataset, dest: dict, method: str | None) -> xr.Dat
     return out
 
 
-def build_layerset_bands(ds: xr.Dataset) -> list[dict]:
-    """Derive the Grid's ``bands`` list from a rasterized layerset Dataset.
+def flatten_layerset(ds: xr.Dataset) -> tuple[xr.Dataset, list[dict]]:
+    """Split a rasterized layerset into one 2D variable per band.
 
-    Returns one entry per (variable, band) pair, in the order produced by
-    ``xr.Dataset.data_vars`` × the variable's ``band`` coord. Each entry is
-    a plain dict matching ``api.resources.grids.schema.Band``'s serialized
-    shape so the worker can write it directly to Firestore without crossing
-    the API↔griddle package boundary.
+    Each ``(fuel_type, property)`` slice becomes a variable named by its band
+    key (``fuel_load.shrub``, ``fuel_moisture.live.herb``, ...), like every
+    other producer's bands, so the API chunk endpoint and the exporters can
+    read it by key. Returns the flat Dataset and the matching ``bands`` list
+    (plain dicts in ``api.resources.grids.schema.Band``'s serialized shape, so
+    the worker writes them to Firestore without crossing the package
+    boundary).
 
-    Each layerset band carries continuous physical units (kg/m**2, m, %, kJ/kg).
-    ``name``/``description`` are prefixed with the fuel type (the variable
-    name) so the webapp can show which fuel type a band belongs to.
+    Raises:
+        ProcessingError: ``INVALID_FUEL_TYPE`` when a fuel type has no
+            key-safe characters, or two fuel types reduce to the same token
+            (e.g. ``"Shrub"`` and ``"shrub "``); ``UNKNOWN_LAYERSET_PROPERTY``
+            when the rasterizer emits a property with no band definition.
     """
+    variables: dict[str, xr.DataArray] = {}
     bands: list[dict] = []
-    idx = 0
+    fuel_types_by_token: dict[str, str] = {}
     for var_name in ds.data_vars:
         band_coord = ds[var_name].coords.get("band")
         if band_coord is None:
             continue
-        fuel_label = str(var_name).replace("_", " ").title()
-        for band_name in band_coord.values:
-            sub = _LAYERSET_BAND_DEFS.get(str(band_name), {})
-            base_desc = sub.get("description")
+        fuel_type = str(var_name)
+        try:
+            token = fuel_type_token(fuel_type)
+        except ValueError as e:
+            raise ProcessingError(
+                code="INVALID_FUEL_TYPE",
+                message=str(e),
+                suggestion="Give every fuel_type at least one letter or digit.",
+            ) from e
+        if token in fuel_types_by_token:
+            raise ProcessingError(
+                code="INVALID_FUEL_TYPE",
+                message=(
+                    f"Fuel types {fuel_types_by_token[token]!r} and {fuel_type!r} "
+                    f"both map to band-key token {token!r}."
+                ),
+                suggestion=(
+                    "Band keys use fuel types lowercased with other characters "
+                    "replaced by '_'; rename one of the fuel types."
+                ),
+            )
+        fuel_types_by_token[token] = fuel_type
+        fuel_label = token.replace("_", " ").title()
+        for property_name in band_coord.values:
+            prop = LAYERSET_PROPERTIES.get(str(property_name))
+            if prop is None:
+                raise ProcessingError(
+                    code="UNKNOWN_LAYERSET_PROPERTY",
+                    message=(
+                        f"Rasterized layerset property {str(property_name)!r} "
+                        "has no band definition."
+                    ),
+                    suggestion="Report this; the rasterizer output changed.",
+                )
+            key = layerset_band_key(str(property_name), fuel_type)
+            quantity = check_band_key(key)
+            variables[key] = ds[var_name].sel(band=property_name).drop_vars("band")
             bands.append(
                 {
-                    "key": f"{var_name}.{band_name}",
-                    "name": f"{fuel_label} {sub.get('name', band_name)}",
-                    "description": (
-                        f"{base_desc} (fuel type: {var_name})" if base_desc else None
-                    ),
-                    "type": "continuous",
-                    "unit": sub.get("unit"),
-                    "index": idx,
+                    "key": key,
+                    "name": f"{fuel_label} {prop['name']}",
+                    "description": f"{prop['description']} (fuel type: {fuel_type})",
+                    "type": quantity.type,
+                    "unit": quantity.unit,
+                    "index": len(bands),
                 }
             )
-            idx += 1
-    return bands
+    flat = xr.Dataset(variables)
+    if ds.rio.crs is not None:
+        flat = flat.rio.write_crs(ds.rio.crs)
+    return flat, bands

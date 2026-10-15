@@ -116,13 +116,13 @@ class TestBuildNetcdfDataset2D:
 
     def test_unit_passthrough(self, tmp_path):
         ds = _build_2d_dataset(
-            bands={"bd": np.zeros((20, 40), dtype=np.float32)},
-            units={"bd": "kg/m**3"},
+            bands={"cbd": np.zeros((20, 40), dtype=np.float32)},
+            units={"cbd": "kg/m**3"},
         )
         path = _write_nc(ds, tmp_path / "unit.nc")
 
         out = _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)
-        assert out["bd"].attrs["units"] == "kg/m**3"
+        assert out["cbd"].attrs["units"] == "kg/m**3"
 
 
 class TestBuildNetcdfDataset3D:
@@ -216,8 +216,8 @@ class TestCrs:
 class TestUnits:
     def test_invalid_units(self, tmp_path):
         ds = _build_2d_dataset(
-            bands={"bd": np.zeros((20, 40), dtype=np.float32)},
-            units={"bd": "kg/m3"},  # non-canonical: bare numeric exponent
+            bands={"cbd": np.zeros((20, 40), dtype=np.float32)},
+            units={"cbd": "kg/m3"},  # non-canonical: bare numeric exponent
         )
         path = _write_nc(ds, tmp_path / "badunits.nc")
 
@@ -316,3 +316,35 @@ class TestBuffer:
 
         assert out3.rio.width > out0.rio.width
         assert out3.rio.height > out0.rio.height
+
+
+class TestBandKeys:
+    @pytest.mark.parametrize(
+        "bands,units,code",
+        [
+            ({"Band1": np.zeros((20, 40), dtype=np.float32)}, None, "INVALID_BAND_KEY"),
+            (
+                {"fuel_load.1hr": np.zeros((20, 40), dtype=np.float32)},
+                {"fuel_load.1hr": "m"},
+                "INVALID_BAND_UNITS",
+            ),
+            (
+                {"fbfm": np.zeros((20, 40), dtype=np.float32)},
+                None,
+                "INVALID_BAND_DTYPE",
+            ),
+        ],
+    )
+    def test_variable_must_fit_its_band_key(self, tmp_path, bands, units, code):
+        ds = _build_2d_dataset(bands=bands, units=units)
+        path = _write_nc(ds, tmp_path / "bad.nc")
+
+        with pytest.raises(ProcessingError) as exc:
+            _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)
+        assert exc.value.code == code
+
+    def test_integer_elevation_is_accepted(self, tmp_path):
+        ds = _build_2d_dataset(bands={"elevation": np.ones((20, 40), dtype=np.int16)})
+        path = _write_nc(ds, tmp_path / "elev.nc")
+
+        _build_netcdf_dataset(path, DOMAIN_CRS, DOMAIN_GDF, 0)

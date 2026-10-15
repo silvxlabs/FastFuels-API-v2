@@ -74,6 +74,12 @@ async def create_geotiff_upload(
     `bands[0]` → GeoTIFF band 1, `bands[1]` → GeoTIFF band 2, etc.
     Each band key becomes a variable name in the output Zarr store.
 
+    A key is `<quantity>` or `<quantity>.<label>` (`fbfm`, `fuel_load.1hr`,
+    `fuel_load.shrub`). The quantity sets the band's `type` and `unit`, so
+    they can be omitted; if given they must match. An uploaded band is then
+    accepted wherever a band of that quantity is, e.g. an uploaded `fbfm`
+    feeds an FBFM40 lookup.
+
     ## CRS Handling
 
     The GeoTIFF must have a CRS set and must match the domain CRS. A mismatch

@@ -261,7 +261,7 @@ class TestSummarizeDataset:
             )
 
     def test_layerset_dot_notation_key(self):
-        """Band keys with dot notation resolve to variable.sel(band=...)."""
+        """Pre-#672 layerset keys resolve to variable.sel(band=...)."""
         data = np.array(
             [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]], dtype=np.float32
         )
@@ -288,3 +288,28 @@ class TestSummarizeDataset:
         assert result["herb.loading"]["count"] == 4
         assert result["herb.loading"]["min"] == 1.0
         assert result["herb.height"]["min"] == 5.0
+
+    def test_legacy_layerset_key_with_dotted_fuel_type(self):
+        """Pre-#672 keys split on the last dot: properties never contain one."""
+        data = np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32)
+        da = xr.DataArray(
+            data,
+            dims=["band", "y", "x"],
+            coords={"band": ["loading"], "y": [1.0, 0.0], "x": [0.0, 1.0]},
+        )
+        da = da.rio.write_crs("EPSG:5070")
+        ds = _make_ds({"tl.3": da})
+        bands = [{"key": "tl.3.loading", "type": "continuous"}]
+        result = summarize_dataset(ds, bands, chunk_shape=(512, 512))
+        assert result["tl.3.loading"]["min"] == 1.0
+
+    def test_flat_layerset_key(self):
+        """Layerset grids from #672 on store each band as its own variable."""
+        da = _make_da(np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+        ds = _make_ds({"fuel_load.herb": da})
+        result = summarize_dataset(
+            ds,
+            [{"key": "fuel_load.herb", "type": "continuous"}],
+            chunk_shape=(512, 512),
+        )
+        assert result["fuel_load.herb"]["max"] == 4.0

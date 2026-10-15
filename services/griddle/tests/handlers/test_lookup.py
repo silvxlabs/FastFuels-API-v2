@@ -459,7 +459,7 @@ class TestUnitConversion:
 
 
 def _make_mock_source_ds(
-    fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:32610", var_name="FBFM"
+    fbfm_codes, y_coords=None, x_coords=None, crs="EPSG:32610", var_name="fbfm"
 ):
     """Create a mock xarray Dataset that mimics load_zarr output."""
     if y_coords is None:
@@ -485,8 +485,8 @@ class TestFbfm13Lookup:
     def test_nodata_cells_pass_through_as_nan(self, mock_load_zarr):
         """Nodata cells become NaN in every output band, real codes are looked up."""
         codes = np.array([[1, 2], [3, 32767]], dtype=np.int16)
-        ds = _make_mock_source_ds(codes)
-        ds["FBFM"] = ds["FBFM"].rio.write_nodata(32767)
+        ds = _make_mock_source_ds(codes, var_name="fbfm13")
+        ds["fbfm13"] = ds["fbfm13"].rio.write_nodata(32767)
         mock_load_zarr.return_value = ds
 
         result = fbfm13_lookup("g", [{"key": "fuel_load.1hr"}], MagicMock())
@@ -500,7 +500,7 @@ class TestFbfm13Lookup:
     def test_returns_dataset(self, mock_load_zarr):
         """Returns a Dataset, not a DataArray."""
         codes = np.array([[1, 2]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.1hr"}, {"key": "fuel_depth"}]
@@ -512,7 +512,7 @@ class TestFbfm13Lookup:
     def test_dataset_variables_match_band_keys(self, mock_load_zarr):
         """Each band key becomes a named variable in the Dataset."""
         codes = np.array([[1, 2]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.1hr"}, {"key": "fuel_depth"}]
@@ -527,7 +527,7 @@ class TestFbfm13Lookup:
         """Every FBFM13 code produces the correct metric value for every band."""
         table = _load_fbfm13_table()
         codes = np.array([ALL_FBFM13_KEYS])  # shape (1, 18)
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [{"key": k} for k in FBFM13_BAND_KEYS]
@@ -559,7 +559,7 @@ class TestFbfm13Lookup:
     def test_single_band(self, mock_load_zarr):
         """Single band lookup produces correct shape and values."""
         codes = np.array([[1, 2], [3, 91]])  # models 1, 2, 3, NB1
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.1hr"}]
@@ -579,7 +579,7 @@ class TestFbfm13Lookup:
     def test_multi_band_output(self, mock_load_zarr):
         """Multiple bands produce one variable per band."""
         codes = np.array([[1, 2], [3, 4]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [
@@ -601,7 +601,7 @@ class TestFbfm13Lookup:
     def test_nonburnable_codes_produce_zeros(self, mock_load_zarr):
         """NB codes (91-99) produce zero values for all bands."""
         codes = np.array([[91, 92], [93, 99]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [
@@ -618,7 +618,7 @@ class TestFbfm13Lookup:
     def test_invalid_codes_raise_error(self, mock_load_zarr):
         """Out-of-range or unknown FBFM13 codes fail with a descriptive error."""
         codes = np.array([[1, 14], [255, -1]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.1hr"}]
@@ -634,7 +634,7 @@ class TestFbfm13Lookup:
     def test_zero_nodata_codes_raise_error(self, mock_load_zarr):
         """Code 0 (nodata) is not a valid FBFM13 code and raises an error."""
         codes = np.array([[0, 1]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.1hr"}]
@@ -648,7 +648,9 @@ class TestFbfm13Lookup:
     def test_spatial_metadata_inherited(self, mock_load_zarr):
         """Output inherits CRS from source grid."""
         codes = np.array([[1, 2], [3, 4]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes, crs="EPSG:32610")
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            codes, crs="EPSG:32610", var_name="fbfm13"
+        )
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.1hr"}]
@@ -664,7 +666,7 @@ class TestFbfm13Lookup:
         y = np.array([5000000.0, 4999970.0])
         x = np.array([500000.0, 500030.0])
         mock_load_zarr.return_value = _make_mock_source_ds(
-            codes, y_coords=y, x_coords=x
+            codes, y_coords=y, x_coords=x, var_name="fbfm13"
         )
         progress = MagicMock()
 
@@ -678,7 +680,7 @@ class TestFbfm13Lookup:
     def test_progress_callbacks(self, mock_load_zarr):
         """Handler calls progress at expected stages."""
         codes = np.array([[1]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fbfm13")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.1hr"}]
@@ -843,7 +845,7 @@ class TestFbfm40Lookup:
         nodata cells become NaN in every output band (issue #290)."""
         codes = np.array([[101, 102], [103, 32767]], dtype=np.int16)
         ds = _make_mock_source_ds(codes)
-        ds["FBFM"] = ds["FBFM"].rio.write_nodata(32767)
+        ds["fbfm"] = ds["fbfm"].rio.write_nodata(32767)
         mock_load_zarr.return_value = ds
 
         result = fbfm40_lookup("g", [{"key": "fuel_load.1hr"}], MagicMock())
@@ -1086,8 +1088,8 @@ class TestFccsLookup:
         )
         NODATA = 2_147_483_647
         codes = np.array([[0, 1], [2, NODATA]], dtype=np.int64)
-        ds = _make_mock_source_ds(codes, var_name="FCCS")
-        ds["FCCS"] = ds["FCCS"].rio.write_nodata(NODATA)
+        ds = _make_mock_source_ds(codes, var_name="fccs")
+        ds["fccs"] = ds["fccs"].rio.write_nodata(NODATA)
         mock_load_zarr.return_value = ds
 
         result = fccs_lookup("g", [{"key": "fuel_load.litter"}], MagicMock())
@@ -1108,7 +1110,7 @@ class TestFccsLookup:
             ]
         )
         codes = np.array([[0, 1]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.litter"}, {"key": "duff_depth"}]
@@ -1127,7 +1129,7 @@ class TestFccsLookup:
             ]
         )
         codes = np.array([[0, 1]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.litter"}, {"key": "duff_depth"}]
@@ -1154,7 +1156,7 @@ class TestFccsLookup:
         mock_read_parquet.return_value = _make_fccs_df(fake_rows)
         sample_codes = [0, 1, 2]
         codes = np.array([sample_codes])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [{"key": k} for k in FCCS_BAND_KEYS]
@@ -1194,7 +1196,7 @@ class TestFccsLookup:
             ]
         )
         codes = np.array([[0, 1], [2, 3]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [
@@ -1222,7 +1224,7 @@ class TestFccsLookup:
             ]
         )
         codes = np.array([[0, 0]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [{"key": k} for k in FCCS_BAND_KEYS]
@@ -1242,7 +1244,7 @@ class TestFccsLookup:
         )
         # base = 123456789 // 10_000 = 12345, not present in the fake table
         codes = np.array([[0, 123456789]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.litter"}]
@@ -1267,7 +1269,7 @@ class TestFccsLookup:
             ]
         )
         codes = np.array([[0, 1_700_211]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.litter"}]
@@ -1291,7 +1293,9 @@ class TestFccsLookup:
             ]
         )
         codes = np.array([[0, 1], [2, 3]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes, crs="EPSG:32610")
+        mock_load_zarr.return_value = _make_mock_source_ds(
+            codes, crs="EPSG:32610", var_name="fccs"
+        )
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.litter"}]
@@ -1314,7 +1318,7 @@ class TestFccsLookup:
         y = np.array([5000000.0, 4999970.0])
         x = np.array([500000.0, 500030.0])
         mock_load_zarr.return_value = _make_mock_source_ds(
-            codes, y_coords=y, x_coords=x
+            codes, y_coords=y, x_coords=x, var_name="fccs"
         )
         progress = MagicMock()
 
@@ -1334,7 +1338,7 @@ class TestFccsLookup:
             ]
         )
         codes = np.array([[0]])
-        mock_load_zarr.return_value = _make_mock_source_ds(codes)
+        mock_load_zarr.return_value = _make_mock_source_ds(codes, var_name="fccs")
         progress = MagicMock()
 
         bands = [{"key": "fuel_load.litter"}]
@@ -1454,7 +1458,7 @@ class TestLookupZarrRoundTrip:
         )
         codes = np.array([[0, 1], [1, 0]])
         mock_load_zarr.return_value = _make_mock_source_ds(
-            codes, var_name="FCCS", crs="EPSG:32610"
+            codes, var_name="fccs", crs="EPSG:32610"
         )
         progress = MagicMock()
 
@@ -1492,3 +1496,25 @@ class TestSourceLoadErrors:
         with pytest.raises(OSError, match="transient") as exc_info:
             lookup("grid", [], MagicMock())
         assert not isinstance(exc_info.value, ProcessingError)
+
+
+class TestSourceBand:
+    """The lookup reads the requested band, not the first variable."""
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_reads_source_band_when_another_band_sorts_first(self, mock_load_zarr):
+        ds = _make_mock_source_ds(np.array([[102, 102]]))
+        ds["chm"] = ds["fbfm"] * 0 + 12.5
+        mock_load_zarr.return_value = ds
+
+        result = fbfm40_lookup("g", [{"key": "fuel_depth"}], MagicMock())
+
+        assert np.all(np.isfinite(result["fuel_depth"].values))
+
+    @patch("griddle.handlers.lookup.load_zarr")
+    def test_missing_source_band_raises(self, mock_load_zarr):
+        mock_load_zarr.return_value = _make_mock_source_ds(np.array([[102]]))
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fbfm40_lookup("g", [{"key": "fuel_depth"}], MagicMock(), source_band="x")
+        assert exc_info.value.code == "SOURCE_GRID_READ_ERROR"

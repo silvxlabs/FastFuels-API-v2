@@ -18,7 +18,9 @@ class CreateApplicationRequest(BaseModel):
     # quota_overrides) is a 422, not a silent no-op.
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., max_length=255, description="Name of the application.")
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="Name of the application."
+    )
     description: str | None = Field(
         None, max_length=2000, description="Description of the application."
     )

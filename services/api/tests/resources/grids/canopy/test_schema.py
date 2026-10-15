@@ -350,6 +350,12 @@ class TestCreatePointCloudChmRequest:
 
         assert request.source_point_cloud_id == "cloud-1"
 
+    def test_publishes_als_point_cloud_input(self):
+        schema = CreatePointCloudChmRequest.model_json_schema()
+        assert schema["x-input-requirements"] == [
+            {"field": "source_point_cloud_id", "resource": "point_cloud", "type": "als"}
+        ]
+
     def test_spike_filter_is_on_by_default(self):
         request = CreatePointCloudChmRequest(source_point_cloud_id="cloud-1")
 

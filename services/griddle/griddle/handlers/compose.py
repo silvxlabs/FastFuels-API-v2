@@ -45,22 +45,13 @@ def compose_grid(
     output_bands = {band["key"]: band for band in grid["bands"]}
 
     progress("Evaluating compose operations...", 50)
-    for operation in source.get("select", []):
-        output_band = output_bands[operation["output"]]
-        output_vars[operation["output"]] = _evaluate_select(
-            operation,
-            output_band,
-            inputs,
-            base_ds,
-            grid["domain_id"],
-            feature_cache,
+    for operation in _operations(source):
+        evaluate = (
+            _evaluate_select if operation["type"] == "select" else _evaluate_compute
         )
-
-    for operation in source.get("compute", []):
-        output_band = output_bands[operation["output"]]
-        output_vars[operation["output"]] = _evaluate_compute(
+        output_vars[operation["output"]] = evaluate(
             operation,
-            output_band,
+            output_bands[operation["output"]],
             inputs,
             base_ds,
             grid["domain_id"],
@@ -81,6 +72,15 @@ def compose_grid(
     result = result.rio.write_transform(base_ds.rio.transform())
     progress("Compose complete.", 80)
     return result
+
+
+def _operations(source: dict) -> list[dict]:
+    """Return the tagged operation list, reading the pre-#711 `select`/`compute` shape."""
+    if "operations" in source:
+        return source["operations"]
+    return [{**op, "type": "select"} for op in source.get("select", [])] + [
+        {**op, "type": "compute"} for op in source.get("compute", [])
+    ]
 
 
 def _load_inputs(inputs: list[dict], output_grid: dict) -> dict[str, dict]:

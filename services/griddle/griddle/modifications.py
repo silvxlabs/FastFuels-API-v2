@@ -28,6 +28,7 @@ from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.domain_utils import buffer_gdf
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
+from lib.layerset_bands import split_legacy_layerset_key
 
 # Bands that can legitimately be negative (elevation below sea level), so
 # arithmetic results on them are not clamped at zero.
@@ -364,7 +365,8 @@ def _resolve_band(ds: xr.Dataset, band_key: str) -> tuple[str, str | None]:
 
     - Flat: ``ds[band_key]`` is a 2D DataArray (uniform, lookup, fbfm).
     - Var + band coord: ``ds[prefix]`` has dims ``(band, y, x)`` and a
-      ``band`` coord containing ``suffix`` (layerset).
+      ``band`` coord containing ``suffix`` (layerset grids rasterized before
+      #672; newer layerset grids are flat).
 
     Returns ``(var_name, band_coord_value_or_None)``.
     """
@@ -372,7 +374,7 @@ def _resolve_band(ds: xr.Dataset, band_key: str) -> tuple[str, str | None]:
         return band_key, None
 
     if "." in band_key:
-        prefix, suffix = band_key.split(".", 1)
+        prefix, suffix = split_legacy_layerset_key(band_key)
         if prefix in ds.data_vars:
             band_coord = ds[prefix].coords.get("band")
             if band_coord is not None and suffix in band_coord.values.tolist():

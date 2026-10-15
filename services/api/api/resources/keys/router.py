@@ -90,9 +90,9 @@ async def create_key(request: Request, body: CreateKeyRequest) -> CreateKeyRespo
         await _get_application_for_ownership(
             body.application_id, owner_id=request.state.id
         )
-        owner_id = body.application_id
+        owner_id = application_id = body.application_id
     else:
-        owner_id = request.state.id
+        owner_id, application_id = request.state.id, None
 
     raw_secret = secrets.token_hex(32)
     key_id = hash_api_key(raw_secret)
@@ -106,7 +106,7 @@ async def create_key(request: Request, body: CreateKeyRequest) -> CreateKeyRespo
         valid_days=body.valid_days,
         scopes=body.scopes,
         access=body.access,
-        application_id=body.application_id,
+        application_id=application_id,
     )
 
     # Calculate expiration

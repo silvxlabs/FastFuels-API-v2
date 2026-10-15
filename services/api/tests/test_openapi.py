@@ -49,6 +49,9 @@ def test_input_requirements_are_documented_and_name_real_fields():
         for part in path.split("."):
             if "$ref" in schema:
                 schema = schemas[schema["$ref"].split("/")[-1]]
+            if part == "*":
+                schema = schema["items"]
+                continue
             variants = schema.get("oneOf") or schema.get("anyOf") or [schema]
             schema = next(
                 v["properties"][part]
@@ -68,7 +71,11 @@ def test_input_requirements_are_documented_and_name_real_fields():
     assert entries
     for name, entry in entries:
         resolve(schemas[name], entry["field"])
-        for path in entry.get("when", {}):
+        paths = [*entry.get("when", {})]
+        paths += [
+            entry[k] for k in ("same_lattice_as", "of", "derived_from") if k in entry
+        ]
+        for path in paths:
             resolve(schemas[name], path)
         assert all(f"`{key}`" in INPUT_REQUIREMENTS_DOC for key in entry), entry
 

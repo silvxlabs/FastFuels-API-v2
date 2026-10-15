@@ -19,6 +19,7 @@ from api.resources.grids.modification_models import (
     GridModification,
 )
 from api.resources.grids.schema import Band, BandKey, validate_no_duplicates
+from api.resources.input_requirements import grid, input_requirements
 from lib.units import validate_unit
 
 
@@ -286,6 +287,12 @@ class ComposeSource(BaseModel):
 
 class CreateComposeRequest(BaseModel):
     """Request to create a grid by composing one or more existing grids."""
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            grid("inputs.*.grid_id", dims=2, same_lattice_as="inputs.*.grid_id"),
+        ),
+    )
 
     inputs: list[ComposeInput] = Field(..., min_length=1)
     operations: list[ComposeOperation] = Field(

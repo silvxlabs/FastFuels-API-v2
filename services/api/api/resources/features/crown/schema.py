@@ -72,7 +72,11 @@ class CreateChmCrownFeatureRequest(CreateFeatureRequestBase):
 
     model_config = ConfigDict(
         json_schema_extra=input_requirements(
-            inventory("source_inventory_id", columns=[TREE_ID_COLUMN.key]),
+            inventory(
+                "source_inventory_id",
+                columns=[TREE_ID_COLUMN.key],
+                derived_from="source_chm_grid_id",
+            ),
             grid("source_chm_grid_id", bands=["chm"]),
         ),
     )

@@ -10,7 +10,7 @@ preserving its bands. The new shape is controlled by the shared
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
@@ -19,6 +19,7 @@ from api.resources.grids.alignment import (
     ResamplingMethod,
 )
 from api.resources.grids.modification_models import GridModification
+from api.resources.input_requirements import grid, input_requirements
 
 
 class ResampleDomainTarget(GridAlignmentDomainTarget):
@@ -74,6 +75,10 @@ class CreateResampleRequest(BaseModel):
     transform/shape; if supplied, keeps the target's CRS and origin and
     recomputes shape at the new cell size).
     """
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(grid("source_grid_id", dims=2)),
+    )
 
     source_grid_id: str = Field(..., description="Grid to resample")
     alignment: ResampleAlignmentSpecification = Field(

@@ -6,9 +6,11 @@ Pydantic models for API key resources.
 
 from datetime import UTC, datetime
 from enum import StrEnum, auto
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
+from api.resources.input_requirements import application, input_requirements
 from api.schema import PaginatedResponse
 
 
@@ -26,11 +28,14 @@ class Access(StrEnum):
     APPLICATION = auto()
 
 
-class CreateKeyRequest(BaseModel):
-    """Request body for creating an API key."""
+class CreateKeyRequestBase(BaseModel):
+    """Fields shared by every key creation request."""
 
     name: str = Field(
-        ..., max_length=255, description="A name to semantically identify the key."
+        ...,
+        min_length=1,
+        max_length=255,
+        description="A name to semantically identify the key.",
     )
     description: str | None = Field(
         None,
@@ -46,22 +51,45 @@ class CreateKeyRequest(BaseModel):
         default=[Scope.READ],
         description="A list of scopes available to the key.",
     )
-    access: Access = Field(
+
+
+class CreatePersonalKeyRequest(CreateKeyRequestBase):
+    """Request body for a key that acts as you."""
+
+    access: Literal[Access.PERSONAL] = Field(
         default=Access.PERSONAL,
         description="Access type for the API key.",
     )
-    application_id: str | None = Field(
-        None,
-        description="Application ID accessed by the API key.",
+
+
+class CreateApplicationKeyRequest(CreateKeyRequestBase):
+    """Request body for a key that acts as one of your applications."""
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(application("application_id")),
     )
 
-    @model_validator(mode="after")
-    def check_app_id(self):
-        if self.access == Access.APPLICATION and not self.application_id:
-            raise ValueError(
-                "Application ID must be provided for access type of APPLICATION"
-            )
-        return self
+    access: Literal[Access.APPLICATION] = Field(
+        description="Access type for the API key."
+    )
+    application_id: str = Field(
+        min_length=1, description="Application ID accessed by the API key."
+    )
+
+
+def _default_access(value):
+    if isinstance(value, dict) and "access" not in value:
+        return {**value, "access": Access.PERSONAL}
+    return value
+
+
+CreateKeyRequest = Annotated[
+    Annotated[
+        CreatePersonalKeyRequest | CreateApplicationKeyRequest,
+        Field(discriminator="access"),
+    ],
+    BeforeValidator(_default_access),
+]
 
 
 class Key(BaseModel):

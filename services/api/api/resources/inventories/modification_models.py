@@ -15,11 +15,13 @@ from typing import Annotated, Literal
 import pint
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     field_validator,
     model_validator,
 )
 
+from api.resources.input_requirements import feature, input_requirements
 from api.resources.modifications import Modifier, Operator, SpatialOperator
 
 ureg = pint.UnitRegistry()
@@ -355,6 +357,10 @@ class InventoryFeatureSpatialCondition(BaseModel):
     A non-zero ``buffer_m`` is typically required for linestring features
     (e.g. roads), since tree points almost never intersect a bare linestring.
     """
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(feature("feature_id"))
+    )
 
     source: Literal["feature"] = Field(
         ...,

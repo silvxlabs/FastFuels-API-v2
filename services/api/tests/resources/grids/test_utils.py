@@ -10,7 +10,9 @@ from unittest.mock import patch
 
 import pytest
 from api.resources.exports.schema import GridExportFormat
+from api.resources.features.crown.schema import CreateChmCrownFeatureRequest
 from api.resources.grids.alignment import GridLatticeGridTarget
+from api.resources.grids.compose.schema import CreateComposeRequest
 from api.resources.grids.lookup.fbfm40.schema import CreateFbfm40LookupRequest
 from api.resources.grids.utils import (
     incomplete_inventory_columns,
@@ -24,7 +26,7 @@ from api.resources.grids.utils import (
 from api.resources.grids.voxelize.inventory.tree.schema import (
     CreateTreeInventoryRequest,
 )
-from api.resources.input_requirements import requirements_for
+from api.resources.input_requirements import X_INPUT_REQUIREMENTS, requirements_for
 from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
 from fastapi import HTTPException
 
@@ -379,3 +381,27 @@ class TestRequirementsFor:
 
         assert "tree_id" not in columns(parametric)
         assert "tree_id" in columns(measured)
+
+    def test_nested_schema_entries_apply_to_their_own_fields(self):
+        target = GridLatticeGridTarget(target="grid", grid_id="g1")
+        assert requirements_for(target, "grid_id") == [
+            {"field": "grid_id", "resource": "grid"}
+        ]
+
+    def test_crown_inventory_derived_from_chm_grid(self):
+        body = CreateChmCrownFeatureRequest(
+            source_inventory_id="i1", source_chm_grid_id="g1"
+        )
+        (req,) = requirements_for(body, "source_inventory_id")
+        assert req["derived_from"] == "source_chm_grid_id"
+
+    def test_compose_inputs_share_one_lattice(self):
+        extra = CreateComposeRequest.model_config["json_schema_extra"]
+        assert extra[X_INPUT_REQUIREMENTS] == [
+            {
+                "field": "inputs.*.grid_id",
+                "resource": "grid",
+                "dims": 2,
+                "same_lattice_as": "inputs.*.grid_id",
+            }
+        ]

@@ -211,12 +211,13 @@ def process_upload(cloud_event: CloudEvent) -> None:
     if not claimed:
         status = doc.get("status")
         if status == "running":
-            logger.info(
-                f"Resource claimed by another run at {doc.get('claimed_on')}, skipping",
-                extra=ids,
+            # Raise, don't return: returning acks the event, and if the claiming
+            # run has died, a retry after its lease expires is what finishes it.
+            raise RuntimeError(
+                f"Resource claimed by another run at {doc.get('claimed_on')}; "
+                "retrying later"
             )
-        else:
-            logger.info(f"Resource already {status}, skipping", extra=ids)
+        logger.info(f"Resource already {status}, skipping", extra=ids)
         return
 
     try:

@@ -84,13 +84,16 @@ def test_already_failed_skips_dispatch(mock_claim, mock_update, mock_dispatch):
 @patch("uploader.dispatch.dispatch_handler")
 @patch("uploader.main.update_document_or_cancel")
 @patch("uploader.main.claim_resource")
-def test_claimed_by_another_run_skips_dispatch(mock_claim, mock_update, mock_dispatch):
-    """Duplicate delivery while another run holds the claim → no dispatch (#709)."""
+def test_claimed_by_another_run_raises_for_retry(
+    mock_claim, mock_update, mock_dispatch
+):
+    """Claim held by another run → no dispatch, and raise so the event is retried (#709)."""
     doc = _make_doc("running") | {"claimed_on": datetime.now(UTC)}
     mock_claim.return_value = (False, doc)
 
     event = _make_event("uploads-bucket", "inventories/inv-123/upload.csv")
-    assert process_upload(event) is None
+    with pytest.raises(RuntimeError, match="claimed by another run"):
+        process_upload(event)
 
     mock_dispatch.assert_not_called()
     mock_update.assert_not_called()

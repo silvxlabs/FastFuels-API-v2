@@ -16,7 +16,12 @@ from cloudevents.http import CloudEvent
 from uploader.main import CLAIM_LEASE, process_upload
 
 from lib.config import INVENTORIES_COLLECTION
-from lib.firestore import delete_document, get_document, set_document
+from lib.firestore import (
+    delete_document,
+    get_document,
+    set_document,
+    update_document,
+)
 
 
 def _make_event(resource_id: str) -> CloudEvent:
@@ -82,7 +87,9 @@ def test_concurrent_deliveries_dispatch_once(make_inventory):
         for t in threads:
             t.join()
 
-    assert errors == []
+    # The losers raise so Eventarc retries them; none of them dispatch.
+    assert len(errors) == deliveries - 1
+    assert all("claimed by another run" in str(e) for e in errors)
     assert mock_dispatch.call_count == 1
     doc = _read(inventory_id)
     assert doc["status"] == "running"
@@ -115,18 +122,44 @@ def test_stale_claim_is_taken_over(make_inventory):
     assert _read(inventory_id)["claimed_on"] > stale
 
 
-def test_fresh_claim_is_skipped(make_inventory):
-    """A claim within the lease belongs to a live run → duplicate skips."""
+def test_fresh_claim_raises_for_retry(make_inventory):
+    """A claim within the lease → duplicate doesn't dispatch, and raises to be retried."""
     fresh = datetime.now(UTC) - timedelta(seconds=30)
     inventory_id = make_inventory(status="running", claimed_on=fresh)
 
     with patch("uploader.dispatch.dispatch_handler") as mock_dispatch:
-        process_upload(_make_event(inventory_id))
+        with pytest.raises(RuntimeError, match="claimed by another run"):
+            process_upload(_make_event(inventory_id))
 
     mock_dispatch.assert_not_called()
     doc = _read(inventory_id)
     assert doc["status"] == "running"
     assert doc["claimed_on"] == fresh
+
+
+def test_retry_after_failed_run_is_not_dropped(make_inventory):
+    """A run that fails leaves its claim; retries keep raising until the lease expires, then take over."""
+    inventory_id = make_inventory(status="pending")
+    event = _make_event(inventory_id)
+
+    with patch("uploader.dispatch.dispatch_handler") as mock_dispatch:
+        mock_dispatch.side_effect = RuntimeError("transient failure")
+        with pytest.raises(RuntimeError, match="transient failure"):
+            process_upload(event)
+
+        # Retry inside the lease: raises again rather than acking and dropping the event.
+        mock_dispatch.side_effect = None
+        with pytest.raises(RuntimeError, match="claimed by another run"):
+            process_upload(event)
+        assert mock_dispatch.call_count == 1
+
+        # Retry after the lease: the dead run's claim is taken over.
+        stale = datetime.now(UTC) - CLAIM_LEASE - timedelta(seconds=60)
+        update_document(INVENTORIES_COLLECTION, inventory_id, {"claimed_on": stale})
+        process_upload(event)
+        assert mock_dispatch.call_count == 2
+
+    assert _read(inventory_id)["claimed_on"] > stale
 
 
 @pytest.mark.parametrize("status", ["completed", "failed"])

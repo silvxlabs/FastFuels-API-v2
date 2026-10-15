@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.features.schema import FeatureType
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 from api.resources.input_requirements import feature, input_requirements, inventory
@@ -32,7 +33,7 @@ VOXELIZE_REQUIRED_COLUMNS = frozenset(
 )
 
 
-class TreeBand(StrEnum):
+class TreeBand(BandEnum):
     """Available output bands for tree fuel grids.
 
     Each value is the band's dot-notation key as it appears in the stored
@@ -492,6 +493,9 @@ class MoistureModel(BaseModel):
 
     live: UniformMoistureValue | None = None
     dead: UniformMoistureValue | None = None
+
+
+publish_band_defs(TreeBand, TREE_BAND_DEFS)
 
 
 def build_tree_bands(requested: list[TreeBand]) -> list[Band]:

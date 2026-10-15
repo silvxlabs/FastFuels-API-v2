@@ -8,11 +8,11 @@ Converts categorical Anderson 13 fuel model codes (from
 Anderson 13 lookup table.
 """
 
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
@@ -32,7 +32,7 @@ class Fbfm13LookupSource(LookupSource):
     )
 
 
-class Fbfm13LookupBand(StrEnum):
+class Fbfm13LookupBand(BandEnum):
     """Bands available from the Anderson 13 lookup table."""
 
     fuel_load_1hr = "fuel_load.1hr"
@@ -135,6 +135,9 @@ FBFM13_LOOKUP_BAND_METADATA: dict[Fbfm13LookupBand, dict] = {
         "unit": "m",
     },
 }
+
+
+publish_band_defs(Fbfm13LookupBand, FBFM13_LOOKUP_BAND_METADATA)
 
 
 def get_fbfm13_lookup_band(band: Fbfm13LookupBand, index: int) -> Band:

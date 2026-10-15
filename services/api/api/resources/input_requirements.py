@@ -32,7 +32,8 @@ meet. A field can have several entries; the input must meet all of them.
 | `type` | The feature's `type`, e.g. `crown`. |
 | `when` | Applies only when the request has these values: `{"<dotted path>": <value>}`. |
 
-Band keys are `<quantity>` or `<quantity>.<label>`; the GeoTIFF upload `bands[].key` description lists the quantities.
+Band keys are `<quantity>` or `<quantity>.<label>`; `x-band-quantities` on the
+`Band` schema lists the quantities.
 
 Every input must also be completed and in the same domain. A request can still
 fail other checks, which the operation's description lists.

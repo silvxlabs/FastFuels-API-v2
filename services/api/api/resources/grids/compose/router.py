@@ -26,6 +26,7 @@ from api.resources.grids.compose.schema import (
     ComposeElseValue,
     ComposeInput,
     ComposeLiteral,
+    ComposeOperation,
     ComposeOperator,
     ComposeSelect,
     ComposeSource,
@@ -152,14 +153,13 @@ async def _load_source_grids(
 
 
 async def _validate_compose_feature_conditions(
-    select: list[ComposeSelect],
-    compute: list[ComposeCompute],
+    operations: list[ComposeOperation],
     owner_id: str,
     domain_id: str,
 ) -> None:
     feature_ids: list[str] = []
     seen: set[str] = set()
-    for operation in [*select, *compute]:
+    for operation in operations:
         for condition in operation.conditions or []:
             if (
                 isinstance(condition, GridFeatureSpatialCondition)
@@ -415,14 +415,15 @@ def _build_output_bands(
 ) -> list[Band]:
     """Derive the ordered output band list from the compose operations.
 
-    Select outputs inherit the source band's type and unit; compute outputs are
-    always continuous with a derived (or compatibly overridden) unit.
+    Bands follow the order of `operations`. Select outputs inherit the source
+    band's type and unit; compute outputs are always continuous with a derived
+    (or compatibly overridden) unit.
     `name`/`description` come from the operation. Conditions and `else`
     fallbacks are validated here against the loaded source grids, and FBFM
     label fallbacks are resolved in place.
     """
     bands: list[Band] = []
-    for operation in [*body.select, *body.compute]:
+    for operation in body.operations:
         if isinstance(operation, ComposeSelect):
             source_band = _band_ref_metadata(
                 operation.from_, source_grids, input_by_alias
@@ -456,7 +457,7 @@ def _build_output_bands(
 
 
 def _dump_operations_for_firestore(
-    operations: list[ComposeSelect] | list[ComposeCompute],
+    operations: list[ComposeOperation],
 ) -> list[dict]:
     data = [op.model_dump(by_alias=True, exclude_none=True) for op in operations]
     return stringify_modification_coordinates(data)
@@ -491,9 +492,7 @@ async def create_compose_grid(
     await enforce_create_quotas(COLLECTION, request)
 
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
-    await _validate_compose_feature_conditions(
-        body.select, body.compute, owner_id, domain_id
-    )
+    await _validate_compose_feature_conditions(body.operations, owner_id, domain_id)
 
     source_grids = await _load_source_grids(body.inputs, owner_id, domain_id)
     input_by_alias = {inp.alias: inp for inp in body.inputs}
@@ -520,13 +519,11 @@ async def create_compose_grid(
             for inp in body.inputs
         ],
         bands=bands,
-        select=body.select,
-        compute=body.compute,
+        operations=body.operations,
     )
 
     source_data = source.model_dump(by_alias=True)
-    source_data["select"] = _dump_operations_for_firestore(body.select)
-    source_data["compute"] = _dump_operations_for_firestore(body.compute)
+    source_data["operations"] = _dump_operations_for_firestore(body.operations)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

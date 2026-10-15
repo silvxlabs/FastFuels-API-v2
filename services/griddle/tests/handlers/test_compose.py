@@ -49,8 +49,8 @@ def _source(inputs, select=None, compute=None):
     return {
         "name": "compose",
         "inputs": inputs,
-        "select": select or [],
-        "compute": compute or [],
+        "operations": [{**op, "type": "select"} for op in select or []]
+        + [{**op, "type": "compute"} for op in compute or []],
     }
 
 
@@ -238,6 +238,64 @@ class TestComposeGrid:
         np.testing.assert_array_equal(
             result["fuel_load.10hr"].values,
             np.array([[5.0, 4.0], [7.0, 6.0]]),
+        )
+
+    @patch("griddle.handlers.compose.get_document")
+    @patch("griddle.handlers.compose.load_zarr")
+    def test_compute_before_select_in_operations(
+        self, mock_load_zarr, mock_get_document
+    ):
+        mock_get_document.return_value = (None, _snapshot())
+        mock_load_zarr.return_value = _make_ds(
+            {"fbfm": np.array([[1, 2], [3, 4]]), "fuel_load.1hr": np.full((2, 2), 2.0)}
+        )
+        source = {
+            "name": "compose",
+            "inputs": [{"grid_id": "grid_a", "alias": "a"}],
+            "operations": [
+                {
+                    "type": "compute",
+                    "output": "fuel_load.1hr",
+                    "operator": "multiply",
+                    "operands": ["a.fuel_load.1hr", 2],
+                },
+                {"type": "select", "output": "fbfm", "from": "a.fbfm"},
+            ],
+        }
+
+        result = compose_grid(_grid("fuel_load.1hr", "fbfm"), source, MagicMock())
+
+        assert list(result.data_vars) == ["fuel_load.1hr", "fbfm"]
+        np.testing.assert_array_equal(
+            result["fuel_load.1hr"].values, np.full((2, 2), 4.0)
+        )
+        np.testing.assert_array_equal(result["fbfm"].values, np.array([[1, 2], [3, 4]]))
+
+    @patch("griddle.handlers.compose.get_document")
+    @patch("griddle.handlers.compose.load_zarr")
+    def test_legacy_select_compute_source(self, mock_load_zarr, mock_get_document):
+        mock_get_document.return_value = (None, _snapshot())
+        mock_load_zarr.return_value = _make_ds(
+            {"fbfm": np.array([[1, 2], [3, 4]]), "fuel_load.1hr": np.full((2, 2), 2.0)}
+        )
+        source = {
+            "name": "compose",
+            "inputs": [{"grid_id": "grid_a", "alias": "a"}],
+            "select": [{"output": "fbfm", "from": "a.fbfm"}],
+            "compute": [
+                {
+                    "output": "fuel_load.1hr",
+                    "operator": "multiply",
+                    "operands": ["a.fuel_load.1hr", 2],
+                }
+            ],
+        }
+
+        result = compose_grid(_grid("fbfm", "fuel_load.1hr"), source, MagicMock())
+
+        assert list(result.data_vars) == ["fbfm", "fuel_load.1hr"]
+        np.testing.assert_array_equal(
+            result["fuel_load.1hr"].values, np.full((2, 2), 4.0)
         )
 
     @patch("griddle.handlers.compose.get_document")

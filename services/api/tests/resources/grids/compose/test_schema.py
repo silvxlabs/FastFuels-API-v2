@@ -17,8 +17,9 @@ class TestCreateComposeRequest:
     def test_minimal_valid_request(self):
         request = CreateComposeRequest(
             inputs=[{"grid_id": "grid_a", "alias": "a"}],
-            compute=[
+            operations=[
                 {
+                    "type": "compute",
                     "output": "fuel_load.1hr",
                     "operator": "multiply",
                     "operands": ["a.fuel_load.1hr", 0.5],
@@ -27,18 +28,57 @@ class TestCreateComposeRequest:
         )
 
         assert request.inputs[0].alias == "a"
-        assert request.compute[0].operands[1] == 0.5
+        assert isinstance(request.operations[0], ComposeCompute)
+        assert request.operations[0].operands[1] == 0.5
 
-    def test_at_least_one_operation_required(self):
-        with pytest.raises(ValidationError, match="select or compute"):
-            CreateComposeRequest(inputs=[{"grid_id": "grid_a", "alias": "a"}])
+    @pytest.mark.parametrize("operations", [None, []])
+    def test_at_least_one_operation_required(self, operations):
+        body = {"inputs": [{"grid_id": "grid_a", "alias": "a"}]}
+        if operations is not None:
+            body["operations"] = operations
+        with pytest.raises(ValidationError, match="operations"):
+            CreateComposeRequest(**body)
+
+    def test_operation_type_is_required(self):
+        with pytest.raises(ValidationError, match="type"):
+            CreateComposeRequest(
+                inputs=[{"grid_id": "grid_a", "alias": "a"}],
+                operations=[{"output": "fbfm", "from": "a.fbfm"}],
+            )
+
+    def test_operations_keep_order_and_discriminate(self):
+        request = CreateComposeRequest(
+            inputs=[{"grid_id": "grid_a", "alias": "a"}],
+            operations=[
+                {
+                    "type": "compute",
+                    "output": "fuel_load.1hr",
+                    "operator": "multiply",
+                    "operands": ["a.fuel_load.1hr", 0.5],
+                },
+                {"type": "select", "output": "fbfm", "from": "a.fbfm"},
+            ],
+        )
+
+        assert [type(op) for op in request.operations] == [
+            ComposeCompute,
+            ComposeSelect,
+        ]
+
+    def test_operations_required_in_json_schema(self):
+        schema = CreateComposeRequest.model_json_schema()
+        assert "operations" in schema["required"]
+        assert schema["properties"]["operations"]["minItems"] == 1
+        assert "select" not in schema["properties"]
+        assert "compute" not in schema["properties"]
 
     def test_alias_must_be_identifier_like(self):
         with pytest.raises(ValidationError):
             CreateComposeRequest(
                 inputs=[{"grid_id": "grid_a", "alias": "a.bad"}],
-                compute=[
+                operations=[
                     {
+                        "type": "compute",
                         "output": "fuel_load.1hr",
                         "operator": "multiply",
                         "operands": ["a.fuel_load.1hr", 0.5],
@@ -50,9 +90,14 @@ class TestCreateComposeRequest:
         with pytest.raises(ValidationError, match="Duplicate"):
             CreateComposeRequest(
                 inputs=[{"grid_id": "grid_a", "alias": "a"}],
-                select=[
-                    {"output": "fuel_load.1hr", "from": "a.fuel_load.1hr"},
-                    {"output": "fuel_load.1hr", "from": "a.fuel_load.10hr"},
+                operations=[
+                    {"type": "select", "output": "fbfm", "from": "a.fbfm"},
+                    {
+                        "type": "compute",
+                        "output": "fbfm",
+                        "operator": "multiply",
+                        "operands": ["a.fuel_load.1hr", 0.5],
+                    },
                 ],
             )
 
@@ -60,8 +105,9 @@ class TestCreateComposeRequest:
         with pytest.raises(ValidationError, match="else"):
             CreateComposeRequest(
                 inputs=[{"grid_id": "grid_a", "alias": "a"}],
-                select=[
+                operations=[
                     {
+                        "type": "select",
                         "output": "fuel_load.1hr",
                         "from": "a.fuel_load.1hr",
                         "conditions": [
@@ -111,7 +157,12 @@ class TestComputationOperands:
 
     def test_compose_compute_inherits_operand_validation(self):
         with pytest.raises(ValidationError, match="exactly two operands"):
-            ComposeCompute(output="fuel_load", operator="subtract", operands=["a.x"])
+            ComposeCompute(
+                type="compute",
+                output="fuel_load",
+                operator="subtract",
+                operands=["a.x"],
+            )
 
 
 class TestAttributeConditionShape:
@@ -137,10 +188,12 @@ class TestExamplesValidateAgainstSchema:
     def test_example_validates_against_schema(self, example_name, example_value):
         request = CreateComposeRequest(**example_value)
         assert request.inputs, example_name
-        assert request.select or request.compute, example_name
+        assert request.operations, example_name
 
 
 class TestOutputKey:
     def test_unknown_quantity_rejected(self):
         with pytest.raises(ValidationError, match="not a band key"):
-            ComposeSelect.model_validate({"output": "moisture", "from": "a.x"})
+            ComposeSelect.model_validate(
+                {"type": "select", "output": "moisture", "from": "a.x"}
+            )

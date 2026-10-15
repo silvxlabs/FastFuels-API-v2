@@ -30,6 +30,7 @@ import numpy as np
 import rioxarray  # noqa: F401 — registers `.rio` accessor
 import xarray as xr
 from leaflux import Environment, LeafArea, SolarPosition, Terrain, attenuate_all
+from scipy.ndimage import distance_transform_edt
 
 from treevox import storage
 from treevox.errors import ProcessingError
@@ -45,6 +46,9 @@ SURFACE_BAND = "irradiance.surface.relative"
 MAX_ZENITH_DEG = 85.0  # past this the sun is treated as down (near-dark)
 WINDOW_TARGET_CELLS = 1600  # core + 2*halo cap; ~2 GB peak at nz~40, fill~0.15
 AIR_FILL = np.float32("nan")
+# Nodata terrain is filled from the nearest valid cell up to this share of the
+# grid; past it the terrain does not describe the LAD grid's ground.
+MAX_TERRAIN_NODATA_FRACTION = 0.10
 
 # One tile is computed and written per worker, so peak memory is roughly
 # WRITE_WORKERS * one padded tile (WINDOW_TARGET_CELLS sizes a tile to ~2 GB).
@@ -296,18 +300,65 @@ _WORKER: dict = {}
 def _open_worker_sources(job: _WriteJob) -> None:
     _WORKER["job"] = job
     _WORKER["lad_ds"] = _open(job.lad_grid_id)
-    _WORKER["dem_ds"] = _open(job.dem_id) if job.dem_id else None
+    _WORKER["terrain"] = _WORKER["terrain_valid"] = None
+    if job.dem_id:
+        elev, valid = _load_terrain(job.dem_id)
+        _WORKER["terrain"] = (_fill_nodata(elev, valid) - job.z_origin) / job.vr
+        _WORKER["terrain_valid"] = valid
+
+
+def _load_terrain(dem_id: str) -> tuple[np.ndarray, np.ndarray]:
+    """The whole (y, x) elevation grid and its mask of cells holding data.
+
+    Read whole, not per tile: the nearest-cell fill must not depend on the tile
+    window, and a window can be entirely nodata. It is 2D, so 1/nz of the LAD."""
+    da = _open(dem_id)[ELEVATION_KEY]
+    elev = da.values.astype(np.float32)
+    valid = np.isfinite(elev)
+    nodata = da.rio.nodata
+    if nodata is not None and np.isfinite(nodata):
+        valid &= elev != nodata
+    return elev, valid
+
+
+def _fill_nodata(elev: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Give each nodata cell the elevation of its nearest valid cell."""
+    if valid.all():
+        return elev
+    idx = distance_transform_edt(~valid, return_distances=False, return_indices=True)
+    return elev[tuple(idx)]
+
+
+def _check_terrain(dem_id: str) -> None:
+    """Fail before any compute when the terrain cannot stand in for the ground
+    under the LAD grid: entirely nodata, or nodata over too large a share."""
+    _, valid = _load_terrain(dem_id)
+    missing = int(valid.size - np.count_nonzero(valid))
+    if missing / valid.size <= MAX_TERRAIN_NODATA_FRACTION:
+        return
+    raise ProcessingError(
+        code="TERRAIN_NODATA",
+        message=(
+            f"Terrain grid {dem_id} has no elevation in {missing} of "
+            f"{valid.size} cells ({missing / valid.size:.0%}); at most "
+            f"{MAX_TERRAIN_NODATA_FRACTION:.0%} can be filled from nearby cells."
+        ),
+        suggestion=(
+            "Create the terrain grid so its elevation covers the LAD grid's "
+            "extent (e.g. align it to the LAD grid with alignment.target='grid', "
+            "or add extent_buffer_cells to the source terrain), or omit "
+            "source_terrain_grid_id to use flat terrain."
+        ),
+    )
 
 
 def _read_terrain(tile: _Tile, shape: tuple[int, int]) -> np.ndarray:
     """The tile's padded terrain in cell units, or a flat plane at the LAD datum
     when there is no terrain grid."""
-    job: _WriteJob = _WORKER["job"]
-    dem_ds = _WORKER["dem_ds"]
-    if dem_ds is None:
+    terrain = _WORKER["terrain"]
+    if terrain is None:
         return np.zeros(shape, dtype=np.float32)
-    elev = dem_ds[ELEVATION_KEY][tile.pad_yx].values.astype(np.float32)
-    return (elev - job.z_origin) / job.vr
+    return terrain[tile.pad_yx]
 
 
 def _write_tile(tile: _Tile) -> None:
@@ -328,6 +379,9 @@ def _write_tile(tile: _Tile) -> None:
         surface = _surface_irradiance(  # 2-D (y, x) ground plane
             lad, terrain, origin, job.sol, job.extn, job.voxel, job.night
         )
+        if _WORKER["terrain_valid"] is not None:
+            # Filled ground is a stand-in: no irradiance where elevation is unknown.
+            surface = np.where(_WORKER["terrain_valid"][tile.pad_yx], surface, AIR_FILL)
         if job.is_3d:
             # Store the ground plane at z=0 of an otherwise-air (z, y, x) tile.
             grid = np.full(lad.shape, AIR_FILL, dtype=np.float32)
@@ -452,14 +506,16 @@ def run_leaflux(
     # surface band then rides at z=0), and 2D for a surface-only request.
     is_3d = CANOPY_BAND in requested
 
+    dem_id = source.get("source_terrain_grid_id") if SURFACE_BAND in requested else None
+    if dem_id:
+        _check_terrain(dem_id)
+
     progress("Writing irradiance grid...", 20)
     _init_output(out_path, lad_ds, bands, core, is_3d, crs, transform, z_origin, vr)
 
     job = _WriteJob(
         lad_grid_id=source["source_lad_grid_id"],
-        dem_id=source.get("source_terrain_grid_id")
-        if SURFACE_BAND in requested
-        else None,
+        dem_id=dem_id,
         out_path=out_path,
         nz=nz,
         ny=ny,

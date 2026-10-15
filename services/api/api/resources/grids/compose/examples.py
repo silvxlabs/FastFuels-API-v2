@@ -6,8 +6,9 @@ EXAMPLE_COMPOSE_BASIC_COMPUTE = {
         {"grid_id": "grid_fbfm40", "alias": "a"},
         {"grid_id": "grid_fccs", "alias": "b"},
     ],
-    "compute": [
+    "operations": [
         {
+            "type": "compute",
             "output": "fuel_load",
             "operator": "add",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
@@ -21,17 +22,17 @@ EXAMPLE_COMPOSE_SELECT_AND_COMPUTE = {
         {"grid_id": "grid_fbfm40", "alias": "a"},
         {"grid_id": "grid_fccs", "alias": "b"},
     ],
-    "select": [
-        {"output": "fbfm", "from": "a.fbfm"},
-        {"output": "fuel_depth", "from": "a.fuel_depth"},
-    ],
-    "compute": [
+    "operations": [
+        {"type": "select", "output": "fbfm", "from": "a.fbfm"},
+        {"type": "select", "output": "fuel_depth", "from": "a.fuel_depth"},
         {
+            "type": "compute",
             "output": "fuel_load.1hr",
             "operator": "add",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
         },
         {
+            "type": "compute",
             "output": "fuel_load.10hr",
             "operator": "max",
             "operands": ["a.fuel_load.10hr", "b.fuel_load.10hr"],
@@ -42,23 +43,23 @@ EXAMPLE_COMPOSE_SELECT_AND_COMPUTE = {
 EXAMPLE_COMPOSE_SINGLE_GRID_MATH = {
     "name": "FCCS with combined 1hr fuels",
     "inputs": [{"grid_id": "grid_fccs", "alias": "a"}],
-    "select": [
-        {"output": "duff_depth", "from": "a.duff_depth"},
-    ],
-    "compute": [
+    "operations": [
+        {"type": "select", "output": "duff_depth", "from": "a.duff_depth"},
         {
+            "type": "compute",
             "output": "fuel_load.1hr",
             "operator": "add",
             "operands": ["a.fuel_load.1hr", "a.fuel_load.litter"],
-        }
+        },
     ],
 }
 
 EXAMPLE_COMPOSE_WITH_LITERAL = {
     "name": "Adjusted fuel loads",
     "inputs": [{"grid_id": "grid_surface", "alias": "a"}],
-    "compute": [
+    "operations": [
         {
+            "type": "compute",
             "output": "fuel_load.1hr",
             "operator": "multiply",
             "operands": ["a.fuel_load.1hr", 0.5],
@@ -72,8 +73,9 @@ EXAMPLE_COMPOSE_UNIT_OVERRIDE = {
         {"grid_id": "grid_fbfm40", "alias": "a"},
         {"grid_id": "grid_fccs", "alias": "b"},
     ],
-    "compute": [
+    "operations": [
         {
+            "type": "compute",
             "output": "fuel_load.1hr",
             "operator": "add",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
@@ -90,8 +92,9 @@ EXAMPLE_COMPOSE_CONDITIONAL_COMPUTE = {
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
     ],
-    "compute": [
+    "operations": [
         {
+            "type": "compute",
             "output": "fuel_load.1hr",
             "operator": "average",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
@@ -110,8 +113,9 @@ EXAMPLE_COMPOSE_CONDITIONAL_FALLBACK = {
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
     ],
-    "select": [
+    "operations": [
         {
+            "type": "select",
             "output": "fuel_load.1hr",
             "from": "a.fuel_load.1hr",
             "conditions": [{"band": "b.fuel_load.1hr", "operator": "eq", "value": 0}],
@@ -126,8 +130,9 @@ EXAMPLE_COMPOSE_SET_MEMBERSHIP = {
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
     ],
-    "select": [
+    "operations": [
         {
+            "type": "select",
             "output": "fuel_load.1hr",
             "from": "b.fuel_load.1hr",
             "conditions": [
@@ -158,8 +163,9 @@ EXAMPLE_COMPOSE_INLINE_COMPUTE_FALLBACK = {
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
     ],
-    "select": [
+    "operations": [
         {
+            "type": "select",
             "output": "fuel_load.1hr",
             "from": "a.fuel_load.1hr",
             "conditions": [{"band": "b.fuel_load.1hr", "operator": "eq", "value": 0}],
@@ -177,12 +183,11 @@ EXAMPLE_COMPOSE_MIXED_CONDITIONS = {
         {"grid_id": "grid_landfire", "alias": "a"},
         {"grid_id": "grid_rap", "alias": "b"},
     ],
-    "select": [
-        {"output": "fbfm", "from": "a.fbfm"},
-        {"output": "fuel_depth", "from": "a.fuel_depth"},
-    ],
-    "compute": [
+    "operations": [
+        {"type": "select", "output": "fbfm", "from": "a.fbfm"},
+        {"type": "select", "output": "fuel_depth", "from": "a.fuel_depth"},
         {
+            "type": "compute",
             "output": "fuel_load.1hr",
             "operator": "average",
             "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
@@ -207,15 +212,16 @@ EXAMPLE_COMPOSE_MIXED_CONDITIONS = {
                 },
             ],
             "else": "a.fuel_load.1hr",
-        }
+        },
     ],
 }
 
 EXAMPLE_COMPOSE_TYPED_LITERAL_FALLBACK = {
     "name": "Zero non-burnable fuels",
     "inputs": [{"grid_id": "grid_surface", "alias": "a"}],
-    "select": [
+    "operations": [
         {
+            "type": "select",
             "output": "fuel_load.1hr",
             "from": "a.fuel_load.1hr",
             "conditions": [
@@ -238,7 +244,7 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
             "Adds the same continuous band from two aligned source grids and "
             "writes the result as a single output band named `fuel_load`. This is the smallest "
             "multi-grid compose request: `inputs` gives each source grid an "
-            "alias, and `compute` names the output plus the arithmetic "
+            "alias, and a `compute` operation names the output plus the arithmetic "
             "operation. The output band's type (continuous) and unit "
             "(`kg/m**2`, inherited from the operands) are derived automatically "
             "— only the optional `name` is supplied. Use this pattern when two "
@@ -251,11 +257,11 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
         "summary": "Select bands and compute multiple outputs",
         "description": (
             "Builds a richer output grid by copying some bands directly from "
-            "one source and computing others from two sources. `select` "
-            "preserves categorical or already-valid bands such as `fbfm` and "
-            "`fuel_depth`; `compute` derives new continuous outputs. The output "
-            "grid's bands come from the operations, in order — selects first, "
-            "then computes — so the resulting band order is `fbfm`, "
+            "one source and computing others from two sources. `select` operations "
+            "preserve categorical or already-valid bands such as `fbfm` and "
+            "`fuel_depth`; `compute` operations derive new continuous outputs. "
+            "Output bands follow the order of `operations`, so the resulting "
+            "band order is `fbfm`, "
             "`fuel_depth`, `fuel_load.1hr`, `fuel_load.10hr`."
         ),
     },
@@ -277,7 +283,7 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
         "summary": "Compute using a scalar literal",
         "description": (
             "Scales a raster band by a bare numeric literal. Bare numbers are "
-            "allowed in `compute.operands`; for `multiply` and `divide` they "
+            "allowed in compute `operands`; for `multiply` and `divide` they "
             "are treated as dimensionless, so multiplying `kg/m**2` by `0.5` "
             "leaves the derived output unit `kg/m**2`. Use a tagged literal "
             "instead when the literal itself has a unit."
@@ -335,7 +341,7 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_COMPOSE_INLINE_COMPUTE_FALLBACK,
         "summary": "Fallback to an inline computation",
         "description": (
-            "Uses a normal `select` for the primary branch and an inline "
+            "Uses a `select` operation for the primary branch and an inline "
             "`compute` object for the fallback branch. Cells where RAP is zero "
             "use LANDFIRE directly; all other cells use the average of "
             "LANDFIRE and RAP. Inline computes are allowed only as fallback "

@@ -7,11 +7,13 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     AfterValidator,
     BaseModel,
+    ConfigDict,
     Field,
     model_serializer,
     model_validator,
 )
 
+from api.resources.band_metadata import BAND_QUANTITIES_SCHEMA
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
     GridAlignmentSpecification,
@@ -113,6 +115,8 @@ class GridSortField(StrEnum):
 
 class Band(BaseModel):
     """A single band in a grid."""
+
+    model_config = ConfigDict(json_schema_extra=BAND_QUANTITIES_SCHEMA)
 
     key: str = Field(..., description="Dot-notation key (e.g., 'fuel_load.1hr')")
     name: str | None = Field(

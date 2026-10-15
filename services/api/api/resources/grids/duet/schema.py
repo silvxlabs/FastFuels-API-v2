@@ -12,16 +12,16 @@ Includes the band vocabulary, the calibration models, and the request and
 persisted-source schemas.
 """
 
-from enum import StrEnum
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 from api.resources.input_requirements import grid, input_requirements
 
 
-class DuetBand(StrEnum):
+class DuetBand(BandEnum):
     """Available output bands for DUET surface fuel grids.
 
     DUET decomposes surface fuels by fuel *type*, not by size class, so this
@@ -160,6 +160,9 @@ DUET_BAND_DEFS: dict[DuetBand, dict] = {
         "unit": "%",
     },
 }
+
+
+publish_band_defs(DuetBand, DUET_BAND_DEFS)
 
 
 def build_duet_bands(requested: list[DuetBand]) -> list[Band]:

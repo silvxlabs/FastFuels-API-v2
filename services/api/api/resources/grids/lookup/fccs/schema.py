@@ -7,11 +7,11 @@ Converts categorical FCCS codes (from `/grids/fccs/landfire`) to continuous
 fuel parameters using the FOFEM FCCS fuelbed lookup table.
 """
 
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
@@ -31,7 +31,7 @@ class FccsLookupSource(LookupSource):
     )
 
 
-class FccsLookupBand(StrEnum):
+class FccsLookupBand(BandEnum):
     """Bands available from the FOFEM FCCS fuelbed lookup table.
 
     A starting subset of the parameters FOFEM provides. Region/scenario
@@ -168,6 +168,9 @@ FCCS_LOOKUP_BAND_METADATA: dict[FccsLookupBand, dict] = {
         "unit": "kg/m**2",
     },
 }
+
+
+publish_band_defs(FccsLookupBand, FCCS_LOOKUP_BAND_METADATA)
 
 
 def get_fccs_lookup_band(band: FccsLookupBand, index: int) -> Band:

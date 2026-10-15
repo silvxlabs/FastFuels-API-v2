@@ -32,6 +32,7 @@ from pydantic import (
     model_validator,
 )
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.alignment import (
     GridLatticeDomainTarget,
     GridLatticeSpecification,
@@ -55,7 +56,7 @@ from lib.inventory_io import CANOPY_BASE_COLUMNS
 DEFAULT_INVENTORY_CANOPY_RESOLUTION_M = 30.0
 
 
-class InventoryCanopyBand(StrEnum):
+class InventoryCanopyBand(BandEnum):
     """Selectable bands on the inventory canopy source.
 
     The first four share keys and units with the LANDFIRE canopy source, so
@@ -81,22 +82,25 @@ CFL_BAND_DEF = {
 }
 
 
+# The four LANDFIRE-parity bands reuse LANDFIRE_CANOPY_BAND_DEFS.
+INVENTORY_CANOPY_BAND_DEFS: dict[InventoryCanopyBand, dict] = {
+    band: CFL_BAND_DEF
+    if band is InventoryCanopyBand.cfl
+    else LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand(band.value)]
+    for band in InventoryCanopyBand
+}
+
+publish_band_defs(InventoryCanopyBand, INVENTORY_CANOPY_BAND_DEFS)
+
+
 def build_inventory_canopy_bands(
     requested: list[InventoryCanopyBand],
 ) -> list[Band]:
-    """Build Band objects for requested bands with indices in request order.
-
-    The four LANDFIRE-parity bands reuse LANDFIRE_CANOPY_BAND_DEFS; ``cfl``
-    uses its own definition.
-    """
-    bands = []
-    for i, band in enumerate(requested):
-        if band is InventoryCanopyBand.cfl:
-            bands.append(Band(index=i, **CFL_BAND_DEF))
-        else:
-            band_def = LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand(band.value)]
-            bands.append(Band(index=i, **band_def))
-    return bands
+    """Build Band objects for requested bands with indices in request order."""
+    return [
+        Band(index=i, **INVENTORY_CANOPY_BAND_DEFS[band])
+        for i, band in enumerate(requested)
+    ]
 
 
 class CanopyBiomassEquations(StrEnum):

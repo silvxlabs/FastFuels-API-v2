@@ -15,6 +15,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.alignment import (
     GridLatticeDomainTarget,
     GridLatticeSpecification,
@@ -29,7 +30,7 @@ from api.resources.grids.schema import (
 )
 
 
-class LandfireCanopyFuelBand(StrEnum):
+class LandfireCanopyFuelBand(BandEnum):
     """Selectable bands on the LANDFIRE canopy fuel source.
 
     These are the four LANDFIRE canopy fuel products: canopy height
@@ -75,6 +76,9 @@ LANDFIRE_CANOPY_BAND_DEFS = {
         "unit": "%",
     },
 }
+
+
+publish_band_defs(LandfireCanopyFuelBand, LANDFIRE_CANOPY_BAND_DEFS)
 
 
 def build_landfire_canopy_bands(

@@ -9,7 +9,6 @@ schema stored on the resulting Grid document.
 """
 
 from datetime import datetime
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import (
@@ -19,11 +18,12 @@ from pydantic import (
     field_validator,
 )
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 from api.resources.input_requirements import grid, input_requirements
 
 
-class LeafluxBand(StrEnum):
+class LeafluxBand(BandEnum):
     """Available output bands for LeafLux irradiance grids.
 
     Each value is the band's dot-notation key as it appears in the stored
@@ -52,6 +52,9 @@ LEAFLUX_BAND_DEFS: dict[LeafluxBand, dict] = {
         "unit": None,
     },
 }
+
+
+publish_band_defs(LeafluxBand, LEAFLUX_BAND_DEFS)
 
 
 def build_leaflux_bands(requested: list[LeafluxBand]) -> list[Band]:

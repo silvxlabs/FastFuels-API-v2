@@ -7,6 +7,7 @@ from fastapi.routing import APIRoute
 
 from api.auth import authenticate_user
 from api.resources.applications.router import router as applications_router
+from api.resources.band_metadata import BAND_METADATA_DOC
 from api.resources.domains.router import router as domain_router
 from api.resources.domains.validate import validate_domain
 from api.resources.exports.router import router as exports_router
@@ -78,6 +79,7 @@ convenience helpers that shipped in v1.
 """
 
 API_DESCRIPTION += INPUT_REQUIREMENTS_DOC
+API_DESCRIPTION += BAND_METADATA_DOC
 
 API_DESCRIPTION += """
 ## Feedback

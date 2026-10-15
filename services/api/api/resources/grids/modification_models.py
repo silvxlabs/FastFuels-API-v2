@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.input_requirements import feature, input_requirements
 from api.resources.modifications import (
     Modifier,
     Operator,
@@ -126,6 +127,10 @@ class GridFeatureSpatialCondition(BaseModel):
     it into the domain CRS, optionally buffers it, and then evaluates the
     spatial operator against grid cells.
     """
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(feature("feature_id"))
+    )
 
     source: Literal["feature"] = Field(
         ...,

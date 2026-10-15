@@ -13,12 +13,13 @@ grid. The rasterization math lives in
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.resources.grids.schema import (
     Band,
     CreateSourceGridRequestBase,
 )
+from api.resources.input_requirements import feature, input_requirements
 
 
 class OverlapMethod(StrEnum):
@@ -58,6 +59,10 @@ class CreateLayersetRasterizeRequest(CreateSourceGridRequestBase):
     the GeoJSON from GCS at job time; a fresh upload produces a new
     ``feature_id``, so the reference is effectively immutable.
     """
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(feature("layerset_id", type="layerset")),
+    )
 
     layerset_id: str = Field(
         ...,

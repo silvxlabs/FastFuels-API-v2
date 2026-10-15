@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import geopandas as gpd
 import numpy as np
 import pytest
+import xarray as xr
 from leaflux import SolarPosition
 from shapely.geometry import box
 from treevox.handlers import leaflux as handler
@@ -323,6 +324,7 @@ def test_run_leaflux_wires_job_and_tiles(monkeypatch):
         handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 40, 40)}
     )
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    monkeypatch.setattr(handler, "_check_terrain", lambda dem_id: None)
     monkeypatch.setattr(handler, "WINDOW_TARGET_CELLS", 24)  # shrink to force >1 tile
     captured = {}
 
@@ -363,6 +365,7 @@ def test_run_leaflux_reads_lattice_from_resource_not_attrs(monkeypatch):
         handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 40, 40)}
     )
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    monkeypatch.setattr(handler, "_check_terrain", lambda dem_id: None)
     captured = {}
     monkeypatch.setattr(
         handler, "_write_tiles", lambda tiles, job, progress: captured.update(job=job)
@@ -395,6 +398,7 @@ def test_run_leaflux_missing_georeference_raises_processing_error(monkeypatch):
         },
     )
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    monkeypatch.setattr(handler, "_check_terrain", lambda dem_id: None)
     monkeypatch.setattr(handler, "_write_tiles", lambda *a, **k: None)
 
     grid = _leaflux_grid([CANOPY_BAND])
@@ -413,6 +417,7 @@ def test_run_leaflux_surface_only_is_2d(monkeypatch):
         handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 30, 30)}
     )
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    monkeypatch.setattr(handler, "_check_terrain", lambda dem_id: None)
     captured = {}
     monkeypatch.setattr(
         handler, "_write_tiles", lambda tiles, job, progress: captured.update(job=job)
@@ -438,6 +443,7 @@ def test_run_leaflux_no_surface_band_skips_terrain(monkeypatch):
         handler, "load_grid", lambda gid: {"georeference": _lad_georeference(6, 20, 20)}
     )
     monkeypatch.setattr(handler, "_init_output", lambda *a, **k: None)
+    monkeypatch.setattr(handler, "_check_terrain", lambda dem_id: None)
     captured = {}
     monkeypatch.setattr(
         handler, "_write_tiles", lambda tiles, job, progress: captured.update(job=job)
@@ -448,3 +454,82 @@ def test_run_leaflux_no_surface_band_skips_terrain(monkeypatch):
     job = captured["job"]
     assert job.want_canopy and not job.want_surface
     assert job.dem_id is None  # no terrain opened when surface isn't requested
+
+
+# --- Terrain with nodata cells (issue #722) ---
+
+
+def _run_with_terrain(monkeypatch, tmp_path, elevation, bands=(SURFACE_BAND,)):
+    """Run run_leaflux end to end on in-memory sources, writing a local zarr."""
+    ny, nx = elevation.shape
+    nz = 6
+    lad = np.zeros((nz, ny, nx), dtype=np.float32)
+    lad[3:5, 8:12, 8:12] = 0.6
+    coords = {"y": np.arange(ny)[::-1] * 2.0 + 1.0, "x": np.arange(nx) * 2.0 + 1.0}
+    sources = {
+        "src-lad": xr.Dataset(
+            {"leaf_area_density": (("z", "y", "x"), lad)},
+            coords={"z": np.arange(nz) + 0.5, **coords},
+        ),
+        "src-dem": xr.Dataset({"elevation": (("y", "x"), elevation)}, coords=coords),
+    }
+    monkeypatch.setattr(handler, "_open", lambda gid: sources[gid])
+    monkeypatch.setattr(
+        handler,
+        "load_grid",
+        lambda gid: {"georeference": _lad_georeference(nz, ny, nx)},
+    )
+    out = str(tmp_path / "out.zarr")
+    monkeypatch.setattr(handler.storage, "gcs_path", lambda gid: out)
+    handler.run_leaflux(
+        _leaflux_grid(list(bands)), _domain_at(46.9, -114.0), lambda *a, **k: None
+    )
+    return xr.open_zarr(out)
+
+
+def test_terrain_nodata_edge_is_filled_and_masked(monkeypatch, tmp_path):
+    """A terrain grid with a nodata edge column (LANDFIRE resampled onto a
+    snapped tree lattice) must not crash leaflux; the surface band is NaN where
+    the ground elevation is unknown and finite everywhere else."""
+    ny, nx = 20, 20
+    elevation = 100.0 + np.tile(np.arange(nx, dtype=np.float32) * 0.5, (ny, 1))
+    elevation[:, 0] = np.nan
+    out = _run_with_terrain(monkeypatch, tmp_path, elevation)
+
+    surface = out[SURFACE_BAND].values
+    assert surface.shape == (ny, nx)
+    assert np.isnan(surface[:, 0]).all()
+    assert np.isfinite(surface[:, 1:]).all()
+
+
+def test_terrain_mostly_nodata_fails_with_processing_error(monkeypatch, tmp_path):
+    """Past the fill limit the terrain does not describe the LAD grid's ground:
+    fail with a specific code, before any compute."""
+    elevation = np.full((20, 20), 100.0, dtype=np.float32)
+    elevation[:, :5] = np.nan  # 25% nodata
+    with pytest.raises(handler.ProcessingError) as exc:
+        _run_with_terrain(monkeypatch, tmp_path, elevation)
+    assert exc.value.code == "TERRAIN_NODATA"
+    assert "100 of 400" in exc.value.message
+
+
+def test_terrain_all_nodata_fails_with_processing_error(monkeypatch, tmp_path):
+    elevation = np.full((20, 20), np.nan, dtype=np.float32)
+    with pytest.raises(handler.ProcessingError) as exc:
+        _run_with_terrain(monkeypatch, tmp_path, elevation)
+    assert exc.value.code == "TERRAIN_NODATA"
+
+
+def test_fill_nodata_takes_nearest_valid_elevation():
+    elev = np.array([[np.nan, 5.0, 6.0], [np.nan, 7.0, 8.0]], dtype=np.float32)
+    filled = handler._fill_nodata(elev, np.isfinite(elev))
+    np.testing.assert_array_equal(filled, [[5.0, 5.0, 6.0], [7.0, 7.0, 8.0]])
+
+
+def test_load_terrain_honors_numeric_nodata_sentinel(monkeypatch):
+    da = xr.DataArray(
+        np.array([[-9999.0, 10.0]], dtype=np.float32), dims=("y", "x")
+    ).rio.write_nodata(-9999.0)
+    monkeypatch.setattr(handler, "_open", lambda gid: xr.Dataset({"elevation": da}))
+    _, valid = handler._load_terrain("src-dem")
+    np.testing.assert_array_equal(valid, [[False, True]])

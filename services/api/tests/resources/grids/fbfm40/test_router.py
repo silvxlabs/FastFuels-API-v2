@@ -231,6 +231,7 @@ class TestDisturbance:
         baseline = LANDFIRE_DISTURBANCE_RELEASES["fbfm40"]["baseline"]
         assert response.status_code == 422
         assert f"'{baseline}'" in response.json()["detail"]
+        assert "<" not in response.json()["detail"]
 
     def test_domain_fully_covered_by_newest_release_rejected(
         self, client, lfps_covered_domain

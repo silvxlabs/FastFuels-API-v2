@@ -123,6 +123,7 @@ def resolve_disturbance_plan(
     if not isinstance(disturbance, LandfireDisturbanceRequest):
         return None
 
+    version = str(version)
     releases = LANDFIRE_DISTURBANCE_RELEASES[product]
     baseline, newest = releases["baseline"], releases["newest"]
 

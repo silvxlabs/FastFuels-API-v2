@@ -68,20 +68,18 @@ EXAMPLE_COMPOSE_WITH_LITERAL = {
 }
 
 EXAMPLE_COMPOSE_UNIT_OVERRIDE = {
-    "name": "Fuel load in grams",
-    "inputs": [
-        {"grid_id": "grid_fbfm40", "alias": "a"},
-        {"grid_id": "grid_fccs", "alias": "b"},
-    ],
+    "name": "Scaled live herb load",
+    "inputs": [{"grid_id": "grid_fbfm40", "alias": "a"}],
     "operations": [
         {
             "type": "compute",
-            "output": "fuel_load.1hr",
-            "operator": "add",
-            "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
-            "name": "Combined fuel loads",
-            "description": "Combined fuel loads in grams.",
-            "unit": "g/m**2",
+            "output": "fuel_load.live_herb",
+            "operator": "multiply",
+            "operands": [
+                "a.fuel_load.live_herb",
+                {"type": "literal", "value": 67, "unit": "%"},
+            ],
+            "unit": "kg/m**2",
         }
     ],
 }
@@ -296,9 +294,10 @@ CREATE_COMPOSE_OPENAPI_EXAMPLES = {
             "A compute output's unit is derived from its operands by default. "
             "Supply `unit` to express the result in a different but "
             "dimensionally compatible unit, and the worker converts to it. "
-            "Here two `kg/m**2` fuel loads are added and the output is written "
-            "in `g/m**2`. An incompatible override (e.g. `m`) is rejected at "
-            "request time."
+            "Here a `kg/m**2` live herb load times a 67 `%` literal derives "
+            "`kg*%/m**2`; `unit` writes it as `kg/m**2`, the unit a "
+            "`fuel_load` band requires. An incompatible override (e.g. `m`) "
+            "is rejected at request time."
         ),
     },
     "conditional_compute": {

@@ -112,8 +112,10 @@ class GridGeometrySpatialCondition(BaseModel):
         description=(
             "Which part of each grid cell is tested against the geometry. "
             "`centroid` tests only the cell center point; `cell` tests the "
-            "full cell bounds (any overlap matches). Use `cell` to catch "
-            "every cell a linestring crosses without needing a buffer."
+            "full cell bounds: `intersects` matches any cell the geometry "
+            "touches, `within` only cells entirely inside it, and `outside` "
+            "only cells it does not touch. Use `cell` with `intersects` to "
+            "catch every cell a linestring crosses without needing a buffer."
         ),
     )
 
@@ -173,7 +175,9 @@ class GridFeatureSpatialCondition(BaseModel):
         description=(
             "Which part of each grid cell is tested against the geometry. "
             "`centroid` tests only the cell center point; `cell` tests the "
-            "full cell bounds (any overlap matches)."
+            "full cell bounds: `intersects` matches any cell the geometry "
+            "touches, `within` only cells entirely inside it, and `outside` "
+            "only cells it does not touch."
         ),
     )
 

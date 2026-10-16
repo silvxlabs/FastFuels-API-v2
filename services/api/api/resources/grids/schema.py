@@ -353,11 +353,17 @@ class Grid(BaseModel):
         Inline-geometry modification conditions are stored with their
         ``coordinates`` JSON-encoded (Firestore rejects nested arrays). This
         runs before validation so GET / list / create responses return proper
-        nested-list GeoJSON. Idempotent: API-request data (already nested
-        lists) passes through unchanged.
+        nested-list GeoJSON. Also decodes ``source.operations`` for compose
+        grids, whose operation conditions are stored the same way.
+        Idempotent: API-request data (already nested lists) passes through
+        unchanged.
         """
-        if isinstance(data, dict) and isinstance(data.get("modifications"), list):
-            parse_modification_coordinates(data["modifications"])
+        if isinstance(data, dict):
+            if isinstance(data.get("modifications"), list):
+                parse_modification_coordinates(data["modifications"])
+            source = data.get("source")
+            if isinstance(source, dict) and isinstance(source.get("operations"), list):
+                parse_modification_coordinates(source["operations"])
         return data
 
 

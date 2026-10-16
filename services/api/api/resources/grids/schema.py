@@ -137,7 +137,7 @@ class Band(BaseModel):
         description=(
             "Physical unit of the band's pixel values, in UDUNITS-2-conformant "
             "ASCII form with `**` for exponents (e.g. `kg/m**3`, `1/m`, `%`). "
-            "`None` for categorical/identifier bands. See docs/units.md."
+            "`None` for categorical/identifier bands."
         ),
         examples=["kg/m**3", "1/m", "%", "m"],
     )

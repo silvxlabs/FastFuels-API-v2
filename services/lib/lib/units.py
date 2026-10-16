@@ -46,6 +46,4 @@ def validate_unit(s: str | None) -> None:
         return
     canonical = canonicalize_unit(s)
     if canonical != s:
-        raise ValueError(
-            f"Unit {s!r} is not canonical; expected {canonical!r}. See docs/units.md."
-        )
+        raise ValueError(f"Unit {s!r} is not canonical; expected {canonical!r}.")

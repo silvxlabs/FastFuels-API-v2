@@ -16,6 +16,8 @@ from griddle.summarize import (
     summarize_dataset,
 )
 
+from lib.errors import ProcessingError
+
 
 def _make_da(data: np.ndarray, nodata=None) -> xr.DataArray:
     """Build a 2D DataArray with CRS and transform."""
@@ -313,3 +315,39 @@ class TestSummarizeDataset:
             chunk_shape=(512, 512),
         )
         assert result["fuel_load.herb"]["max"] == 4.0
+
+    @pytest.mark.parametrize(
+        "listed_key",
+        [
+            # Pre-#682 Fosberg key vs the post-#682 output (#727).
+            "fuel_moisture.dead.1hr",
+            "elevation",
+        ],
+    )
+    def test_band_missing_from_data_raises_processing_error(self, listed_key):
+        da = _make_da(np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+        ds = _make_ds({"fuel_moisture.1hr": da})
+        with pytest.raises(ProcessingError) as exc:
+            summarize_dataset(
+                ds,
+                [{"key": listed_key, "type": "continuous"}],
+                chunk_shape=(512, 512),
+            )
+        assert exc.value.code == "BAND_NOT_PRODUCED"
+        assert listed_key in exc.value.message
+
+    def test_legacy_layerset_key_missing_band_coord_raises_processing_error(self):
+        data = np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32)
+        da = xr.DataArray(
+            data,
+            dims=["band", "y", "x"],
+            coords={"band": ["loading"], "y": [1.0, 0.0], "x": [0.0, 1.0]},
+        )
+        ds = _make_ds({"herb": da.rio.write_crs("EPSG:5070")})
+        with pytest.raises(ProcessingError) as exc:
+            summarize_dataset(
+                ds,
+                [{"key": "herb.height", "type": "continuous"}],
+                chunk_shape=(512, 512),
+            )
+        assert exc.value.code == "BAND_NOT_PRODUCED"

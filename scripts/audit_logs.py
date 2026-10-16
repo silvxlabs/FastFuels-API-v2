@@ -63,6 +63,10 @@ ID_KEYS = (
     "task_id",
 )
 
+# Lines that mark a lost job but reach stderr with no severity: gunicorn's
+# OOM kill notice, and a worker's retry giving up on a crashed first attempt.
+LOST_JOB_MARKERS = ("was sent SIGKILL", "Failed on previous attempt")
+
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
 TEST_ID = re.compile(r"\btest-[A-Za-z0-9-]*[0-9a-f]{6,}\b")
@@ -117,9 +121,12 @@ def credentials_from_env():
 
 def build_filter(services, min_severity, start, end):
     svc = " OR ".join(f'resource.labels.service_name="{s}"' for s in services)
+    lost = " OR ".join(
+        f'textPayload:"{m}" OR jsonPayload.message:"{m}"' for m in LOST_JOB_MARKERS
+    )
     return (
         f'resource.type="cloud_run_revision" AND ({svc}) '
-        f"AND severity>={min_severity} "
+        f"AND (severity>={min_severity} OR {lost}) "
         f'AND timestamp>="{start.isoformat()}" AND timestamp<"{end.isoformat()}"'
     )
 
@@ -223,7 +230,7 @@ def iter_client(client, flt, page_size=1000):
         filter_=flt, order_by=gcl.DESCENDING, page_size=page_size
     ):
         raw = {
-            "severity": str(e.severity),
+            "severity": str(e.severity or "DEFAULT"),
             "timestamp": e.timestamp.isoformat() if e.timestamp else "",
             "resource": {"labels": dict(e.resource.labels)},
         }
@@ -284,9 +291,12 @@ def to_entry(raw):
     msg = extract_message(raw)
     ids = extract_ids(raw)
     tb = parse_traceback(msg)
+    severity = str(raw.get("severity") or "DEFAULT")
+    if severity == "DEFAULT" and any(m in msg for m in LOST_JOB_MARKERS):
+        severity = "ERROR"
     return Entry(
         service=raw.get("resource", {}).get("labels", {}).get("service_name", "?"),
-        severity=str(raw.get("severity", "DEFAULT")),
+        severity=severity,
         timestamp=raw.get("timestamp", ""),
         message=msg[:4000],
         ids=ids,

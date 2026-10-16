@@ -67,6 +67,17 @@ _DISTURBED_FUEL_MODELS = {
     "fbfm40": ("FBFM40_code", "fbfm"),
     "fccs": ("FCCS", "fccs"),
 }
+
+# FDist codes are 100 * D_TYPE + 10 * D_SEVERITY + D_TIME.
+_VALID_FDIST_CODES = np.array(
+    [
+        100 * d_type + 10 * severity + time
+        for d_type in range(1, 8)
+        for severity in range(1, 4)
+        for time in range(1, 4)
+    ]
+)
+
 # LANDFIRE aspect marks flat cells (slope 0-2 deg) with -1. Topography grids
 # store flat as 0, matching 3DEP.
 LANDFIRE_FLAT_ASPECT: int = -1
@@ -187,6 +198,42 @@ def _ldist_attributes(version: str) -> pd.DataFrame:
             message=f"No LDist attribute table for version {version} is available.",
             suggestion=f"Upload LF{version}_LDist_attributes.csv to the tables bucket.",
         )
+
+
+def _check_fdist_codes(fdist: np.ndarray, nodata: float | None = None) -> None:
+    """Fail unless every cell of a user's FDist raster is a valid code.
+
+    Zero, NaN and ``nodata`` mean undisturbed. Any other value must be
+    ``100 * D_TYPE + 10 * D_SEVERITY + D_TIME`` with D_TYPE 1-7, D_SEVERITY 1-3
+    and D_TIME 1-3, so a negative value other than ``nodata`` is invalid. Core
+    silently ignores a positive value that matches no rule, so an invalid code
+    would otherwise do nothing.
+
+    Args:
+        fdist: The FDist raster.
+        nodata: The band's declared nodata value, if any.
+
+    Raises:
+        ProcessingError: ``INVALID_FDIST_CODES``, listing the offending codes.
+    """
+    checked = np.isfinite(fdist) & (fdist != 0)
+    if nodata is not None:
+        checked &= fdist != nodata
+
+    codes = np.unique(fdist[checked])
+    invalid = codes[~np.isin(codes, _VALID_FDIST_CODES)]
+    if invalid.size == 0:
+        return
+
+    listed = ", ".join(f"{code:g}" for code in invalid)
+    raise ProcessingError(
+        code="INVALID_FDIST_CODES",
+        message=f"The disturbance grid has values that aren't valid FDist codes: {listed}.",
+        suggestion=(
+            "FDist codes are 100 * D_TYPE + 10 * D_SEVERITY + D_TIME, with "
+            "D_TYPE 1-7, D_SEVERITY 1-3 and D_TIME 1-3. Use 0 for undisturbed cells."
+        ),
+    )
 
 
 def _fetch_landfire_raster(

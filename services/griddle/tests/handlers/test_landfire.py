@@ -17,11 +17,14 @@ import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 from fastfuels_core.fuel_models import update_fuel_models
+from fastfuels_core.fuel_models.fdist_builder import LDIST_TO_FDIST
 from griddle.handlers import landfire as landfire_handler
 from griddle.handlers.landfire import (
+    _VALID_FDIST_CODES,
     FBFM_NON_BURNABLE,
     FCCS_BARE_GROUND,
     LANDFIRE_EXTRA_NODATA,
+    _check_fdist_codes,
     _fetch_fuel_model,
     _fetch_landfire_raster,
     _fuel_rulesets,
@@ -717,6 +720,46 @@ class TestLdistAttributes:
 
         assert exc_info.value.code == "LDIST_ATTRIBUTES_NOT_AVAILABLE"
         assert "LF2026_LDist_attributes.csv" in exc_info.value.suggestion
+
+
+class TestCheckFdistCodes:
+    """Unit tests for the user FDist code check."""
+
+    def test_valid_codes_pass(self):
+        _check_fdist_codes(np.array([[121, 732], [111, 333]]))
+
+    def test_every_code_core_produces_is_valid(self):
+        assert set(LDIST_TO_FDIST.values()) <= set(_VALID_FDIST_CODES.tolist())
+
+    def test_zero_nan_and_nodata_are_ignored(self):
+        _check_fdist_codes(np.array([[0, -9999.0, np.nan]]), nodata=-9999)
+        _check_fdist_codes(np.array([[0, 255, np.nan]]), nodata=255)
+
+    def test_invalid_codes_are_reported_in_ascending_order(self):
+        with pytest.raises(ProcessingError) as exc_info:
+            _check_fdist_codes(np.array([[999, 5], [400, 121]]))
+
+        assert exc_info.value.code == "INVALID_FDIST_CODES"
+        assert "5, 400, 999" in exc_info.value.message
+
+    def test_negative_values_other_than_nodata_are_invalid(self):
+        with pytest.raises(ProcessingError) as exc_info:
+            _check_fdist_codes(np.array([[-1, -9999, 121]]), nodata=-9999)
+
+        assert "-1" in exc_info.value.message
+        assert "9999" not in exc_info.value.message
+
+    def test_negative_values_are_invalid_without_nodata(self):
+        with pytest.raises(ProcessingError) as exc_info:
+            _check_fdist_codes(np.array([[-9999, 121]]))
+
+        assert "-9999" in exc_info.value.message
+
+    def test_non_integer_values_are_invalid(self):
+        with pytest.raises(ProcessingError) as exc_info:
+            _check_fdist_codes(np.array([[121.5]]))
+
+        assert "121.5" in exc_info.value.message
 
 
 class TestFetchAnnualDisturbance:

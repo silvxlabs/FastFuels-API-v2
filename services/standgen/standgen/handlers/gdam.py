@@ -2,7 +2,8 @@
 GDAM allometry imputation handler.
 
 Fills the missing morphology columns (dbh, crown ratio, species) of a tree
-inventory by calling the external GDAM batch-prediction API.
+inventory by calling the external GDAM batch-prediction API with its
+flow-matching model, pinned to one version (``GDAM_MODEL``).
 
 This module is split into two layers:
 - pure marshalling functions (v2 <-> GDAM units/shape), unit-tested directly;
@@ -17,8 +18,15 @@ Unit and coordinate conventions (verified against a live GDAM probe):
   docstring says 0-1, but the live API returns 0-100), SPCD FIA integer (returned
   as a float). Response columns are name-keyed, reordered vs the request, and omit
   Lat/Lon; rows align to the request via the returned `index`.
+
+Reproducibility: each predicted value is one random draw. The draws depend on the
+model version, the seed and the trees of the request, so each partition sends a
+seed derived from the inventory id and the partition number (``batch_seed``).
+Reprocessing an inventory re-forms the same partitions from the same source and
+so reproduces its values.
 """
 
+import hashlib
 import json
 import logging
 import time
@@ -50,6 +58,15 @@ _IMPUTED_DTYPES = {
 # Columns GDAM needs on every source row.
 _REQUIRED_COLUMNS = ("x", "y", "height")
 
+# The GDAM model every request names. The version is pinned so a change of GDAM's
+# default can't change our output. "overhead": every tree is visible from above,
+# as trees detected on a canopy height model are.
+GDAM_MODEL = {
+    "name": "flow_matching",
+    "version": "v2_west.1",
+    "tree_observation": "overhead",
+}
+
 
 def _reproject_to_lonlat(x, y, source_crs):
     """Reproject domain-CRS x/y arrays to (lon, lat) in EPSG:4326.
@@ -64,13 +81,23 @@ def _reproject_to_lonlat(x, y, source_crs):
     return lon, lat
 
 
-def build_batch_payload(df: pd.DataFrame, source_crs) -> dict:
+def batch_seed(inventory_id: str, partition: int) -> int:
+    """GDAM seed for one partition of an inventory, in [0, 2**32 - 1].
+
+    Stable for the same inventory and partition (so a rerun reproduces the draws)
+    and different across partitions (so batches don't reuse the same noise).
+    """
+    digest = hashlib.sha256(f"{inventory_id}/{partition}".encode()).digest()
+    return int.from_bytes(digest[:4], "big")
+
+
+def build_batch_payload(df: pd.DataFrame, source_crs, seed: int) -> dict:
     """Build a GDAM /predict/batch request body from a v2 inventory chunk.
 
-    Reprojects x/y to Lat/Lon and converts height to feet (both required). Any
-    present morphology columns are sent as conditioning inputs (dbh cm->in,
-    crown_ratio fraction->percent, fia_species_code->SPCD); absent ones are
-    omitted. Environmental fields (elevation/slope/aspect) are never sent — GDAM
+    Names ``GDAM_MODEL`` with ``seed``. Reprojects x/y to Lat/Lon and converts
+    height to feet (both required). Any present morphology columns are sent as
+    conditioning inputs (dbh cm->in, crown_ratio fraction->percent,
+    fia_species_code->SPCD); absent ones are omitted. Environmental fields (elevation/slope/aspect) are never sent — GDAM
     auto-extracts them.
 
     Column dtypes are trusted from the inventory: the upload path — the only way
@@ -91,7 +118,10 @@ def build_batch_payload(df: pd.DataFrame, source_crs) -> dict:
     if "fia_species_code" in df.columns:
         payload["SPCD"] = df["fia_species_code"]  # keep Int64 -> serializes as int
 
-    return {"trees": json.loads(payload.to_json(orient="split", double_precision=15))}
+    return {
+        "trees": json.loads(payload.to_json(orient="split", double_precision=15)),
+        "model": {**GDAM_MODEL, "seed": seed},
+    }
 
 
 def parse_gdam_response(response: dict) -> pd.DataFrame:
@@ -150,20 +180,39 @@ _RETRYABLE_TRANSPORT_ERRORS = (
     httpx.WriteError,
     httpx.RemoteProtocolError,
 )
+# Statuses worth retrying: 429 (GDAM's rate limit at the load balancer) and the
+# gateway errors a scaling or redeploying Cloud Run service returns. A 500 is
+# terminal: GDAM returns it for failures a retry won't fix.
+_RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
 _RETRY_BACKOFF_BASE_S = 0.5
+# Longest Retry-After honored; standgen's whole request has a deadline.
+_MAX_RETRY_AFTER_S = 30.0
+
+
+def _retry_delay(attempt: int, response=None) -> float:
+    """Seconds to wait before the next attempt: the response's Retry-After (in
+    seconds, capped) when it has one, else exponential backoff."""
+    if response is not None:
+        try:
+            return min(float(response.headers["Retry-After"]), _MAX_RETRY_AFTER_S)
+        except (KeyError, TypeError, ValueError):
+            pass
+    return _RETRY_BACKOFF_BASE_S * (2**attempt)
 
 
 def _post_batch(payload: dict) -> dict:
     """POST one partition's trees to GDAM and return the parsed JSON.
 
-    A transient transport error (a dropped/reset connection) is retried up to
-    ``GDAM_MAX_ATTEMPTS`` times with exponential backoff — one blip mid-response
-    shouldn't fail the whole inventory. A non-2xx status or a timeout is terminal
+    A transient error — a dropped/reset connection, a 429 or a 502/503/504 — is
+    retried up to ``GDAM_MAX_ATTEMPTS`` times, waiting for the response's
+    Retry-After or with exponential backoff, so one blip doesn't fail the whole
+    inventory. Any other non-2xx status or a timeout is terminal
     (`GDAM_REQUEST_FAILED`): a bad request or a sustained-unhealthy GDAM won't be
     fixed by re-running the task, and the 120s timeout already absorbs cold starts.
     """
     last_exc = None
     for attempt in range(config.GDAM_MAX_ATTEMPTS):
+        retry_response = None
         try:
             response = httpx.post(
                 f"{config.GDAM_API_URL}/predict/batch",
@@ -174,18 +223,27 @@ def _post_batch(payload: dict) -> dict:
             return response.json()
         except _RETRYABLE_TRANSPORT_ERRORS as e:
             last_exc = e
-            if attempt < config.GDAM_MAX_ATTEMPTS - 1:
-                logger.warning(
-                    f"Transient GDAM transport error on attempt "
-                    f"{attempt + 1}/{config.GDAM_MAX_ATTEMPTS}, retrying: {e}"
-                )
-                time.sleep(_RETRY_BACKOFF_BASE_S * (2**attempt))
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in _RETRYABLE_STATUSES:
+                raise ProcessingError(
+                    code="GDAM_REQUEST_FAILED",
+                    message=f"GDAM prediction request failed: {e} {e.response.text}",
+                    suggestion="Retry shortly; if it persists, the GDAM service may be down.",
+                ) from e
+            last_exc = e
+            retry_response = e.response
         except httpx.HTTPError as e:
             raise ProcessingError(
                 code="GDAM_REQUEST_FAILED",
                 message=f"GDAM prediction request failed: {e}",
                 suggestion="Retry shortly; if it persists, the GDAM service may be down.",
             ) from e
+        if attempt < config.GDAM_MAX_ATTEMPTS - 1:
+            logger.warning(
+                f"Transient GDAM error on attempt "
+                f"{attempt + 1}/{config.GDAM_MAX_ATTEMPTS}, retrying: {last_exc}"
+            )
+            time.sleep(_retry_delay(attempt, retry_response))
 
     raise ProcessingError(
         code="GDAM_REQUEST_FAILED",
@@ -222,13 +280,23 @@ def _predict(payload: dict, expected_count: int) -> dict:
     )
 
 
-def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.DataFrame:
+def _process_partition(
+    pdf: pd.DataFrame,
+    source_crs_str: str,
+    columns,
+    inventory_id: str,
+    partition_info=None,
+) -> pd.DataFrame:
     """Impute one dask partition: call GDAM and fill the selected morphology.
 
     Runs on a dask worker (one partition at a time), so the whole inventory is
     never held in memory. Raises ``MISSING_REQUIRED_HEIGHT`` if any tree in the
-    partition lacks a height (GDAM requires it). Always surfaces the selected
+    partition lacks a height and ``NON_POSITIVE_HEIGHT`` if any height is not
+    above zero (GDAM requires a positive height). Always surfaces the selected
     `columns` so the partition's schema matches the declared ``meta``.
+
+    Dask passes ``partition_info``; its partition number seeds the draws
+    (``batch_seed``).
 
     GDAM returns predictions 0-based and aligned to the sent batch by position
     (it ignores the index it was sent). Those positions are mapped back onto
@@ -247,6 +315,16 @@ def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.Da
             ),
             suggestion="Remove or fix rows with a missing height before running GDAM.",
         )
+    non_positive = int((pdf["height"] <= 0).sum())
+    if non_positive:
+        raise ProcessingError(
+            code="NON_POSITIVE_HEIGHT",
+            message=(
+                f"{non_positive} tree(s) have a height of zero or less; GDAM requires "
+                f"a positive height for every tree."
+            ),
+            suggestion="Remove or fix rows with a zero height before running GDAM.",
+        )
 
     if len(pdf) == 0:
         # No trees to predict; still surface the selected columns (empty) so the
@@ -257,7 +335,8 @@ def _process_partition(pdf: pd.DataFrame, source_crs_str: str, columns) -> pd.Da
                 out[col] = pd.Series([], dtype=_IMPUTED_DTYPES[col], index=out.index)
         return out
 
-    payload = build_batch_payload(pdf, source_crs_str)
+    seed = batch_seed(inventory_id, partition_info["number"])
+    payload = build_batch_payload(pdf, source_crs_str, seed)
     data = _predict(payload, len(pdf))
     predicted = parse_gdam_response(data)
     predicted.index = pdf.index[predicted.index.to_numpy()]
@@ -330,6 +409,7 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
         _process_partition,
         source_crs_str,
         impute_columns,
+        inventory_id,
         meta=_result_meta(ddf, impute_columns),
     )
 
@@ -339,7 +419,12 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     _, stats, forestry_metrics = save_parquet_with_summary(
         inventory_id, result_ddf, inventory["columns"], inventory["type"], domain_gdf
     )
-    logger.info(f"GDAM imputed {total} trees", extra={"inventory_id": inventory_id})
+    logger.info(
+        f"GDAM imputed {total} trees in {npartitions} batch(es) with "
+        f"{GDAM_MODEL['name']}/{GDAM_MODEL['version']}, seeds from "
+        f"batch_seed(inventory_id, partition)",
+        extra={"inventory_id": inventory_id},
+    )
 
     georeference = {
         "crs": str(domain_gdf.crs),

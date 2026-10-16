@@ -69,9 +69,10 @@ async def create_gdam_inventory(
     that predicts tree morphology — diameter at breast height, live crown ratio,
     and species — from simple stem metrics (position and height). It replaces
     legacy region-specific allometric equations with a single generative model:
-    each tree is routed to a region-specific model by geography, and a masked
-    tabular autoencoder fills in every missing field in one pass while preserving
-    any values you already supply.
+    each tree is routed to a region-specific model by geography, and each missing
+    value is one draw from the predicted distribution given the values you
+    already supply, which are preserved. Every tree is treated as visible from
+    above, as trees detected on a canopy height model are.
 
     This endpoint creates a new tree inventory by calling the GDAM API to fill in
     the missing morphology columns (diameter, crown ratio, species) of an existing
@@ -98,7 +99,7 @@ async def create_gdam_inventory(
     **Required on the source inventory** (the typical uploaded position+height set):
 
     - **x**, **y**: tree position, in the domain CRS.
-    - **height**: tree height, in metres (``m``).
+    - **height**: tree height above zero, in metres (``m``).
 
     **Imputable by GDAM** (select via ``impute_columns``) — filled only where
     missing; existing values are preserved:

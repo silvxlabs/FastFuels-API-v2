@@ -27,6 +27,8 @@ Contract pinned:
   * DIA / CR / SPCD present *by name* (cols reorder)  -> parse_gdam_response
   * CR is a 0-100 percent, not a 0-1 fraction         -> parse_gdam_response's /100
   * SPCD is a positive FIA code                       -> fia_species_code mapping
+  * the pinned model version answers, echoing the
+    seed; the same seed gives the same draws          -> GDAM_MODEL / batch_seed
 """
 
 import httpx
@@ -47,6 +49,16 @@ _REQUEST_INDEX = [7, 3, 5]
 _M_PER_FT = 0.3048
 
 
+def _post(payload):
+    response = httpx.post(
+        f"{standgen_config.GDAM_API_URL}/predict/batch",
+        json=payload,
+        timeout=standgen_config.GDAM_REQUEST_TIMEOUT_S,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 @pytest.fixture(scope="module")
 def gdam_contract_response():
     """POST one small, controlled batch to the live GDAM API for the module.
@@ -58,15 +70,8 @@ def gdam_contract_response():
     df = pd.DataFrame(
         {"x": _LONS, "y": _LATS, "height": _HEIGHTS_M}, index=_REQUEST_INDEX
     )
-    payload = build_batch_payload(df, "EPSG:4326")
-
-    response = httpx.post(
-        f"{standgen_config.GDAM_API_URL}/predict/batch",
-        json=payload,
-        timeout=standgen_config.GDAM_REQUEST_TIMEOUT_S,
-    )
-    response.raise_for_status()
-    return payload, response.json()
+    payload = build_batch_payload(df, "EPSG:4326", seed=1)
+    return payload, _post(payload)
 
 
 def _frame(predictions: dict) -> pd.DataFrame:
@@ -147,3 +152,22 @@ def test_species_is_positive_fia_code(gdam_contract_response):
     _, body = gdam_contract_response
     spcd = _frame(body["predictions"])["SPCD"].to_numpy(dtype=float)
     assert (spcd > 0).all(), f"GDAM returned a non-positive SPCD: {spcd}"
+
+
+def test_pinned_model_answers_with_the_sent_seed(gdam_contract_response):
+    payload, body = gdam_contract_response
+    model = payload["model"]
+    assert body["model_version"] == f"{model['name']}/{model['version']}", (
+        f"GDAM answered with {body['model_version']}, not the pinned GDAM_MODEL."
+    )
+    assert body["seed"] == model["seed"]
+
+
+def test_same_seed_gives_same_draws(gdam_contract_response):
+    """Reproducibility: batch_seed relies on GDAM drawing deterministically."""
+    payload, body = gdam_contract_response
+    again = _post(payload)
+    cols = ["DIA", "CR", "SPCD"]
+    first = _frame(body["predictions"])[cols]
+    second = _frame(again["predictions"])[cols]
+    pd.testing.assert_frame_equal(first, second)

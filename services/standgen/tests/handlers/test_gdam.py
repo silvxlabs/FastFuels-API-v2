@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from standgen.handlers import gdam
 from standgen.handlers.gdam import (
+    batch_seed,
     build_batch_payload,
     fill_missing,
     parse_gdam_response,
@@ -79,7 +80,7 @@ class TestBuildBatchPayload:
 
     def test_required_fields_and_height_conversion(self):
         df = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
-        payload = build_batch_payload(df, _UTM10N)
+        payload = build_batch_payload(df, _UTM10N, seed=1)
         trees = payload["trees"]
 
         # Only the required fields when no conditioning columns are present.
@@ -105,7 +106,7 @@ class TestBuildBatchPayload:
                 "fia_species_code": pd.array([122], dtype="Int64"),
             }
         )
-        payload = build_batch_payload(df, _UTM10N)
+        payload = build_batch_payload(df, _UTM10N, seed=1)
         trees = payload["trees"]
         assert trees["columns"] == ["Lat", "Lon", "HT", "DIA", "CR", "SPCD"]
 
@@ -127,7 +128,7 @@ class TestBuildBatchPayload:
                 "fia_species_code": pd.array([122, pd.NA], dtype="Int64"),
             }
         )
-        payload = build_batch_payload(df, _UTM10N)
+        payload = build_batch_payload(df, _UTM10N, seed=1)
         rows = [
             dict(zip(payload["trees"]["columns"], r)) for r in payload["trees"]["data"]
         ]
@@ -139,8 +140,33 @@ class TestBuildBatchPayload:
 
     def test_environmental_fields_never_sent(self):
         df = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
-        cols = build_batch_payload(df, _UTM10N)["trees"]["columns"]
+        cols = build_batch_payload(df, _UTM10N, seed=1)["trees"]["columns"]
         assert not ({"elevation", "slope", "aspect"} & set(cols))
+
+    def test_names_pinned_flow_model_with_seed(self):
+        df = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        payload = build_batch_payload(df, _UTM10N, seed=42)
+        assert payload["model"] == {
+            "name": "flow_matching",
+            "version": "v2_west.1",
+            "tree_observation": "overhead",
+            "seed": 42,
+        }
+
+
+class TestBatchSeed:
+    """batch_seed: stable per (inventory, partition), distinct across them."""
+
+    def test_stable(self):
+        assert batch_seed("inv-a", 3) == batch_seed("inv-a", 3)
+
+    def test_distinct_across_partitions_and_inventories(self):
+        seeds = {batch_seed(inv, p) for inv in ("inv-a", "inv-b") for p in range(50)}
+        assert len(seeds) == 100
+
+    def test_in_gdam_seed_range(self):
+        for p in range(200):
+            assert 0 <= batch_seed("inv-a", p) <= 2**32 - 1
 
 
 class TestFillMissing:
@@ -310,6 +336,25 @@ def _flaky_post(exc, fail_times):
     return side_effect
 
 
+def _status_then_ok(status, fail_times, retry_after=None):
+    """A post side_effect whose first ``fail_times`` responses carry ``status``
+    (with the given Retry-After headers, one per failure), then ``_ok_post``."""
+    calls = {"n": 0}
+
+    def side_effect(url, json=None, timeout=None):
+        if calls["n"] < fail_times:
+            headers = {}
+            if retry_after:
+                headers["Retry-After"] = retry_after[calls["n"]]
+            calls["n"] += 1
+            return httpx.Response(
+                status, headers=headers, request=httpx.Request("POST", url)
+            )
+        return _ok_post(url, json=json, timeout=timeout)
+
+    return side_effect
+
+
 @contextmanager
 def _patched(source_frame, post_side_effect):
     """Patch the handler's parquet I/O and GDAM client for one call.
@@ -433,6 +478,96 @@ class TestHandleGdam:
         assert len(result) == 5
         assert result["dbh"].notna().all()
         assert sorted(result.index) == [0, 1, 2, 3, 4]
+
+    def test_each_partition_sends_its_own_stable_seed(
+        self, mock_domain_gdf, monkeypatch
+    ):
+        # 5 trees / batch 2 -> 3 partitions, each seeded batch_seed(id, partition).
+        monkeypatch.setattr(gdam.config, "GDAM_BATCH_SIZE", 2)
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0 + i for i in range(5)],
+                "y": [4500000.0] * 5,
+                "height": [10.0] * 5,
+            }
+        )
+        runs = []
+        for _ in range(2):
+            with _patched(frame, _ok_post) as (_, mock_post):
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+            runs.append(
+                sorted(
+                    c.kwargs["json"]["model"]["seed"] for c in mock_post.call_args_list
+                )
+            )
+        expected = sorted(batch_seed(_INVENTORY["id"], p) for p in range(3))
+        assert runs[0] == expected
+        assert runs[1] == expected  # a rerun reproduces the seeds
+
+    def test_non_positive_height_raises(self, mock_domain_gdf):
+        frame = pd.DataFrame({"x": [1.0, 2.0], "y": [1.0, 2.0], "height": [10.0, 0.0]})
+        with _patched(frame, _ok_post) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "NON_POSITIVE_HEIGHT"
+        assert mock_post.call_count == 0
+
+    @pytest.mark.parametrize("status", [429, 502, 503, 504])
+    def test_retries_transient_status_then_succeeds(
+        self, mock_domain_gdf, monkeypatch, status
+    ):
+        sleeps = []
+        monkeypatch.setattr(gdam.time, "sleep", sleeps.append)
+        frame = pd.DataFrame(
+            {"x": [500000.0], "y": [4500000.0], "height": [10.0], "dbh": [np.nan]}
+        )
+        side_effect = _status_then_ok(status, fail_times=2)
+        with _patched(frame, side_effect) as (saved, mock_post):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        assert mock_post.call_count == 3
+        assert sleeps == [0.5, 1.0]  # exponential backoff, no Retry-After
+        assert saved["df"].loc[0, "dbh"] == pytest.approx(30.0, abs=1e-2)
+
+    def test_honours_retry_after_capped(self, mock_domain_gdf, monkeypatch):
+        sleeps = []
+        monkeypatch.setattr(gdam.time, "sleep", sleeps.append)
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        side_effect = _status_then_ok(429, fail_times=2, retry_after=["7", "600"])
+        with _patched(frame, side_effect) as (_, mock_post):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        assert mock_post.call_count == 3
+        assert sleeps == [7.0, gdam._MAX_RETRY_AFTER_S]
+
+    def test_terminal_after_exhausting_429_retries(self, mock_domain_gdf, monkeypatch):
+        monkeypatch.setattr(gdam.time, "sleep", lambda *_: None)
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        side_effect = _status_then_ok(429, fail_times=99)
+        with _patched(frame, side_effect) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "GDAM_REQUEST_FAILED"
+        assert mock_post.call_count == gdam.config.GDAM_MAX_ATTEMPTS
+
+    @pytest.mark.parametrize("status", [400, 422, 500])
+    def test_other_status_is_terminal_without_retry(self, mock_domain_gdf, status):
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        with _patched(frame, _status_then_ok(status, fail_times=99)) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "GDAM_REQUEST_FAILED"
+        assert mock_post.call_count == 1
 
     def test_retries_transient_transport_error_then_succeeds(
         self, mock_domain_gdf, monkeypatch

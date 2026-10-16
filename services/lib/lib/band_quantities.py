@@ -33,6 +33,7 @@ BAND_QUANTITIES: dict[str, BandQuantity] = {
     "fbfm": _CATEGORICAL,
     "fbfm13": _CATEGORICAL,
     "fccs": _CATEGORICAL,
+    "fdist": _CATEGORICAL,
     "fuel_depth": BandQuantity("continuous", "m"),
     "fuel_load": BandQuantity("continuous", "kg/m**2"),
     "fuel_moisture": BandQuantity("continuous", "%"),

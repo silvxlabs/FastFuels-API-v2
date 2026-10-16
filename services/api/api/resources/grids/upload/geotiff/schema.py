@@ -20,7 +20,7 @@ class UploadBandDefinition(BaseModel):
         description=(
             "Optional; set by the key's quantity. If given, it must match, in "
             "UDUNITS-2-conformant ASCII form with `**` for exponents (e.g. "
-            "`kg/m**3`, `1/m`, `%`). See docs/units.md."
+            "`kg/m**3`, `1/m`, `%`)."
         ),
         examples=["kg/m**3", "1/m", "%", "m"],
     )

@@ -13,7 +13,13 @@ from typing import Literal
 
 from pydantic import Field
 
-from api.resources.grids.providers.landfire import BoundaryScatter, LandfireSource
+from api.resources.grids.providers.landfire import (
+    LANDFIRE_DISTURBANCE_RELEASES,
+    BoundaryScatter,
+    LandfireDisturbancePlan,
+    LandfireDisturbanceRequest,
+    LandfireSource,
+)
 from api.resources.grids.schema import Band, BandType, CreateSourceGridRequestBase
 from lib.landfire import LANDFIRE_VERSIONS
 
@@ -31,6 +37,8 @@ LandfireFccsVersion = StrEnum(
     {f"v{version}": version for version in _FCCS_ALL_VERSIONS},
 )
 
+_RELEASES = LANDFIRE_DISTURBANCE_RELEASES["fccs"]
+
 
 class LandfireFccsSource(LandfireSource):
     """Source for LANDFIRE FCCS (Fuel Characteristic Classification System).
@@ -41,6 +49,7 @@ class LandfireFccsSource(LandfireSource):
 
     product: Literal["fccs"] = "fccs"
     description: Literal["LANDFIRE FCCS fuelbed IDs"] = "LANDFIRE FCCS fuelbed IDs"
+    disturbance: LandfireDisturbancePlan | None = None
     remove_bare_ground: bool = False
     boundary_scatter: BoundaryScatter | None = None
 
@@ -58,6 +67,14 @@ class CreateLandfireFccsRequest(CreateSourceGridRequestBase):
             "LANDFIRE version. Most years are served from staged LANDFIRE "
             f"data; {', '.join(LANDFIRE_VERSIONS['fccs']['lfps_available'])} "
             "is instead fetched on demand from LANDFIRE Product Service."
+        ),
+    )
+    disturbance: LandfireDisturbanceRequest | None = Field(
+        default=None,
+        description=(
+            f"For domains the LANDFIRE {_RELEASES['newest']} release doesn't fully cover "
+            f"yet, update the {_RELEASES['baseline']} version for recent disturbance "
+            f"(`version` must be {_RELEASES['baseline']})."
         ),
     )
     remove_bare_ground: bool = False

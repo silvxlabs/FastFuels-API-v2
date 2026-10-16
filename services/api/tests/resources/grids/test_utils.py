@@ -14,8 +14,15 @@ from api.resources.features.crown.schema import CreateChmCrownFeatureRequest
 from api.resources.grids.alignment import GridLatticeGridTarget
 from api.resources.grids.compose.schema import CreateComposeRequest
 from api.resources.grids.lookup.fbfm40.schema import CreateFbfm40LookupRequest
+from api.resources.grids.providers.landfire import (
+    LANDFIRE_DISTURBANCE_FDIST_VERSION,
+    LANDFIRE_DISTURBANCE_LDIST_VERSION,
+    LANDFIRE_DISTURBANCE_RELEASES,
+    LandfireDisturbanceRequest,
+)
 from api.resources.grids.utils import (
     incomplete_inventory_columns,
+    resolve_disturbance_plan,
     validate_band_of,
     validate_format_supports_grid,
     validate_grid_input,
@@ -277,6 +284,83 @@ class TestValidateFormatSupportsGrid:
                     validate_lfps_coverage("fbfm40", "2024", self._domain())
             assert "doesn't currently cover this domain's location" in exc.value.detail
             assert "landfire.gov/data" in exc.value.detail
+
+
+class TestResolveDisturbancePlan:
+    """resolve_disturbance_plan checks the baseline and newest-release coverage.
+
+    covers_annual is mocked so no real HTTP call to LFPS happens.
+    """
+
+    BASELINES = [
+        (product, releases["baseline"])
+        for product, releases in LANDFIRE_DISTURBANCE_RELEASES.items()
+    ]
+
+    def _domain(self):
+        return make_domain_data()
+
+    def _request(self):
+        return LandfireDisturbanceRequest(source="landfire")
+
+    @pytest.mark.parametrize("product,baseline", BASELINES)
+    @pytest.mark.parametrize(
+        "coverage",
+        [CoverageStatus.PARTIAL, CoverageStatus.NONE, CoverageStatus.NO_SUCH_PRODUCT],
+    )
+    def test_newest_not_fully_covering_returns_plan(self, product, baseline, coverage):
+        with patch("api.resources.grids.utils.covers_annual", return_value=coverage):
+            plan = resolve_disturbance_plan(
+                product, baseline, self._domain(), self._request()
+            )
+        assert plan.source == "landfire"
+        assert plan.mode == "ldist_and_last_year_fdist"
+        assert plan.ldist_version == LANDFIRE_DISTURBANCE_LDIST_VERSION
+        assert plan.fdist_version == LANDFIRE_DISTURBANCE_FDIST_VERSION
+
+    @pytest.mark.parametrize("product,baseline", BASELINES)
+    def test_newest_fully_covering_raises_422(self, product, baseline):
+        with patch(
+            "api.resources.grids.utils.covers_annual",
+            return_value=CoverageStatus.FULL,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                resolve_disturbance_plan(
+                    product, baseline, self._domain(), self._request()
+                )
+        assert exc.value.status_code == 422
+        assert "already fully covers" in exc.value.detail
+
+    @pytest.mark.parametrize("product,baseline", BASELINES)
+    def test_checks_the_newest_release(self, product, baseline):
+        with patch(
+            "api.resources.grids.utils.covers_annual",
+            return_value=CoverageStatus.NONE,
+        ) as mock_annual:
+            resolve_disturbance_plan(product, baseline, self._domain(), self._request())
+        args, _ = mock_annual.call_args
+        assert args[0] == product
+        assert args[1] == LANDFIRE_DISTURBANCE_RELEASES[product]["newest"]
+
+    def test_non_baseline_version_raises_422_without_calling_lfps(self):
+        with patch("api.resources.grids.utils.covers_annual") as mock_annual:
+            with pytest.raises(HTTPException) as exc:
+                resolve_disturbance_plan(
+                    "fbfm13", "2023", self._domain(), self._request()
+                )
+        assert exc.value.status_code == 422
+        baseline = LANDFIRE_DISTURBANCE_RELEASES["fbfm13"]["baseline"]
+        assert f"'{baseline}'" in exc.value.detail
+        mock_annual.assert_not_called()
+
+    @pytest.mark.parametrize("disturbance", [None, object()])
+    def test_non_landfire_disturbance_is_skipped(self, disturbance):
+        with patch("api.resources.grids.utils.covers_annual") as mock_annual:
+            plan = resolve_disturbance_plan(
+                "fbfm13", "2023", self._domain(), disturbance
+            )
+        assert plan is None
+        mock_annual.assert_not_called()
 
 
 class TestIncompleteInventoryColumns:

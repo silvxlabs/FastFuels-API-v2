@@ -14,7 +14,10 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from api.resources.grids.providers.landfire import (
+    LANDFIRE_DISTURBANCE_RELEASES,
     BoundaryScatter,
+    LandfireDisturbancePlan,
+    LandfireDisturbanceRequest,
     LandfireSource,
     NonBurnableFuelModel,
     check_no_duplicate_non_burnable,
@@ -49,6 +52,8 @@ LandfireSeason = StrEnum(
     {season: season for season in SEASON_CODES},
 )
 
+_RELEASES = LANDFIRE_DISTURBANCE_RELEASES["fbfm40"]
+
 
 class LandfireFbfm40Source(LandfireSource):
     """Source for LANDFIRE FBFM40 (Fire Behavior Fuel Model 40).
@@ -61,6 +66,7 @@ class LandfireFbfm40Source(LandfireSource):
     description: Literal[
         "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
     ] = "LANDFIRE FBFM40 fuel model codes (Scott-Burgan 40 classification)"
+    disturbance: LandfireDisturbancePlan | None = None
     remove_non_burnable: list[str] | None = None
     boundary_scatter: BoundaryScatter | None = None
     season: str | None = Field(
@@ -98,6 +104,14 @@ class CreateLandfireFbfm40Request(CreateSourceGridRequestBase):
             "With `season` set, this is the base vintage for LANDFIRE "
             "Seasonal Fuels; the calendar year the data represents is "
             "reported back as `year`."
+        ),
+    )
+    disturbance: LandfireDisturbanceRequest | None = Field(
+        default=None,
+        description=(
+            f"For domains the LANDFIRE {_RELEASES['newest']} release doesn't fully cover "
+            f"yet, update the {_RELEASES['baseline']} version for recent disturbance "
+            f"(`version` must be {_RELEASES['baseline']}; can't be used with `season`)."
         ),
     )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None

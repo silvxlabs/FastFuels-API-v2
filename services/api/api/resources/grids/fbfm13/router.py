@@ -29,6 +29,7 @@ from api.resources.grids.providers.landfire import (
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    resolve_disturbance_plan,
     validate_feature_modifications,
     validate_lfps_coverage,
     validate_target_grid_alignment,
@@ -76,6 +77,7 @@ async def create_landfire_fbfm13(
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
     - **version**: (optional) LANDFIRE version. Default: "2024".
+    - **disturbance**: (optional) Update for recent LANDFIRE disturbance.
 
     ## Response
 
@@ -98,10 +100,19 @@ async def create_landfire_fbfm13(
             domain,
         )
 
+    disturbance_plan = await asyncio.to_thread(
+        resolve_disturbance_plan,
+        "fbfm13",
+        body.version,
+        domain,
+        body.disturbance,
+    )
+
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
     source = LandfireFbfm13Source(
         version=body.version,
+        disturbance=disturbance_plan,
         remove_non_burnable=body.remove_non_burnable,
         boundary_scatter=body.boundary_scatter,
         extent_buffer_cells=body.extent_buffer_cells,

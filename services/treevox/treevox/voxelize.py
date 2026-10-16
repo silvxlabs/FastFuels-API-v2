@@ -9,6 +9,7 @@ biomass cache, and the per-chunk voxelization loop.
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass
 
@@ -483,6 +484,23 @@ def assign_trees_to_chunks(
         ignore_index=True,
     )
     return out
+
+
+def chunk_batches(
+    chunk_locations: list[tuple[int, int]], batch_size: int
+) -> list[list[tuple[int, int]]]:
+    """Cut block-ordered chunk locations into batches of up to `batch_size`.
+
+    A batch never spans two stripes (pairs of chunk rows). Each batch is
+    read as one bounding box, so a batch that wrapped from the end of one
+    stripe to the start of the next would read the full grid width.
+    """
+    batches: list[list[tuple[int, int]]] = []
+    for _, stripe in itertools.groupby(chunk_locations, key=lambda loc: loc[0] // 2):
+        stripe = list(stripe)
+        for i in range(0, len(stripe), batch_size):
+            batches.append(stripe[i : i + batch_size])
+    return batches
 
 
 def batch_union_slices(

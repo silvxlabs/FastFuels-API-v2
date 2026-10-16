@@ -528,6 +528,52 @@ class TestBatchUnionSlices:
             voxelize.batch_union_slices([], 100, 100, chunk_xy=50, overlap_cells=10)
 
 
+def _block_order(num_rows: int, num_cols: int) -> list[tuple[int, int]]:
+    """Chunk order from `handlers.voxelize._plan_grid_layout`."""
+    return sorted(
+        [(r, c) for r in range(num_rows) for c in range(num_cols)],
+        key=lambda loc: (loc[0] // 2, loc[1] // 2, loc[0], loc[1]),
+    )
+
+
+class TestChunkBatches:
+    def test_odd_column_count_does_not_wrap_stripes(self):
+        """6x11 chunks: the plain 4-slice put (0,10),(1,10),(2,0),(2,1) in one
+        batch, whose union spanned the full grid width (#729)."""
+        locations = _block_order(6, 11)
+        batches = voxelize.chunk_batches(locations, batch_size=4)
+
+        assert [loc for batch in batches for loc in batch] == locations
+        for batch in batches:
+            assert len(batch) <= 4
+            assert len({r // 2 for r, _ in batch}) == 1
+
+        ny, nx = 2674, 5224
+        areas = []
+        for batch in batches:
+            y, x = voxelize.batch_union_slices(
+                batch, ny, nx, chunk_xy=500, overlap_cells=10
+            )
+            areas.append((y.stop - y.start) * (x.stop - x.start))
+        # No batch reads more than one 2x2 block plus its halo.
+        assert max(areas) <= (2 * 500 + 2 * 10) ** 2
+
+    def test_even_column_count_matches_plain_slicing(self):
+        locations = _block_order(6, 10)
+        batches = voxelize.chunk_batches(locations, batch_size=4)
+        assert batches == [locations[i : i + 4] for i in range(0, len(locations), 4)]
+
+    def test_single_row_grid(self):
+        locations = _block_order(1, 5)
+        assert voxelize.chunk_batches(locations, batch_size=4) == [
+            locations[:4],
+            locations[4:],
+        ]
+
+    def test_empty(self):
+        assert voxelize.chunk_batches([], batch_size=4) == []
+
+
 class TestChunkSlice:
     def test_matches_union_of_one(self):
         dims = voxelize.compute_grid_dimensions(

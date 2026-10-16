@@ -720,7 +720,8 @@ def _run_voxelization_batches(
     num_workers = _pick_worker_count()
     batch_size = max(1, num_workers)
     total_chunks = len(layout.chunk_locations)
-    num_batches = max(1, int(math.ceil(total_chunks / batch_size)))
+    batches = voxelize.chunk_batches(layout.chunk_locations, batch_size)
+    num_batches = max(1, len(batches))
     ctx = multiprocessing.get_context("spawn")
 
     logger.info(
@@ -734,11 +735,7 @@ def _run_voxelization_batches(
     # One Pool for all batches — per-batch spawning would re-import
     # fastfuels_core N times and dominate wall time.
     with ctx.Pool(processes=num_workers) as pool:
-        for i in range(num_batches):
-            batch = layout.chunk_locations[i * batch_size : (i + 1) * batch_size]
-            if not batch:
-                continue
-
+        for i, batch in enumerate(batches):
             logger.info(
                 f"Starting batch {i + 1}/{num_batches} with {len(batch)} chunks",
                 extra={"grid_id": grid_id},

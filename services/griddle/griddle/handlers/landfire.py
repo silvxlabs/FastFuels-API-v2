@@ -27,6 +27,7 @@ from shapely.geometry import box
 from xarray import DataArray
 
 from griddle.handlers import landfire_lfps
+from griddle.storage import load_band
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
 from lib.config import RASTERS_BUCKET, TABLES_BUCKET
 from lib.errors import ProcessingError
@@ -768,10 +769,10 @@ def fetch_disturbed_fuel(
         fuel_model: "fbfm13", "fbfm40", or "fccs" -- the output product.
         version: LANDFIRE version of `fuel_model` whose values undisturbed
             pixels keep.
-        disturbance: The plan the API stored on the grid's source, e.g.
-            ``{"source": "landfire", "mode": "ldist_and_last_year_fdist",
-            "ldist_version": "2025", "fdist_version": "2024"}`` or
-            ``{"source": "landfire", "mode": "fdist", "fdist_version": "2026"}``.
+        disturbance: The plan the API stored on the grid's source. Its
+            ``source`` is "landfire" (LANDFIRE's own disturbance) or "grid"
+            (a user's grid, with ``grid_id``, ``band`` and, for an FDist band,
+            ``include_landfire``).
         progress: Progress callback.
         remove_non_burnable: fbfm13/fbfm40 only -- as in fetch_fbfm13/40,
             applied to the updated grid.
@@ -790,12 +791,24 @@ def fetch_disturbed_fuel(
     """
     alignment = alignment or {"target": "domain"}
     rules_column, band_key = _DISTURBED_FUEL_MODELS[fuel_model]
-    combined = disturbance["mode"] != "fdist"
+    has_user_disturbance = disturbance["source"] == "grid"
+    user_ldist = has_user_disturbance and disturbance["band"] == "annual_disturbance"
+    user_fdist = has_user_disturbance and disturbance["band"] == "fdist"
+    user_only = user_fdist and not disturbance["include_landfire"]
+    combined = not user_only and disturbance["mode"] != "fdist"
+
+    # The user's band is checked now, before the slow LFPS job.
+    if has_user_disturbance:
+        user_disturbance = load_band(disturbance["grid_id"], disturbance["band"])
+        if user_fdist:
+            _check_fdist_codes(user_disturbance.values, user_disturbance.rio.nodata)
 
     # One LFPS job for every layer it serves. `previous` joins it only when
     # its version is LFPS-only; a staged one is fetched on its own below.
-    layers = {"fdist": disturbance["fdist_version"]}
-    if combined:
+    layers = {}
+    if not user_only:
+        layers["fdist"] = disturbance["fdist_version"]
+    if combined and not user_ldist:
         layers["annual_disturbance"] = disturbance["ldist_version"]
     for product in ("fvt", "fvc", "fvh", "bps"):
         layers[product] = LANDFIRE_VERSIONS[product]["default"]
@@ -833,14 +846,32 @@ def fetch_disturbed_fuel(
             target_grid_doc,
         )
 
-    progress("Matching disturbance rulesets...", 85)
-    fdist_inputs = {"fdist": bands["fdist"].values}
-    if combined:
-        fdist_inputs["ldist"] = bands["annual_disturbance"].values
-        fdist_inputs["ldist_attribute_table"] = _ldist_attributes(
-            disturbance["ldist_version"]
+    if has_user_disturbance:
+        # Nearest-neighbor whatever alignment.method says: codes must never blend.
+        user_disturbance = user_disturbance.rio.reproject_match(
+            previous, resampling=RESAMPLING_METHOD_MAP["nearest"]
         )
-    dist, unconverted = build_fdist_raster(disturbance["mode"], **fdist_inputs)
+        user_codes = user_disturbance.values
+        if user_disturbance.rio.nodata is not None:
+            user_codes = np.where(
+                user_codes == user_disturbance.rio.nodata, 0, user_codes
+            )
+
+    progress("Matching disturbance rulesets...", 85)
+    if user_only:
+        dist, unconverted = build_fdist_raster("fdist", fdist=user_codes)
+    else:
+        fdist_inputs = {"fdist": bands["fdist"].values}
+        if combined:
+            fdist_inputs["ldist"] = (
+                user_codes if user_ldist else bands["annual_disturbance"].values
+            )
+            fdist_inputs["ldist_attribute_table"] = _ldist_attributes(
+                disturbance["ldist_version"]
+            )
+        dist, unconverted = build_fdist_raster(disturbance["mode"], **fdist_inputs)
+        if user_fdist:
+            dist = np.where(user_codes > 0, user_codes, dist)
 
     zone = _lookup_lf_zones(
         _lf_map_zones(), previous.rio.transform(), previous.shape, previous.rio.crs

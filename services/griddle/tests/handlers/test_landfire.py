@@ -1372,6 +1372,29 @@ class TestFetchDisturbedFuel:
         "fdist_version": "2024",
     }
     FDIST_ONLY = {"source": "landfire", "mode": "fdist", "fdist_version": "2025"}
+    GRID_LDIST = {
+        "source": "grid",
+        "grid_id": "g1",
+        "checksum": "abc",
+        "band": "annual_disturbance",
+        "mode": "ldist_and_last_year_fdist",
+        "ldist_version": "2025",
+        "fdist_version": "2024",
+    }
+    GRID_FDIST = {
+        "source": "grid",
+        "grid_id": "g1",
+        "checksum": "abc",
+        "band": "fdist",
+        "include_landfire": False,
+    }
+    GRID_FDIST_WITH_LANDFIRE = {
+        **GRID_FDIST,
+        "include_landfire": True,
+        "mode": "ldist_and_last_year_fdist",
+        "ldist_version": "2025",
+        "fdist_version": "2024",
+    }
 
     # --- what gets fetched ---
 
@@ -1472,6 +1495,123 @@ class TestFetchDisturbedFuel:
         )
 
         assert list(result.data_vars) == [band_key]
+
+    # --- a user's disturbance grid ---
+
+    @pytest.fixture
+    def mock_load_band(self):
+        with patch("griddle.handlers.landfire.load_band") as mock:
+            yield mock
+
+    def test_user_ldist_replaces_the_fetched_ldist(self, roi, env, mock_load_band):
+        mock_load_band.return_value = _make_canopy_raster(np.zeros((2, 2)))
+
+        fetch_disturbed_fuel(roi, "fbfm40", "2024", self.GRID_LDIST, MagicMock())
+
+        assert list(env.submitted) == ["fdist", "fvt", "fvc", "fvh", "bps"]
+        mock_load_band.assert_called_once_with("g1", "annual_disturbance")
+        env.ldist_attributes.assert_called_once_with("2025")
+
+    def test_user_ldist_codes_update_the_fuel_model(self, roi, env, mock_load_band):
+        mock_load_band.return_value = _make_canopy_raster(np.array([[2882, 0], [0, 0]]))
+
+        result = fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", self.GRID_LDIST, MagicMock()
+        )
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+
+    def test_user_ldist_nodata_is_undisturbed(self, roi, env, mock_load_band, caplog):
+        mock_load_band.return_value = _make_canopy_raster(
+            np.array([[2882, -9999], [0, 0]]), nodata=-9999
+        )
+
+        with caplog.at_level(logging.INFO, logger="griddle.handlers.landfire"):
+            result = fetch_disturbed_fuel(
+                roi, "fbfm40", "2024", self.GRID_LDIST, MagicMock()
+            )
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+        assert "treated as undisturbed" not in caplog.text
+
+    def test_user_fdist_alone_leaves_out_landfires_disturbance(
+        self, roi, env, mock_load_band
+    ):
+        mock_load_band.return_value = _make_canopy_raster(np.zeros((2, 2)))
+
+        fetch_disturbed_fuel(roi, "fbfm40", "2024", self.GRID_FDIST, MagicMock())
+
+        assert list(env.submitted) == ["fvt", "fvc", "fvh", "bps"]
+        mock_load_band.assert_called_once_with("g1", "fdist")
+        env.ldist_attributes.assert_not_called()
+
+    def test_user_fdist_alone_updates_the_fuel_model(self, roi, env, mock_load_band):
+        mock_load_band.return_value = _make_canopy_raster(np.array([[121, 0], [0, 0]]))
+
+        result = fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", self.GRID_FDIST, MagicMock()
+        )
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+
+    def test_invalid_user_fdist_codes_fail_before_the_lfps_job(
+        self, roi, env, mock_load_band
+    ):
+        mock_load_band.return_value = _make_canopy_raster(np.array([[121, 5], [0, 0]]))
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_disturbed_fuel(roi, "fbfm40", "2024", self.GRID_FDIST, MagicMock())
+
+        assert exc_info.value.code == "INVALID_FDIST_CODES"
+        assert env.submitted == {}
+
+    def test_user_fdist_with_landfire_keeps_landfires_disturbance(
+        self, roi, env, mock_load_band
+    ):
+        mock_load_band.return_value = _make_canopy_raster(np.zeros((2, 2)))
+
+        fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", self.GRID_FDIST_WITH_LANDFIRE, MagicMock()
+        )
+
+        assert list(env.submitted) == [
+            "fdist",
+            "annual_disturbance",
+            "fvt",
+            "fvc",
+            "fvh",
+            "bps",
+        ]
+
+    def test_user_codes_win_over_landfire_where_above_zero(
+        self, roi, env, mock_load_band
+    ):
+        """LANDFIRE disturbs both top cells (FDist 121, fuel model 101). The
+        user's 211 on the left matches no rule, so that cell keeps the previous
+        value (5); the user's 0 on the right leaves LANDFIRE's disturbance."""
+        env.values["annual_disturbance"] = [[2882, 2882], [0, 0]]
+        mock_load_band.return_value = _make_canopy_raster(np.array([[211, 0], [0, 0]]))
+
+        result = fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", self.GRID_FDIST_WITH_LANDFIRE, MagicMock()
+        )
+
+        assert result["fbfm"].values.tolist() == [[5, 101], [5, 5]]
+
+    def test_user_nodata_does_not_replace_landfires_disturbance(
+        self, roi, env, mock_load_band
+    ):
+        """A positive nodata (9999) must not overwrite LANDFIRE's code."""
+        env.values["annual_disturbance"] = [[2882, 0], [0, 0]]
+        mock_load_band.return_value = _make_canopy_raster(
+            np.array([[9999, 0], [0, 0]]), nodata=9999
+        )
+
+        result = fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", self.GRID_FDIST_WITH_LANDFIRE, MagicMock()
+        )
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
 
     # --- post-processing, with core stubbed so the output is exact ---
 

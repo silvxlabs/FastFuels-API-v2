@@ -148,7 +148,7 @@ class TestBuildBatchPayload:
         payload = build_batch_payload(df, _UTM10N, seed=42)
         assert payload["model"] == {
             "name": "flow_matching",
-            "version": "v2_west.1",
+            "version": "v2_west.2",
             "tree_observation": "overhead",
             "seed": 42,
         }

@@ -19,9 +19,10 @@ GDAM_API_URL = os.getenv("GDAM_API_URL", "https://api.fastfuels.silvxlabs.com/gd
 # Target trees per dask partition, i.e. per /predict/batch request. The handler
 # repartitions the source inventory to this size so each GDAM call (and each
 # partition held in memory) is bounded, and stays under GDAM's 50,000-tree limit.
-# Measured against the public URL with the flow-matching model (v2_west.1), a
+# Measured against the public URL with the flow-matching model v2_west.1, a
 # 20k-tree batch takes ~10s warm (~24s cold), far under GDAM_REQUEST_TIMEOUT_S;
-# 2k trees take ~2s, so the per-tree cost falls with batch size.
+# 2k trees take ~2s, so the per-tree cost falls with batch size. v2_west.2 draws
+# in one network pass instead of v2_west.1's 8-step solve, so it is faster.
 GDAM_BATCH_SIZE = int(os.getenv("GDAM_BATCH_SIZE", "20000"))
 
 # Per-request timeout (seconds) on outbound GDAM calls. Must stay under Cloud Run's

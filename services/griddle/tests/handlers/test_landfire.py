@@ -1687,6 +1687,19 @@ class TestFetchDisturbedFuel:
 
         assert result["fbfm"].values.tolist() == expected
 
+    @pytest.mark.parametrize("codes", [(121, 122), (122, 121)])
+    def test_more_recent_polygon_wins_whatever_the_order(
+        self, roi, env, mock_feature, codes
+    ):
+        """121 (D_TIME 1) is more recent than 122 (D_TIME 2), so it wins in
+        either order: fuel model 101. 122 matches no rule."""
+        mock_feature.read_parquet.return_value = self._polygons(
+            (0, 0, codes[0]), (0, 0, codes[1])
+        )
+        result = fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+
     def test_polygon_that_misses_a_cells_center_leaves_it_undisturbed(
         self, roi, env, mock_feature
     ):

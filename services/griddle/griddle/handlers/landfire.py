@@ -281,13 +281,20 @@ def _load_disturbance_polygons(feature_id: str) -> gpd.GeoDataFrame:
 def _rasterize_fdist(polygons: gpd.GeoDataFrame, like: DataArray) -> np.ndarray:
     """FDist codes of ``polygons`` burned onto ``like``'s grid.
 
-    A cell takes the code of the polygon that covers its center; where polygons
-    overlap, the later row wins. Every other cell is 0.
+    A cell takes the code of the polygon that covers its center. Where polygons
+    overlap, the more recent disturbance wins (the lower last digit, D_TIME);
+    if they are equally recent, the later row wins. Every other cell is 0.
     """
     polygons = polygons.to_crs(like.rio.crs)
     polygons = polygons[~(polygons.geometry.isna() | polygons.geometry.is_empty)]
     if polygons.empty:
         return np.zeros(like.shape, dtype=np.int32)
+
+    # Burn the oldest first so the most recent ends up on top. The sort is
+    # stable, so equally recent polygons keep their order in the file.
+    d_time = polygons["fdist"].astype(int).to_numpy() % 10
+    polygons = polygons.iloc[np.argsort(-d_time, kind="stable")]
+
     return rasterize(
         zip(polygons.geometry, polygons["fdist"].astype(int)),
         out_shape=like.shape,

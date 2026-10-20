@@ -47,6 +47,7 @@ from rasterio.transform import from_origin
 from shapely.geometry import box
 
 from lib.errors import ProcessingError
+from lib.firestore import DocumentNotFoundError
 from lib.landfire import UnknownLandfireVersionError
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 
@@ -1395,6 +1396,14 @@ class TestFetchDisturbedFuel:
         "ldist_version": "2025",
         "fdist_version": "2024",
     }
+    FEATURE = {"source": "feature", "feature_id": "f1", "include_landfire": False}
+    FEATURE_WITH_LANDFIRE = {
+        **FEATURE,
+        "include_landfire": True,
+        "mode": "ldist_and_last_year_fdist",
+        "ldist_version": "2025",
+        "fdist_version": "2024",
+    }
 
     # --- what gets fetched ---
 
@@ -1612,6 +1621,137 @@ class TestFetchDisturbedFuel:
         )
 
         assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+
+    # --- a user's disturbance polygons ---
+
+    @pytest.fixture
+    def mock_feature(self):
+        """The feature's record (in domain d1) and its Parquet, patched.
+
+        Set `read_parquet.return_value` to the polygons the file holds.
+        """
+        snapshot = MagicMock()
+        snapshot.to_dict.return_value = {"domain_id": "d1"}
+        with (
+            patch(
+                "griddle.handlers.landfire.get_document", return_value=(None, snapshot)
+            ) as get_document,
+            patch("griddle.handlers.landfire.gpd.read_parquet") as read_parquet,
+        ):
+            yield SimpleNamespace(get_document=get_document, read_parquet=read_parquet)
+
+    @staticmethod
+    def _polygons(*cells: tuple[int, int, float]) -> gpd.GeoDataFrame:
+        """One polygon per (col, row, code), covering that cell of the 2x2 test grid."""
+        return gpd.GeoDataFrame(
+            {"fdist": [code for _, _, code in cells]},
+            geometry=[box(x - 0.5, y - 0.5, x + 0.5, y + 0.5) for x, y, _ in cells],
+            crs="EPSG:5070",
+        )
+
+    def test_feature_alone_leaves_out_landfires_disturbance(
+        self, roi, env, mock_feature
+    ):
+        mock_feature.read_parquet.return_value = self._polygons((0, 0, 121))
+
+        fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert list(env.submitted) == ["fvt", "fvc", "fvh", "bps"]
+        assert mock_feature.read_parquet.call_args.args[0].endswith("/d1/f1.parquet")
+        env.ldist_attributes.assert_not_called()
+
+    def test_feature_codes_update_the_fuel_model(self, roi, env, mock_feature):
+        mock_feature.read_parquet.return_value = self._polygons((0, 0, 121))
+
+        result = fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+
+    @pytest.mark.parametrize(
+        ("codes", "expected"),
+        [
+            ((121, 211), [[5, 5], [5, 5]]),
+            ((211, 121), [[101, 5], [5, 5]]),
+        ],
+    )
+    def test_later_polygon_wins_where_they_overlap(
+        self, roi, env, mock_feature, codes, expected
+    ):
+        """Only 121 matches a rule (fuel model 101); 211 matches none, so a cell
+        it wins keeps the previous value (5)."""
+        mock_feature.read_parquet.return_value = self._polygons(
+            (0, 0, codes[0]), (0, 0, codes[1])
+        )
+
+        result = fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert result["fbfm"].values.tolist() == expected
+
+    def test_polygon_that_misses_a_cells_center_leaves_it_undisturbed(
+        self, roi, env, mock_feature
+    ):
+        mock_feature.read_parquet.return_value = gpd.GeoDataFrame(
+            {"fdist": [121]}, geometry=[box(0.2, 0.2, 0.5, 0.5)], crs="EPSG:5070"
+        )
+
+        result = fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert result["fbfm"].values.tolist() == [[5, 5], [5, 5]]
+
+    def test_feature_codes_win_over_landfire_where_above_zero(
+        self, roi, env, mock_feature
+    ):
+        """LANDFIRE disturbs both top cells (FDist 121, fuel model 101). The
+        polygon's 211 on the left matches no rule, so that cell keeps the
+        previous value (5); the right cell keeps LANDFIRE's disturbance."""
+        env.values["annual_disturbance"] = [[2882, 2882], [0, 0]]
+        mock_feature.read_parquet.return_value = self._polygons((0, 0, 211))
+
+        result = fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", self.FEATURE_WITH_LANDFIRE, MagicMock()
+        )
+
+        assert "annual_disturbance" in env.submitted
+        assert result["fbfm"].values.tolist() == [[5, 101], [5, 5]]
+
+    def test_invalid_feature_codes_fail_before_the_lfps_job(
+        self, roi, env, mock_feature
+    ):
+        mock_feature.read_parquet.return_value = self._polygons((0, 0, 121), (1, 0, 5))
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert exc_info.value.code == "INVALID_FDIST_CODES"
+        assert env.submitted == {}
+
+    def test_feature_polygon_with_no_code_fails_before_the_lfps_job(
+        self, roi, env, mock_feature
+    ):
+        polygons = self._polygons((0, 0, 121))
+        polygons.loc[0, "fdist"] = np.nan
+        mock_feature.read_parquet.return_value = polygons
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert exc_info.value.code == "INVALID_FDIST_CODES"
+        assert env.submitted == {}
+
+    @pytest.mark.parametrize("missing", ["record", "parquet"])
+    def test_missing_feature_fails_before_the_lfps_job(
+        self, roi, env, mock_feature, missing
+    ):
+        if missing == "record":
+            mock_feature.get_document.side_effect = DocumentNotFoundError
+        else:
+            mock_feature.read_parquet.side_effect = FileNotFoundError
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_disturbed_fuel(roi, "fbfm40", "2024", self.FEATURE, MagicMock())
+
+        assert exc_info.value.code == "DISTURBANCE_FEATURE_NOT_FOUND"
+        assert env.submitted == {}
 
     # --- post-processing, with core stubbed so the output is exact ---
 

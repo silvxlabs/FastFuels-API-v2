@@ -4,6 +4,7 @@ api/v2/resources/grids/canopy/router.py
 Router for canopy grid product endpoints.
 """
 
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -42,10 +43,15 @@ from api.resources.grids.canopy.schema import (
     build_chm_bands,
     build_landfire_canopy_bands,
 )
+from api.resources.grids.providers.landfire import (
+    LandfireCoverageResponse,
+    build_landfire_coverage_response,
+)
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
     validate_feature_modifications,
+    validate_lfps_coverage,
     validate_target_grid_alignment,
 )
 from api.resources.point_clouds.schema import PointCloudType
@@ -57,6 +63,8 @@ from lib.config import (
     GRIDS_COLLECTION,
     POINT_CLOUDS_COLLECTION,
 )
+from lib.domain_utils import parse_domain_gdf
+from lib.landfire import LANDFIRE_VERSIONS, list_releases
 
 router = APIRouter()
 
@@ -279,6 +287,8 @@ async def create_landfire_canopy(
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    if body.version in LANDFIRE_VERSIONS["canopy"]["lfps_available"]:
+        await asyncio.to_thread(validate_lfps_coverage, "canopy", body.version, domain)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -315,6 +325,37 @@ async def create_landfire_canopy(
     register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)
+
+
+@router.get(
+    "/landfire/coverage",
+    response_model=LandfireCoverageResponse,
+    summary="Check LANDFIRE canopy release coverage for a domain",
+)
+async def check_landfire_canopy_coverage(request: Request, domain: VerifiedDomain):
+    """
+    # Check LANDFIRE Canopy Coverage
+
+    Immediate pre-flight check reporting every LANDFIRE canopy release the API
+    serves and how much of this domain each one covers. Staged annual releases
+    are national; newer releases are served by LANDFIRE Product Service region
+    by region, so coverage depends on where the domain is and on what LANDFIRE
+    has published so far.
+
+    ## Response
+
+    `latest` is the release representing the most recent point in time that
+    fully covers the domain. `releases` lists every release, newest first.
+    Each release that covers the domain carries a `links.create` request:
+    send its `body` to its `href`, a path relative to this API's base URL,
+    to create the grid.
+    """
+    geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
+    releases = await asyncio.to_thread(list_releases, "canopy", geometry)
+    create_href = str(
+        request.app.url_path_for("create_landfire_canopy", domain_id=domain["id"])
+    )
+    return build_landfire_coverage_response("canopy", releases, create_href)
 
 
 @router.post(

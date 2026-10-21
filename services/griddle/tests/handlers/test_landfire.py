@@ -20,7 +20,6 @@ from fastfuels_core.fuel_models import update_fuel_models
 from fastfuels_core.fuel_models.fdist_builder import LDIST_TO_FDIST
 from griddle.handlers import landfire as landfire_handler
 from griddle.handlers.landfire import (
-    _VALID_FDIST_CODES,
     FBFM_NON_BURNABLE,
     FCCS_BARE_GROUND,
     LANDFIRE_EXTRA_NODATA,
@@ -48,7 +47,7 @@ from shapely.geometry import box
 
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError
-from lib.landfire import UnknownLandfireVersionError
+from lib.landfire import VALID_FDIST_CODES, UnknownLandfireVersionError
 from lib.testing import SHARED_TEST_DOMAINS_DIR
 
 DOMAINS_DIR = SHARED_TEST_DOMAINS_DIR
@@ -730,7 +729,7 @@ class TestCheckFdistCodes:
         _check_fdist_codes(np.array([[121, 732], [111, 333]]))
 
     def test_every_code_core_produces_is_valid(self):
-        assert set(LDIST_TO_FDIST.values()) <= set(_VALID_FDIST_CODES.tolist())
+        assert set(LDIST_TO_FDIST.values()) <= VALID_FDIST_CODES
 
     def test_zero_nan_and_nodata_are_ignored(self):
         _check_fdist_codes(np.array([[0, -9999.0, np.nan]]), nodata=-9999)

@@ -37,7 +37,12 @@ from lib.config import (
 )
 from lib.errors import ProcessingError
 from lib.firestore import DocumentNotFoundError, get_document
-from lib.landfire import LANDFIRE_VERSIONS, NB_CODE_MAP, validate_landfire_version
+from lib.landfire import (
+    LANDFIRE_VERSIONS,
+    NB_CODE_MAP,
+    VALID_FDIST_CODES,
+    validate_landfire_version,
+)
 from lib.raster import RasterConnection, cog_env
 
 logger = logging.getLogger(__name__)
@@ -74,16 +79,6 @@ _DISTURBED_FUEL_MODELS = {
     "fbfm40": ("FBFM40_code", "fbfm"),
     "fccs": ("FCCS", "fccs"),
 }
-
-# FDist codes are 100 * D_TYPE + 10 * D_SEVERITY + D_TIME.
-_VALID_FDIST_CODES = np.array(
-    [
-        100 * d_type + 10 * severity + time
-        for d_type in range(1, 8)
-        for severity in range(1, 4)
-        for time in range(1, 4)
-    ]
-)
 
 # LANDFIRE aspect marks flat cells (slope 0-2 deg) with -1. Topography grids
 # store flat as 0, matching 3DEP.
@@ -231,7 +226,7 @@ def _check_fdist_codes(fdist: np.ndarray, nodata: float | None = None) -> None:
         checked &= fdist != nodata
 
     codes = np.unique(fdist[checked])
-    invalid = codes[~np.isin(codes, _VALID_FDIST_CODES)]
+    invalid = codes[~np.isin(codes, list(VALID_FDIST_CODES))]
     if invalid.size == 0:
         return
 

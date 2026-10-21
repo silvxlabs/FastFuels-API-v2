@@ -33,6 +33,7 @@ from api.resources.features.cache import (
     get_feature_metadata,
 )
 from api.resources.features.crown.router import router as crown_router
+from api.resources.features.disturbance.router import router as disturbance_router
 from api.resources.features.layerset.router import router as layerset_router
 from api.resources.features.road.router import router as road_router
 from api.resources.features.schema import (
@@ -586,3 +587,6 @@ router.include_router(road_router, prefix="/road", tags=["Features - Road"])
 router.include_router(water_router, prefix="/water", tags=["Features - Water"])
 router.include_router(layerset_router, prefix="/layerset", tags=["Features - Layerset"])
 router.include_router(crown_router, prefix="/crown", tags=["Features - Crown"])
+router.include_router(
+    disturbance_router, prefix="/disturbance", tags=["Features - Disturbance"]
+)

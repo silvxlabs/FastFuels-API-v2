@@ -8,7 +8,14 @@ from lib.units import validate_unit
 
 @pytest.mark.parametrize(
     "key",
-    ["fbfm", "fuel_load.1hr", "fuel_load.mass_1_2m", "fuel_moisture.live.shrub"],
+    [
+        "fbfm",
+        "fdist",
+        "fdist.perimeters",
+        "fuel_load.1hr",
+        "fuel_load.mass_1_2m",
+        "fuel_moisture.live.shrub",
+    ],
 )
 def test_accepts_known_quantity_with_any_label(key):
     check_band_key(key)

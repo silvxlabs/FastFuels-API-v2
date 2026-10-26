@@ -2683,6 +2683,7 @@ dependencies = [
     { name = "leaflux" },
     { name = "lib", extra = ["firestore", "gcs", "inventory", "raster", "zarr"] },
     { name = "pyarrow" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -2711,6 +2712,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=18.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.5.0" },
+    { name = "scipy", specifier = ">=1.14" },
 ]
 provides-extras = ["test"]
 

@@ -10,6 +10,7 @@ import httpx
 import numpy as np
 import pandas as pd
 import pytest
+from standgen import crown_base
 from standgen.crown_base import crown_base_height
 from standgen.handlers import gdam
 from standgen.handlers.gdam import (
@@ -1196,7 +1197,7 @@ class TestCrownBaseHeightModel:
             seen["model"] = model
             return np.full(len(args[0]), 2.0)
 
-        monkeypatch.setattr(gdam, "crown_base_height", fake_cbh)
+        monkeypatch.setattr(crown_base, "crown_base_height", fake_cbh)
         frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
         source = {
             "source_tree_inventory_id": "src",
@@ -1214,7 +1215,7 @@ class TestCrownBaseHeightModel:
             seen["model"] = model
             return np.full(len(args[0]), 2.0)
 
-        monkeypatch.setattr(gdam, "crown_base_height", fake_cbh)
+        monkeypatch.setattr(crown_base, "crown_base_height", fake_cbh)
         frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
         with _patched(frame, _ok_post):
             gdam.handle_gdam(

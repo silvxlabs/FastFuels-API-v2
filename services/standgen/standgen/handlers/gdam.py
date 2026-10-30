@@ -44,7 +44,7 @@ from fastfuels_core.allometry.crown_ratio import FIA_NATIONAL_LOGIT_2026
 
 from lib.errors import ProcessingError
 from standgen import config
-from standgen.crown_base import crown_base_height
+from standgen.crown_base import CROWN_BASE_INPUTS, fill_crown_base_height
 from standgen.region import in_pacific_northwest
 from standgen.storage import load_inventory_parquet, save_parquet_with_summary
 
@@ -65,9 +65,6 @@ _IMPUTED_DTYPES = {
     "fia_species_code": "Int64",
     "crown_base_height": "float64",
 }
-# Inputs of the crown base height model.
-_CROWN_BASE_INPUTS = ("fia_species_code", "crown_ratio", "dbh", "height")
-
 # Columns GDAM needs on every source row.
 _REQUIRED_COLUMNS = ("x", "y", "height")
 
@@ -293,29 +290,6 @@ def _predict(payload: dict, expected_count: int) -> dict:
     )
 
 
-def fill_crown_base_height(
-    df: pd.DataFrame, pacific_northwest: bool, model: str = FIA_NATIONAL_LOGIT_2026
-) -> pd.DataFrame:
-    """Fill null (or absent) ``crown_base_height`` cells from the crown base
-    height ``model`` on the frame's species, crown ratio, dbh and height.
-    Existing values are kept, as in ``fill_missing``."""
-    modeled = pd.Series(
-        crown_base_height(
-            *(df[c] for c in _CROWN_BASE_INPUTS),
-            pacific_northwest=pacific_northwest,
-            model=model,
-        ),
-        index=df.index,
-    )
-    result = df.copy()
-    if "crown_base_height" in result.columns:
-        current = result["crown_base_height"]
-        result["crown_base_height"] = current.where(current.notna(), modeled)
-    else:
-        result["crown_base_height"] = modeled
-    return result
-
-
 def _process_partition(
     pdf: pd.DataFrame,
     source_crs_str: str,
@@ -468,7 +442,7 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     if "crown_base_height" in impute_columns:
         missing_inputs = [
             c
-            for c in _CROWN_BASE_INPUTS
+            for c in CROWN_BASE_INPUTS
             if c not in ddf.columns and c not in impute_columns
         ]
         if missing_inputs:

@@ -8,6 +8,9 @@ from fastfuels_core.allometry.crown_ratio import (
 )
 from fastfuels_core.ref_data import REF_SPECIES
 
+# Inputs of the crown base height model, in ``crown_base_height`` argument order.
+CROWN_BASE_INPUTS = ("fia_species_code", "crown_ratio", "dbh", "height")
+
 
 def crown_base_height(
     species_code,
@@ -45,3 +48,33 @@ def crown_base_height(
             equation=model,
         )
     return out
+
+
+def fill_crown_base_height(
+    df: pd.DataFrame,
+    pacific_northwest: bool,
+    model: str = FIA_NATIONAL_LOGIT_2026,
+    overwrite: bool = False,
+) -> pd.DataFrame:
+    """Set ``crown_base_height`` from the crown base height ``model`` on the
+    frame's species, crown ratio, dbh and height.
+
+    Without ``overwrite`` only null (or absent) cells are filled and existing
+    values are kept; with it every row takes the modeled value. An existing
+    column keeps its position; an absent one is appended. Always float64.
+    """
+    modeled = pd.Series(
+        crown_base_height(
+            *(df[c] for c in CROWN_BASE_INPUTS),
+            pacific_northwest=pacific_northwest,
+            model=model,
+        ),
+        index=df.index,
+    )
+    result = df.copy()
+    if "crown_base_height" in result.columns and not overwrite:
+        current = result["crown_base_height"].astype("float64")
+        result["crown_base_height"] = current.where(current.notna(), modeled)
+    else:
+        result["crown_base_height"] = modeled
+    return result

@@ -31,6 +31,7 @@ from api.resources.inventories.tree.allometry.gdam.schema import (
     CreateGdamInventoryRequest,
     GdamInventorySource,
     crown_base_height_missing_inputs,
+    gdam_conditioned_columns,
     resolve_gdam_columns,
 )
 from api.schema import JobStatus
@@ -70,19 +71,19 @@ async def create_gdam_inventory(
     that predicts tree morphology — diameter at breast height, live crown ratio,
     and species — from simple stem metrics (position and height). It replaces
     legacy region-specific allometric equations with a single generative model:
-    each tree is routed to a region-specific model by geography, and each missing
-    value is one draw from the predicted distribution given the values you
-    already supply, which are preserved. Every tree is treated as visible from
-    above, as trees detected on a canopy height model are.
+    each tree is routed to a region-specific model by geography, and each
+    predicted value is one draw from the predicted distribution given the values
+    you already supply. Every tree is treated as visible from above, as trees
+    detected on a canopy height model are.
 
     This endpoint creates a new tree inventory by calling the GDAM API to fill in
-    the missing morphology columns (diameter, crown ratio, species) of an existing
-    tree inventory, then computes each tree's crown base height from those with
-    the uncompacted crown ratio model.
+    the morphology columns (diameter, crown ratio, species) of an existing tree
+    inventory, then computes each tree's crown base height from those with
+    ``crown_base_height_model``.
 
     The typical input is an uploaded **position + height** inventory (`x`, `y`,
-    `height`). GDAM predicts the missing fields; any values already present are
-    preserved and passed to GDAM as conditioning inputs.
+    `height`). GDAM conditions on every dbh, crown ratio and species column the
+    source has, except those being overwritten.
 
     ## Request Body
 
@@ -95,6 +96,15 @@ async def create_gdam_inventory(
       Requesting ``crown_base_height`` requires each of ``dbh``, ``crown_ratio``
       and ``fia_species_code`` to be imputed too or to be a column of the source
       inventory. Must be non-empty with no duplicates.
+    - **overwrite**: (optional, default ``false``) ``false`` keeps existing
+      values and fills only empty cells. ``true`` replaces every tree's value in
+      ``impute_columns``, and GDAM does not see the old values. Overwriting
+      ``crown_ratio`` without ``crown_base_height`` leaves crown bases that no
+      longer match the new crown ratios.
+    - **crown_base_height_model**: (optional) The model that computes
+      ``crown_base_height`` from species, dbh, crown ratio and height, selected
+      by ``name``. Defaults to ``{"name": "fia_national_logit_2026"}``. GDAM does
+      not predict crown base height yet.
     - **name**: (optional) Name for the inventory.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing inventories.
@@ -106,8 +116,7 @@ async def create_gdam_inventory(
     - **x**, **y**: tree position, in the domain CRS.
     - **height**: tree height above zero, in metres (``m``).
 
-    **Imputable** (select via ``impute_columns``) — filled only where missing;
-    existing values are preserved:
+    **Imputable** (select via ``impute_columns``):
 
     - **dbh**: diameter at breast height, in centimetres (``cm``). Predicted by
       GDAM.
@@ -116,9 +125,16 @@ async def create_gdam_inventory(
     - **fia_species_code**: FIA species code. Predicted by GDAM.
     - **crown_base_height**: height of the lowest live foliage, in metres
       (``m``): the base of a continuous, gap-free crown, equal to ``height`` for
-      a tree with no live crown. Computed from species, crown ratio, diameter
-      and height by the uncompacted crown ratio model, not by GDAM. With only
-      ``crown_base_height`` requested, no GDAM call is made.
+      a tree with no live crown. Computed from each tree's final species, crown
+      ratio, diameter and height by ``crown_base_height_model``. Species the
+      model does not cover get no value. With only ``crown_base_height``
+      requested, no GDAM call is made.
+
+    ## Source
+
+    The created inventory's ``source`` records ``impute_columns``,
+    ``overwrite``, ``crown_base_height_model`` and ``conditioned_columns`` (the
+    source columns GDAM conditioned on).
 
     ## Response
 
@@ -190,6 +206,11 @@ async def create_gdam_inventory(
         source_tree_inventory_id=body.source_tree_inventory_id,
         source_tree_inventory_checksum=source_data.get("checksum"),
         impute_columns=body.impute_columns,
+        overwrite=body.overwrite,
+        crown_base_height_model=body.crown_base_height_model,
+        conditioned_columns=gdam_conditioned_columns(
+            source_keys, body.impute_columns, body.overwrite
+        ),
     )
 
     inventory_data = {

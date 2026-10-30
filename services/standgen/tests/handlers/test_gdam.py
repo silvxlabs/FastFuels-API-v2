@@ -993,3 +993,248 @@ class TestCrownBaseHeight:
         for out in (full, empty):
             assert list(out.columns) == list(meta.columns)
             assert out.dtypes.to_dict() == meta.dtypes.to_dict()
+
+
+def _sent_columns(mock_post):
+    return mock_post.call_args.kwargs["json"]["trees"]["columns"]
+
+
+_FULL_SOURCE = {
+    "x": [500000.0, 500030.0],
+    "y": [4500000.0, 4500030.0],
+    "height": [10.0, 12.0],
+    "dbh": [20.0, np.nan],
+    "crown_ratio": [0.7, np.nan],
+    "fia_species_code": pd.array([202, pd.NA], dtype="Int64"),
+    "crown_base_height": [1.0, np.nan],
+}
+
+
+class TestOverwrite:
+    """With overwrite, the selected columns' old values are dropped before GDAM,
+    so GDAM never sees them and every row takes the new value."""
+
+    def test_payload_omits_overwritten_columns(self, mock_domain_gdf):
+        frame = pd.DataFrame(_FULL_SOURCE)
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["dbh"],
+            "overwrite": True,
+        }
+        with _patched(frame, _ok_post) as (_, mock_post):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        sent = _sent_columns(mock_post)
+        assert "DIA" not in sent
+        assert "CR" in sent
+        assert "SPCD" in sent
+
+    def test_without_overwrite_payload_conditions_on_all_present(self, mock_domain_gdf):
+        frame = pd.DataFrame(_FULL_SOURCE)
+        source = {"source_tree_inventory_id": "src", "impute_columns": ["dbh"]}
+        with _patched(frame, _ok_post) as (saved, mock_post):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        assert _sent_columns(mock_post) == ["Lat", "Lon", "HT", "DIA", "CR", "SPCD"]
+        assert saved["df"].loc[0, "dbh"] == 20.0
+
+    def test_every_row_takes_the_prediction(self, mock_domain_gdf):
+        frame = pd.DataFrame(_FULL_SOURCE)
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["dbh", "crown_ratio", "fia_species_code"],
+            "overwrite": True,
+        }
+        with _patched(frame, _ok_post) as (saved, mock_post):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        result = saved["df"]
+        assert _sent_columns(mock_post) == ["Lat", "Lon", "HT"]
+        assert list(result["dbh"]) == pytest.approx([30.0, 30.0], abs=1e-2)
+        assert list(result["crown_ratio"]) == pytest.approx([0.40, 0.40])
+        assert list(result["fia_species_code"]) == [122, 122]
+        # Not requested: left as the source had it.
+        assert result.loc[0, "crown_base_height"] == 1.0
+        assert np.isnan(result.loc[1, "crown_base_height"])
+
+    def test_crown_base_height_recomputed_from_final_values(self, mock_domain_gdf):
+        frame = pd.DataFrame(_FULL_SOURCE)
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["crown_ratio", "crown_base_height"],
+            "overwrite": True,
+        }
+        with _patched(frame, _ok_post) as (saved, mock_post):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        result = saved["df"]
+        assert "CR" not in _sent_columns(mock_post)
+        # dbh/species not overwritten: kept, including the empty cells.
+        assert result.loc[0, "dbh"] == 20.0
+        assert np.isnan(result.loc[1, "dbh"])
+        assert list(result["crown_ratio"]) == pytest.approx([0.40, 0.40])
+        expected = crown_base_height(
+            result["fia_species_code"],
+            result["crown_ratio"],
+            result["dbh"],
+            result["height"],
+            pacific_northwest=in_pacific_northwest(mock_domain_gdf),
+        )
+        cbh = result["crown_base_height"].to_numpy()
+        assert cbh == pytest.approx(expected, nan_ok=True)
+        assert cbh[0] != 1.0  # the old value is replaced
+        assert np.isnan(cbh[1])  # no dbh or species -> no crown base
+
+    def test_crown_base_height_alone_recomputes_every_row(self, mock_domain_gdf):
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0, 500030.0],
+                "y": [4500000.0, 4500030.0],
+                "height": [10.0, 12.0],
+                "dbh": [20.0, 30.0],
+                "crown_ratio": [0.5, 0.6],
+                "fia_species_code": pd.array([202, 122], dtype="Int64"),
+                "crown_base_height": [1.0, np.nan],
+            }
+        )
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["crown_base_height"],
+            "overwrite": True,
+        }
+        with _patched(frame, _ok_post) as (saved, mock_post):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        assert mock_post.call_count == 0
+        expected = crown_base_height(
+            frame["fia_species_code"],
+            frame["crown_ratio"],
+            frame["dbh"],
+            frame["height"],
+            pacific_northwest=in_pacific_northwest(mock_domain_gdf),
+        )
+        assert saved["df"]["crown_base_height"].to_numpy() == pytest.approx(expected)
+
+    def test_overwritten_inputs_count_as_available(self, mock_domain_gdf):
+        frame = pd.DataFrame(_FULL_SOURCE).drop(columns=["fia_species_code"])
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["dbh", "fia_species_code", "crown_base_height"],
+            "overwrite": True,
+        }
+        with _patched(frame, _ok_post) as (saved, _):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        # Row 1 keeps its empty crown ratio, so only row 0 gets a crown base.
+        assert saved["df"].loc[0, "crown_base_height"] > 0
+
+    @pytest.mark.parametrize("overwrite", [False, True])
+    @pytest.mark.parametrize(
+        "source_columns",
+        [
+            ["x", "y", "height"],
+            ["x", "y", "height", "crown_base_height", "tree_id"],
+            ["x", "crown_base_height", "y", "height", "crown_ratio"],
+            ["dbh", "x", "y", "height", "fia_species_code", "crown_ratio"],
+        ],
+    )
+    @pytest.mark.parametrize(
+        "columns",
+        [
+            list(gdam.IMPUTED_COLUMNS),
+            ["crown_ratio", "crown_base_height"],
+            ["dbh"],
+        ],
+    )
+    def test_partition_output_matches_meta(
+        self, mock_domain_gdf, source_columns, columns, overwrite
+    ):
+        if "crown_base_height" in columns and any(
+            c not in source_columns and c not in columns
+            for c in ("dbh", "fia_species_code")
+        ):
+            pytest.skip("handle_gdam rejects missing crown base inputs")
+        values = {
+            "x": [500000.0, 500001.0],
+            "y": [4500000.0] * 2,
+            "height": [10.0, 12.0],
+            "dbh": [20.0, np.nan],
+            "crown_base_height": [np.nan, 3.0],
+            "crown_ratio": [0.5, np.nan],
+            "fia_species_code": pd.array([202, pd.NA], dtype="Int64"),
+            "tree_id": np.array([1, 2], dtype="int32"),
+        }
+        frame = pd.DataFrame({c: values[c] for c in source_columns})
+        ddf = dd.from_pandas(frame, npartitions=1)
+        meta = gdam._result_meta(ddf, columns, overwrite)
+
+        with patch.object(gdam.httpx, "post", side_effect=_ok_post):
+            full = gdam._process_partition(
+                frame,
+                _UTM10N,
+                True,
+                columns,
+                "inv",
+                overwrite,
+                partition_info={"number": 0},
+            )
+        empty = gdam._process_partition(
+            frame.iloc[:0],
+            _UTM10N,
+            True,
+            columns,
+            "inv",
+            overwrite,
+            partition_info={"number": 1},
+        )
+        for out in (full, empty):
+            assert list(out.columns) == list(meta.columns)
+            assert out.dtypes.to_dict() == meta.dtypes.to_dict()
+
+
+class TestCrownBaseHeightModel:
+    """The source's crown_base_height_model reaches the core model."""
+
+    def test_model_name_passed_to_core(self, mock_domain_gdf, monkeypatch):
+        seen = {}
+
+        def fake_cbh(*args, pacific_northwest, model):
+            seen["model"] = model
+            return np.full(len(args[0]), 2.0)
+
+        monkeypatch.setattr(gdam, "crown_base_height", fake_cbh)
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        source = {
+            "source_tree_inventory_id": "src",
+            "crown_base_height_model": {"name": "toney_reeves_2009"},
+        }
+        with _patched(frame, _ok_post) as (saved, _):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        assert seen["model"] == "toney_reeves_2009"
+        assert list(saved["df"]["crown_base_height"]) == [2.0]
+
+    def test_default_is_refit(self, mock_domain_gdf, monkeypatch):
+        seen = {}
+
+        def fake_cbh(*args, pacific_northwest, model):
+            seen["model"] = model
+            return np.full(len(args[0]), 2.0)
+
+        monkeypatch.setattr(gdam, "crown_base_height", fake_cbh)
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        with _patched(frame, _ok_post):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        assert seen["model"] == "fia_national_logit_2026"
+
+    def test_uncovered_species_gets_nan(self, mock_domain_gdf):
+        # Loblolly pine (131) is outside Toney and Reeves (2009)'s species.
+        def loblolly_post(url, json=None, timeout=None):
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            resp.json.return_value = _predictions(json["trees"]["index"], spcd=131.0)
+            return resp
+
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        source = {
+            "source_tree_inventory_id": "src",
+            "crown_base_height_model": {"name": "toney_reeves_2009"},
+        }
+        with _patched(frame, loblolly_post) as (saved, _):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        assert saved["df"]["crown_base_height"].isna().all()

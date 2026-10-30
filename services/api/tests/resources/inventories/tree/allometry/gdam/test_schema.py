@@ -11,6 +11,7 @@ from api.resources.inventories.tree.allometry.gdam.schema import (
     CreateGdamInventoryRequest,
     GdamInventorySource,
     crown_base_height_missing_inputs,
+    gdam_conditioned_columns,
     resolve_gdam_columns,
 )
 from pydantic import ValidationError
@@ -63,7 +64,37 @@ class TestGdamInventorySource:
                 "fia_species_code",
                 "crown_base_height",
             ],
+            "overwrite": False,
+            "crown_base_height_model": {"name": "fia_national_logit_2026"},
+            "conditioned_columns": None,
         }
+
+    def test_document_without_new_fields_validates(self):
+        """A source stored before overwrite/model/conditioned_columns existed
+        still reads, with the defaults."""
+        source = GdamInventorySource.model_validate(
+            {
+                "name": "gdam",
+                "source_tree_inventory_id": "inv123",
+                "source_tree_inventory_checksum": "sum123",
+                "impute_columns": ["dbh"],
+            }
+        )
+        assert source.overwrite is False
+        assert source.crown_base_height_model.name == "fia_national_logit_2026"
+        assert source.conditioned_columns is None
+
+    def test_records_new_fields(self):
+        source = GdamInventorySource(
+            source_tree_inventory_id="inv123",
+            overwrite=True,
+            crown_base_height_model={"name": "randolph_2010"},
+            conditioned_columns=["dbh"],
+        )
+        data = source.model_dump()
+        assert data["overwrite"] is True
+        assert data["crown_base_height_model"] == {"name": "randolph_2010"}
+        assert data["conditioned_columns"] == ["dbh"]
 
 
 class TestCreateGdamInventoryRequest:
@@ -107,7 +138,33 @@ class TestCreateGdamInventoryRequest:
             "tags",
             "source_tree_inventory_id",
             "impute_columns",
+            "overwrite",
+            "crown_base_height_model",
         }
+
+    def test_overwrite_defaults_to_false(self):
+        request = CreateGdamInventoryRequest(source_tree_inventory_id="inv123")
+        assert request.overwrite is False
+
+    def test_crown_base_height_model_defaults_to_refit(self):
+        request = CreateGdamInventoryRequest(source_tree_inventory_id="inv123")
+        assert request.crown_base_height_model.name == "fia_national_logit_2026"
+
+    def test_crown_base_height_model_selected_by_name(self):
+        request = CreateGdamInventoryRequest(
+            source_tree_inventory_id="inv123",
+            crown_base_height_model={"name": "westfall_2019"},
+            overwrite=True,
+        )
+        assert request.crown_base_height_model.name == "westfall_2019"
+        assert request.overwrite is True
+
+    def test_unknown_crown_base_height_model_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateGdamInventoryRequest(
+                source_tree_inventory_id="inv123",
+                crown_base_height_model={"name": "gdam"},
+            )
 
     def test_unknown_fields_ignored(self):
         """Unknown fields (e.g. an algorithm block) are dropped, not stored."""
@@ -259,3 +316,56 @@ class TestCrownBaseHeightMissingInputs:
             "dbh",
             "fia_species_code",
         ]
+
+
+class TestGdamConditionedColumns:
+    """GDAM conditions on every GDAM column the source carries, except the
+    overwritten ones; crown_base_height is never sent."""
+
+    ALL = ["dbh", "crown_ratio", "fia_species_code", "crown_base_height"]
+    FULL_SOURCE = {
+        "x",
+        "y",
+        "height",
+        "dbh",
+        "crown_ratio",
+        "fia_species_code",
+        "crown_base_height",
+    }
+
+    def test_position_height_source_conditions_on_nothing(self):
+        assert gdam_conditioned_columns({"x", "y", "height"}, self.ALL, False) == []
+
+    def test_no_overwrite_conditions_on_all_present(self):
+        assert gdam_conditioned_columns(self.FULL_SOURCE, self.ALL, False) == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+        ]
+
+    def test_no_overwrite_conditions_on_columns_not_imputed(self):
+        source = {"x", "y", "height", "dbh", "crown_ratio"}
+        assert gdam_conditioned_columns(source, ["fia_species_code"], False) == [
+            "dbh",
+            "crown_ratio",
+        ]
+
+    def test_overwrite_excludes_overwritten(self):
+        result = gdam_conditioned_columns(
+            self.FULL_SOURCE, ["crown_ratio", "crown_base_height"], True
+        )
+        assert result == ["dbh", "fia_species_code"]
+
+    def test_overwrite_all_conditions_on_nothing(self):
+        assert gdam_conditioned_columns(self.FULL_SOURCE, self.ALL, True) == []
+
+    def test_crown_base_height_never_conditioned(self):
+        source = {"x", "y", "height", "crown_base_height"}
+        assert gdam_conditioned_columns(source, ["dbh"], False) == []
+
+    @pytest.mark.parametrize("overwrite", [False, True])
+    def test_crown_base_height_alone_calls_no_gdam(self, overwrite):
+        result = gdam_conditioned_columns(
+            self.FULL_SOURCE, ["crown_base_height"], overwrite
+        )
+        assert result == []

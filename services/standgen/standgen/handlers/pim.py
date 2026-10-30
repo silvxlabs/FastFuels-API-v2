@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pint
 import xarray as xr
+from fastfuels_core.allometry.crown_ratio import FIA_NATIONAL_LOGIT_2026
 from fastfuels_core.trees import TreeSample
 
 from lib.config import GRIDS_COLLECTION
@@ -71,6 +72,9 @@ def handle_pim(
     source_pim_grid_id = source["source_pim_grid_id"]
     seed = source["seed"]
     point_process = source["point_process"]
+    crown_base_model = (source.get("crown_base_height_model") or {}).get(
+        "name", FIA_NATIONAL_LOGIT_2026
+    )
 
     # Load source PIM grid document from Firestore
     try:
@@ -130,6 +134,7 @@ def handle_pim(
         progress,
         seed=seed,
         point_process=point_process,
+        crown_base_model=crown_base_model,
     )
 
 
@@ -142,6 +147,7 @@ def expand_plots(
     *,
     seed: int,
     point_process: str,
+    crown_base_model: str = FIA_NATIONAL_LOGIT_2026,
 ) -> dict:
     """Expand a plots GeoDataFrame into a tree inventory and write it to GCS.
 
@@ -162,6 +168,8 @@ def expand_plots(
         progress: Callback for progress reporting.
         seed: Random seed for the point process.
         point_process: Spatial point process name.
+        crown_base_model: Core crown ratio equation that computes the crown
+            base height, from the source's ``crown_base_height_model``.
 
     Returns:
         Dict with 'georeference', 'columns' with per-column summary statistics,
@@ -178,6 +186,7 @@ def expand_plots(
         unique_plot_ids,
         version,
         pacific_northwest=in_pacific_northwest(domain_gdf),
+        model=crown_base_model,
     )
     logger.info(
         f"Filtered tree table to {len(tree_df)} trees from {len(unique_plot_ids)} plots; "
@@ -297,6 +306,7 @@ def filter_and_convert_tree_table(
     version: str,
     *,
     pacific_northwest: bool,
+    model: str = FIA_NATIONAL_LOGIT_2026,
 ) -> pd.DataFrame:
     """Filter tree table to relevant plots and convert units to metric.
 
@@ -305,6 +315,7 @@ def filter_and_convert_tree_table(
         plot_ids: Array of plot IDs present in the grid
         version: TreeMap version year
         pacific_northwest: Use the CA/OR/WA crown ratio model coefficients
+        model: Core crown ratio equation that computes CBH
 
     Returns:
         DataFrame ready for TreeSample construction with columns:
@@ -344,7 +355,7 @@ def filter_and_convert_tree_table(
     df["CR"] = (df["CR"].fillna(0).values / 100.0).clip(0, 1)
 
     df["CBH"] = crown_base_height(
-        df["SPCD"], df["CR"], df["DIA"], df["HT"], pacific_northwest
+        df["SPCD"], df["CR"], df["DIA"], df["HT"], pacific_northwest, model=model
     )
 
     # TPA_UNADJ: trees/acre → trees/m²

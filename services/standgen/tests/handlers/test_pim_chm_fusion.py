@@ -157,9 +157,29 @@ class TestHandleFusion:
         )
         assert result["forestry_metrics"] is None
         assert captured["version"] == "2022"
-        assert captured["kw"] == {"seed": 42, "point_process": "inhomogeneous_poisson"}
+        assert captured["kw"] == {
+            "seed": 42,
+            "point_process": "inhomogeneous_poisson",
+            "crown_base_model": "fia_national_logit_2026",
+        }
         # Masked cell became a zero-density anchor; two real plots survived.
         assert captured["plots"]["PLOT_ID"].tolist() == [101, 0, 102]
+
+    def test_passes_source_crown_base_height_model(self, monkeypatch):
+        """The source's recorded crown base height model is the one that runs."""
+        _install_common_stubs(monkeypatch, [101])
+        captured = {}
+
+        def fake_expand(*a, **kw):
+            captured.update(kw)
+            return {"georeference": {}, "columns": [], "forestry_metrics": None}
+
+        monkeypatch.setattr(pim_chm_fusion, "expand_plots", fake_expand)
+        source = {**_source(), "crown_base_height_model": {"name": "randolph_2010"}}
+        handle_pim_chm_fusion(
+            {"id": "inv-1"}, source, gpd.GeoDataFrame(), lambda *a, **k: None
+        )
+        assert captured["crown_base_model"] == "randolph_2010"
 
     def test_unsupported_method_raises(self, monkeypatch):
         _install_common_stubs(monkeypatch, [101])

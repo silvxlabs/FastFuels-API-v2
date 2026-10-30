@@ -125,6 +125,32 @@ class TestPimChmFusionInventorySource:
         assert dumped["source_pim_grid_checksum"] == "psum"
         assert dumped["source_chm_grid_checksum"] == "csum"
 
+    def test_crown_base_height_model_records_refit(self):
+        source = PimChmFusionInventorySource(
+            source_pim_grid_id="pim123",
+            source_chm_grid_id="chm123",
+            method=ReimputationMethod(),
+            point_process="inhomogeneous_poisson",
+            seed=42,
+        )
+        assert source.model_dump()["crown_base_height_model"] == {
+            "name": "fia_national_logit_2026"
+        }
+
+    def test_stored_doc_without_crown_base_height_model_validates(self):
+        source = PimChmFusionInventorySource.model_validate(
+            {
+                "name": "pim",
+                "fusion": ["chm"],
+                "source_pim_grid_id": "pim123",
+                "source_chm_grid_id": "chm123",
+                "method": {"name": "reimputation"},
+                "point_process": "inhomogeneous_poisson",
+                "seed": 42,
+            }
+        )
+        assert source.crown_base_height_model.name == "fia_national_logit_2026"
+
 
 class TestCreatePimChmFusionInventoryRequest:
     """Tests for the CreatePimChmFusionInventoryRequest model."""

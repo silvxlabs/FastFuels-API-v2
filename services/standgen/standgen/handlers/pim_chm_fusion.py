@@ -14,6 +14,7 @@ trees exactly as ``tree/pim`` does.
 import logging
 
 import geopandas as gpd
+from fastfuels_core.allometry.crown_ratio import FIA_NATIONAL_LOGIT_2026
 from fastfuels_core.onramps.hag_pim import (
     compute_cover_from_hag,
     sample_plots_from_hag,
@@ -55,6 +56,9 @@ def handle_pim_chm_fusion(
     source_chm_grid_id = source["source_chm_grid_id"]
     seed = source["seed"]
     point_process = source["point_process"]
+    crown_base_model = (source.get("crown_base_height_model") or {}).get(
+        "name", FIA_NATIONAL_LOGIT_2026
+    )
 
     method = source.get("method") or {}
     method_name = method.get("name", "reimputation")
@@ -191,6 +195,7 @@ def handle_pim_chm_fusion(
         progress,
         seed=seed,
         point_process=point_process,
+        crown_base_model=crown_base_model,
     )
 
 

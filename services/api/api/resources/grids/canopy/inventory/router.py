@@ -57,9 +57,12 @@ router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 
-# Columns the allometry endpoint can impute from position + height; position
-# and height themselves cannot be imputed.
-ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
+# Columns the allometry endpoint can impute from position + height (species,
+# diameter, crown ratio, crown base height); position and height themselves
+# cannot be imputed.
+ALLOMETRY_IMPUTABLE_COLUMNS = frozenset(
+    {"dbh", "crown_ratio", "fia_species_code", "crown_base_height"}
+)
 
 
 def _required_columns(body: CreateInventoryCanopyRequest) -> set[str]:

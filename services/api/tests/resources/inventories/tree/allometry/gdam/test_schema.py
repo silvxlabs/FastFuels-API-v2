@@ -10,6 +10,7 @@ from api.resources.inventories.schema import InventoryType
 from api.resources.inventories.tree.allometry.gdam.schema import (
     CreateGdamInventoryRequest,
     GdamInventorySource,
+    crown_base_height_missing_inputs,
     resolve_gdam_columns,
 )
 from pydantic import ValidationError
@@ -56,7 +57,12 @@ class TestGdamInventorySource:
             "name": "gdam",
             "source_tree_inventory_id": "inv123",
             "source_tree_inventory_checksum": None,
-            "impute_columns": ["dbh", "crown_ratio", "fia_species_code"],
+            "impute_columns": [
+                "dbh",
+                "crown_ratio",
+                "fia_species_code",
+                "crown_base_height",
+            ],
         }
 
 
@@ -112,9 +118,22 @@ class TestCreateGdamInventoryRequest:
         assert not hasattr(request, "algorithm")
 
     def test_impute_columns_defaults_to_all(self):
-        """Omitting impute_columns imputes all three morphology columns."""
+        """Omitting impute_columns imputes all four morphology columns."""
         request = CreateGdamInventoryRequest(source_tree_inventory_id="inv123")
-        assert request.impute_columns == ["dbh", "crown_ratio", "fia_species_code"]
+        assert request.impute_columns == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+            "crown_base_height",
+        ]
+
+    def test_impute_columns_crown_base_height_only_accepted(self):
+        """crown_base_height alone is a valid selection at the schema layer."""
+        request = CreateGdamInventoryRequest(
+            source_tree_inventory_id="inv123",
+            impute_columns=["crown_base_height"],
+        )
+        assert request.impute_columns == ["crown_base_height"]
 
     def test_impute_columns_subset_accepted(self):
         """A subset of the imputable columns is accepted and stored."""
@@ -162,9 +181,10 @@ class TestResolveGdamColumns:
     def _keys(self, columns):
         return [c["key"] for c in columns]
 
-    def test_full_impute_adds_all_three_not_status(self):
+    def test_full_impute_adds_all_four_not_status(self):
         result = resolve_gdam_columns(
-            self.CHM_COLUMNS, ["dbh", "crown_ratio", "fia_species_code"]
+            self.CHM_COLUMNS,
+            ["dbh", "crown_ratio", "fia_species_code", "crown_base_height"],
         )
         assert self._keys(result) == [
             "x",
@@ -173,6 +193,7 @@ class TestResolveGdamColumns:
             "dbh",
             "crown_ratio",
             "fia_species_code",
+            "crown_base_height",
         ]
         # GDAM never writes the live/dead flag, so it must not be claimed.
         assert "fia_status_code" not in self._keys(result)
@@ -186,6 +207,12 @@ class TestResolveGdamColumns:
         source = self.CHM_COLUMNS + [{"key": "dbh", "type": "continuous", "unit": "cm"}]
         result = resolve_gdam_columns(source, ["dbh", "fia_species_code"])
         assert self._keys(result).count("dbh") == 1
+
+    def test_crown_base_height_carries_type_and_unit(self):
+        result = resolve_gdam_columns(self.CHM_COLUMNS, ["crown_base_height"])
+        cbh = next(c for c in result if c["key"] == "crown_base_height")
+        assert cbh["type"] == "continuous"
+        assert cbh["unit"] == "m"
 
     def test_imputed_column_carries_type_and_unit(self):
         result = resolve_gdam_columns(self.CHM_COLUMNS, ["dbh"])
@@ -203,3 +230,32 @@ class TestResolveGdamColumns:
         """A source without tree_id doesn't gain one: GDAM never writes it."""
         result = resolve_gdam_columns(self.CHM_COLUMNS, ["dbh"])
         assert "tree_id" not in self._keys(result)
+
+
+class TestCrownBaseHeightMissingInputs:
+    """The crown base height model needs species, crown ratio and diameter,
+    each either imputed in the same request or present on the source."""
+
+    def test_not_requested_skips_check(self):
+        assert crown_base_height_missing_inputs({"x", "y", "height"}, ["dbh"]) == []
+
+    def test_all_inputs_on_source(self):
+        source = {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
+        assert crown_base_height_missing_inputs(source, ["crown_base_height"]) == []
+
+    def test_all_inputs_imputed(self):
+        impute = ["dbh", "crown_ratio", "fia_species_code", "crown_base_height"]
+        assert crown_base_height_missing_inputs({"x", "y", "height"}, impute) == []
+
+    def test_mix_of_source_and_imputed(self):
+        source = {"x", "y", "height", "dbh"}
+        impute = ["crown_ratio", "fia_species_code", "crown_base_height"]
+        assert crown_base_height_missing_inputs(source, impute) == []
+
+    def test_missing_inputs_reported(self):
+        source = {"x", "y", "height", "crown_ratio"}
+        impute = ["crown_base_height"]
+        assert crown_base_height_missing_inputs(source, impute) == [
+            "dbh",
+            "fia_species_code",
+        ]

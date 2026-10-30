@@ -144,7 +144,7 @@ class TestCreateGdamInventory:
     def test_impute_columns_default_persisted(
         self, client, domain_for_testing, source_tree_inventory
     ):
-        """Omitting impute_columns persists all three columns in the source."""
+        """Omitting impute_columns persists all four columns in the source."""
         response = client.post(
             self.route(domain_for_testing["id"]),
             json={"source_tree_inventory_id": source_tree_inventory["id"]},
@@ -154,6 +154,7 @@ class TestCreateGdamInventory:
             "dbh",
             "crown_ratio",
             "fia_species_code",
+            "crown_base_height",
         ]
 
     def test_impute_columns_subset_persisted(
@@ -169,6 +170,22 @@ class TestCreateGdamInventory:
         )
         assert response.status_code == 201
         assert response.json()["source"]["impute_columns"] == ["fia_species_code"]
+
+    def test_crown_base_height_without_inputs_returns_422(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """crown_base_height alone on a position+height source returns 422."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": source_tree_inventory["id"],
+                "impute_columns": ["crown_base_height"],
+            },
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        for key in ("dbh", "crown_ratio", "fia_species_code"):
+            assert key in detail
 
     def test_impute_columns_empty_returns_422(
         self, client, domain_for_testing, source_tree_inventory

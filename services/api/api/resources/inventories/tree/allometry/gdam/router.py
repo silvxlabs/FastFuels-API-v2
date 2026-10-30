@@ -30,6 +30,7 @@ from api.resources.inventories.tree.allometry.gdam.schema import (
     GDAM_REQUIRED_SOURCE_COLUMNS,
     CreateGdamInventoryRequest,
     GdamInventorySource,
+    crown_base_height_missing_inputs,
     resolve_gdam_columns,
 )
 from api.schema import JobStatus
@@ -76,7 +77,8 @@ async def create_gdam_inventory(
 
     This endpoint creates a new tree inventory by calling the GDAM API to fill in
     the missing morphology columns (diameter, crown ratio, species) of an existing
-    tree inventory.
+    tree inventory, then computes each tree's crown base height from those with
+    the uncompacted crown ratio model.
 
     The typical input is an uploaded **position + height** inventory (`x`, `y`,
     `height`). GDAM predicts the missing fields; any values already present are
@@ -87,9 +89,12 @@ async def create_gdam_inventory(
     - **source_tree_inventory_id**: (required) ID of a completed tree inventory to
       fill in.
     - **impute_columns**: (optional) Which morphology columns to impute. Defaults
-      to all of ``dbh``, ``crown_ratio``, ``fia_species_code``. Narrow it (e.g.
-      ``["fia_species_code"]``) to impute fewer columns and write less to disk;
-      columns left out are not imputed. Must be non-empty with no duplicates.
+      to all of ``dbh``, ``crown_ratio``, ``fia_species_code``,
+      ``crown_base_height``. Narrow it (e.g. ``["fia_species_code"]``) to impute
+      fewer columns and write less to disk; columns left out are not imputed.
+      Requesting ``crown_base_height`` requires each of ``dbh``, ``crown_ratio``
+      and ``fia_species_code`` to be imputed too or to be a column of the source
+      inventory. Must be non-empty with no duplicates.
     - **name**: (optional) Name for the inventory.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing inventories.
@@ -101,13 +106,19 @@ async def create_gdam_inventory(
     - **x**, **y**: tree position, in the domain CRS.
     - **height**: tree height above zero, in metres (``m``).
 
-    **Imputable by GDAM** (select via ``impute_columns``) — filled only where
-    missing; existing values are preserved:
+    **Imputable** (select via ``impute_columns``) — filled only where missing;
+    existing values are preserved:
 
-    - **dbh**: diameter at breast height, in centimetres (``cm``).
+    - **dbh**: diameter at breast height, in centimetres (``cm``). Predicted by
+      GDAM.
     - **crown_ratio**: FIA compacted live crown ratio (0–1 fraction), as
-      recorded by FIA field crews.
-    - **fia_species_code**: FIA species code.
+      recorded by FIA field crews. Predicted by GDAM.
+    - **fia_species_code**: FIA species code. Predicted by GDAM.
+    - **crown_base_height**: height of the lowest live foliage, in metres
+      (``m``): the base of a continuous, gap-free crown, equal to ``height`` for
+      a tree with no live crown. Computed from species, crown ratio, diameter
+      and height by the uncompacted crown ratio model, not by GDAM. With only
+      ``crown_base_height`` requested, no GDAM call is made.
 
     ## Response
 
@@ -155,6 +166,20 @@ async def create_gdam_inventory(
                 f"{missing}. GDAM allometry imputation needs a value for every "
                 f"tree in {list(GDAM_REQUIRED_SOURCE_COLUMNS)}. "
                 f"Available columns: {column_keys}."
+            ),
+        )
+
+    # The crown base height model reads species, crown ratio and diameter.
+    source_keys = {c["key"] if isinstance(c, dict) else c for c in source_columns}
+    missing_inputs = crown_base_height_missing_inputs(source_keys, body.impute_columns)
+    if missing_inputs:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"crown_base_height is computed from fia_species_code, "
+                f"crown_ratio, dbh and height, but the source inventory has no "
+                f"column(s) {missing_inputs}. Add {missing_inputs} to "
+                f"impute_columns."
             ),
         )
 

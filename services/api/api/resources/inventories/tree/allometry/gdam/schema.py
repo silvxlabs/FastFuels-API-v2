@@ -4,8 +4,9 @@ api/v2/resources/inventories/tree/allometry/gdam/schema.py
 Schema models for GDAM allometry imputation inventory creation.
 
 GDAM fills the missing morphology columns (dbh, crown ratio, species) on an
-existing position+height tree inventory. By default it imputes all three; the
-caller can narrow that with `impute_columns`.
+existing position+height tree inventory; crown base height is then computed
+from those by the uncompacted crown ratio model. By default all four are
+imputed; the caller can narrow that with `impute_columns`.
 """
 
 from typing import Literal
@@ -21,13 +22,19 @@ from api.resources.inventories.schema import (
 # Columns GDAM needs on the source inventory to make a prediction.
 GDAM_REQUIRED_SOURCE_COLUMNS = ("x", "y", "height")
 
-# The morphology columns GDAM can impute. The caller selects a subset of these.
-ImputableColumn = Literal["dbh", "crown_ratio", "fia_species_code"]
+# The morphology columns the endpoint can impute. The caller selects a subset.
+# GDAM predicts the first three; crown_base_height comes from the uncompacted
+# crown ratio model.
+ImputableColumn = Literal["dbh", "crown_ratio", "fia_species_code", "crown_base_height"]
 _DEFAULT_IMPUTE_COLUMNS: list[ImputableColumn] = [
     "dbh",
     "crown_ratio",
     "fia_species_code",
+    "crown_base_height",
 ]
+
+# Inputs of the crown base height model: each must be imputed or on the source.
+CROWN_BASE_HEIGHT_INPUTS = ("dbh", "crown_ratio", "fia_species_code")
 
 
 def _validate_impute_columns(v: list[str]) -> list[str]:
@@ -59,7 +66,7 @@ class GdamInventorySource(BaseModel):
     )
     impute_columns: list[ImputableColumn] = Field(
         default_factory=lambda: list(_DEFAULT_IMPUTE_COLUMNS),
-        description="The morphology columns GDAM imputed for this inventory.",
+        description="The morphology columns imputed for this inventory.",
     )
 
 
@@ -75,18 +82,22 @@ class CreateGdamInventoryRequest(CreateInventoryRequestBase):
     source_tree_inventory_id: str = Field(
         description=(
             "ID of a completed tree inventory whose missing morphology columns "
-            "(dbh, crown ratio, species) GDAM will fill in. Existing values are "
-            "preserved; only missing cells are imputed."
+            "(dbh, crown ratio, species, crown base height) will be filled in. "
+            "Existing values are preserved; only missing cells are imputed."
         ),
     )
     impute_columns: list[ImputableColumn] = Field(
         default_factory=lambda: list(_DEFAULT_IMPUTE_COLUMNS),
         description=(
-            "Which morphology columns GDAM should impute. Defaults to all of "
-            "`dbh`, `crown_ratio`, `fia_species_code`. Narrow it (e.g. "
-            "`['fia_species_code']`) to impute fewer columns and write less to "
-            "disk; columns left out are not imputed (they stay as the source had "
-            "them). Must contain at least one column, with no duplicates."
+            "Which morphology columns to impute. Defaults to all of `dbh`, "
+            "`crown_ratio`, `fia_species_code`, `crown_base_height`. Narrow it "
+            "(e.g. `['fia_species_code']`) to impute fewer columns and write less "
+            "to disk; columns left out are not imputed (they stay as the source "
+            "had them). GDAM predicts `dbh`, `crown_ratio` and "
+            "`fia_species_code`; `crown_base_height` is computed from those and "
+            "`height` by the uncompacted crown ratio model, so each of them must "
+            "be imputed too or be a column of the source inventory. Must contain "
+            "at least one column, with no duplicates."
         ),
     )
 
@@ -100,11 +111,12 @@ def resolve_gdam_columns(
     source_columns: list[dict], impute_columns: list[str]
 ) -> list[dict]:
     """Columns an imputed inventory will carry: the source's columns plus the
-    columns GDAM actually imputes.
+    columns actually imputed.
 
-    GDAM fills only `impute_columns` (a subset of `dbh` / `crown_ratio` /
-    `fia_species_code`), preserving existing values, so the stored `columns`
-    must reflect exactly the source set plus those. Hardcoding the full base
+    Only `impute_columns` (a subset of `dbh` / `crown_ratio` /
+    `fia_species_code` / `crown_base_height`) are filled, preserving existing
+    values, so the stored `columns` must reflect exactly the source set plus
+    those. Hardcoding the full base
     set instead over-claims columns the parquet never receives — any morphology
     column left un-imputed, and `fia_status_code`, which GDAM never writes.
     """
@@ -116,3 +128,20 @@ def resolve_gdam_columns(
             resolved.append(imputable_defs[key])
             have.add(key)
     return resolved
+
+
+def crown_base_height_missing_inputs(
+    source_keys: set[str], impute_columns: list[str]
+) -> list[str]:
+    """Crown base height model inputs that are neither imputed nor on the source.
+
+    Empty when `crown_base_height` is not requested. Checks column presence
+    only; trees with a missing input value get no crown base height.
+    """
+    if "crown_base_height" not in impute_columns:
+        return []
+    return [
+        key
+        for key in CROWN_BASE_HEIGHT_INPUTS
+        if key not in impute_columns and key not in source_keys
+    ]

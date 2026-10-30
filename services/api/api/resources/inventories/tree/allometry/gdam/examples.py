@@ -16,7 +16,7 @@ EXAMPLE_GDAM_MINIMAL = {
 # Full request with all optional metadata fields
 EXAMPLE_GDAM_FULL = {
     "source_tree_inventory_id": "PLACEHOLDER_INVENTORY_ID",
-    "impute_columns": ["dbh", "crown_ratio", "fia_species_code"],
+    "impute_columns": ["dbh", "crown_ratio", "fia_species_code", "crown_base_height"],
     "name": "GDAM allometry inventory",
     "description": "Position+height inventory filled in with GDAM-predicted morphology",
     "tags": ["baseline"],
@@ -28,8 +28,9 @@ CREATE_GDAM_OPENAPI_EXAMPLES = {
         "summary": "Minimal request",
         "description": (
             "Fills in a completed tree inventory's missing morphology columns "
-            "(dbh, crown ratio, species) using GDAM. Existing values are "
-            "preserved; only missing cells are imputed."
+            "(dbh, crown ratio, species) using GDAM, then computes crown base "
+            "height from them. Existing values are preserved; only missing "
+            "cells are imputed."
         ),
     },
     "full": {

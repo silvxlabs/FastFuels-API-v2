@@ -54,9 +54,11 @@ router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 
-# Of VOXELIZE_REQUIRED_COLUMNS, the allometry endpoint imputes species / diameter / crown ratio from
+# The allometry endpoint imputes species / diameter / crown ratio / crown base height from
 # position + height; position and height themselves cannot be imputed.
-ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
+ALLOMETRY_IMPUTABLE_COLUMNS = frozenset(
+    {"dbh", "crown_ratio", "fia_species_code", "crown_base_height"}
+)
 
 
 @router.post(

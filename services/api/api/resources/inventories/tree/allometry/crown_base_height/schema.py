@@ -31,7 +31,7 @@ CROWN_BASE_HEIGHT_REQUIRED_SOURCE_COLUMNS = ("x", "y", "height")
 CROWN_BASE_HEIGHT_GDAM_INPUTS = ("dbh", "crown_ratio", "fia_species_code")
 
 
-class CrownBaseHeightInventorySource(BaseModel):
+class CrownBaseHeightAllometrySource(BaseModel):
     """Source metadata stored on the inventory document.
 
     Records which tree inventory the crown base heights were computed for, its
@@ -62,7 +62,7 @@ class CrownBaseHeightInventorySource(BaseModel):
     )
 
 
-class CreateCrownBaseHeightInventoryRequest(CreateInventoryRequestBase):
+class CreateCrownBaseHeightAllometryRequest(CreateInventoryRequestBase):
     """Request body for creating an inventory with model-computed crown base
     heights."""
 

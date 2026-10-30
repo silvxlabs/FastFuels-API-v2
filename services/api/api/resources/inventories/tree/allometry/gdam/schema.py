@@ -57,7 +57,7 @@ def _validate_impute_columns(v: list[str]) -> list[str]:
     return v
 
 
-class GdamInventorySource(BaseModel):
+class GdamAllometrySource(BaseModel):
     """Source metadata stored on the inventory document.
 
     Records which tree inventory GDAM filled in, its checksum at the time this
@@ -101,7 +101,7 @@ class GdamInventorySource(BaseModel):
     )
 
 
-class CreateGdamInventoryRequest(CreateInventoryRequestBase):
+class CreateGdamAllometryRequest(CreateInventoryRequestBase):
     """Request body for creating an inventory via GDAM allometry imputation."""
 
     model_config = ConfigDict(

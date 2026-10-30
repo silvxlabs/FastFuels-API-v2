@@ -489,7 +489,17 @@ class TestNullValues:
     def test_null_morphology_fails_instead_of_thinning(self):
         df = _trees()
         df.loc[3, "crown_base_height"] = np.nan
-        with pytest.raises(ProcessingError) as exc:
-            _run(_source(), df)
+        schema = set(df.columns) | {"crown_ratio"}
+        with (
+            patch("lib.inventory_io._inventory_column_names", return_value=schema),
+            pytest.raises(ProcessingError) as exc,
+        ):
+            _run(_source(), df, domain_id="d1")
         assert exc.value.code == "INCOMPLETE_INVENTORY"
         assert "crown_base_height: 1" in exc.value.message
+        inventory_id = _source()["source_inventory_id"]
+        assert exc.value.suggestion == (
+            "Send POST /domains/d1/inventories/tree/allometry/crown_base_height "
+            f'with body {{"source_tree_inventory_id": "{inventory_id}"}} to fill '
+            "crown_base_height, then use the inventory it creates."
+        )

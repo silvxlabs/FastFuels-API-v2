@@ -380,9 +380,16 @@ class TestCreateTreeInventoryGrid:
             assert response.status_code == 422
             detail = response.json()["detail"]
             assert "dbh" in detail
-            assert "crown_base_height" in detail
-            assert "allometry/gdam" in detail
-            assert "impute_columns" in detail
+            # One GDAM request fills the morphology and the crown base, including
+            # the crown ratio the crown base model needs.
+            domain_id = domain_for_testing["id"]
+            assert f"POST /domains/{domain_id}/inventories/tree/allometry/gdam" in (
+                detail
+            )
+            assert (
+                '"impute_columns": ["dbh", "crown_ratio", "fia_species_code", '
+                '"crown_base_height"]'
+            ) in detail
             # Message must not assume the source was CHM.
             assert "CHM" not in detail
         finally:
@@ -481,8 +488,12 @@ class TestCreateTreeInventoryGrid:
         detail = response.json()["detail"]
         assert "null" in detail
         assert "'crown_base_height'" in detail
-        assert "allometry/gdam" in detail
-        assert "impute_columns=['crown_base_height']" in detail
+        domain_id = domain_for_testing["id"]
+        assert (
+            f"POST /domains/{domain_id}/inventories/tree/allometry/crown_base_height "
+            f'with body {{"source_tree_inventory_id": "{inv["id"]}"}}'
+        ) in detail
+        assert "allometry/gdam" not in detail
 
     # --- Request body validation ---
 

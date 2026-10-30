@@ -682,14 +682,20 @@ class TestVoxelizeInventoryFlow:
         assert any("Initializing" in m for m in msgs)
         assert any("Finalizing" in m for m in msgs)
 
+    @patch("lib.inventory_io._inventory_column_names", return_value=None)
     @patch("treevox.handlers.voxelize.read_inventory")
-    def test_null_morphology_fails_instead_of_thinning(self, mock_read_inv):
+    def test_null_morphology_fails_instead_of_thinning(self, mock_read_inv, _schema):
         df = _sample_df()
         df.loc[df.index[0], "dbh"] = None
         mock_read_inv.return_value = df
         with pytest.raises(ProcessingError) as exc:
             voxelize_inventory(_base_grid(), _fake_domain(), lambda *a, **k: None)
         assert exc.value.code == "INCOMPLETE_INVENTORY"
+        assert (
+            "POST /domains/d1/inventories/tree/allometry/gdam with body "
+            '{"source_tree_inventory_id": "inv1", "impute_columns": ["dbh"]}'
+        ) in exc.value.suggestion
+        assert mock_read_inv.call_args.kwargs["domain_id"] == "d1"
 
     @patch("treevox.handlers.voxelize.storage.consolidate_metadata")
     @patch("treevox.handlers.voxelize.storage.write_union")

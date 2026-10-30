@@ -13,6 +13,8 @@ pandas' fsspec integration to avoid that double-resident copy.
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
@@ -42,6 +44,69 @@ CROWN_CLASS_COLUMN = "fia_crown_class_code"
 # renumbered).
 TREE_ID_COLUMN = "tree_id"
 
+# Columns GDAM imputes, in the order `impute_columns` lists them.
+GDAM_COLUMNS = ("dbh", "crown_ratio", "fia_species_code")
+
+# Columns one allometry request can fill. Everything else must come from the
+# inventory's source data.
+IMPUTABLE_COLUMNS = frozenset({*GDAM_COLUMNS, "crown_base_height"})
+
+
+def allometry_request(
+    missing: set[str],
+    present: set[str],
+    domain_id: str | None,
+    inventory_id: str,
+) -> str | None:
+    """The one allometry request that fills the imputable `missing` columns.
+
+    `missing` holds columns absent from the inventory or with nulls; `present`
+    holds columns the inventory carries (complete, where nulls are known). GDAM
+    is named when dbh, crown ratio or species is missing, or when the crown base
+    is missing and one of its model inputs is not present; it fills the crown
+    base too. Otherwise a missing crown base names the crown base height route.
+    Returns None when nothing missing is imputable.
+    """
+    cbh_missing = "crown_base_height" in missing
+    inputs = [
+        c for c in GDAM_COLUMNS if c in missing or (cbh_missing and c not in present)
+    ]
+    base = f"/domains/{domain_id or '<domain_id>'}/inventories/tree/allometry"
+    if inputs:
+        columns = inputs + ["crown_base_height"] if cbh_missing else inputs
+        url = f"{base}/gdam"
+        body = {"source_tree_inventory_id": inventory_id, "impute_columns": columns}
+    elif cbh_missing:
+        url = f"{base}/crown_base_height"
+        body = {"source_tree_inventory_id": inventory_id}
+        columns = ["crown_base_height"]
+    else:
+        return None
+    filled = columns[-1]
+    if len(columns) > 1:
+        filled = f"{', '.join(columns[:-1])} and {filled}"
+    return (
+        f"Send POST {url} with body {json.dumps(body)} to fill {filled}, then "
+        f"use the inventory it creates."
+    )
+
+
+def _missing_columns_suggestion(
+    missing: set[str], present: set[str], domain_id: str | None, inventory_id: str
+) -> str:
+    """Suggestion naming the allometry request and the columns it cannot fill."""
+    parts = []
+    request = allometry_request(missing, present, domain_id, inventory_id)
+    if request:
+        parts.append(request)
+    source_only = sorted(missing - IMPUTABLE_COLUMNS)
+    if source_only:
+        parts.append(
+            f"Column(s) {source_only} cannot be imputed and must be present in "
+            f"the inventory's source data."
+        )
+    return " ".join(parts)
+
 
 def _inventory_column_names(inventory_id: str) -> set[str] | None:
     """Column names in an inventory parquet, or None if the schema can't be read.
@@ -69,6 +134,8 @@ def read_inventory(
     include_crown_class: bool = False,
     required_columns: list[str] | None = None,
     include_tree_id: bool = False,
+    *,
+    domain_id: str | None = None,
 ) -> pd.DataFrame:
     """Read a tree-inventory parquet directly from GCS with column projection
     and, when the column is present, a live-tree predicate pushdown
@@ -106,7 +173,8 @@ def read_inventory(
     is set to 1 after the read. A null `fia_status_code` likewise means live and
     is set to 1. A `required_columns` member that the inventory lacks (e.g. a
     `dbh` absent because the allometry step was skipped) still fails the read
-    early with `INVENTORY_MISSING_MORPHOLOGY`.
+    early with `INVENTORY_MISSING_MORPHOLOGY`, whose suggestion names the
+    allometry request (under `domain_id`) that fills it.
     """
     gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
 
@@ -138,12 +206,8 @@ def read_inventory(
                     f"Inventory {inventory_id} is missing column(s) {missing} "
                     f"required by the requested operation."
                 ),
-                suggestion=(
-                    "Impute the missing column(s) with the allometry endpoint "
-                    "(POST /inventories/tree/allometry/gdam), or supply them in "
-                    "the source inventory. For crown_base_height, request "
-                    'impute_columns: ["crown_base_height"]; it computes the '
-                    "crown base from species, crown ratio, dbh and height."
+                suggestion=_missing_columns_suggestion(
+                    set(missing), available, domain_id, inventory_id
                 ),
             )
 
@@ -208,6 +272,9 @@ def require_complete_rows(
     df: pd.DataFrame,
     biomass_column: str | None = None,
     required_columns: list[str] | None = None,
+    *,
+    inventory_id: str | None = None,
+    domain_id: str | None = None,
 ) -> None:
     """Fail when any row has a null in a required column or `biomass_column`.
 
@@ -217,7 +284,10 @@ def require_complete_rows(
     "not measured" and falls back to allometry.
 
     `required_columns` must match the set the paired `read_inventory` call used
-    (defaults to `REQUIRED_COLUMNS`).
+    (defaults to `REQUIRED_COLUMNS`). With `inventory_id`, the suggestion names
+    the allometry request (under `domain_id`) that fills the nulls; the
+    inventory's schema tells whether the crown base model inputs the frame did
+    not project are present.
     """
     required = list(
         required_columns if required_columns is not None else REQUIRED_COLUMNS
@@ -228,15 +298,17 @@ def require_complete_rows(
     null_counts = null_counts[null_counts > 0]
     if not null_counts.empty:
         counts = ", ".join(f"{c}: {n}" for c, n in null_counts.items())
+        missing = set(null_counts.index)
+        present = set(df.columns) - missing
+        if inventory_id is not None:
+            present |= (_inventory_column_names(inventory_id) or set()) - set(
+                df.columns
+            )
         raise ProcessingError(
             code="INCOMPLETE_INVENTORY",
             message=f"Inventory has null values ({counts}).",
-            suggestion=(
-                "Supply complete values in the source inventory, or fill nulls "
-                "with the allometry endpoint (POST "
-                "/inventories/tree/allometry/gdam). For crown_base_height, "
-                'request impute_columns: ["crown_base_height"]; dbh, '
-                "crown_ratio and fia_species_code can be imputed the same way."
+            suggestion=_missing_columns_suggestion(
+                missing, present, domain_id, inventory_id or "<inventory_id>"
             ),
         )
 

@@ -40,9 +40,6 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     build_tree_bands,
 )
 from api.resources.inventories.schema import TREE_ID_COLUMN
-from api.resources.inventories.tree.allometry.gdam.schema import (
-    crown_base_height_missing_inputs,
-)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -52,16 +49,11 @@ from lib.config import (
     TREEVOX_QUEUE,
     TREEVOX_SERVICE,
 )
+from lib.inventory_io import IMPUTABLE_COLUMNS, allometry_request
 
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
-
-# Required columns the allometry endpoint can impute from position + height;
-# position and height themselves cannot be imputed.
-ALLOMETRY_IMPUTABLE_COLUMNS = frozenset(
-    {"dbh", "fia_species_code", "crown_base_height"}
-)
 
 
 @router.post(
@@ -233,25 +225,20 @@ async def create_tree_inventory_grid(
         inventory_data, required_columns, nullable
     )
     if missing_columns:
-        imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
-        # The crown base model's inputs must be imputed too when the source lacks them.
+        # Columns the source carries with no nulls: the crown base model's
+        # inputs must be imputed with it when the source lacks them.
         source_keys = {
             c["key"] if isinstance(c, dict) else c
             for c in inventory_data.get("columns", [])
         }
-        imputable_missing += crown_base_height_missing_inputs(
-            source_keys, imputable_missing
+        complete = source_keys - incomplete_inventory_columns(
+            inventory_data, source_keys
         )
-        source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
-        guidance = []
-        if imputable_missing:
-            guidance.append(
-                f"Send impute_columns={imputable_missing} to the allometry "
-                f"endpoint (POST /domains/{domain_id}/inventories/tree/allometry/"
-                f"gdam with source_tree_inventory_id="
-                f"'{body.source_inventory_id}'), then "
-                f"voxelize the resulting inventory."
-            )
+        request = allometry_request(
+            missing_columns, complete, domain_id, body.source_inventory_id
+        )
+        source_only_missing = sorted(missing_columns - IMPUTABLE_COLUMNS)
+        guidance = [request] if request else []
         if source_only_missing:
             guidance.append(
                 f"Column(s) {source_only_missing} cannot be imputed and must be "

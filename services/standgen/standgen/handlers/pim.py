@@ -23,11 +23,13 @@ from standgen.columns import (
     RENAME_MAP,
     generate_tree_ids,
 )
+from standgen.crown_base import crown_base_height
 from standgen.modifications import (
     _has_spatial_condition,
     apply_modifications,
     resolve_spatial_conditions,
 )
+from standgen.region import in_pacific_northwest
 from standgen.storage import (
     TREEMAP_COLUMNS,
     load_grid,
@@ -171,9 +173,15 @@ def expand_plots(
     progress("Loading tree table...", 20)
     unique_plot_ids = plots["PLOT_ID"].unique()
     tree_table = load_tree_table(version, unique_plot_ids)
-    tree_df = filter_and_convert_tree_table(tree_table, unique_plot_ids, version)
+    tree_df = filter_and_convert_tree_table(
+        tree_table,
+        unique_plot_ids,
+        version,
+        pacific_northwest=in_pacific_northwest(domain_gdf),
+    )
     logger.info(
-        f"Filtered tree table to {len(tree_df)} trees from {len(unique_plot_ids)} plots",
+        f"Filtered tree table to {len(tree_df)} trees from {len(unique_plot_ids)} plots; "
+        f"{int(tree_df['CBH'].isna().sum())} without a crown base height",
         extra={"inventory_id": inventory_id},
     )
 
@@ -287,6 +295,8 @@ def filter_and_convert_tree_table(
     tree_table: pd.DataFrame,
     plot_ids: np.ndarray,
     version: str,
+    *,
+    pacific_northwest: bool,
 ) -> pd.DataFrame:
     """Filter tree table to relevant plots and convert units to metric.
 
@@ -294,10 +304,12 @@ def filter_and_convert_tree_table(
         tree_table: Full TreeMap tree table
         plot_ids: Array of plot IDs present in the grid
         version: TreeMap version year
+        pacific_northwest: Use the CA/OR/WA crown ratio model coefficients
 
     Returns:
         DataFrame ready for TreeSample construction with columns:
-        TREE_ID, PLOT_ID, SPCD, STATUSCD, DIA (cm), HT (m), CR (fraction), TPA (trees/m²)
+        TREE_ID, PLOT_ID, SPCD, STATUSCD, DIA (cm), HT (m), CR (fraction),
+        CBH (m, NaN = unknown), TPA (trees/m²)
     """
     col_map = TREEMAP_COLUMNS[version]
     tree_id_col = col_map["tree_id"]
@@ -329,7 +341,11 @@ def filter_and_convert_tree_table(
     df["HT"] = Q_(df["HT"].values, "ft").to("m").magnitude
 
     # CR: percent → fraction (NaN for dead trees → fill with 0)
-    df["CR"] = df["CR"].fillna(0).values / 100.0
+    df["CR"] = (df["CR"].fillna(0).values / 100.0).clip(0, 1)
+
+    df["CBH"] = crown_base_height(
+        df["SPCD"], df["CR"], df["DIA"], df["HT"], pacific_northwest
+    )
 
     # TPA_UNADJ: trees/acre → trees/m²
     df["TPA"] = Q_(df["TPA_UNADJ"].values, "1/acre").to("1/m**2").magnitude

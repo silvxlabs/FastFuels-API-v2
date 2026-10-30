@@ -303,6 +303,12 @@ class TestExpandPlots:
         assert list(df["tree_id"]) == list(range(1, len(df) + 1))
         assert saved["stats"]["tree_id"]["unique_count"] == len(df)
 
+    def test_crown_base_height_survives_expansion(self, run):
+        df = run()[0]["df"]
+        assert "crown_base_height" in df.columns
+        assert df["crown_base_height"].notna().all()
+        assert (df["crown_base_height"] <= df["height"]).all()
+
     def test_expansion_graph_computed_once(self, run):
         _, calls = run()
         assert calls
@@ -372,6 +378,7 @@ def _stored_inventory(tmp_path) -> tuple[str, pd.DataFrame]:
             "dbh": rng.uniform(1.0, 50.0, n),
             "height": rng.uniform(1.0, 30.0, n),
             "crown_ratio": rng.uniform(0.1, 0.9, n),
+            "crown_base_height": rng.uniform(0.0, 1.0, n),
         }
     )
     path = str(tmp_path / "stored")

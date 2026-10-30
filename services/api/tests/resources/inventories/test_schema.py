@@ -8,6 +8,7 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.inventories.schema import (
+    BASE_INVENTORY_COLUMNS,
     CategoricalColumnSummary,
     Column,
     ColumnType,
@@ -404,6 +405,20 @@ class TestInventoryDataResponse:
         )
         assert resp.num_rows == 0
         assert resp.data == []
+
+
+class TestBaseInventoryColumns:
+    """Tests for the PIM-expanded base column set."""
+
+    def test_crown_base_height_is_continuous_metres(self):
+        col = next(c for c in BASE_INVENTORY_COLUMNS if c.key == "crown_base_height")
+        assert col.type == ColumnType.continuous
+        assert col.unit == "m"
+
+    def test_units_are_canonical(self):
+        for col in BASE_INVENTORY_COLUMNS:
+            if col.unit is not None:
+                validate_unit(col.unit)
 
 
 class TestColumnSummary:

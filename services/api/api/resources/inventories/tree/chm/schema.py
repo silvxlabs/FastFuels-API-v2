@@ -88,7 +88,9 @@ class StemIsolationVwf(BaseModel):
         description=(
             "Window diameter added per meter of height. The search window "
             "diameter (in meters) is crown_offset + crown_ratio × height, "
-            "converted to a whole, odd number of pixels of at least 3."
+            "converted to a whole, odd number of pixels of at least 3. "
+            "This is a slope of the search-window size, not a measurement of "
+            "any tree's crown ratio."
         ),
     )
     crown_offset: float = Field(

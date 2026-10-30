@@ -105,7 +105,8 @@ async def create_gdam_inventory(
     missing; existing values are preserved:
 
     - **dbh**: diameter at breast height, in centimetres (``cm``).
-    - **crown_ratio**: live crown ratio, as a 0–1 fraction.
+    - **crown_ratio**: FIA compacted live crown ratio (0–1 fraction), as
+      recorded by FIA field crews.
     - **fia_species_code**: FIA species code.
 
     ## Response

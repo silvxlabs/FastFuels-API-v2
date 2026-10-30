@@ -61,7 +61,9 @@ class InventoryColumnMapping(BaseModel):
     dbh: str | None = Field(None, description="Diameter at breast height (cm).")
     crown_ratio: str | None = Field(
         None,
-        description="Live crown ratio: fraction of total height with live crown (0-1).",
+        description=(
+            "FIA compacted live crown ratio (0-1), as recorded by FIA field crews."
+        ),
     )
     crown_radius: str | None = Field(
         None,

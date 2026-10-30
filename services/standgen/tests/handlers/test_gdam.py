@@ -10,6 +10,7 @@ import httpx
 import numpy as np
 import pandas as pd
 import pytest
+from standgen.crown_base import crown_base_height
 from standgen.handlers import gdam
 from standgen.handlers.gdam import (
     batch_seed,
@@ -17,6 +18,7 @@ from standgen.handlers.gdam import (
     fill_missing,
     parse_gdam_response,
 )
+from standgen.region import in_pacific_northwest
 
 from lib.errors import ProcessingError
 
@@ -845,3 +847,149 @@ class TestHandleGdam:
             )
         assert mock_post.call_count == 2
         assert saved["df"]["dbh"].notna().all()
+
+
+class TestCrownBaseHeight:
+    """crown_base_height comes from the crown ratio model, never from GDAM."""
+
+    def test_default_fills_from_gdam_filled_columns(self, mock_domain_gdf):
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0, 500030.0],
+                "y": [4500000.0, 4500030.0],
+                "height": [10.0, 12.0],
+                "crown_ratio": [0.7, np.nan],
+            }
+        )
+        with _patched(frame, _ok_post) as (saved, _):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        result = saved["df"]
+        expected = crown_base_height(
+            result["fia_species_code"],
+            result["crown_ratio"],
+            result["dbh"],
+            result["height"],
+            pacific_northwest=in_pacific_northwest(mock_domain_gdf),
+        )
+        assert list(result["crown_ratio"]) == pytest.approx([0.7, 0.40])
+        assert result["crown_base_height"].to_numpy() == pytest.approx(expected)
+        assert result["crown_base_height"].notna().all()
+
+    def test_keeps_source_values_and_fills_nulls(self, mock_domain_gdf):
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0, 500030.0],
+                "y": [4500000.0, 4500030.0],
+                "height": [10.0, 12.0],
+                "crown_base_height": [2.5, np.nan],
+            }
+        )
+        with _patched(frame, _ok_post) as (saved, mock_post):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        result = saved["df"]
+        # Not sent to GDAM as conditioning.
+        sent = mock_post.call_args.kwargs["json"]["trees"]["columns"]
+        assert sent == ["Lat", "Lon", "HT"]
+        expected = crown_base_height(
+            result["fia_species_code"],
+            result["crown_ratio"],
+            result["dbh"],
+            result["height"],
+            pacific_northwest=in_pacific_northwest(mock_domain_gdf),
+        )
+        assert result.loc[0, "crown_base_height"] == 2.5
+        assert result.loc[1, "crown_base_height"] == pytest.approx(expected[1])
+
+    def test_only_crown_base_height_makes_no_gdam_request(self, mock_domain_gdf):
+        # A zero and a missing height would fail a GDAM run; here they only
+        # leave those trees without a crown base.
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0 + i for i in range(4)],
+                "y": [4500000.0] * 4,
+                "height": [10.0, 20.0, 0.0, np.nan],
+                "dbh": [20.0, 40.0, 10.0, 10.0],
+                "crown_ratio": [0.5, 0.0, 0.5, 0.5],
+                "fia_species_code": pd.array([122, 202, 122, 122], dtype="Int64"),
+            }
+        )
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["crown_base_height"],
+        }
+        with _patched(frame, _ok_post) as (saved, mock_post):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        assert mock_post.call_count == 0
+        result = saved["df"]
+        expected = crown_base_height(
+            frame["fia_species_code"],
+            frame["crown_ratio"],
+            frame["dbh"],
+            frame["height"],
+            pacific_northwest=in_pacific_northwest(mock_domain_gdf),
+        )
+        cbh = result["crown_base_height"].to_numpy()
+        assert cbh == pytest.approx(expected, nan_ok=True)
+        assert cbh[1] == 20.0  # no live crown -> crown base at the top
+        assert np.isnan(cbh[2:]).all()
+        assert list(result["dbh"]) == [20.0, 40.0, 10.0, 10.0]
+
+    def test_dbh_only_adds_no_crown_base_height(self, mock_domain_gdf):
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        source = {"source_tree_inventory_id": "src", "impute_columns": ["dbh"]}
+        with _patched(frame, _ok_post) as (saved, _):
+            gdam.handle_gdam(dict(_INVENTORY), source, mock_domain_gdf, _noop_progress)
+        assert "crown_base_height" not in saved["df"].columns
+
+    def test_missing_model_input_raises(self, mock_domain_gdf):
+        frame = pd.DataFrame(
+            {"x": [500000.0], "y": [4500000.0], "height": [10.0], "dbh": [20.0]}
+        )
+        source = {
+            "source_tree_inventory_id": "src",
+            "impute_columns": ["crown_base_height", "fia_species_code"],
+        }
+        with _patched(frame, _ok_post) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), source, mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "MISSING_CROWN_BASE_INPUTS"
+        assert mock_post.call_count == 0
+
+    @pytest.mark.parametrize(
+        "source_columns",
+        [
+            ["x", "y", "height"],
+            ["x", "y", "height", "crown_base_height", "tree_id"],
+            ["x", "crown_base_height", "y", "height", "crown_ratio"],
+        ],
+    )
+    def test_partition_output_matches_meta(self, mock_domain_gdf, source_columns):
+        values = {
+            "x": [500000.0, 500001.0],
+            "y": [4500000.0] * 2,
+            "height": [10.0, 12.0],
+            "crown_base_height": [np.nan, 3.0],
+            "crown_ratio": [0.5, np.nan],
+            "tree_id": np.array([1, 2], dtype="int32"),
+        }
+        frame = pd.DataFrame({c: values[c] for c in source_columns})
+        ddf = dd.from_pandas(frame, npartitions=1)
+        columns = list(gdam.IMPUTED_COLUMNS)
+        meta = gdam._result_meta(ddf, columns)
+
+        with patch.object(gdam.httpx, "post", side_effect=_ok_post):
+            full = gdam._process_partition(
+                frame, _UTM10N, True, columns, "inv", partition_info={"number": 0}
+            )
+        empty = gdam._process_partition(
+            frame.iloc[:0], _UTM10N, True, columns, "inv", partition_info={"number": 1}
+        )
+        for out in (full, empty):
+            assert list(out.columns) == list(meta.columns)
+            assert out.dtypes.to_dict() == meta.dtypes.to_dict()

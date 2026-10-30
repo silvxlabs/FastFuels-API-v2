@@ -30,8 +30,8 @@ from api.resources.inventories.tree.allometry.crown_base_height.examples import 
 from api.resources.inventories.tree.allometry.crown_base_height.schema import (
     CROWN_BASE_HEIGHT_GDAM_INPUTS,
     CROWN_BASE_HEIGHT_REQUIRED_SOURCE_COLUMNS,
-    CreateCrownBaseHeightInventoryRequest,
-    CrownBaseHeightInventorySource,
+    CreateCrownBaseHeightAllometryRequest,
+    CrownBaseHeightAllometrySource,
     resolve_crown_base_height_columns,
 )
 from api.resources.inventories.tree.allometry.schema import (
@@ -63,7 +63,7 @@ async def create_crown_base_height_inventory(
     background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
-        CreateCrownBaseHeightInventoryRequest,
+        CreateCrownBaseHeightAllometryRequest,
         Body(openapi_examples=CREATE_CROWN_BASE_HEIGHT_OPENAPI_EXAMPLES),
     ],
 ):
@@ -222,7 +222,7 @@ async def create_crown_base_height_inventory(
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now(UTC)
 
-    source = CrownBaseHeightInventorySource(
+    source = CrownBaseHeightAllometrySource(
         source_tree_inventory_id=body.source_tree_inventory_id,
         source_tree_inventory_checksum=source_data.get("checksum"),
         model=body.model,

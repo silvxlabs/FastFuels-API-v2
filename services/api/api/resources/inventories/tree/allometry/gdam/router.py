@@ -28,8 +28,8 @@ from api.resources.inventories.tree.allometry.gdam.examples import (
 )
 from api.resources.inventories.tree.allometry.gdam.schema import (
     GDAM_REQUIRED_SOURCE_COLUMNS,
-    CreateGdamInventoryRequest,
-    GdamInventorySource,
+    CreateGdamAllometryRequest,
+    GdamAllometrySource,
     crown_base_height_missing_inputs,
     gdam_conditioned_columns,
     resolve_gdam_columns,
@@ -60,7 +60,7 @@ async def create_gdam_inventory(
     background_tasks: BackgroundTasks,
     domain: VerifiedDomain,
     body: Annotated[
-        CreateGdamInventoryRequest,
+        CreateGdamAllometryRequest,
         Body(openapi_examples=CREATE_GDAM_OPENAPI_EXAMPLES),
     ],
 ):
@@ -212,7 +212,7 @@ async def create_gdam_inventory(
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now(UTC)
 
-    source = GdamInventorySource(
+    source = GdamAllometrySource(
         source_tree_inventory_id=body.source_tree_inventory_id,
         source_tree_inventory_checksum=source_data.get("checksum"),
         impute_columns=body.impute_columns,

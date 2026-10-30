@@ -71,7 +71,7 @@ def _sample_df(n=1, height=5.0):
             "fia_status_code": [1] * n,
             "dbh": [20.0] * n,
             "height": [height] * n,
-            "crown_ratio": [0.5] * n,
+            "crown_base_height": [0.5 * height] * n,
         }
     )
 
@@ -120,7 +120,7 @@ class TestLoadInventoryDataframe:
                 "fia_status_code": [1, 1, 1],
                 "dbh": [20.0, 22.0, 25.0],
                 "height": [15.0, 15.0, 15.0],
-                "crown_ratio": [0.4, 0.4, 0.4],
+                "crown_base_height": [9.0, 9.0, 9.0],
             }
         )
         source = _base_grid()["source"]
@@ -682,14 +682,20 @@ class TestVoxelizeInventoryFlow:
         assert any("Initializing" in m for m in msgs)
         assert any("Finalizing" in m for m in msgs)
 
+    @patch("lib.inventory_io._inventory_column_names", return_value=None)
     @patch("treevox.handlers.voxelize.read_inventory")
-    def test_null_morphology_fails_instead_of_thinning(self, mock_read_inv):
+    def test_null_morphology_fails_instead_of_thinning(self, mock_read_inv, _schema):
         df = _sample_df()
         df.loc[df.index[0], "dbh"] = None
         mock_read_inv.return_value = df
         with pytest.raises(ProcessingError) as exc:
             voxelize_inventory(_base_grid(), _fake_domain(), lambda *a, **k: None)
         assert exc.value.code == "INCOMPLETE_INVENTORY"
+        assert (
+            "POST /domains/d1/inventories/tree/allometry/gdam with body "
+            '{"source_tree_inventory_id": "inv1", "impute_columns": ["dbh"]}'
+        ) in exc.value.suggestion
+        assert mock_read_inv.call_args.kwargs["domain_id"] == "d1"
 
     @patch("treevox.handlers.voxelize.storage.consolidate_metadata")
     @patch("treevox.handlers.voxelize.storage.write_union")
@@ -968,7 +974,7 @@ class TestHaloMergeAcrossChunks:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [5.0],
-                "crown_ratio": [0.5],
+                "crown_base_height": [2.5],
             }
         )
         grid = self._grid(bands=["volume_fraction"])
@@ -1054,7 +1060,7 @@ class TestHaloMergeAcrossChunks:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [5.0],
-                "crown_ratio": [0.5],
+                "crown_base_height": [2.5],
             }
         )
         grid = self._grid(bands=["spcd"])
@@ -1164,7 +1170,7 @@ class TestHaloCoversWideCrowns:
                 "fia_status_code": [1],
                 "dbh": [80.0],
                 "height": [20.0],
-                "crown_ratio": [0.6],
+                "crown_base_height": [8.0],
                 **{k: [v] for k, v in extra.items()},
             }
         )
@@ -1242,7 +1248,7 @@ class TestMaxBulkDensity:
                 "fia_status_code": [1, 1],
                 "dbh": [20.0, 20.0],
                 "height": [5.0, 5.0],
-                "crown_ratio": [0.5, 0.5],
+                "crown_base_height": [2.5, 2.5],
                 "tree_id": np.array([1, 2], dtype="int32"),
             }
         )

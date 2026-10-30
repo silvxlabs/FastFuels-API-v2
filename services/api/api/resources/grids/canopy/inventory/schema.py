@@ -123,7 +123,7 @@ class CanopyCrownWidthEquations(StrEnum):
 
     ``purves`` (Purves et al. 2007) is the national default and the one
     the tree voxelization endpoint uses; it varies with height and
-    crown ratio as well as diameter. ``crookston_stage`` (Crookston &
+    crown base height as well as diameter. ``crookston_stage`` (Crookston &
     Stage 1999, RMRS-GTR-24, reached through FVS) is the crown width
     behind FuelCalc's canopy cover — diameter alone above breast
     height, with regionally fitted coefficients — and is offered for
@@ -434,7 +434,8 @@ class CanopyCbdDepth(StrEnum):
     the requested `cbh`/`chm` threshold settings — those bands must be
     requested with the `bulk_density_threshold` method so the depth's
     definition is recorded on the grid. `mean_crown_length` is the mean of
-    per-tree crown lengths (the depth Cruz et al. 2003 used).
+    per-tree crown lengths, height − crown_base_height (the depth Cruz et
+    al. 2003 used).
     `biomass_percentile` is the height span holding the central 80% of
     canopy biomass (10th to 90th percentile; Albini 1996).
     `height_percentile` is the 90th-percentile tree height minus the
@@ -570,7 +571,7 @@ class CanopyCbhMean(BaseModel):
     """CBH as the mean of the per-tree crown base heights in each cell.
 
     Van Wagner's (1977) stand-mean definition — a plain summary of the
-    per-tree crown bases (`height * (1 - crown_ratio)`), one tree one vote
+    per-tree `crown_base_height` values, one tree one vote
     unless `weight_by_available_fuel` is set. A distinct convention from
     the `bulk_density_threshold` profile method; the two diverge where tree
     height varies within a cell.

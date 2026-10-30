@@ -29,7 +29,7 @@ from api.resources.inventories.schema import TREE_ID_COLUMN
 # Columns a fastfuels-core Tree needs per row. `fia_status_code` is intentionally
 # excluded — treevox treats an absent status as live.
 VOXELIZE_REQUIRED_COLUMNS = frozenset(
-    {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
+    {"x", "y", "height", "dbh", "crown_base_height", "fia_species_code"}
 )
 
 
@@ -169,7 +169,7 @@ class CrownProfileModel(StrEnum):
 
 CROWN_PROFILE_MODEL_DESCRIPTION = (
     "Crown geometry model: the shape of each tree's crown, which runs from "
-    "the crown base, height × (1 − crown_ratio), to the tree height. "
+    "its `crown_base_height` to its height. "
     "`purves` (default): Purves et al. (2007), species-specific, widest at "
     "the crown base. "
     "`beta`: species-group beta distribution, widest within the crown per "

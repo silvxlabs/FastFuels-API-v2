@@ -49,14 +49,11 @@ from lib.config import (
     TREEVOX_QUEUE,
     TREEVOX_SERVICE,
 )
+from lib.inventory_io import IMPUTABLE_COLUMNS, allometry_request
 
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
-
-# Of VOXELIZE_REQUIRED_COLUMNS, the allometry endpoint imputes species / diameter / crown ratio from
-# position + height; position and height themselves cannot be imputed.
-ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
 
 
 @router.post(
@@ -90,7 +87,7 @@ async def create_tree_inventory_grid(
     ## Request Body
 
     - **source_inventory_id**: (required) ID of a completed tree inventory.
-      Its `x`, `y`, `height`, `dbh`, `crown_ratio` and `fia_species_code`
+      Its `x`, `y`, `height`, `dbh`, `crown_base_height` and `fia_species_code`
       (and any biomass column read) must have no null values; a null
       `fia_status_code` counts as live.
     - **resolution**: (optional) Voxel resolution in meters. Defaults to
@@ -100,8 +97,8 @@ async def create_tree_inventory_grid(
       duplicates. Branchwood and fine bands are accepted by the API, but
       Treevox currently fails those jobs with a not-implemented processing
       error.
-    - **crown_profile_model**: (optional) Crown shape. Every crown runs from
-      the crown base, height × (1 − crown_ratio), to the tree height.
+    - **crown_profile_model**: (optional) Crown shape. Each tree's crown runs
+      from its `crown_base_height` to its height.
       - `purves` (default): Purves et al. (2007), species-specific; widest at
         the crown base.
       - `beta`: species-group beta distribution; widest within the crown, per
@@ -228,16 +225,20 @@ async def create_tree_inventory_grid(
         inventory_data, required_columns, nullable
     )
     if missing_columns:
-        imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
-        source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
-        guidance = []
-        if imputable_missing:
-            guidance.append(
-                f"Impute {imputable_missing} with the allometry endpoint (POST "
-                f"/domains/{domain_id}/inventories/tree/allometry/gdam with "
-                f"source_tree_inventory_id='{body.source_inventory_id}'), then "
-                f"voxelize the resulting inventory."
-            )
+        # Columns the source carries with no nulls: the crown base model's
+        # inputs must be imputed with it when the source lacks them.
+        source_keys = {
+            c["key"] if isinstance(c, dict) else c
+            for c in inventory_data.get("columns", [])
+        }
+        complete = source_keys - incomplete_inventory_columns(
+            inventory_data, source_keys
+        )
+        request = allometry_request(
+            missing_columns, complete, domain_id, body.source_inventory_id
+        )
+        source_only_missing = sorted(missing_columns - IMPUTABLE_COLUMNS)
+        guidance = [request] if request else []
         if source_only_missing:
             guidance.append(
                 f"Column(s) {source_only_missing} cannot be imputed and must be "

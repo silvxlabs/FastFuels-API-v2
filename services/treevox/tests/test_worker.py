@@ -45,7 +45,7 @@ def _make_payload(rng_seed=42, trees_n=2):
             "fia_status_code": [1] * trees_n,
             "dbh": [20.0] * trees_n,
             "height": [8.0] * trees_n,
-            "crown_ratio": [0.5] * trees_n,
+            "crown_base_height": [4.0] * trees_n,
             "tree_id": list(range(trees_n)),
             "_cache_key": [0] * trees_n,
         }
@@ -242,7 +242,7 @@ class TestTreeIdBand:
                 "fia_status_code": [1, 1],
                 "dbh": [20.0, 20.0],
                 "height": [8.0, 8.0],
-                "crown_ratio": [0.5, 0.5],
+                "crown_base_height": [4.0, 4.0],
             }
         )
 

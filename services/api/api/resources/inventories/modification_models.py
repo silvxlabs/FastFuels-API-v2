@@ -4,7 +4,7 @@ api/v2/resources/inventories/modifications.py
 Modification schemas for tree inventories.
 
 Provides condition/action models for filtering and modifying tree attributes
-(dbh, height, crown_ratio, fia_species_code; tree_id in conditions only).
+(dbh, height, crown_base_height, fia_species_code; tree_id in conditions only).
 Supports optional unit conversion via pint for conditions and actions.
 """
 
@@ -32,7 +32,7 @@ class InventoryAttribute(StrEnum):
 
     dbh = "dbh"
     height = "height"
-    crown_ratio = "crown_ratio"
+    crown_base_height = "crown_base_height"
     fia_species_code = "fia_species_code"
     tree_id = "tree_id"
 
@@ -41,13 +41,13 @@ class InventoryAttribute(StrEnum):
 ATTRIBUTE_UNITS = {
     "dbh": "cm",
     "height": "m",
-    "crown_ratio": "dimensionless",
+    "crown_base_height": "m",
     "fia_species_code": None,
     "tree_id": None,
 }
 
 # Attributes allowed in expressions (excludes categorical fia_species_code, tree_id)
-EXPRESSION_ALLOWED_NAMES = {"dbh", "height", "crown_ratio"}
+EXPRESSION_ALLOWED_NAMES = {"dbh", "height", "crown_base_height"}
 
 # Categorical attributes: conditions support only eq/ne.
 EQUALITY_ONLY_ATTRIBUTES = {
@@ -173,14 +173,14 @@ class InventoryModificationCondition(BaseModel):
 class InventoryExpressionCondition(BaseModel):
     """Boolean expression condition evaluated against tree attributes.
 
-    Expressions use native units (cm, m, 0-1 fraction). No unit field
+    Expressions use native units (cm, m). No unit field
     is provided — convert values in the expression yourself.
 
     Example: "dbh < 5 and height < 2"
     """
 
     expression: str = Field(
-        ..., description="Boolean expression using dbh, height, crown_ratio"
+        ..., description="Boolean expression using dbh, height, crown_base_height"
     )
 
     @field_validator("expression")

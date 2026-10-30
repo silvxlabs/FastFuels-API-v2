@@ -67,7 +67,7 @@ EXAMPLE_REMOVE_BY_TREE_ID = {
 EXAMPLE_REMOVE_BY_EXPRESSION = {
     "modifications": [
         {
-            "conditions": {"expression": "height * crown_ratio < 1.0"},
+            "conditions": {"expression": "height - crown_base_height < 1.0"},
             "actions": {"modifier": "remove"},
         }
     ],
@@ -244,8 +244,9 @@ APPLY_MODIFICATIONS_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_REMOVE_BY_EXPRESSION,
         "summary": "Remove by expression",
         "description": (
-            "Remove trees where height * crown_ratio < 1.0. "
-            "Expressions always use native units (cm, m, 0-1 fraction)."
+            "Remove trees whose live crown is shorter than 1 m "
+            "(height - crown_base_height < 1.0). "
+            "Expressions always use native units (cm, m)."
         ),
     },
     "reduce_tall_trees": {

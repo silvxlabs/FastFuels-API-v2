@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 import rioxarray  # noqa: F401 — registers .rio accessor
 import xarray as xr
+from fastfuels_core.allometry.crown_ratio import estimate_crown_base_height
+from standgen.handlers import pim
 from standgen.handlers.pim import (
     filter_and_convert_tree_table,
     raster_to_plots_gdf,
@@ -87,35 +89,35 @@ class TestRasterToPlots:
 class TestFilterAndConvert:
     def test_filters_to_plot_ids(self, sample_tree_table):
         result = filter_and_convert_tree_table(
-            sample_tree_table, np.array([101, 102]), "2022"
+            sample_tree_table, np.array([101, 102]), "2022", pacific_northwest=False
         )
         assert set(result["PLOT_ID"].unique()) == {101, 102}
         assert 103 not in result["PLOT_ID"].values
 
     def test_unit_conversion_dia(self, sample_tree_table):
         result = filter_and_convert_tree_table(
-            sample_tree_table, np.array([101]), "2022"
+            sample_tree_table, np.array([101]), "2022", pacific_northwest=False
         )
         # 12 inches = 30.48 cm
         assert pytest.approx(result["DIA"].iloc[0], rel=0.01) == 30.48
 
     def test_unit_conversion_ht(self, sample_tree_table):
         result = filter_and_convert_tree_table(
-            sample_tree_table, np.array([101]), "2022"
+            sample_tree_table, np.array([101]), "2022", pacific_northwest=False
         )
         # 60 feet = 18.288 m
         assert pytest.approx(result["HT"].iloc[0], rel=0.01) == 18.288
 
     def test_unit_conversion_cr(self, sample_tree_table):
         result = filter_and_convert_tree_table(
-            sample_tree_table, np.array([101]), "2022"
+            sample_tree_table, np.array([101]), "2022", pacific_northwest=False
         )
         # 40% → 0.4
         assert pytest.approx(result["CR"].iloc[0]) == 0.4
 
     def test_unit_conversion_tpa(self, sample_tree_table):
         result = filter_and_convert_tree_table(
-            sample_tree_table, np.array([101]), "2022"
+            sample_tree_table, np.array([101]), "2022", pacific_northwest=False
         )
         # TPA_UNADJ should be renamed to TPA and converted from /acre to /m²
         assert "TPA" in result.columns
@@ -125,7 +127,7 @@ class TestFilterAndConvert:
 
     def test_has_standard_columns(self, sample_tree_table):
         result = filter_and_convert_tree_table(
-            sample_tree_table, np.array([101]), "2022"
+            sample_tree_table, np.array([101]), "2022", pacific_northwest=False
         )
         for col in ["PLOT_ID", "SPCD", "STATUSCD", "DIA", "HT", "CR", "TPA"]:
             assert col in result.columns
@@ -142,7 +144,9 @@ class TestFilterAndConvert:
                 "TPA_UNADJ": [10.0, 50.0],
             }
         )
-        result = filter_and_convert_tree_table(df, np.array([101]), "2016")
+        result = filter_and_convert_tree_table(
+            df, np.array([101]), "2016", pacific_northwest=False
+        )
         assert "PLOT_ID" in result.columns
         assert len(result) == 2
 
@@ -159,7 +163,9 @@ class TestFilterAndConvert:
                 "TPA_UNADJ": [10.0, 50.0],
             }
         )
-        result = filter_and_convert_tree_table(df, np.array([101]), "2014")
+        result = filter_and_convert_tree_table(
+            df, np.array([101]), "2014", pacific_northwest=False
+        )
         assert "PLOT_ID" in result.columns
         assert "TREE_ID" in result.columns
         assert len(result) == 2
@@ -178,7 +184,142 @@ class TestFilterAndConvert:
                 "TPA_UNADJ": [10.0, 50.0],
             }
         )
-        result = filter_and_convert_tree_table(df, np.array([101]), "2020")
+        result = filter_and_convert_tree_table(
+            df, np.array([101]), "2020", pacific_northwest=False
+        )
         assert "PLOT_ID" in result.columns
         assert len(result) == 2
         assert set(result["PLOT_ID"].unique()) == {101}
+
+    def test_crown_base_height_column(self, sample_tree_table):
+        result = filter_and_convert_tree_table(
+            sample_tree_table, np.array([101, 102]), "2022", pacific_northwest=False
+        )
+        assert "CBH" in result.columns
+        assert result["CBH"].notna().all()
+        assert (result["CBH"] >= 0).all()
+        assert (result["CBH"] <= result["HT"]).all()
+
+    def test_dead_tree_crown_base_is_height(self):
+        """A dead tree's missing CR becomes 0, so its crown base is its height."""
+        df = pd.DataFrame(
+            {
+                "TM_ID": [101],
+                "SPCD": [202],
+                "STATUSCD": [2],
+                "DIA": [12.0],
+                "HT": [60.0],
+                "CR": [np.nan],
+                "TPA_UNADJ": [10.0],
+            }
+        )
+        result = filter_and_convert_tree_table(
+            df, np.array([101]), "2022", pacific_northwest=False
+        )
+        assert result["CR"].iloc[0] == 0
+        assert result["CBH"].iloc[0] == pytest.approx(result["HT"].iloc[0])
+
+    def test_crown_ratio_clipped(self):
+        df = pd.DataFrame(
+            {
+                "TM_ID": [101, 101],
+                "SPCD": [202, 202],
+                "STATUSCD": [1, 1],
+                "DIA": [12.0, 12.0],
+                "HT": [60.0, 60.0],
+                "CR": [120.0, 100.0],
+                "TPA_UNADJ": [10.0, 10.0],
+            }
+        )
+        result = filter_and_convert_tree_table(
+            df, np.array([101]), "2022", pacific_northwest=False
+        )
+        assert result["CR"].tolist() == [1.0, 1.0]
+        assert result["CBH"].iloc[0] == pytest.approx(result["CBH"].iloc[1])
+
+    def test_published_model_matches_core(self, sample_tree_table):
+        result = filter_and_convert_tree_table(
+            sample_tree_table,
+            np.array([101, 102]),
+            "2022",
+            pacific_northwest=False,
+            model="monleon_2004_eq1",
+        )
+        expected = estimate_crown_base_height(
+            result["SPCD"].to_numpy(),
+            result["CR"].to_numpy(),
+            result["DIA"].to_numpy(),
+            result["HT"].to_numpy(),
+            equation="monleon_2004_eq1",
+        )
+        np.testing.assert_allclose(result["CBH"].to_numpy(), expected, equal_nan=True)
+
+
+class _Stop(Exception):
+    pass
+
+
+class TestCrownBaseHeightModel:
+    def test_handle_pim_passes_source_model(self, monkeypatch, sample_dataset):
+        class Snapshot:
+            def to_dict(self):
+                return {"source": {"product": "treemap", "version": "2022"}}
+
+        monkeypatch.setattr(pim, "get_document", lambda *a: (None, Snapshot()))
+        monkeypatch.setattr(pim, "load_grid", lambda *a: sample_dataset)
+        captured = {}
+
+        def fake_expand(*a, **kw):
+            captured.update(kw)
+            return {}
+
+        monkeypatch.setattr(pim, "expand_plots", fake_expand)
+        source = {
+            "source_pim_grid_id": "pim-1",
+            "seed": 1,
+            "point_process": "inhomogeneous_poisson",
+            "crown_base_height_model": {"name": "westfall_2019"},
+        }
+        pim.handle_pim({"id": "inv-1"}, source, None, lambda *a, **k: None)
+        assert captured["crown_base_model"] == "westfall_2019"
+
+    def test_handle_pim_defaults_to_refit(self, monkeypatch, sample_dataset):
+        class Snapshot:
+            def to_dict(self):
+                return {"source": {}}
+
+        monkeypatch.setattr(pim, "get_document", lambda *a: (None, Snapshot()))
+        monkeypatch.setattr(pim, "load_grid", lambda *a: sample_dataset)
+        captured = {}
+        monkeypatch.setattr(pim, "expand_plots", lambda *a, **kw: captured.update(kw))
+        source = {
+            "source_pim_grid_id": "pim-1",
+            "seed": 1,
+            "point_process": "inhomogeneous_poisson",
+        }
+        pim.handle_pim({"id": "inv-1"}, source, None, lambda *a, **k: None)
+        assert captured["crown_base_model"] == "fia_national_logit_2026"
+
+    def test_expand_plots_passes_model_to_tree_table(self, monkeypatch, sample_dataset):
+        captured = {}
+
+        def fake_filter(*a, **kw):
+            captured.update(kw)
+            raise _Stop
+
+        monkeypatch.setattr(pim, "load_tree_table", lambda *a: pd.DataFrame())
+        monkeypatch.setattr(pim, "in_pacific_northwest", lambda gdf: False)
+        monkeypatch.setattr(pim, "filter_and_convert_tree_table", fake_filter)
+        plots = raster_to_plots_gdf(sample_dataset, "tm_id")
+        with pytest.raises(_Stop):
+            pim.expand_plots(
+                {"id": "inv-1"},
+                plots,
+                "2022",
+                None,
+                lambda *a, **k: None,
+                seed=1,
+                point_process="inhomogeneous_poisson",
+                crown_base_model="toney_reeves_2009",
+            )
+        assert captured["model"] == "toney_reeves_2009"

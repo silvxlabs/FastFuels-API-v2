@@ -97,8 +97,8 @@ def plan_measured_crowns(
     """Choose which trees get a measured crown, and why the rest do not.
 
     A tree gets a measured crown when the crown Feature holds a footprint for
-    its `tree_id` and some footprint cell rises above its crown base,
-    `height × (1 − crown_ratio)`. Every other tree is drawn parametrically.
+    its `tree_id` and some footprint cell rises above its crown base, the
+    `crown_base_height` column. Every other tree is drawn parametrically.
     `footprints` holds only crowns that contain their tree's stem; a tree
     whose crown does not is flagged in the `_stem_outside_crown` column
     (see `crown_feature.load_footprints`).
@@ -110,15 +110,12 @@ def plan_measured_crowns(
     measured: dict[int, Footprint] = {}
     reasons: dict[int, str] = {}
     tree_ids = trees_in_chunk["tree_id"].to_numpy()
-    heights = trees_in_chunk["height"].to_numpy(dtype=float)
-    crown_ratios = trees_in_chunk["crown_ratio"].to_numpy(dtype=float)
+    crown_bases = trees_in_chunk["crown_base_height"].to_numpy(dtype=float)
     if "_stem_outside_crown" in trees_in_chunk:
         stem_outside = trees_in_chunk["_stem_outside_crown"].to_numpy(dtype=bool)
     else:
         stem_outside = np.zeros(len(trees_in_chunk), dtype=bool)
-    for tree_id, height, crown_ratio, outside in zip(
-        tree_ids, heights, crown_ratios, stem_outside
-    ):
+    for tree_id, crown_base_height, outside in zip(tree_ids, crown_bases, stem_outside):
         tree_id = int(tree_id)
         footprint = footprints.get(tree_id)
         if outside:
@@ -127,8 +124,6 @@ def plan_measured_crowns(
         if footprint is None:
             reasons[tree_id] = "parametric_no_crown"
             continue
-        # Same expression as core's Tree.crown_base_height.
-        crown_base_height = height - height * crown_ratio
         if footprint_has_volume(footprint, crown_base_height, vr):
             measured[tree_id] = footprint
             reasons[tree_id] = "measured"

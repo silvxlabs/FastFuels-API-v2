@@ -117,7 +117,9 @@ def _pick_worker_count() -> int:
 
 
 def _load_inventory_dataframe(
-    source: dict, progress: Callable[[str, int | None], None]
+    source: dict,
+    progress: Callable[[str, int | None], None],
+    domain_id: str | None = None,
 ) -> pd.DataFrame:
     """Read the parquet from GCS, filter to live trees, and require complete rows.
 
@@ -127,13 +129,17 @@ def _load_inventory_dataframe(
     progress("Loading inventory...", 5)
     biomass_column = voxelize.foliage_inventory_column(source)
     crown_radius_column = voxelize.max_crown_radius_inventory_column(source)
+    inventory_id = source["source_inventory_id"]
     df = read_inventory(
-        source["source_inventory_id"],
+        inventory_id,
         biomass_column,
         crown_radius_column,
         include_tree_id=True,
+        domain_id=domain_id,
     )
-    require_complete_rows(df, biomass_column)
+    require_complete_rows(
+        df, biomass_column, inventory_id=inventory_id, domain_id=domain_id
+    )
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",
@@ -820,7 +826,7 @@ def voxelize_inventory(
         extra={"grid_id": grid_id},
     )
 
-    df = _load_inventory_dataframe(source, progress)
+    df = _load_inventory_dataframe(source, progress, grid["domain_id"])
     logger.info(
         f"Inventory loaded: {len(df)} trees",
         extra={"grid_id": grid_id},

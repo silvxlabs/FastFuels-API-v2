@@ -6,9 +6,7 @@ Request schema for the in-place inventory modifications endpoint.
 
 from pydantic import BaseModel, Field
 
-from api.resources.inventories.modification_models import (
-    CreateInventoryModifications,
-)
+from api.resources.inventories.modification_models import InventoryModification
 
 
 class ApplyModificationsRequest(BaseModel):
@@ -18,7 +16,7 @@ class ApplyModificationsRequest(BaseModel):
     keeps its identity; use PATCH to edit metadata.
     """
 
-    modifications: CreateInventoryModifications = Field(
+    modifications: list[InventoryModification] = Field(
         ...,
         min_length=1,
         description="Modifications to append to this inventory and apply to its data.",

@@ -11,9 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from api.resources.crown_segmentation import CrownSegmentationBase
 from api.resources.input_requirements import grid, input_requirements
-from api.resources.inventories.modification_models import (
-    CreateInventoryModifications,
-)
+from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase
 from api.resources.inventories.treatment_models import InventoryTreatment
 
@@ -176,7 +174,7 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
             "segmentation."
         ),
     )
-    modifications: CreateInventoryModifications = Field(
+    modifications: list[InventoryModification] = Field(
         default_factory=list,
         description="Modifications to apply after stem extraction.",
     )

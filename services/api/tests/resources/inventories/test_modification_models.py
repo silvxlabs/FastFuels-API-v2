@@ -18,7 +18,6 @@ from api.resources.inventories.modification_models import (
     RemoveAction,
 )
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
-from api.resources.inventories.schema import Inventory
 from api.resources.inventories.tree.chm.schema import CreateChmInventoryRequest
 from api.resources.inventories.tree.pim.fusion.chm.schema import (
     CreatePimChmFusionInventoryRequest,
@@ -32,7 +31,7 @@ class TestInventoryAttribute:
         assert InventoryAttribute.dbh == "dbh"
         assert InventoryAttribute.height == "height"
         assert InventoryAttribute.crown_base_height == "crown_base_height"
-        assert InventoryAttribute.crown_ratio == "crown_ratio"
+        assert "crown_ratio" not in set(InventoryAttribute)
         assert InventoryAttribute.fia_species_code == "fia_species_code"
 
     def test_attribute_units_keys_match(self):
@@ -105,18 +104,6 @@ class TestInventoryModificationCondition:
         )
         assert cond.unit == "ft"
 
-    def test_crown_ratio_dimensionless(self):
-        cond = InventoryModificationCondition(
-            attribute="crown_ratio", operator="gt", value=0.5
-        )
-        assert cond.unit is None
-
-    def test_crown_ratio_rejects_length_unit(self):
-        with pytest.raises(ValidationError, match="not dimensionless"):
-            InventoryModificationCondition(
-                attribute="crown_ratio", operator="gt", value=0.5, unit="cm"
-            )
-
     def test_list_value_with_gt_rejected(self):
         with pytest.raises(ValidationError, match="List values"):
             InventoryModificationCondition(
@@ -150,13 +137,10 @@ class TestInventoryExpressionCondition:
     def test_expression_with_math(self):
         InventoryExpressionCondition(expression="height - crown_base_height < 1.0")
 
-    def test_retired_name_readable_but_not_listed(self):
-        """Stored expressions naming crown_ratio still parse; the allowed-name
-        list shown in errors omits it."""
-        InventoryExpressionCondition(expression="height * crown_ratio < 1.0")
+    def test_crown_ratio_rejected_listing_crown_base_height(self):
         with pytest.raises(ValidationError) as exc:
-            InventoryExpressionCondition(expression="x > 0")
-        assert "crown_ratio" not in str(exc.value)
+            InventoryExpressionCondition(expression="height * crown_ratio < 1.0")
+        assert "disallowed name 'crown_ratio'" in str(exc.value)
         assert "crown_base_height" in str(exc.value)
 
     def test_expression_with_division(self):
@@ -685,7 +669,7 @@ class TestCrownBaseHeight:
         assert len(req.modifications) == 1
 
 
-RETIRED_CROWN_RATIO_MODIFICATIONS = {
+CROWN_RATIO_MODIFICATIONS = {
     "attribute_condition": {
         "conditions": {"attribute": "crown_ratio", "operator": "lt", "value": 0.2},
         "actions": {"modifier": "remove"},
@@ -713,33 +697,14 @@ REQUEST_BUILDERS = {
 }
 
 
-class TestRetiredCrownRatio:
+class TestCrownRatioNotAnAttribute:
     @pytest.mark.parametrize("request_name", REQUEST_BUILDERS)
-    @pytest.mark.parametrize("case", RETIRED_CROWN_RATIO_MODIFICATIONS)
+    @pytest.mark.parametrize("case", CROWN_RATIO_MODIFICATIONS)
     def test_requests_reject_crown_ratio(self, request_name, case):
-        mods = [RETIRED_CROWN_RATIO_MODIFICATIONS[case]]
-        with pytest.raises(ValidationError, match="use `crown_base_height`"):
+        """The error names crown_ratio's input and lists crown_base_height."""
+        mods = [CROWN_RATIO_MODIFICATIONS[case]]
+        with pytest.raises(ValidationError) as exc:
             REQUEST_BUILDERS[request_name](mods)
-
-    def test_stored_ledger_still_reads(self):
-        """Inventories whose stored modifications name crown_ratio still load."""
-        inv = Inventory(
-            id="abc123",
-            domain_id="domain456",
-            type="tree",
-            status="completed",
-            source={"name": "pim", "source_pim_grid_id": "grid789"},
-            # Stored ledgers hold the normalized (list) form.
-            modifications=[
-                {
-                    "conditions": [],
-                    "actions": [],
-                    **{k: v if isinstance(v, list) else [v] for k, v in mod.items()},
-                }
-                for mod in RETIRED_CROWN_RATIO_MODIFICATIONS.values()
-            ],
-        )
-        assert len(inv.modifications) == 3
-        assert inv.modifications[0].conditions[0].attribute == "crown_ratio"
-        assert inv.modifications[1].actions[0].attribute == "crown_ratio"
-        Inventory.model_validate(inv.model_dump())
+        message = str(exc.value)
+        assert "crown_ratio" in message
+        assert "crown_base_height" in message

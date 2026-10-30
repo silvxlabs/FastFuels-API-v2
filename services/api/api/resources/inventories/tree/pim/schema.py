@@ -10,9 +10,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.resources.input_requirements import grid, input_requirements
-from api.resources.inventories.modification_models import (
-    CreateInventoryModifications,
-)
+from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase, PointProcess
 from api.resources.inventories.treatment_models import InventoryTreatment
 from api.resources.inventories.tree.allometry.schema import (
@@ -70,7 +68,7 @@ class CreatePimInventoryRequest(CreateInventoryRequestBase):
         default=PointProcess.inhomogeneous_poisson,
         description="Spatial point process for tree coordinate assignment.",
     )
-    modifications: CreateInventoryModifications = Field(
+    modifications: list[InventoryModification] = Field(
         default_factory=list,
         description="Modifications to apply after point process expansion.",
     )

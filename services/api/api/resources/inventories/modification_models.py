@@ -14,7 +14,6 @@ from typing import Annotated, Literal
 
 import pint
 from pydantic import (
-    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -34,8 +33,6 @@ class InventoryAttribute(StrEnum):
     dbh = "dbh"
     height = "height"
     crown_base_height = "crown_base_height"
-    # Read only: modifications stored before crown_base_height replaced it.
-    crown_ratio = "crown_ratio"
     fia_species_code = "fia_species_code"
     tree_id = "tree_id"
 
@@ -45,16 +42,12 @@ ATTRIBUTE_UNITS = {
     "dbh": "cm",
     "height": "m",
     "crown_base_height": "m",
-    "crown_ratio": "dimensionless",
     "fia_species_code": None,
     "tree_id": None,
 }
 
 # Attributes allowed in expressions (excludes categorical fia_species_code, tree_id)
 EXPRESSION_ALLOWED_NAMES = {"dbh", "height", "crown_base_height"}
-
-# Attributes accepted only when reading stored modifications; requests reject them.
-RETIRED_ATTRIBUTES = frozenset({"crown_ratio"})
 
 # Categorical attributes: conditions support only eq/ne.
 EQUALITY_ONLY_ATTRIBUTES = {
@@ -78,8 +71,7 @@ class InventoryModificationCondition(BaseModel):
         description=(
             "The tree attribute to test. `fia_species_code` and `tree_id` support "
             "only `eq`/`ne`. `tree_id` selects individual trees by their "
-            "inventory ID. `crown_ratio` appears only in modifications recorded "
-            "before `crown_base_height` replaced it and is rejected in requests."
+            "inventory ID."
         ),
     )
     operator: Operator = Field(
@@ -203,7 +195,7 @@ class InventoryExpressionCondition(BaseModel):
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):
-                if node.id not in EXPRESSION_ALLOWED_NAMES | RETIRED_ATTRIBUTES:
+                if node.id not in EXPRESSION_ALLOWED_NAMES:
                     raise ValueError(
                         f"Expression contains disallowed name '{node.id}'. "
                         f"Allowed: {sorted(EXPRESSION_ALLOWED_NAMES)}"
@@ -225,11 +217,7 @@ class InventoryModificationAction(BaseModel):
 
     attribute: InventoryAttribute = Field(
         ...,
-        description=(
-            "The tree attribute to change. `tree_id` cannot be changed. "
-            "`crown_ratio` appears only in modifications recorded before "
-            "`crown_base_height` replaced it and is rejected in requests."
-        ),
+        description="The tree attribute to change. `tree_id` cannot be changed.",
     )
     modifier: Modifier = Field(
         ...,
@@ -453,40 +441,3 @@ class InventoryModification(BaseModel):
         if has_remove and len(self.actions) > 1:
             raise ValueError("RemoveAction must be the sole action if present")
         return self
-
-
-def _expression_names(expression: str) -> set[str]:
-    return {
-        node.id
-        for node in ast.walk(ast.parse(expression, mode="eval"))
-        if isinstance(node, ast.Name)
-    }
-
-
-def reject_retired_attributes(
-    modifications: list[InventoryModification],
-) -> list[InventoryModification]:
-    """Reject request modifications that name a retired attribute."""
-    for modification in modifications:
-        names = set()
-        for condition in modification.conditions:
-            if isinstance(condition, InventoryModificationCondition):
-                names.add(condition.attribute.value)
-            elif isinstance(condition, InventoryExpressionCondition):
-                names |= _expression_names(condition.expression)
-        for action in modification.actions:
-            if isinstance(action, InventoryModificationAction):
-                names.add(action.attribute.value)
-        if names & RETIRED_ATTRIBUTES:
-            raise ValueError(
-                "`crown_ratio` can no longer be modified or used in conditions; "
-                "use `crown_base_height` (m) instead."
-            )
-    return modifications
-
-
-# Request type for modifications: stored ledgers may still name retired
-# attributes, new requests may not.
-CreateInventoryModifications = Annotated[
-    list[InventoryModification], AfterValidator(reject_retired_attributes)
-]

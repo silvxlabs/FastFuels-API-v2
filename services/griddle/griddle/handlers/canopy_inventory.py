@@ -179,6 +179,15 @@ def _fill_missing_crown_radius(df: pd.DataFrame, column: str) -> None:
                 "fia_species_code."
             ),
         ) from e
+    except ValueError as e:
+        raise ProcessingError(
+            code="CANOPY_FUEL_INPUT_ERROR",
+            message=str(e),
+            suggestion=(
+                "Correct crown_base_height so that 0 <= crown_base_height <= "
+                "height for every tree."
+            ),
+        ) from e
     logger.info(
         f"{int(missing.sum())} trees have no {column}; using their Purves crown radius"
     )

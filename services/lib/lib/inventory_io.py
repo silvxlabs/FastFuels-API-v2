@@ -242,14 +242,14 @@ def require_complete_rows(
 
 
 # Columns every inventory-canopy request reads: position and crown interval.
-CANOPY_BASE_COLUMNS = frozenset({"x", "y", "height", "crown_ratio"})
+CANOPY_BASE_COLUMNS = frozenset({"x", "y", "height", "crown_base_height"})
 
 
 def canopy_required_columns(source: dict) -> set[str]:
     """Morphology columns an inventory-canopy source's methods read from the tree
     inventory.
 
-    Position (`x`, `y`) and the crown interval (`height`, `crown_ratio`) are
+    Position (`x`, `y`) and the crown interval (`height`, `crown_base_height`) are
     always read; `dbh` and `fia_species_code` only by the methods that consume
     them — allometric crown biomass, the Reinhardt vertical distribution, the
     FuelCalc hardwood exclusion, the FuelCalc crown-class factors, the

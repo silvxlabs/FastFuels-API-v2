@@ -150,9 +150,7 @@ def _build_inventory(expansion: str) -> pd.DataFrame:
                     .astype("int64"),
                     "dbh": (p["DBH_IN"].to_numpy() * 2.54)[idx],
                     "height": (p["HEIGHT_FT"].to_numpy() * FT_TO_M)[idx],
-                    "crown_ratio": (
-                        1.0 - p["CBH_FT"].to_numpy() / p["HEIGHT_FT"].to_numpy()
-                    )[idx],
+                    "crown_base_height": (p["CBH_FT"].to_numpy() * FT_TO_M)[idx],
                 }
             )
         )

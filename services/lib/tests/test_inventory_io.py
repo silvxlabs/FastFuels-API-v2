@@ -229,7 +229,14 @@ class TestReadInventory:
         """A canopy request that reads neither dbh nor species passes a reduced
         required set: those columns are neither required-in-schema nor projected,
         while the live-status column is still handled."""
-        present = {"x", "y", "height", "crown_ratio", "acf_kg", "fia_status_code"}
+        present = {
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+            "acf_kg",
+            "fia_status_code",
+        }
         monkeypatch.setattr(
             inventory_io, "_inventory_column_names", lambda _id: present
         )
@@ -247,7 +254,7 @@ class TestReadInventory:
         read_inventory(
             "inv",
             biomass_column="acf_kg",
-            required_columns=["x", "y", "height", "crown_ratio"],
+            required_columns=["x", "y", "height", "crown_base_height"],
         )
         assert "dbh" not in captured["columns"]
         assert "fia_species_code" not in captured["columns"]
@@ -374,7 +381,14 @@ class TestCanopyRequiredColumns:
 
     def test_allometry_defaults_need_dbh_and_species(self):
         cols = canopy_required_columns(self._source())
-        assert {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"} <= cols
+        assert {
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+            "dbh",
+            "fia_species_code",
+        } <= cols
 
     def test_column_radius_needs_dbh_and_species_for_fallback(self):
         """A null column radius falls back to Purves, which reads dbh and species."""
@@ -395,7 +409,14 @@ class TestCanopyRequiredColumns:
                 },
             )
         )
-        assert cols == {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"}
+        assert cols == {
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+            "dbh",
+            "fia_species_code",
+        }
 
     def test_reinhardt_distribution_needs_species(self):
         cols = canopy_required_columns(
@@ -493,7 +514,7 @@ class TestCanopyRequiredColumns:
                 bands=["cbd", "cbh", "chm", "cfl"], horizontal_distribution="stem"
             )
         )
-        assert cols == {"x", "y", "height", "crown_ratio"}
+        assert cols == {"x", "y", "height", "crown_base_height"}
 
 
 class TestReadInventoryTreeId:

@@ -79,15 +79,20 @@ def _roi(size_m: float = 120.0) -> gpd.GeoDataFrame:
 def _trees(n: int = 40, species: int = 122, seed: int = 0, **cols) -> pd.DataFrame:
     """Live conifers clustered inside a 120 m box (ponderosa pine by default)."""
     rng = np.random.default_rng(seed)
+    x = rng.uniform(10, 110, n)
+    y = rng.uniform(10, 110, n)
+    dbh = rng.uniform(15, 45, n)
+    height = rng.uniform(8, 25, n)
+    crown_ratio = rng.uniform(0.3, 0.6, n)
     df = pd.DataFrame(
         {
-            "x": rng.uniform(10, 110, n),
-            "y": rng.uniform(10, 110, n),
+            "x": x,
+            "y": y,
             "fia_species_code": np.full(n, species),
             "fia_status_code": np.ones(n, dtype=int),
-            "dbh": rng.uniform(15, 45, n),
-            "height": rng.uniform(8, 25, n),
-            "crown_ratio": rng.uniform(0.3, 0.6, n),
+            "dbh": dbh,
+            "height": height,
+            "crown_base_height": height * (1.0 - crown_ratio),
         }
     )
     for key, value in cols.items():
@@ -427,7 +432,14 @@ class TestRequiredColumns:
             },
         )
         captured = self._capture(src, df)
-        expected = {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"}
+        expected = {
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+            "dbh",
+            "fia_species_code",
+        }
         assert set(captured["read"]) == expected
         assert set(captured["check"]) == expected
 
@@ -466,10 +478,18 @@ class TestNullValues:
             _run(_source(max_crown_radius_source=self.RADIUS_SOURCE), df)
         assert exc.value.code == "CANOPY_FUEL_INPUT_ERROR"
 
+    def test_null_radius_with_crown_base_above_height_is_processing_error(self):
+        df = _trees(crad_m=2.0)
+        df.loc[0, "crad_m"] = np.nan
+        df.loc[0, "crown_base_height"] = df.loc[0, "height"] + 1.0
+        with pytest.raises(ProcessingError) as exc:
+            _run(_source(max_crown_radius_source=self.RADIUS_SOURCE), df)
+        assert exc.value.code == "CANOPY_FUEL_INPUT_ERROR"
+
     def test_null_morphology_fails_instead_of_thinning(self):
         df = _trees()
-        df.loc[3, "crown_ratio"] = np.nan
+        df.loc[3, "crown_base_height"] = np.nan
         with pytest.raises(ProcessingError) as exc:
             _run(_source(), df)
         assert exc.value.code == "INCOMPLETE_INVENTORY"
-        assert "crown_ratio: 1" in exc.value.message
+        assert "crown_base_height: 1" in exc.value.message

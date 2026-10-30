@@ -38,6 +38,7 @@ def sample_ddf():
             "crown_ratio": rng.uniform(0.05, 0.95, n),
         }
     )
+    df["crown_base_height"] = df["height"] * (1.0 - df["crown_ratio"])
     return dd.from_pandas(df, npartitions=5)
 
 
@@ -108,14 +109,14 @@ class TestDaskRemove:
         """Expression-based remove works through map_partitions."""
         mods = [
             {
-                "conditions": [{"expression": "height * crown_ratio < 1.0"}],
+                "conditions": [{"expression": "height - crown_base_height < 1.0"}],
                 "actions": [{"modifier": "remove"}],
             }
         ]
 
         original = sample_ddf.compute()
         expected_remaining = len(
-            original[~(original["height"] * original["crown_ratio"] < 1.0)]
+            original[~(original["height"] - original["crown_base_height"] < 1.0)]
         )
 
         result = sample_ddf.map_partitions(apply_modifications, mods).compute()
@@ -265,24 +266,27 @@ class TestDaskModify:
         expected_sum = original["dbh"].sum() + len(original) * 2.54
         assert abs(result["dbh"].sum() - expected_sum) < 0.1
 
-    def test_clamp_crown_ratio(self, sample_ddf):
-        """Crown ratio clamping works through map_partitions."""
+    def test_clamp_crown_base_height(self, sample_ddf):
+        """Crown base clamping to [0, height] works through map_partitions."""
         mods = [
             {
                 "conditions": [
-                    {"attribute": "crown_ratio", "operator": "gt", "value": 0.0}
+                    {"attribute": "crown_base_height", "operator": "gt", "value": 0.0}
                 ],
                 "actions": [
-                    {"attribute": "crown_ratio", "modifier": "add", "value": 2.0}
+                    {
+                        "attribute": "crown_base_height",
+                        "modifier": "add",
+                        "value": 100.0,
+                    }
                 ],
             }
         ]
 
         result = sample_ddf.map_partitions(apply_modifications, mods).compute()
 
-        # All values should be clamped to [0, 1]
-        assert (result["crown_ratio"] >= 0).all()
-        assert (result["crown_ratio"] <= 1.0).all()
+        assert (result["crown_base_height"] >= 0).all()
+        assert (result["crown_base_height"] == result["height"]).all()
 
     def test_clamp_dbh_non_negative(self, sample_ddf):
         """DBH clamping at 0 works through map_partitions."""

@@ -5,7 +5,7 @@ Tree inventory modification processing.
 
 Applies condition-based modifications to tree DataFrames. Supports
 attribute conditions, expression conditions, and actions with optional
-pint unit conversion.
+pint unit conversion. ``crown_base_height`` is kept within ``[0, height]``.
 """
 
 import copy
@@ -48,13 +48,13 @@ MODIFIER_MAP = {
 NATIVE_UNITS = {
     "dbh": "cm",
     "height": "m",
-    "crown_ratio": "dimensionless",
+    "crown_base_height": "m",
 }
 
 CLAMP_RULES = {
     "dbh": (0, None),
     "height": (0, None),
-    "crown_ratio": (0, 1),
+    "crown_base_height": (0, None),
 }
 
 
@@ -69,9 +69,6 @@ def convert_value(attribute: str, value, unit: str | None):
     native = NATIVE_UNITS.get(attribute)
     if native is None:
         return value
-
-    if native == "dimensionless":
-        return float(value)
 
     converted = Q_(value, unit).to(native).magnitude
     return converted
@@ -217,6 +214,16 @@ def apply_action(df: pd.DataFrame, action: dict, mask: pd.Series) -> pd.DataFram
             df.loc[mask, attribute] = df.loc[mask, attribute].clip(lower=lo)
         if hi is not None:
             df.loc[mask, attribute] = df.loc[mask, attribute].clip(upper=hi)
+
+    # A crown base cannot sit above its tree. A NaN height leaves it unbounded.
+    if (
+        attribute in ("crown_base_height", "height")
+        and "crown_base_height" in df.columns
+        and mask.any()
+    ):
+        df.loc[mask, "crown_base_height"] = df.loc[mask, "crown_base_height"].clip(
+            upper=df.loc[mask, "height"]
+        )
 
     return df
 

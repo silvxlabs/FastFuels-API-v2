@@ -34,6 +34,7 @@ _V2_COLUMNS = {
     "fia_crown_class_code",
     "dbh",
     "crown_ratio",
+    "crown_base_height",
     "crown_radius",
 }
 
@@ -52,6 +53,7 @@ _COLUMN_METADATA = {
     "dbh": ("continuous", "cm"),
     "height": ("continuous", "m"),
     "crown_ratio": ("continuous", None),
+    "crown_base_height": ("continuous", "m"),
     "crown_radius": ("continuous", "m"),
 }
 
@@ -74,9 +76,17 @@ class _InventorySchema(pa.DataFrameModel):
     )
     dbh: Series[float] | None = pa.Field(ge=0, nullable=True)
     crown_ratio: Series[float] | None = pa.Field(ge=0, le=1, nullable=True)
+    crown_base_height: Series[float] | None = pa.Field(ge=0, nullable=True)
     crown_radius: Series[float] | None = pa.Field(
         gt=0, le=MAX_CROWN_RADIUS_M, nullable=True
     )
+
+    @pa.dataframe_check(error="crown_base_height must not exceed height")
+    def crown_base_height_at_most_height(cls, df: pd.DataFrame) -> pd.Series:
+        if "crown_base_height" not in df.columns:
+            return pd.Series(True, index=df.index)
+        cbh = df["crown_base_height"]
+        return cbh.isna() | (cbh <= df["height"])
 
     class Config:
         coerce = True

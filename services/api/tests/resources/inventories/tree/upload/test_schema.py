@@ -36,6 +36,7 @@ class TestInventoryColumnMapping:
         assert mapping.fia_status_code is None
         assert mapping.dbh is None
         assert mapping.crown_ratio is None
+        assert mapping.crown_base_height is None
         assert mapping.crown_radius is None
 
     def test_partial_mapping_valid(self):
@@ -76,6 +77,14 @@ class TestInventoryColumnMapping:
         )
         assert req.columns.model_dump(exclude_none=True) == {
             "crown_radius": "CrownRad_m"
+        }
+
+    def test_crown_base_height_mapping(self):
+        req = CreateInventoryUploadRequest(
+            format="csv", columns={"crown_base_height": "CBH_m"}
+        )
+        assert req.columns.model_dump(exclude_none=True) == {
+            "crown_base_height": "CBH_m"
         }
 
     def test_tree_id_mapping(self):

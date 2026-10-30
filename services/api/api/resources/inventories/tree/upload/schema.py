@@ -65,6 +65,14 @@ class InventoryColumnMapping(BaseModel):
             "FIA compacted live crown ratio (0-1), as recorded by FIA field crews."
         ),
     )
+    crown_base_height: str | None = Field(
+        None,
+        description=(
+            "Crown base height (m): height of the lowest live foliage, the base "
+            "of a continuous, gap-free crown. At least 0 and at most `height`; "
+            "equal to `height` for a tree with no live crown."
+        ),
+    )
     crown_radius: str | None = Field(
         None,
         description=(

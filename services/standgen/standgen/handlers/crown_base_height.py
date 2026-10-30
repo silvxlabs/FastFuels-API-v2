@@ -1,13 +1,16 @@
 """
 Crown base height allometry handler.
 
-Computes each tree's crown base height from the species, crown ratio, dbh and
-height already on a tree inventory with the core crown base height model the
-source names. No GDAM call is made.
+Computes each tree's crown base height with the model the source names. A core
+model reads the species, crown ratio, dbh and height already on the inventory,
+with no GDAM call; species it does not cover get NaN. The ``gdam`` model calls
+GDAM through the GDAM handler, conditioned on whichever of species, dbh, crown
+ratio and crown base the trees have, and needs only position and height. Only
+``crown_base_height`` is written.
 
 Without ``overwrite`` existing crown base heights are kept and only empty cells
-are filled; with it every tree is recomputed. Species the model does not cover
-get NaN.
+are filled; with it every tree is recomputed, and GDAM is not sent the old
+values.
 """
 
 import logging
@@ -17,6 +20,7 @@ from fastfuels_core.allometry.crown_ratio import FIA_NATIONAL_LOGIT_2026
 
 from lib.errors import ProcessingError
 from standgen.crown_base import CROWN_BASE_INPUTS, fill_crown_base_height
+from standgen.handlers import gdam
 from standgen.region import in_pacific_northwest
 from standgen.storage import load_inventory_parquet, save_parquet_with_summary
 
@@ -36,7 +40,7 @@ def handle_crown_base_height(
     inventory: dict, source: dict, domain_gdf, progress
 ) -> dict:
     """Fill (or, with ``overwrite``, recompute) a tree inventory's crown base
-    heights from the crown base height model.
+    heights from the crown base height model or GDAM.
 
     Dict with 'georeference', 'columns' with per-column summary statistics,
     and 'forestry_metrics' with stand-level forestry scalars or None.
@@ -59,16 +63,20 @@ def handle_crown_base_height(
             ),
         ) from e
 
-    missing_inputs = [c for c in CROWN_BASE_INPUTS if c not in ddf.columns]
-    if missing_inputs:
-        raise ProcessingError(
-            code="MISSING_CROWN_BASE_INPUTS",
-            message=(
-                f"Crown base height needs column(s) {missing_inputs}, which the "
-                f"source inventory lacks."
-            ),
-            suggestion="Fill the missing column(s) with the GDAM allometry route.",
-        )
+    use_gdam = model == gdam.GDAM_CROWN_BASE_MODEL
+    if use_gdam:
+        gdam.check_required_columns(ddf)
+    else:
+        missing_inputs = [c for c in CROWN_BASE_INPUTS if c not in ddf.columns]
+        if missing_inputs:
+            raise ProcessingError(
+                code="MISSING_CROWN_BASE_INPUTS",
+                message=(
+                    f"Crown base height needs column(s) {missing_inputs}, which "
+                    f"the source inventory lacks."
+                ),
+                suggestion="Fill the missing column(s) with the GDAM allometry route.",
+            )
 
     if not overwrite and "crown_base_height" in ddf.columns:
         null_count = int(ddf["crown_base_height"].isna().sum().compute())
@@ -82,14 +90,18 @@ def handle_crown_base_height(
             )
 
     progress("Computing crown base heights...", 40)
-    pacific_northwest = in_pacific_northwest(domain_gdf)
-    result_ddf = ddf.map_partitions(
-        fill_crown_base_height,
-        pacific_northwest,
-        model,
-        overwrite,
-        meta=_result_meta(ddf),
-    )
+    if use_gdam:
+        result_ddf = gdam.map_gdam(
+            ddf, domain_gdf, ["crown_base_height"], inventory_id, overwrite, model
+        )
+    else:
+        result_ddf = ddf.map_partitions(
+            fill_crown_base_height,
+            in_pacific_northwest(domain_gdf),
+            model,
+            overwrite,
+            meta=_result_meta(ddf),
+        )
 
     progress("Writing inventory...", 90)
     _, stats, forestry_metrics = save_parquet_with_summary(

@@ -146,9 +146,17 @@ class TestCreateGdamInventoryRequest:
         request = CreateGdamInventoryRequest(source_tree_inventory_id="inv123")
         assert request.overwrite is False
 
-    def test_crown_base_height_model_defaults_to_refit(self):
+    def test_crown_base_height_model_defaults_to_gdam(self):
         request = CreateGdamInventoryRequest(source_tree_inventory_id="inv123")
-        assert request.crown_base_height_model.name == "fia_national_logit_2026"
+        assert request.crown_base_height_model.name == "gdam"
+        assert request.model_dump()["crown_base_height_model"] == {"name": "gdam"}
+
+    def test_crown_base_height_model_description_names_gdam(self):
+        description = CreateGdamInventoryRequest.model_fields[
+            "crown_base_height_model"
+        ].description
+        assert "`gdam` (the default)" in description
+        assert "does not predict" not in description
 
     def test_crown_base_height_model_selected_by_name(self):
         request = CreateGdamInventoryRequest(
@@ -163,7 +171,7 @@ class TestCreateGdamInventoryRequest:
         with pytest.raises(ValidationError):
             CreateGdamInventoryRequest(
                 source_tree_inventory_id="inv123",
-                crown_base_height_model={"name": "gdam"},
+                crown_base_height_model={"name": "bogus"},
             )
 
     def test_unknown_fields_ignored(self):
@@ -289,38 +297,51 @@ class TestResolveGdamColumns:
         assert "tree_id" not in self._keys(result)
 
 
+REFIT = "fia_national_logit_2026"
+
+
 class TestCrownBaseHeightMissingInputs:
-    """The crown base height model needs species, crown ratio and diameter,
-    each either imputed in the same request or present on the source."""
+    """A crown base height equation needs species, crown ratio and diameter,
+    each either imputed in the same request or present on the source; gdam
+    needs none."""
 
     def test_not_requested_skips_check(self):
-        assert crown_base_height_missing_inputs({"x", "y", "height"}, ["dbh"]) == []
+        missing = crown_base_height_missing_inputs({"x", "y", "height"}, ["dbh"], REFIT)
+        assert missing == []
 
     def test_all_inputs_on_source(self):
         source = {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
-        assert crown_base_height_missing_inputs(source, ["crown_base_height"]) == []
+        missing = crown_base_height_missing_inputs(source, ["crown_base_height"], REFIT)
+        assert missing == []
 
     def test_all_inputs_imputed(self):
         impute = ["dbh", "crown_ratio", "fia_species_code", "crown_base_height"]
-        assert crown_base_height_missing_inputs({"x", "y", "height"}, impute) == []
+        missing = crown_base_height_missing_inputs({"x", "y", "height"}, impute, REFIT)
+        assert missing == []
 
     def test_mix_of_source_and_imputed(self):
         source = {"x", "y", "height", "dbh"}
         impute = ["crown_ratio", "fia_species_code", "crown_base_height"]
-        assert crown_base_height_missing_inputs(source, impute) == []
+        assert crown_base_height_missing_inputs(source, impute, REFIT) == []
 
     def test_missing_inputs_reported(self):
         source = {"x", "y", "height", "crown_ratio"}
         impute = ["crown_base_height"]
-        assert crown_base_height_missing_inputs(source, impute) == [
+        assert crown_base_height_missing_inputs(source, impute, REFIT) == [
             "dbh",
             "fia_species_code",
         ]
 
+    def test_gdam_needs_no_inputs(self):
+        missing = crown_base_height_missing_inputs(
+            {"x", "y", "height"}, ["crown_base_height"], "gdam"
+        )
+        assert missing == []
+
 
 class TestGdamConditionedColumns:
     """GDAM conditions on every GDAM column the source carries, except the
-    overwritten ones; crown_base_height is never sent."""
+    overwritten ones; crown_base_height is sent only with the gdam model."""
 
     ALL = ["dbh", "crown_ratio", "fia_species_code", "crown_base_height"]
     FULL_SOURCE = {
@@ -334,10 +355,12 @@ class TestGdamConditionedColumns:
     }
 
     def test_position_height_source_conditions_on_nothing(self):
-        assert gdam_conditioned_columns({"x", "y", "height"}, self.ALL, False) == []
+        assert (
+            gdam_conditioned_columns({"x", "y", "height"}, self.ALL, False, REFIT) == []
+        )
 
     def test_no_overwrite_conditions_on_all_present(self):
-        assert gdam_conditioned_columns(self.FULL_SOURCE, self.ALL, False) == [
+        assert gdam_conditioned_columns(self.FULL_SOURCE, self.ALL, False, REFIT) == [
             "dbh",
             "crown_ratio",
             "fia_species_code",
@@ -345,27 +368,56 @@ class TestGdamConditionedColumns:
 
     def test_no_overwrite_conditions_on_columns_not_imputed(self):
         source = {"x", "y", "height", "dbh", "crown_ratio"}
-        assert gdam_conditioned_columns(source, ["fia_species_code"], False) == [
+        assert gdam_conditioned_columns(source, ["fia_species_code"], False, REFIT) == [
             "dbh",
             "crown_ratio",
         ]
 
     def test_overwrite_excludes_overwritten(self):
         result = gdam_conditioned_columns(
-            self.FULL_SOURCE, ["crown_ratio", "crown_base_height"], True
+            self.FULL_SOURCE, ["crown_ratio", "crown_base_height"], True, REFIT
         )
         assert result == ["dbh", "fia_species_code"]
 
     def test_overwrite_all_conditions_on_nothing(self):
-        assert gdam_conditioned_columns(self.FULL_SOURCE, self.ALL, True) == []
+        assert gdam_conditioned_columns(self.FULL_SOURCE, self.ALL, True, REFIT) == []
 
-    def test_crown_base_height_never_conditioned(self):
+    def test_crown_base_height_not_conditioned_with_equation(self):
         source = {"x", "y", "height", "crown_base_height"}
-        assert gdam_conditioned_columns(source, ["dbh"], False) == []
+        assert gdam_conditioned_columns(source, ["dbh"], False, REFIT) == []
 
     @pytest.mark.parametrize("overwrite", [False, True])
     def test_crown_base_height_alone_calls_no_gdam(self, overwrite):
         result = gdam_conditioned_columns(
-            self.FULL_SOURCE, ["crown_base_height"], overwrite
+            self.FULL_SOURCE, ["crown_base_height"], overwrite, REFIT
         )
         assert result == []
+
+    def test_gdam_conditions_on_kept_crown_base_height(self):
+        assert gdam_conditioned_columns(self.FULL_SOURCE, ["dbh"], False, "gdam") == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+            "crown_base_height",
+        ]
+
+    def test_gdam_overwritten_crown_base_height_not_conditioned(self):
+        result = gdam_conditioned_columns(
+            self.FULL_SOURCE, ["crown_base_height"], True, "gdam"
+        )
+        assert result == ["dbh", "crown_ratio", "fia_species_code"]
+
+    def test_gdam_crown_base_height_alone_calls_gdam(self):
+        result = gdam_conditioned_columns(
+            self.FULL_SOURCE, ["crown_base_height"], False, "gdam"
+        )
+        assert result == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+            "crown_base_height",
+        ]
+
+    def test_gdam_position_height_source_conditions_on_nothing(self):
+        source = {"x", "y", "height"}
+        assert gdam_conditioned_columns(source, self.ALL, False, "gdam") == []

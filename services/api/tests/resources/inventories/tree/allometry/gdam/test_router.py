@@ -200,7 +200,26 @@ class TestCreateGdamInventory:
     def test_crown_base_height_without_inputs_returns_422(
         self, client, domain_for_testing, source_tree_inventory
     ):
-        """crown_base_height alone on a position+height source returns 422."""
+        """crown_base_height alone with an equation on a position+height source
+        returns 422."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": source_tree_inventory["id"],
+                "impute_columns": ["crown_base_height"],
+                "crown_base_height_model": {"name": "fia_national_logit_2026"},
+            },
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        for key in ("dbh", "crown_ratio", "fia_species_code"):
+            assert key in detail
+
+    def test_gdam_crown_base_height_needs_no_inputs(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """With the default gdam model, crown_base_height alone needs only
+        position and height."""
         response = client.post(
             self.route(domain_for_testing["id"]),
             json={
@@ -208,10 +227,10 @@ class TestCreateGdamInventory:
                 "impute_columns": ["crown_base_height"],
             },
         )
-        assert response.status_code == 422
-        detail = response.json()["detail"]
-        for key in ("dbh", "crown_ratio", "fia_species_code"):
-            assert key in detail
+        assert response.status_code == 201
+        source = response.json()["source"]
+        assert source["crown_base_height_model"] == {"name": "gdam"}
+        assert source["conditioned_columns"] == []
 
     def test_new_source_fields_default_persisted(
         self, client, domain_for_testing, source_tree_inventory
@@ -225,7 +244,7 @@ class TestCreateGdamInventory:
         assert response.status_code == 201
         source = response.json()["source"]
         assert source["overwrite"] is False
-        assert source["crown_base_height_model"] == {"name": "fia_national_logit_2026"}
+        assert source["crown_base_height_model"] == {"name": "gdam"}
         assert source["conditioned_columns"] == []
 
     def test_overwrite_persisted_and_excluded_from_conditioning(
@@ -251,7 +270,24 @@ class TestCreateGdamInventory:
     def test_crown_base_height_alone_with_inputs_creates_inventory(
         self, client, domain_for_testing, full_morphology_inventory
     ):
-        """crown_base_height alone runs only the model: no GDAM conditioning."""
+        """crown_base_height alone with an equation runs only the equation: no
+        GDAM conditioning."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": full_morphology_inventory["id"],
+                "impute_columns": ["crown_base_height"],
+                "crown_base_height_model": {"name": "fia_national_logit_2026"},
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["conditioned_columns"] == []
+
+    def test_gdam_crown_base_height_alone_conditions_on_present_columns(
+        self, client, domain_for_testing, full_morphology_inventory
+    ):
+        """crown_base_height alone with gdam calls GDAM, conditioned on every
+        morphology column the source has."""
         response = client.post(
             self.route(domain_for_testing["id"]),
             json={
@@ -260,7 +296,11 @@ class TestCreateGdamInventory:
             },
         )
         assert response.status_code == 201
-        assert response.json()["source"]["conditioned_columns"] == []
+        assert response.json()["source"]["conditioned_columns"] == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+        ]
 
     def test_impute_columns_empty_returns_422(
         self, client, domain_for_testing, source_tree_inventory

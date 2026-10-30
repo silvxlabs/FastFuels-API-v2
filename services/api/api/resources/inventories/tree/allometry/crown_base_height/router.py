@@ -34,6 +34,9 @@ from api.resources.inventories.tree.allometry.crown_base_height.schema import (
     CrownBaseHeightInventorySource,
     resolve_crown_base_height_columns,
 )
+from api.resources.inventories.tree.allometry.schema import (
+    GDAM_CROWN_BASE_HEIGHT_MODEL,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -68,26 +71,31 @@ async def create_crown_base_height_inventory(
     # Create Crown Base Height Inventory
 
     Creates a new tree inventory with each tree's crown base height computed
-    from its species, dbh, crown ratio and height by a crown base height model.
-    Use it for a tree inventory that has those columns but no crown base
-    height, such as an uploaded inventory, before voxelizing it or building
-    canopy grids from it.
+    from its species, dbh, crown ratio and height by a crown base height
+    equation, or predicted by GDAM with the ``gdam`` model. Use it for a tree
+    inventory without a crown base height, such as an uploaded inventory,
+    before voxelizing it or building canopy grids from it.
 
-    An inventory without dbh, crown ratio or species needs the GDAM route
-    (``POST /domains/{domain_id}/inventories/tree/allometry/gdam``) instead,
-    which fills those and the crown base height in one request.
+    With an equation, an inventory without dbh, crown ratio or species needs
+    the GDAM route (``POST /domains/{domain_id}/inventories/tree/allometry/gdam``)
+    instead, which fills those and the crown base height in one request. The
+    ``gdam`` model needs only position and height, conditions on whichever of
+    species, dbh, crown ratio and crown base height are present, and writes
+    only the crown base height. GDAM covers the conterminous US; an inventory
+    with a tree outside it fails.
 
     ## Request Body
 
     - **source_tree_inventory_id**: (required) ID of a completed tree inventory
-      with species, dbh, crown ratio and height for every tree.
+      with the required columns below.
     - **model**: (optional) The crown base height model, selected by ``name``.
-      Defaults to ``{"name": "fia_national_logit_2026"}``. Species the model
-      does not cover get no crown base height.
+      Defaults to ``{"name": "fia_national_logit_2026"}``. Species an equation
+      does not cover get no crown base height. ``{"name": "gdam"}`` predicts it
+      with GDAM.
     - **overwrite**: (optional, default ``false``) ``false`` keeps existing
       crown base heights and fills only empty cells; a source where every tree
       already has one is rejected. ``true`` recomputes every tree's crown base
-      height.
+      height, and ``gdam`` is not given the old values.
     - **name**: (optional) Name for the inventory.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing inventories.
@@ -97,10 +105,12 @@ async def create_crown_base_height_inventory(
     **Required on the source inventory**, with a value for every tree:
 
     - **x**, **y**: tree position, in the domain CRS.
-    - **height**: tree height, in metres (``m``).
-    - **dbh**: diameter at breast height, in centimetres (``cm``).
-    - **crown_ratio**: FIA compacted live crown ratio (0–1 fraction).
-    - **fia_species_code**: FIA species code.
+    - **height**: tree height, in metres (``m``); above zero for ``gdam``.
+    - **dbh**: diameter at breast height, in centimetres (``cm``). Not
+      required for ``gdam``.
+    - **crown_ratio**: FIA compacted live crown ratio (0–1 fraction). Not
+      required for ``gdam``.
+    - **fia_species_code**: FIA species code. Not required for ``gdam``.
 
     **Written**:
 
@@ -163,9 +173,12 @@ async def create_crown_base_height_inventory(
             ),
         )
 
-    incomplete_inputs = incomplete_inventory_columns(
-        source_data, set(CROWN_BASE_HEIGHT_GDAM_INPUTS)
-    )
+    # GDAM's crown base needs no equation inputs.
+    incomplete_inputs = set()
+    if body.model.name != GDAM_CROWN_BASE_HEIGHT_MODEL:
+        incomplete_inputs = incomplete_inventory_columns(
+            source_data, set(CROWN_BASE_HEIGHT_GDAM_INPUTS)
+        )
     if incomplete_inputs:
         impute_columns = [
             c for c in CROWN_BASE_HEIGHT_GDAM_INPUTS if c in incomplete_inputs
@@ -173,15 +186,17 @@ async def create_crown_base_height_inventory(
         gdam_body = {
             "source_tree_inventory_id": body.source_tree_inventory_id,
             "impute_columns": [*impute_columns, "crown_base_height"],
+            "crown_base_height_model": body.model.model_dump(),
         }
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Source inventory is missing, or has empty values in, column(s) "
-                f"{impute_columns}, which the crown base height model needs for "
-                f"every tree. Send POST /domains/{domain_id}/inventories/tree/"
-                f"allometry/gdam with body {json.dumps(gdam_body)}; it fills "
-                f"those columns and the crown base height in one request."
+                f"{impute_columns}, which crown base height model "
+                f"{body.model.name} needs for every tree. Send POST "
+                f"/domains/{domain_id}/inventories/tree/allometry/gdam with body "
+                f"{json.dumps(gdam_body)}; it fills those columns and the crown "
+                f"base height in one request."
             ),
         )
 

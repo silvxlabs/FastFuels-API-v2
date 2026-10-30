@@ -3,9 +3,10 @@ api/v2/resources/inventories/tree/allometry/crown_base_height/schema.py
 
 Schema models for crown base height inventory creation.
 
-A crown base height model computes each tree's crown base height from the
-species, dbh, crown ratio and height already on a tree inventory. No GDAM call
-is made.
+A crown base height equation computes each tree's crown base height from the
+species, dbh, crown ratio and height already on a tree inventory, with no GDAM
+call. The `gdam` model predicts it with GDAM from position and height,
+conditioned on whichever of those columns are present.
 """
 
 from typing import Literal
@@ -18,6 +19,7 @@ from api.resources.inventories.schema import (
     CreateInventoryRequestBase,
 )
 from api.resources.inventories.tree.allometry.schema import (
+    CROWN_BASE_HEIGHT_EQUATIONS,
     CrownBaseHeightModel,
     default_crown_base_height_model,
 )
@@ -25,7 +27,7 @@ from api.resources.inventories.tree.allometry.schema import (
 # Columns every tree needs a value in; none of them can be imputed.
 CROWN_BASE_HEIGHT_REQUIRED_SOURCE_COLUMNS = ("x", "y", "height")
 
-# Model inputs GDAM can fill, in the order GDAM's impute_columns lists them.
+# Equation inputs GDAM can fill, in the order GDAM's impute_columns lists them.
 CROWN_BASE_HEIGHT_GDAM_INPUTS = ("dbh", "crown_ratio", "fia_species_code")
 
 
@@ -68,26 +70,34 @@ class CreateCrownBaseHeightInventoryRequest(CreateInventoryRequestBase):
         json_schema_extra=input_requirements(
             inventory(
                 "source_tree_inventory_id",
-                columns=(
-                    *CROWN_BASE_HEIGHT_REQUIRED_SOURCE_COLUMNS,
-                    *CROWN_BASE_HEIGHT_GDAM_INPUTS,
-                ),
+                columns=CROWN_BASE_HEIGHT_REQUIRED_SOURCE_COLUMNS,
+            ),
+            *(
+                inventory(
+                    "source_tree_inventory_id",
+                    columns=CROWN_BASE_HEIGHT_GDAM_INPUTS,
+                    when={"model.name": equation().name},
+                )
+                for equation in CROWN_BASE_HEIGHT_EQUATIONS
             ),
         ),
     )
 
     source_tree_inventory_id: str = Field(
         description=(
-            "ID of a completed tree inventory with species, dbh, crown ratio and "
-            "height for every tree."
+            "ID of a completed tree inventory with position and height for "
+            "every tree, and species, dbh and crown ratio for every tree unless "
+            "`model` is `gdam`."
         ),
     )
     model: CrownBaseHeightModel = Field(
         default_factory=default_crown_base_height_model,
         description=(
-            "The model that computes each tree's crown base height from its "
-            "species, dbh, crown ratio and height, selected by `name`. Species "
-            "the model does not cover get no crown base height."
+            "The model that gives each tree's crown base height, selected by "
+            "`name`. `gdam` predicts it with GDAM, conditioned on whichever of "
+            "species, dbh, crown ratio and crown base height the tree has. The "
+            "other models compute it from species, dbh, crown ratio and "
+            "height; species a model does not cover get no crown base height."
         ),
     )
     overwrite: bool = Field(
@@ -95,7 +105,7 @@ class CreateCrownBaseHeightInventoryRequest(CreateInventoryRequestBase):
         description=(
             "`false` keeps existing crown base heights and fills only empty "
             "cells. `true` recomputes every tree's crown base height with "
-            "`model`."
+            "`model`; `gdam` is not given the old values."
         ),
     )
 

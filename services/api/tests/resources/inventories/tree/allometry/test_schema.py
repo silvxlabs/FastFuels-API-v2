@@ -6,8 +6,11 @@ Tests the shared crown base height model type.
 
 import pytest
 from api.resources.inventories.tree.allometry.schema import (
+    CROWN_BASE_HEIGHT_EQUATIONS,
+    GDAM_CROWN_BASE_HEIGHT_MODEL,
     CrownBaseHeightModel,
     FiaNationalLogit2026Model,
+    GdamModel,
     default_crown_base_height_model,
 )
 from pydantic import TypeAdapter, ValidationError
@@ -21,6 +24,7 @@ NAMES = [
     "toney_reeves_2009",
     "randolph_2010",
     "westfall_2019",
+    "gdam",
 ]
 
 
@@ -33,7 +37,25 @@ def test_each_name_validates(name):
 
 def test_unknown_name_rejected():
     with pytest.raises(ValidationError):
-        ADAPTER.validate_python({"name": "gdam"})
+        ADAPTER.validate_python({"name": "bogus"})
+
+
+def test_gdam_member():
+    model = ADAPTER.validate_python({"name": "gdam"})
+    assert isinstance(model, GdamModel)
+    assert GDAM_CROWN_BASE_HEIGHT_MODEL == "gdam"
+
+
+def test_gdam_description_is_user_facing():
+    schema = ADAPTER.json_schema()
+    description = schema["$defs"]["GdamModel"]["description"]
+    assert "flow-matching" in description
+    assert "uncompacted crown" in description
+
+
+def test_equations_exclude_gdam():
+    names = [equation().name for equation in CROWN_BASE_HEIGHT_EQUATIONS]
+    assert names == NAMES[:-1]
 
 
 def test_missing_name_rejected():

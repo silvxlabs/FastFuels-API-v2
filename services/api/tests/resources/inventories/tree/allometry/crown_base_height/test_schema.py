@@ -5,6 +5,7 @@ These are pure unit tests with no external dependencies.
 """
 
 import pytest
+from api.resources.input_requirements import requirements_for
 from api.resources.inventories.schema import InventoryType
 from api.resources.inventories.tree.allometry.crown_base_height.examples import (
     ALL_CROWN_BASE_HEIGHT_EXAMPLE_VALUES,
@@ -43,6 +44,7 @@ class TestCreateCrownBaseHeightInventoryRequest:
             "toney_reeves_2009",
             "randolph_2010",
             "westfall_2019",
+            "gdam",
         ],
     )
     def test_model_selected_by_name(self, name):
@@ -51,7 +53,7 @@ class TestCreateCrownBaseHeightInventoryRequest:
         )
         assert request.model.name == name
 
-    @pytest.mark.parametrize("model", [{"name": "gdam"}, {"name": "bogus"}, {}])
+    @pytest.mark.parametrize("model", [{"name": "bogus"}, {}])
     def test_unknown_model_rejected(self, model):
         with pytest.raises(ValidationError):
             CreateCrownBaseHeightInventoryRequest(
@@ -66,11 +68,46 @@ class TestCreateCrownBaseHeightInventoryRequest:
 
     def test_input_requirements_list_model_inputs(self):
         schema = CreateCrownBaseHeightInventoryRequest.model_json_schema()
-        (entry,) = schema["x-input-requirements"]
-        assert entry["field"] == "source_tree_inventory_id"
-        assert entry["columns"] == sorted(
-            ["x", "y", "height", "dbh", "crown_ratio", "fia_species_code"]
+        always, *equations = schema["x-input-requirements"]
+        assert always == {
+            "field": "source_tree_inventory_id",
+            "resource": "inventory",
+            "columns": ["height", "x", "y"],
+        }
+        # Every equation needs its inputs; gdam needs only position and height.
+        assert [e["when"] for e in equations] == [
+            {"model.name": name}
+            for name in (
+                "fia_national_logit_2026",
+                "monleon_2004_eq1",
+                "monleon_2004_eq2",
+                "toney_reeves_2009",
+                "randolph_2010",
+                "westfall_2019",
+            )
+        ]
+        for entry in equations:
+            assert entry["field"] == "source_tree_inventory_id"
+            assert entry["columns"] == ["crown_ratio", "dbh", "fia_species_code"]
+
+    @pytest.mark.parametrize(
+        "model,columns",
+        [
+            (
+                "toney_reeves_2009",
+                {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"},
+            ),
+            ("gdam", {"x", "y", "height"}),
+        ],
+    )
+    def test_input_requirements_apply_by_model(self, model, columns):
+        request = CreateCrownBaseHeightInventoryRequest(
+            source_tree_inventory_id="inv123", model={"name": model}
         )
+        required = set()
+        for entry in requirements_for(request, "source_tree_inventory_id"):
+            required |= set(entry["columns"])
+        assert required == columns
 
     @pytest.mark.parametrize("name,value", ALL_CROWN_BASE_HEIGHT_EXAMPLE_VALUES)
     def test_examples_validate(self, name, value):

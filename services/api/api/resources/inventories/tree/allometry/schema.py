@@ -3,13 +3,13 @@ api/v2/resources/inventories/tree/allometry/schema.py
 
 Crown base height model shared by the allometry routes and the PIM sources.
 
-A model computes a tree's crown base height from its species, dbh, FIA
-compacted crown ratio and height. Discriminated on ``name`` the way ``method``
-selects the fusion algorithm; ``gdam`` joins when GDAM's crown length model
-ships.
+A model gives a tree's crown base height. The equations compute it from the
+tree's species, dbh, FIA compacted crown ratio and height; ``gdam`` predicts it
+with GDAM. Discriminated on ``name`` the way ``method`` selects the fusion
+algorithm.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -67,13 +67,29 @@ class Westfall2019Model(BaseModel):
     name: Literal["westfall_2019"] = "westfall_2019"
 
 
+class GdamModel(BaseModel):
+    """GDAM's flow-matching model predicts the uncompacted crown jointly with
+    dbh, crown ratio and species, conditioned on whichever of them each tree
+    has. Needs only position and height; covers the conterminous US.
+    """
+
+    name: Literal["gdam"] = "gdam"
+
+
+# Models that compute the crown base from species, dbh, crown ratio and height.
+CROWN_BASE_HEIGHT_EQUATIONS = (
+    FiaNationalLogit2026Model,
+    Monleon2004Eq1Model,
+    Monleon2004Eq2Model,
+    ToneyReeves2009Model,
+    Randolph2010Model,
+    Westfall2019Model,
+)
+
+GDAM_CROWN_BASE_HEIGHT_MODEL = GdamModel().name
+
 CrownBaseHeightModel = Annotated[
-    FiaNationalLogit2026Model
-    | Monleon2004Eq1Model
-    | Monleon2004Eq2Model
-    | ToneyReeves2009Model
-    | Randolph2010Model
-    | Westfall2019Model,
+    Union[(*CROWN_BASE_HEIGHT_EQUATIONS, GdamModel)],
     Field(discriminator="name"),
 ]
 

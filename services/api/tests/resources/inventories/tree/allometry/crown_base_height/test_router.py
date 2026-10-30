@@ -202,6 +202,7 @@ class TestCreateCrownBaseHeightInventory:
         body = {
             "source_tree_inventory_id": source["id"],
             "impute_columns": ["crown_ratio", "fia_species_code", "crown_base_height"],
+            "crown_base_height_model": {"name": "fia_national_logit_2026"},
         }
         assert json.dumps(body) in detail
 
@@ -256,9 +257,48 @@ class TestCreateCrownBaseHeightInventory:
         source = make_source(_FULL_MORPHOLOGY_COLUMNS)
         response = client.post(
             self.route(domain_for_testing["id"]),
+            json={"source_tree_inventory_id": source["id"], "model": {"name": "bogus"}},
+        )
+        assert response.status_code == 422
+
+    def test_gdam_model_needs_only_position_and_height(
+        self, client, domain_for_testing, make_source
+    ):
+        source = make_source(_POSITION_HEIGHT_COLUMNS)
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"source_tree_inventory_id": source["id"], "model": {"name": "gdam"}},
+        )
+        assert response.status_code == 201
+        data = response.json()
+        assert data["source"]["model"] == {"name": "gdam"}
+        assert [c["key"] for c in data["columns"]] == [
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+        ]
+
+    def test_gdam_model_nothing_to_fill_returns_422(
+        self, client, domain_for_testing, make_source
+    ):
+        source = make_source(
+            [
+                *_POSITION_HEIGHT_COLUMNS,
+                {
+                    "key": "crown_base_height",
+                    "type": "continuous",
+                    "unit": "m",
+                    "summary": _summary(0),
+                },
+            ]
+        )
+        response = client.post(
+            self.route(domain_for_testing["id"]),
             json={"source_tree_inventory_id": source["id"], "model": {"name": "gdam"}},
         )
         assert response.status_code == 422
+        assert "overwrite: true" in response.json()["detail"]
 
     def test_nonexistent_source_inventory_returns_404(self, client, domain_for_testing):
         response = client.post(

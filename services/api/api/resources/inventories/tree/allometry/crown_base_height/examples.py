@@ -23,6 +23,12 @@ EXAMPLE_CROWN_BASE_HEIGHT_FULL = {
     "tags": ["upload"],
 }
 
+# GDAM crown base heights for a position+height inventory
+EXAMPLE_CROWN_BASE_HEIGHT_GDAM = {
+    "source_tree_inventory_id": "PLACEHOLDER_INVENTORY_ID",
+    "model": {"name": "gdam"},
+}
+
 CREATE_CROWN_BASE_HEIGHT_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_CROWN_BASE_HEIGHT_MINIMAL,
@@ -42,9 +48,20 @@ CREATE_CROWN_BASE_HEIGHT_OPENAPI_EXAMPLES = {
             "description, tags) specified."
         ),
     },
+    "gdam": {
+        "value": EXAMPLE_CROWN_BASE_HEIGHT_GDAM,
+        "summary": "Predict crown base heights with GDAM",
+        "description": (
+            "Fills each empty crown base height with a GDAM prediction. The "
+            "source needs only position and height; GDAM conditions on any "
+            "species, dbh, crown ratio and crown base height it has, and only "
+            "the crown base height is written."
+        ),
+    },
 }
 
 ALL_CROWN_BASE_HEIGHT_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_CROWN_BASE_HEIGHT_MINIMAL),
     ("full", EXAMPLE_CROWN_BASE_HEIGHT_FULL),
+    ("gdam", EXAMPLE_CROWN_BASE_HEIGHT_GDAM),
 ]

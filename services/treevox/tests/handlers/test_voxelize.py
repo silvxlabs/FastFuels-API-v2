@@ -71,7 +71,7 @@ def _sample_df(n=1, height=5.0):
             "fia_status_code": [1] * n,
             "dbh": [20.0] * n,
             "height": [height] * n,
-            "crown_ratio": [0.5] * n,
+            "crown_base_height": [0.5 * height] * n,
         }
     )
 
@@ -120,7 +120,7 @@ class TestLoadInventoryDataframe:
                 "fia_status_code": [1, 1, 1],
                 "dbh": [20.0, 22.0, 25.0],
                 "height": [15.0, 15.0, 15.0],
-                "crown_ratio": [0.4, 0.4, 0.4],
+                "crown_base_height": [9.0, 9.0, 9.0],
             }
         )
         source = _base_grid()["source"]
@@ -968,7 +968,7 @@ class TestHaloMergeAcrossChunks:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [5.0],
-                "crown_ratio": [0.5],
+                "crown_base_height": [2.5],
             }
         )
         grid = self._grid(bands=["volume_fraction"])
@@ -1054,7 +1054,7 @@ class TestHaloMergeAcrossChunks:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [5.0],
-                "crown_ratio": [0.5],
+                "crown_base_height": [2.5],
             }
         )
         grid = self._grid(bands=["spcd"])
@@ -1164,7 +1164,7 @@ class TestHaloCoversWideCrowns:
                 "fia_status_code": [1],
                 "dbh": [80.0],
                 "height": [20.0],
-                "crown_ratio": [0.6],
+                "crown_base_height": [8.0],
                 **{k: [v] for k, v in extra.items()},
             }
         )
@@ -1242,7 +1242,7 @@ class TestMaxBulkDensity:
                 "fia_status_code": [1, 1],
                 "dbh": [20.0, 20.0],
                 "height": [5.0, 5.0],
-                "crown_ratio": [0.5, 0.5],
+                "crown_base_height": [2.5, 2.5],
                 "tree_id": np.array([1, 2], dtype="int32"),
             }
         )

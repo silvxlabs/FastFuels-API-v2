@@ -36,10 +36,13 @@ def fake_tree_df(
     status=1,
     dbh=20.0,
     height=15.0,
-    crown_ratio=0.4,
+    crown_base_height=None,
     xs=None,
     ys=None,
 ) -> pd.DataFrame:
+    """`crown_base_height` defaults to 60% of `height` (crown ratio 0.4)."""
+    if crown_base_height is None:
+        crown_base_height = 0.6 * height
     xs = xs if xs is not None else np.linspace(10, 90, n)
     ys = ys if ys is not None else np.linspace(10, 90, n)
     return pd.DataFrame(
@@ -50,7 +53,7 @@ def fake_tree_df(
             "fia_status_code": [status] * n,
             "dbh": [dbh] * n,
             "height": [height] * n,
-            "crown_ratio": [crown_ratio] * n,
+            "crown_base_height": [crown_base_height] * n,
         }
     )
 
@@ -159,7 +162,7 @@ class TestBuildTree:
             "fia_status_code": 1,
             "dbh": 20.0,
             "height": 15.0,
-            "crown_ratio": 0.4,
+            "crown_base_height": 9.0,
             "x": 5.0,
             "y": 5.0,
         }
@@ -172,7 +175,7 @@ class TestBuildTree:
         assert tree.status_code == 1
         assert tree.diameter == 20.0
         assert tree.height == 15.0
-        assert tree.crown_ratio == 0.4
+        assert tree.crown_base_height == 9.0
         assert tree.x == 5.0
         assert tree.y == 5.0
 
@@ -310,13 +313,17 @@ class TestBiomassComponentDistribution:
 
 class TestComputeCacheKeys:
     def test_identical_trees_share_key(self):
-        df = fake_tree_df(n=5, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df = fake_tree_df(
+            n=5, species=131, dbh=20.0, height=15.0, crown_base_height=9.0
+        )
         keys = voxelize.compute_cache_keys(df)
         assert keys.nunique() == 1
 
     def test_null_radius_is_its_own_key(self):
         """Null radii share a key with each other, never with measured radii."""
-        df = fake_tree_df(n=4, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df = fake_tree_df(
+            n=4, species=131, dbh=20.0, height=15.0, crown_base_height=9.0
+        )
         df["lidar_radius"] = [np.nan, 2.0, np.nan, 2.0]
         keys = voxelize.compute_cache_keys(
             df, _profile_config("purves", "lidar_radius")
@@ -333,7 +340,7 @@ class TestComputeCacheKeys:
                 "fia_status_code": [1, 1],
                 "dbh": [20.0, 20.0],
                 "height": [15.0, 15.0],
-                "crown_ratio": [0.4, 0.4],
+                "crown_base_height": [9.0, 9.0],
                 "x": [1, 2],
                 "y": [1, 2],
             }
@@ -341,10 +348,19 @@ class TestComputeCacheKeys:
         keys = voxelize.compute_cache_keys(df)
         assert keys.nunique() == 2
 
+    def test_zero_height_tree_has_a_key(self):
+        """Height 0 (crown base 0) bins as crownless instead of failing."""
+        df = fake_tree_df(n=2, height=1.0)
+        df.loc[1, ["height", "crown_base_height"]] = 0.0
+        keys = voxelize.compute_cache_keys(df)
+        assert keys.notna().all()
+        assert keys.nunique() == 2
+
     def test_bin_boundary_equality(self):
         """height=1.0 and 1.9 land in the same bin at HEIGHT_BIN_M=1."""
         df = fake_tree_df(n=2, height=1.0)
         df.loc[1, "height"] = 1.9
+        df.loc[1, "crown_base_height"] = 0.6 * 1.9
         keys = voxelize.compute_cache_keys(df)
         assert keys.nunique() == 1
 
@@ -356,7 +372,9 @@ class TestComputeCacheKeys:
         assert keys.nunique() == 2
 
     def test_inventory_foliage_biomass_splits_same_morphology(self):
-        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df = fake_tree_df(
+            n=2, species=131, dbh=20.0, height=15.0, crown_base_height=9.0
+        )
         df["my_fuel_load"] = [10.0, 25.0]
         cfg = base_source_config()
         cfg["biomass_source"] = {
@@ -370,7 +388,9 @@ class TestComputeCacheKeys:
         assert keys.nunique() == 2
 
     def test_allometry_ignores_unconfigured_biomass_columns(self):
-        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df = fake_tree_df(
+            n=2, species=131, dbh=20.0, height=15.0, crown_base_height=9.0
+        )
         df["my_fuel_load"] = [10.0, 25.0]
 
         keys = voxelize.compute_cache_keys(df, base_source_config())
@@ -378,7 +398,9 @@ class TestComputeCacheKeys:
         assert keys.nunique() == 1
 
     def test_inventory_max_crown_radius_splits_same_morphology(self):
-        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df = fake_tree_df(
+            n=2, species=131, dbh=20.0, height=15.0, crown_base_height=9.0
+        )
         df["lidar_max_radius"] = [2.5, 4.0]
         cfg = base_source_config()
         cfg["max_crown_radius_source"] = {
@@ -393,7 +415,9 @@ class TestComputeCacheKeys:
 
     def test_inventory_max_crown_radius_is_binned(self):
         """Radii within one CROWN_RADIUS_BIN_M bin share a key."""
-        df = fake_tree_df(n=4, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df = fake_tree_df(
+            n=4, species=131, dbh=20.0, height=15.0, crown_base_height=9.0
+        )
         df["crown_radius"] = [2.40, 2.55, 2.60, 3.05]
         cfg = base_source_config()
         cfg["max_crown_radius_source"] = {
@@ -408,7 +432,9 @@ class TestComputeCacheKeys:
         assert keys.nunique() == 2
 
     def test_allometry_crown_radius_source_does_not_split(self):
-        df = fake_tree_df(n=2, species=131, dbh=20.0, height=15.0, crown_ratio=0.4)
+        df = fake_tree_df(
+            n=2, species=131, dbh=20.0, height=15.0, crown_base_height=9.0
+        )
         df["lidar_max_radius"] = [2.5, 4.0]
         cfg = base_source_config()
         cfg["max_crown_radius_source"] = {"type": "allometry"}
@@ -616,7 +642,7 @@ class TestCrownHaloCells:
         assert voxelize.crown_halo_cells(df, self._radius_config(), hr=0.5) == 24
 
     def test_null_column_value_uses_allometric_radius(self):
-        df = fake_tree_df(n=2, dbh=80.0, height=20.0, crown_ratio=0.6).assign(
+        df = fake_tree_df(n=2, dbh=80.0, height=20.0, crown_base_height=8.0).assign(
             crown_radius=[1.0, np.nan]
         )
         config = self._radius_config()
@@ -634,7 +660,7 @@ class TestCrownHaloCells:
                 "fia_status_code": [1, 1, 1],
                 "dbh": [80.0, 40.0, 25.0],
                 "height": [20.0, 30.0, 12.0],
-                "crown_ratio": [0.6, 0.5, 0.8],
+                "crown_base_height": [8.0, 15.0, 2.4],
             }
         )
         config = base_source_config()
@@ -663,7 +689,7 @@ class TestBuildChunkCache:
                 "fia_status_code": [],
                 "dbh": [],
                 "height": [],
-                "crown_ratio": [],
+                "crown_base_height": [],
                 "x": [],
                 "y": [],
                 "_cache_key": [],
@@ -704,7 +730,7 @@ class TestBuildChunkCache:
                 "fia_status_code": [1, 1, 1],
                 "dbh": [20.0, 20.0, 20.0],
                 "height": [15.0, 15.0, 15.0],
-                "crown_ratio": [0.4, 0.4, 0.4],
+                "crown_base_height": [9.0, 9.0, 9.0],
                 "x": [1, 2, 3],
                 "y": [1, 2, 3],
             }
@@ -773,7 +799,7 @@ class TestBuildChunkCache:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [15.0],
-                "crown_ratio": [0.4],
+                "crown_base_height": [9.0],
                 "x": [1.0],
                 "y": [1.0],
                 "my_fuel_load": [42.0],
@@ -829,7 +855,7 @@ class TestBuildChunkCache:
                 "fia_status_code": [1, 1],
                 "dbh": [20.0, 20.0],
                 "height": [15.0, 15.0],
-                "crown_ratio": [0.4, 0.4],
+                "crown_base_height": [9.0, 9.0],
                 "x": [1.0, 2.0],
                 "y": [1.0, 2.0],
                 "my_fuel_load": [10.0, 25.0],
@@ -874,7 +900,7 @@ class TestBuildChunkCache:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [15.0],
-                "crown_ratio": [0.4],
+                "crown_base_height": [9.0],
                 "x": [1.0],
                 "y": [1.0],
             }
@@ -914,7 +940,7 @@ class TestFieldHoistEquivalence:
                     "fia_status_code": 1,
                     "dbh": 25.0,
                     "height": 18.0,
-                    "crown_ratio": 0.5,
+                    "crown_base_height": 9.0,
                     "x": 5.0,
                     "y": 5.0,
                 }
@@ -950,7 +976,7 @@ def _real_row(**overrides):
         "fia_status_code": 1,
         "dbh": 25.0,
         "height": 18.0,
-        "crown_ratio": 0.5,
+        "crown_base_height": 9.0,
         "x": 5.0,
         "y": 5.0,
     }
@@ -989,7 +1015,7 @@ def _closed_form_radius(profile, z, hb, ht, r):
 
 
 class TestGeometricCrownProfiles:
-    HB, HT = 9.0, 18.0  # height 18 m, crown_ratio 0.5
+    HB, HT = 9.0, 18.0  # height 18 m, crown base 9 m
     HEIGHTS = [9.0, 10.0, 11.25, 13.5, 15.0, 16.75, 18.0]
 
     @pytest.mark.parametrize(
@@ -1061,8 +1087,18 @@ class TestGeometricCrownProfiles:
         "row_overrides",
         [
             {},
-            {"fia_species_code": 202, "dbh": 40.0, "height": 30.0, "crown_ratio": 0.3},
-            {"fia_species_code": 316, "dbh": 12.0, "height": 9.5, "crown_ratio": 0.8},
+            {
+                "fia_species_code": 202,
+                "dbh": 40.0,
+                "height": 30.0,
+                "crown_base_height": 21.0,
+            },
+            {
+                "fia_species_code": 316,
+                "dbh": 12.0,
+                "height": 9.5,
+                "crown_base_height": 1.9,
+            },
         ],
     )
     def test_allometry_radius_equals_purves(self, profile, row_overrides):
@@ -1123,10 +1159,10 @@ class TestGeometricCrownProfiles:
             )
 
     @pytest.mark.parametrize("profile", GEOMETRIC_PROFILES)
-    @pytest.mark.parametrize("crown_ratio", [0.0, 1.0])
-    def test_degenerate_crown_ratio_does_not_raise(self, profile, crown_ratio):
+    @pytest.mark.parametrize("crown_base_height", [18.0, 0.0])
+    def test_degenerate_crown_does_not_raise(self, profile, crown_base_height):
         tree = voxelize.build_tree(
-            _real_row(crown_ratio=crown_ratio), _profile_config(profile)
+            _real_row(crown_base_height=crown_base_height), _profile_config(profile)
         )
         assert np.all(
             np.isfinite(tree.get_crown_radius_at_height(np.linspace(0, 18, 37)))
@@ -1152,7 +1188,7 @@ def _pre_614_build_tree(row, source_config: dict):
         status_code=int(row["fia_status_code"]),
         diameter=float(row["dbh"]),
         height=float(row["height"]),
-        crown_ratio=float(row["crown_ratio"]),
+        crown_base_height=float(row["crown_base_height"]),
         x=float(row["x"]),
         y=float(row["y"]),
         crown_profile_model_type=source_config["crown_profile_model"],
@@ -1177,14 +1213,14 @@ class TestPurvesBetaUnchanged:
                 fia_species_code=202,
                 dbh=40.0,
                 height=30.0,
-                crown_ratio=0.3,
+                crown_base_height=21.0,
                 lidar_radius=3.1,
             ),
             _real_row(
                 fia_species_code=316,
                 dbh=12.0,
                 height=9.5,
-                crown_ratio=0.8,
+                crown_base_height=1.9,
                 lidar_radius=1.4,
             ),
         ]
@@ -1240,7 +1276,7 @@ class TestVoxelizeChunk:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [height],
-                "crown_ratio": [0.5],
+                "crown_base_height": [0.5 * height],
                 "x": [x],
                 "y": [y],
                 "tree_id": [tree_id],
@@ -1305,7 +1341,7 @@ class TestVoxelizeChunk:
                 "fia_status_code": [1, 1],
                 "dbh": [20.0, 20.0],
                 "height": [5.0, 10.0],
-                "crown_ratio": [0.5, 0.5],
+                "crown_base_height": [2.5, 5.0],
                 "x": [15.0, 15.0],
                 "y": [15.0, 15.0],
                 "tree_id": [0, 1],
@@ -1355,7 +1391,7 @@ class TestVoxelizeChunk:
                 "fia_status_code": [1, 1],
                 "dbh": [20.0, 20.0],
                 "height": [5.0, 5.0],
-                "crown_ratio": [0.5, 0.5],
+                "crown_base_height": [2.5, 2.5],
                 "x": [15.0, 15.0],
                 "y": [15.0, 15.0],
                 "tree_id": [0, 1],
@@ -1473,7 +1509,7 @@ class TestVoxelizeChunk:
                     "fia_status_code": [],
                     "dbh": [],
                     "height": [],
-                    "crown_ratio": [],
+                    "crown_base_height": [],
                     "x": [],
                     "y": [],
                     "tree_id": [],

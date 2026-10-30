@@ -1,9 +1,9 @@
 """Tabular tree-inventory I/O — parquet read, filtering, ID assignment.
 
 "Inventory" here means the tabular tree data (the parquet): rows of trees with
-`x, y, fia_species_code, fia_status_code, dbh, height, crown_ratio`. Shared by
-the worker services that consume an inventory: treevox voxelizes it into a 3D
-fuel grid, griddle derives 2D canopy fuel grids from it.
+`x, y, fia_species_code, fia_status_code, dbh, height, crown_base_height`.
+Shared by the worker services that consume an inventory: treevox voxelizes it
+into a 3D fuel grid, griddle derives 2D canopy fuel grids from it.
 
 Memory note: on Cloud Run `/tmp` is RAM-backed tmpfs, so downloading a parquet
 to a local file *before* reading it holds both the compressed bytes and the
@@ -28,7 +28,7 @@ REQUIRED_COLUMNS = [
     "fia_status_code",
     "dbh",
     "height",
-    "crown_ratio",
+    "crown_base_height",
 ]
 
 # Optional first-class FIA column (CCLCD, crown class code 1-5). Carried by
@@ -100,13 +100,13 @@ def read_inventory(
 
     `fia_status_code` is treated as optional and live-by-default. Inventories
     built by CHM extraction or GDAM allometry never record it (GDAM imputes
-    dbh / crown_ratio / species, not the live-dead flag), and an upload may omit
-    it. When the file has no `fia_status_code` column, every tree is taken as
-    live: the live-tree filter is skipped and the column is set to 1 after the
-    read. A null `fia_status_code` likewise means live and is set to 1. A
-    `required_columns` member that the inventory lacks (e.g. a `dbh` absent
-    because the allometry step was skipped) still fails the read early
-    with `INVENTORY_MISSING_MORPHOLOGY`.
+    dbh / crown_ratio / crown_base_height / species, not the live-dead flag),
+    and an upload may omit it. When the file has no `fia_status_code` column,
+    every tree is taken as live: the live-tree filter is skipped and the column
+    is set to 1 after the read. A null `fia_status_code` likewise means live and
+    is set to 1. A `required_columns` member that the inventory lacks (e.g. a
+    `dbh` absent because the allometry step was skipped) still fails the read
+    early with `INVENTORY_MISSING_MORPHOLOGY`.
     """
     gcs_path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
 
@@ -139,9 +139,11 @@ def read_inventory(
                     f"required by the requested operation."
                 ),
                 suggestion=(
-                    "Impute tree morphology (dbh, crown ratio, species) via the "
-                    "allometry endpoint (POST /inventories/tree/allometry/gdam), "
-                    "or supply the column(s) in the source inventory."
+                    "Impute the missing column(s) with the allometry endpoint "
+                    "(POST /inventories/tree/allometry/gdam), or supply them in "
+                    "the source inventory. For crown_base_height, request "
+                    'impute_columns: ["crown_base_height"]; it computes the '
+                    "crown base from species, crown ratio, dbh and height."
                 ),
             )
 
@@ -230,9 +232,11 @@ def require_complete_rows(
             code="INCOMPLETE_INVENTORY",
             message=f"Inventory has null values ({counts}).",
             suggestion=(
-                "Supply complete values in the source inventory. Null dbh, "
-                "crown_ratio and fia_species_code can be filled with the "
-                "allometry endpoint (POST /inventories/tree/allometry/gdam)."
+                "Supply complete values in the source inventory, or fill nulls "
+                "with the allometry endpoint (POST "
+                "/inventories/tree/allometry/gdam). For crown_base_height, "
+                'request impute_columns: ["crown_base_height"]; dbh, '
+                "crown_ratio and fia_species_code can be imputed the same way."
             ),
         )
 

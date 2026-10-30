@@ -45,7 +45,7 @@ class TestReadInventory:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [15.0],
-                "crown_ratio": [0.4],
+                "crown_base_height": [9.0],
             }
         )
 
@@ -205,6 +205,26 @@ class TestReadInventory:
         assert "voxeliz" not in exc.value.message.lower()
         assert "voxeliz" not in exc.value.suggestion.lower()
 
+    def test_missing_crown_base_height_names_it_in_suggestion(self, monkeypatch):
+        """An inventory with crown_ratio but no crown_base_height cannot be
+        voxelized; the error says how to impute the crown base."""
+        present = (set(REQUIRED_COLUMNS) - {"crown_base_height"}) | {"crown_ratio"}
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: present
+        )
+
+        def fail(*a, **k):
+            raise AssertionError("read_parquet must not be called")
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fail)
+
+        with pytest.raises(ProcessingError) as exc:
+            read_inventory("cr_only")
+        assert exc.value.code == "INVENTORY_MISSING_MORPHOLOGY"
+        assert "crown_base_height" in exc.value.message
+        assert "crown_base_height" in exc.value.suggestion
+        assert "/inventories/tree/allometry/gdam" in exc.value.suggestion
+
     def test_required_columns_trims_projection_and_morphology_check(self, monkeypatch):
         """A canopy request that reads neither dbh nor species passes a reduced
         required set: those columns are neither required-in-schema nor projected,
@@ -287,7 +307,7 @@ class TestRequireCompleteRows:
             "fia_status_code": [1, 1, 1],
             "dbh": [20.0, 20.0, 20.0],
             "height": [15.0, 15.0, 15.0],
-            "crown_ratio": [0.4, 0.4, 0.4],
+            "crown_base_height": [9.0, 9.0, 9.0],
         }
         data.update(overrides)
         return pd.DataFrame(data)
@@ -302,6 +322,14 @@ class TestRequireCompleteRows:
         assert exc.value.code == "INCOMPLETE_INVENTORY"
         assert "dbh: 2" in exc.value.message
         assert "height: 1" in exc.value.message
+
+    def test_null_crown_base_height_fails(self):
+        df = self._df(crown_base_height=[9.0, None, 9.0])
+        with pytest.raises(ProcessingError) as exc:
+            require_complete_rows(df)
+        assert exc.value.code == "INCOMPLETE_INVENTORY"
+        assert "crown_base_height: 1" in exc.value.message
+        assert "crown_base_height" in exc.value.suggestion
 
     def test_null_biomass_column_fails(self):
         df = self._df()
@@ -319,7 +347,9 @@ class TestRequireCompleteRows:
     def test_required_columns_restricts_check(self):
         """A null in a column the request does not read is not an error."""
         df = self._df(dbh=[None, 20.0, 20.0], fia_species_code=[131, None, 131])
-        require_complete_rows(df, required_columns=["x", "y", "height", "crown_ratio"])
+        require_complete_rows(
+            df, required_columns=["x", "y", "height", "crown_base_height"]
+        )
 
 
 class TestCanopyRequiredColumns:

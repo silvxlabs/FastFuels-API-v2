@@ -54,3 +54,31 @@ def test_nullable_int_species_series():
     assert isinstance(result, np.ndarray)
     assert np.isfinite(result[0])
     assert np.isnan(result[1])
+
+
+def test_published_model_matches_core():
+    expected = estimate_crown_base_height(
+        np.array([202]),
+        np.array([0.4]),
+        np.array([30.0]),
+        np.array([20.0]),
+        equation="monleon_2004_eq1",
+    )
+    result = crown_base_height(
+        [202], [0.4], [30.0], [20.0], False, model="monleon_2004_eq1"
+    )
+    np.testing.assert_allclose(result, expected)
+
+
+def test_pacific_northwest_ignored_for_published_model():
+    args = ([202], [0.4], [30.0], [20.0])
+    with_flag = crown_base_height(*args, True, model="monleon_2004_eq1")
+    without_flag = crown_base_height(*args, False, model="monleon_2004_eq1")
+    np.testing.assert_allclose(with_flag, without_flag)
+
+
+def test_published_model_uncovered_species_is_nan():
+    # Loblolly pine is outside the Interior West equation's species list
+    args = ([131], [0.4], [30.0], [20.0], False)
+    assert np.isnan(crown_base_height(*args, model="toney_reeves_2009")[0])
+    assert np.isfinite(crown_base_height(*args)[0])

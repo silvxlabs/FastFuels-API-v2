@@ -158,6 +158,7 @@ class TestCreatePimChmFusionInventory:
             "dbh",
             "height",
             "crown_ratio",
+            "crown_base_height",
         ]
 
     def test_request_with_method_and_metadata(

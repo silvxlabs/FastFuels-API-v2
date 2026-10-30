@@ -18,6 +18,12 @@ from api.resources.inventories.modification_models import (
     RemoveAction,
 )
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
+from api.resources.inventories.schema import Inventory
+from api.resources.inventories.tree.chm.schema import CreateChmInventoryRequest
+from api.resources.inventories.tree.pim.fusion.chm.schema import (
+    CreatePimChmFusionInventoryRequest,
+)
+from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
 from pydantic import ValidationError
 
 
@@ -25,6 +31,7 @@ class TestInventoryAttribute:
     def test_all_values(self):
         assert InventoryAttribute.dbh == "dbh"
         assert InventoryAttribute.height == "height"
+        assert InventoryAttribute.crown_base_height == "crown_base_height"
         assert InventoryAttribute.crown_ratio == "crown_ratio"
         assert InventoryAttribute.fia_species_code == "fia_species_code"
 
@@ -141,7 +148,16 @@ class TestInventoryExpressionCondition:
         assert cond.expression == "dbh < 5 and height < 2"
 
     def test_expression_with_math(self):
+        InventoryExpressionCondition(expression="height - crown_base_height < 1.0")
+
+    def test_retired_name_readable_but_not_listed(self):
+        """Stored expressions naming crown_ratio still parse; the allowed-name
+        list shown in errors omits it."""
         InventoryExpressionCondition(expression="height * crown_ratio < 1.0")
+        with pytest.raises(ValidationError) as exc:
+            InventoryExpressionCondition(expression="x > 0")
+        assert "crown_ratio" not in str(exc.value)
+        assert "crown_base_height" in str(exc.value)
 
     def test_expression_with_division(self):
         InventoryExpressionCondition(expression="height / dbh > 100")
@@ -621,3 +637,109 @@ class TestTreeIdAttribute:
             actions={"modifier": "remove"},
         )
         assert isinstance(mod.actions[0], RemoveAction)
+
+
+class TestCrownBaseHeight:
+    def test_condition_with_length_unit(self):
+        cond = InventoryModificationCondition(
+            attribute="crown_base_height", operator="lt", value=6, unit="ft"
+        )
+        assert cond.attribute == InventoryAttribute.crown_base_height
+        assert ATTRIBUTE_UNITS["crown_base_height"] == "m"
+
+    def test_action(self):
+        action = InventoryModificationAction(
+            attribute="crown_base_height", modifier="add", value=1.5
+        )
+        assert action.attribute == InventoryAttribute.crown_base_height
+
+    def test_dimensionless_unit_rejected(self):
+        with pytest.raises(ValidationError, match="not compatible"):
+            InventoryModificationCondition(
+                attribute="crown_base_height",
+                operator="lt",
+                value=0.5,
+                unit="dimensionless",
+            )
+
+    def test_request_accepts_crown_base_height(self):
+        req = ApplyModificationsRequest(
+            modifications=[
+                {
+                    "conditions": [
+                        {
+                            "attribute": "crown_base_height",
+                            "operator": "lt",
+                            "value": 2,
+                        },
+                        {"expression": "height - crown_base_height < 1.0"},
+                    ],
+                    "actions": {
+                        "attribute": "crown_base_height",
+                        "modifier": "replace",
+                        "value": 2,
+                    },
+                }
+            ]
+        )
+        assert len(req.modifications) == 1
+
+
+RETIRED_CROWN_RATIO_MODIFICATIONS = {
+    "attribute_condition": {
+        "conditions": {"attribute": "crown_ratio", "operator": "lt", "value": 0.2},
+        "actions": {"modifier": "remove"},
+    },
+    "action": {
+        "actions": {"attribute": "crown_ratio", "modifier": "multiply", "value": 0.9},
+    },
+    "expression": {
+        "conditions": {"expression": "height * crown_ratio < 1.0"},
+        "actions": {"modifier": "remove"},
+    },
+}
+
+REQUEST_BUILDERS = {
+    "apply": lambda mods: ApplyModificationsRequest(modifications=mods),
+    "pim": lambda mods: CreatePimInventoryRequest(
+        source_pim_grid_id="pim123", modifications=mods
+    ),
+    "chm": lambda mods: CreateChmInventoryRequest(
+        source_chm_grid_id="chm123", modifications=mods
+    ),
+    "pim_chm_fusion": lambda mods: CreatePimChmFusionInventoryRequest(
+        source_pim_grid_id="pim123", source_chm_grid_id="chm123", modifications=mods
+    ),
+}
+
+
+class TestRetiredCrownRatio:
+    @pytest.mark.parametrize("request_name", REQUEST_BUILDERS)
+    @pytest.mark.parametrize("case", RETIRED_CROWN_RATIO_MODIFICATIONS)
+    def test_requests_reject_crown_ratio(self, request_name, case):
+        mods = [RETIRED_CROWN_RATIO_MODIFICATIONS[case]]
+        with pytest.raises(ValidationError, match="use `crown_base_height`"):
+            REQUEST_BUILDERS[request_name](mods)
+
+    def test_stored_ledger_still_reads(self):
+        """Inventories whose stored modifications name crown_ratio still load."""
+        inv = Inventory(
+            id="abc123",
+            domain_id="domain456",
+            type="tree",
+            status="completed",
+            source={"name": "pim", "source_pim_grid_id": "grid789"},
+            # Stored ledgers hold the normalized (list) form.
+            modifications=[
+                {
+                    "conditions": [],
+                    "actions": [],
+                    **{k: v if isinstance(v, list) else [v] for k, v in mod.items()},
+                }
+                for mod in RETIRED_CROWN_RATIO_MODIFICATIONS.values()
+            ],
+        )
+        assert len(inv.modifications) == 3
+        assert inv.modifications[0].conditions[0].attribute == "crown_ratio"
+        assert inv.modifications[1].actions[0].attribute == "crown_ratio"
+        Inventory.model_validate(inv.model_dump())

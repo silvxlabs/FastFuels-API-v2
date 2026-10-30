@@ -144,28 +144,6 @@ def process_export_request(request: Request):
         logger.error("No id in request body")
         return "Missing id", 400
 
-    # Check if this is a retry
-    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
-    if retry_count > 0:
-        logger.error(
-            "Failed on previous attempt, marking as failed",
-            extra={"export_id": export_id},
-        )
-        try:
-            update_status(
-                export_id,
-                "failed",
-                error={
-                    "code": "UNEXPECTED_FAILURE",
-                    "message": UNEXPECTED_FAILURE_MESSAGE,
-                },
-            )
-        except (CancelledException, DocumentNotFoundError):
-            pass
-        return "OK", 200
-
-    logger.info("Processing started", extra={"export_id": export_id})
-
     # Load export document
     try:
         export = load_export(export_id)
@@ -177,6 +155,35 @@ def process_export_request(request: Request):
 
     domain_id = export.get("domain_id")
     ids = {"export_id": export_id, "domain_id": domain_id}
+
+    # Cloud Tasks sets X-CloudTasks-TaskRetryCount on every re-dispatch. Only an
+    # export already "running" proves the previous attempt executed and died
+    # without recording an outcome; one still "pending" was rejected by Cloud
+    # Run before any container ran and must be processed (#664). A terminal
+    # export finished but its response was lost; leave it alone.
+    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
+    if retry_count > 0:
+        status = export.get("status")
+        if status == "running":
+            logger.warning("Failed on previous attempt, marking as failed", extra=ids)
+            try:
+                update_status(
+                    export_id,
+                    "failed",
+                    error={
+                        "code": "UNEXPECTED_FAILURE",
+                        "message": UNEXPECTED_FAILURE_MESSAGE,
+                    },
+                )
+            except (CancelledException, DocumentNotFoundError):
+                pass
+            return "OK", 200
+        if status in ("completed", "failed"):
+            logger.info("Retry of a finished job, nothing to do", extra=ids)
+            return "OK", 200
+        logger.info("Previous attempt never ran, processing", extra=ids)
+
+    logger.info("Processing started", extra=ids)
 
     # Update status to running
     try:
@@ -241,7 +248,22 @@ def process_export_request(request: Request):
 
     except Exception as e:
         logger.exception(f"Unexpected error: {e}", extra=ids)
-        return "Internal error", 500
+        # Record the failure now instead of leaving it to a retry: a retry
+        # exists only while attempts remain, and without one the resource
+        # would stay "running" forever (#664). If this write itself fails,
+        # the exception escapes as a 500 and the retry marks it failed.
+        try:
+            update_status(
+                export_id,
+                "failed",
+                error={
+                    "code": "UNEXPECTED_FAILURE",
+                    "message": UNEXPECTED_FAILURE_MESSAGE,
+                },
+            )
+        except CancelledException:
+            delete_export_files(export_id)
+        return "OK", 200
 
 
 # Local development entry point

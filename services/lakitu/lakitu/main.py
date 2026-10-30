@@ -205,30 +205,6 @@ def process_point_cloud_request(request: Request):
         logger.error("No id in request body")
         return "Missing id", 400
 
-    # Cloud Tasks sets X-CloudTasks-TaskRetryCount. A retry means the previous
-    # attempt died without recording anything, so fail the resource rather than
-    # spend another hour of fetching on it.
-    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
-    if retry_count > 0:
-        logger.error(
-            "Failed on previous attempt, marking as failed",
-            extra={"point_cloud_id": point_cloud_id},
-        )
-        try:
-            update_status(
-                point_cloud_id,
-                "failed",
-                error={
-                    "code": "UNEXPECTED_FAILURE",
-                    "message": UNEXPECTED_FAILURE_MESSAGE,
-                },
-            )
-        except (CancelledException, DocumentNotFoundError):
-            pass
-        delete_cloud(point_cloud_id)
-        return "OK", 200  # Return 200 to prevent further retries
-
-    logger.info("Processing started", extra={"point_cloud_id": point_cloud_id})
     try:
         point_cloud = load_point_cloud(point_cloud_id)
     except DocumentNotFoundError:
@@ -240,6 +216,37 @@ def process_point_cloud_request(request: Request):
 
     domain_id = point_cloud.get("domain_id")
     ids = {"point_cloud_id": point_cloud_id, "domain_id": domain_id}
+
+    # Cloud Tasks sets X-CloudTasks-TaskRetryCount on every re-dispatch. Only a
+    # point cloud already "running" proves the previous attempt executed and
+    # died without recording anything; fail it rather than spend another hour
+    # of fetching on it. One still "pending" was rejected by Cloud Run before
+    # any container ran and must be processed (#664). A terminal point cloud
+    # finished but its response was lost; leave it alone.
+    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
+    if retry_count > 0:
+        status = point_cloud.get("status")
+        if status == "running":
+            logger.warning("Failed on previous attempt, marking as failed", extra=ids)
+            try:
+                update_status(
+                    point_cloud_id,
+                    "failed",
+                    error={
+                        "code": "UNEXPECTED_FAILURE",
+                        "message": UNEXPECTED_FAILURE_MESSAGE,
+                    },
+                )
+            except (CancelledException, DocumentNotFoundError):
+                pass
+            delete_cloud(point_cloud_id)
+            return "OK", 200  # Return 200 to prevent further retries
+        if status in ("completed", "failed"):
+            logger.info("Retry of a finished job, nothing to do", extra=ids)
+            return "OK", 200
+        logger.info("Previous attempt never ran, processing", extra=ids)
+
+    logger.info("Processing started", extra=ids)
 
     try:
         update_status(point_cloud_id, "running")
@@ -302,7 +309,23 @@ def process_point_cloud_request(request: Request):
 
     except Exception as e:
         logger.exception(f"Unexpected error: {e}", extra=ids)
-        return "Internal error", 500
+        # Record the failure now instead of leaving it to a retry: a retry
+        # exists only while attempts remain, and without one the resource
+        # would stay "running" forever (#664). If this write itself fails,
+        # the exception escapes as a 500 and the retry marks it failed.
+        delete_cloud(point_cloud_id)
+        try:
+            update_status(
+                point_cloud_id,
+                "failed",
+                error={
+                    "code": "UNEXPECTED_FAILURE",
+                    "message": UNEXPECTED_FAILURE_MESSAGE,
+                },
+            )
+        except CancelledException:
+            pass
+        return "OK", 200
 
 
 if __name__ == "__main__":

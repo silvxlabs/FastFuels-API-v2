@@ -43,6 +43,9 @@ from api.resources.grids.utils import (
 from api.resources.grids.voxelize.inventory.tree.schema import (
     InventoryColumnMaxCrownRadiusSource,
 )
+from api.resources.inventories.tree.allometry.gdam.schema import (
+    crown_base_height_missing_inputs,
+)
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -57,11 +60,11 @@ router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 
-# Columns the allometry endpoint can impute from position + height (species,
-# diameter, crown ratio, crown base height); position and height themselves
-# cannot be imputed.
+# Required columns the allometry endpoint can impute from position + height
+# (species, diameter, crown base height); position and height themselves cannot
+# be imputed.
 ALLOMETRY_IMPUTABLE_COLUMNS = frozenset(
-    {"dbh", "crown_ratio", "fia_species_code", "crown_base_height"}
+    {"dbh", "fia_species_code", "crown_base_height"}
 )
 
 
@@ -123,7 +126,7 @@ async def create_inventory_canopy_grid(
 
     - **source_inventory_id**: (required) ID of a completed tree inventory in
       this domain. Required columns depend on the selected methods; the
-      defaults need `x`, `y`, `height`, `crown_ratio`, `dbh`, and
+      defaults need `x`, `y`, `height`, `crown_base_height`, `dbh`, and
       `fia_species_code`. Required columns must have no null values; a null
       `fia_status_code` counts as live.
     - **alignment**: (optional) Output lattice. Against the domain (the
@@ -207,13 +210,22 @@ async def create_inventory_canopy_grid(
     )
     if missing_columns:
         imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
+        # The crown base model's inputs must be imputed too when the source lacks them.
+        source_keys = {
+            c["key"] if isinstance(c, dict) else c
+            for c in inventory_data.get("columns", [])
+        }
+        imputable_missing += crown_base_height_missing_inputs(
+            source_keys, imputable_missing
+        )
         source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
         guidance = []
         if imputable_missing:
             guidance.append(
-                f"Impute {imputable_missing} with the allometry endpoint (POST "
-                f"/domains/{domain_id}/inventories/tree/allometry/gdam with "
-                f"source_tree_inventory_id='{body.source_inventory_id}'), then "
+                f"Send impute_columns={imputable_missing} to the allometry "
+                f"endpoint (POST /domains/{domain_id}/inventories/tree/allometry/"
+                f"gdam with source_tree_inventory_id="
+                f"'{body.source_inventory_id}'), then "
                 f"derive canopy metrics from the resulting inventory."
             )
         if source_only_missing:

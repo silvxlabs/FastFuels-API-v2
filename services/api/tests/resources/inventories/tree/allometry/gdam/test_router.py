@@ -111,7 +111,7 @@ class TestCreateGdamInventory:
         assert data["source"]["source_tree_inventory_checksum"] == _SOURCE_CHECKSUM
 
         # Columns reflect the source set plus exactly what GDAM imputes (all
-        # three by default) — not the full base set. fia_status_code is never
+        # four by default) — not the full base set. fia_status_code is never
         # imputed, so it must not appear.
         assert [c["key"] for c in data["columns"]] == [
             "x",
@@ -120,6 +120,7 @@ class TestCreateGdamInventory:
             "dbh",
             "crown_ratio",
             "fia_species_code",
+            "crown_base_height",
         ]
 
     def test_request_with_metadata(

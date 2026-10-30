@@ -380,7 +380,9 @@ class TestCreateTreeInventoryGrid:
             assert response.status_code == 422
             detail = response.json()["detail"]
             assert "dbh" in detail
+            assert "crown_base_height" in detail
             assert "allometry/gdam" in detail
+            assert "impute_columns" in detail
             # Message must not assume the source was CHM.
             assert "CHM" not in detail
         finally:
@@ -464,13 +466,13 @@ class TestCreateTreeInventoryGrid:
     ):
         inv = make_inventory_data(
             domain_id=domain_for_testing["id"],
-            name="Inventory with null crown_ratio",
+            name="Inventory with null crown_base_height",
             status="completed",
             inventory_type="tree",
         )
         for column in inv["columns"]:
             column["summary"] = {
-                "null_count": 2 if column["key"] == "crown_ratio" else 0
+                "null_count": 2 if column["key"] == "crown_base_height" else 0
             }
         response = self._post_for_inventory(
             client, firestore_client, domain_for_testing["id"], inv
@@ -478,8 +480,9 @@ class TestCreateTreeInventoryGrid:
         assert response.status_code == 422
         detail = response.json()["detail"]
         assert "null" in detail
-        assert "'crown_ratio'" in detail
+        assert "'crown_base_height'" in detail
         assert "allometry/gdam" in detail
+        assert "impute_columns=['crown_base_height']" in detail
 
     # --- Request body validation ---
 

@@ -56,10 +56,9 @@ API_DESCRIPTION = """
 A JSON API for generating high-resolution 3D fuel inputs for physics-based
 wildfire simulation models such as **QUIC-Fire**, **FIRETEC**, and **FDS**.
 
-> ⚠️ **Beta — under active development.** v2 is a ground-up redesign of the
-> FastFuels API. Endpoints, request/response schemas, and resource semantics
-> may change without notice while the API is in beta. Pin to a specific
-> deployment and follow the changelog if you are building against it.
+> **Release candidate.** v2 is a ground-up redesign of the FastFuels API.
+> Endpoints, request/response schemas, and resource semantics may still change
+> before the 2.0.0 release.
 
 ## What's here
 
@@ -90,6 +89,7 @@ Found a bug or have a request? Open an issue on
 """
 
 OPENAPI_TAGS = [
+    {"name": "Index", "description": "Service metadata and welcome endpoint."},
     {
         "name": "Domains",
         "description": "Geographic areas of interest. All other resources hang off a domain.",
@@ -174,7 +174,7 @@ app = FastAPI(
     title="FastFuels API",
     summary="3D fuels for next-generation fire behavior models.",
     description=API_DESCRIPTION,
-    version="2.0.0-beta",
+    version="2.0.0-rc.1",
     license_info={
         "name": "MIT",
         "url": "https://github.com/silvxlabs/FastFuels-API-v2/blob/main/LICENSE",
@@ -184,6 +184,7 @@ app = FastAPI(
     docs_url=f"{API_PREFIX}/docs",
     redoc_url=f"{API_PREFIX}/redoc",
     openapi_url=f"{API_PREFIX}/openapi.json",
+    swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect",
 )
 
 # Every response header the API sets that a browser client needs to read. Only
@@ -278,6 +279,55 @@ api_router.include_router(
 api_router.include_router(
     features_router, prefix="/domains/{domain_id}/features", tags=["Features"]
 )
+
+
+@app.get(
+    API_PREFIX,
+    tags=["Index"],
+    summary="Welcome / service metadata",
+    description="Returns service metadata, documentation links, and the current "
+    "deployment status. Useful as a liveness check and as a starting "
+    "point for discovering the API.",
+)
+async def index():
+    return {
+        "name": "FastFuels API",
+        "version": app.version,
+        "status": "release_candidate",
+        "message": (
+            "Welcome to FastFuels v2 — the next-generation API for 3D fuels. "
+            "v2 is a release candidate; schemas and endpoints may still change "
+            "before 2.0.0."
+        ),
+        "environment": DEPLOYMENT_ENV,
+        "documentation": {
+            "swagger": {
+                "url": f"{API_PREFIX}/docs",
+                "description": "Interactive API documentation (Swagger UI).",
+            },
+            "redoc": {
+                "url": f"{API_PREFIX}/redoc",
+                "description": "Static API documentation (ReDoc).",
+            },
+            "openapi": {
+                "url": f"{API_PREFIX}/openapi.json",
+                "description": "Raw OpenAPI 3.1 schema.",
+            },
+            "repository": {
+                "url": "https://github.com/silvxlabs/FastFuels-API-v2",
+                "description": "Source code, design docs, and changelog.",
+            },
+        },
+        "web_application": {
+            "url": "https://app.fastfuels.silvxlabs.com",
+            "description": "Web application for creating, editing, and visualizing FastFuels v2 data.",
+        },
+        "feedback": {
+            "issues": "https://github.com/silvxlabs/FastFuels-API-v2/issues",
+            "email": "support.fastfuels@silvxlabs.com",
+        },
+    }
+
 
 # Include router with authentication middleware
 app.include_router(

@@ -284,6 +284,13 @@ app.include_router(
     api_router, prefix=API_PREFIX, dependencies=[Depends(authenticate_user)]
 )
 
+# Migration window: the pre-/v2 root paths keep working on the run.app URL (the load
+# balancer forwards only /v2) and are left out of OpenAPI. Remove this include to end
+# the window, before locking ingress to the load balancer.
+app.include_router(
+    api_router, dependencies=[Depends(authenticate_user)], include_in_schema=False
+)
+
 
 # Simplify operation IDs
 for route in app.routes:

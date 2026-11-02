@@ -187,7 +187,7 @@ CREATE_INVENTORY_CANOPY_OPENAPI_EXAMPLES: dict = {
             "lowest and highest threshold crossings, and cover is the "
             "geometric union of projected crowns.\n\n"
             "The inventory must be a completed tree inventory in this "
-            "domain with species, dbh, height, and crown ratio columns."
+            "domain with species, dbh, height, and crown base height columns."
         ),
     },
     "explicit_defaults": {

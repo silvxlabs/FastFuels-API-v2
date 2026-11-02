@@ -5,6 +5,7 @@ Tests the core Grid schema models, enums, and base classes.
 These are pure unit tests with no external dependencies.
 """
 
+import json
 from datetime import datetime
 
 import pytest
@@ -712,6 +713,34 @@ class TestGrid:
         grid = Grid(**minimal_grid_data)
         assert isinstance(grid.georeference, Georeference3D)
         assert grid.georeference.z_resolution == 1.0
+
+    def test_compose_source_geometry_coordinates_are_parsed(self, minimal_grid_data):
+        """Stored compose operation geometry coordinates come back as nested lists."""
+        ring = [[0, 0], [1, 0], [1, 1], [0, 0]]
+        minimal_grid_data["source"] = {
+            "name": "compose",
+            "operations": [
+                {
+                    "type": "select",
+                    "output": "fbfm",
+                    "from": "a.fbfm",
+                    "conditions": [
+                        {
+                            "source": "geometry",
+                            "operator": "within",
+                            "geometry": {
+                                "type": "Polygon",
+                                "coordinates": json.dumps([ring]),
+                            },
+                        }
+                    ],
+                    "else": 91,
+                }
+            ],
+        }
+        grid = Grid(**minimal_grid_data)
+        condition = grid.source["operations"][0]["conditions"][0]
+        assert condition["geometry"]["coordinates"] == [ring]
 
 
 class TestListGridsResponse:

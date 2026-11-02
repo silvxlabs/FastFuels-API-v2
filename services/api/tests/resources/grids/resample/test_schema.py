@@ -7,13 +7,13 @@ introduced in #205.
 
 import pytest
 from api.resources.grids.alignment import (
-    GridAlignmentDomainTarget,
     GridAlignmentGridTarget,
-    GridAlignmentNativeTarget,
 )
 from api.resources.grids.resample.examples import ALL_RESAMPLE_EXAMPLE_VALUES
 from api.resources.grids.resample.schema import (
     CreateResampleRequest,
+    ResampleDomainTarget,
+    ResampleNativeTarget,
     ResampleSource,
     ResamplingMethod,
 )
@@ -62,7 +62,7 @@ class TestResampleSource:
     def test_name_is_always_resample(self):
         source = ResampleSource(
             source_grid_id="abc123",
-            alignment=GridAlignmentDomainTarget(resolution=2.0),
+            alignment=ResampleDomainTarget(resolution=2.0),
         )
         assert source.name == "resample"
 
@@ -71,13 +71,13 @@ class TestResampleSource:
             ResampleSource(
                 name="other",
                 source_grid_id="abc123",
-                alignment=GridAlignmentDomainTarget(resolution=2.0),
+                alignment=ResampleDomainTarget(resolution=2.0),
             )
 
     def test_source_grid_id_is_required(self):
         with pytest.raises(ValidationError):
             ResampleSource(
-                alignment=GridAlignmentDomainTarget(resolution=2.0),
+                alignment=ResampleDomainTarget(resolution=2.0),
             )
 
     def test_alignment_is_required(self):
@@ -87,14 +87,14 @@ class TestResampleSource:
     def test_method_overrides_defaults_to_empty_dict(self):
         source = ResampleSource(
             source_grid_id="abc123",
-            alignment=GridAlignmentDomainTarget(resolution=2.0),
+            alignment=ResampleDomainTarget(resolution=2.0),
         )
         assert source.method_overrides == {}
 
     def test_method_overrides_can_be_set(self):
         source = ResampleSource(
             source_grid_id="abc123",
-            alignment=GridAlignmentDomainTarget(resolution=2.0),
+            alignment=ResampleDomainTarget(resolution=2.0),
             method_overrides={"fbfm": "nearest"},
         )
         assert source.method_overrides == {"fbfm": ResamplingMethod.nearest}
@@ -102,7 +102,7 @@ class TestResampleSource:
     def test_model_dump(self):
         source = ResampleSource(
             source_grid_id="abc123",
-            alignment=GridAlignmentDomainTarget(
+            alignment=ResampleDomainTarget(
                 resolution=2.0, method=ResamplingMethod.bilinear
             ),
             method_overrides={"fbfm": "nearest"},
@@ -118,7 +118,7 @@ class TestResampleSource:
     def test_source_grid_checksum_defaults_to_none(self):
         source = ResampleSource(
             source_grid_id="abc123",
-            alignment=GridAlignmentDomainTarget(resolution=2.0),
+            alignment=ResampleDomainTarget(resolution=2.0),
         )
         assert source.source_grid_checksum is None
 
@@ -126,7 +126,7 @@ class TestResampleSource:
         source = ResampleSource(
             source_grid_id="abc123",
             source_grid_checksum="sum123",
-            alignment=GridAlignmentDomainTarget(resolution=2.0),
+            alignment=ResampleDomainTarget(resolution=2.0),
         )
         assert source.source_grid_checksum == "sum123"
         assert source.model_dump()["source_grid_checksum"] == "sum123"
@@ -135,11 +135,14 @@ class TestResampleSource:
 class TestCreateResampleRequest:
     """Tests for CreateResampleRequest model."""
 
-    def test_minimal_valid_request_defaults_to_domain_target(self):
-        request = CreateResampleRequest(source_grid_id="abc123")
+    def test_minimal_valid_request(self):
+        request = CreateResampleRequest(
+            source_grid_id="abc123",
+            alignment={"target": "domain", "resolution": 2.0},
+        )
         assert request.source_grid_id == "abc123"
-        assert isinstance(request.alignment, GridAlignmentDomainTarget)
-        assert request.alignment.resolution is None
+        assert isinstance(request.alignment, ResampleDomainTarget)
+        assert request.alignment.resolution == 2.0
         assert request.alignment.method is None
         assert request.method_overrides == {}
         assert request.name == ""
@@ -150,6 +153,28 @@ class TestCreateResampleRequest:
     def test_source_grid_id_is_required(self):
         with pytest.raises(ValidationError):
             CreateResampleRequest()
+
+    def test_alignment_is_required(self):
+        with pytest.raises(ValidationError):
+            CreateResampleRequest(source_grid_id="abc123")
+
+    @pytest.mark.parametrize("target", ["domain", "native"])
+    def test_alignment_resolution_required_for_domain_and_native(self, target):
+        with pytest.raises(ValidationError) as exc_info:
+            CreateResampleRequest(source_grid_id="abc123", alignment={"target": target})
+        assert exc_info.value.errors()[0]["loc"] == (
+            "alignment",
+            target,
+            "resolution",
+        )
+
+    @pytest.mark.parametrize("target", ["domain", "native"])
+    def test_alignment_resolution_published_as_required(self, target):
+        schema = CreateResampleRequest.model_json_schema()
+        assert "alignment" in schema["required"]
+        ref = schema["properties"]["alignment"]["discriminator"]["mapping"][target]
+        target_schema = schema["$defs"][ref.rsplit("/", 1)[-1]]
+        assert "resolution" in target_schema["required"]
 
     def test_alignment_resolution_must_be_at_least_1(self):
         # Resolution validation happens at the alignment-spec level.
@@ -175,7 +200,7 @@ class TestCreateResampleRequest:
             source_grid_id="abc123",
             alignment={"target": "native", "resolution": 5.0},
         )
-        assert isinstance(request.alignment, GridAlignmentNativeTarget)
+        assert isinstance(request.alignment, ResampleNativeTarget)
         assert request.alignment.resolution == 5.0
 
     def test_alignment_grid_target_minimal(self):

@@ -15,7 +15,7 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
+from lib.config import DOMAINS_COLLECTION, FEATURES_COLLECTION, GRIDS_COLLECTION
 from lib.domain_utils import EmptyDomainError, InvalidGeometryError, parse_domain_gdf
 from lib.firestore import (
     DocumentNotFoundError,
@@ -30,6 +30,19 @@ logger = logging.getLogger(__name__)
 def load_grid(grid_id: str) -> dict:
     """Load a grid document from Firestore."""
     _, snapshot = get_document(GRIDS_COLLECTION, grid_id)
+    return snapshot.to_dict()
+
+
+def load_feature(feature_id: str) -> dict:
+    """Load a Feature document, mapping a deleted Feature to ProcessingError."""
+    try:
+        _, snapshot = get_document(FEATURES_COLLECTION, feature_id)
+    except DocumentNotFoundError:
+        raise ProcessingError(
+            code="SOURCE_NOT_FOUND",
+            message=f"Crown Feature {feature_id} no longer exists.",
+            suggestion="Create the grid again with an existing crown Feature.",
+        )
     return snapshot.to_dict()
 
 

@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.providers.pim import PimSource
 from api.resources.grids.schema import (
     Band,
@@ -31,7 +32,7 @@ class TreeMapVersion(StrEnum):
     v2022 = "2022"
 
 
-class TreeMapBand(StrEnum):
+class TreeMapBand(BandEnum):
     """Available bands for TreeMap data."""
 
     tm_id = "tm_id"
@@ -89,6 +90,9 @@ class CreateTreeMapRequest(CreateSourceGridRequestBase):
     @classmethod
     def no_duplicate_bands(cls, v: list[TreeMapBand]) -> list[TreeMapBand]:
         return validate_no_duplicates(v)
+
+
+publish_band_defs(TreeMapBand, TREEMAP_BAND_DEFS)
 
 
 def build_treemap_bands(requested: list[TreeMapBand]) -> list[Band]:

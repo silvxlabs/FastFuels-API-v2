@@ -15,10 +15,12 @@ import json
 import logging
 import sys
 import traceback
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import functions_framework
 from cloudevents.http import CloudEvent
+from google.api_core.exceptions import NotFound
+from google.cloud import firestore
 
 from lib.config import (
     GRIDS_COLLECTION,
@@ -28,7 +30,7 @@ from lib.config import (
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import (
     DocumentNotFoundError,
-    get_document,
+    firestore_client,
     update_document_or_cancel,
 )
 
@@ -37,6 +39,10 @@ _RESOURCE_COLLECTIONS = {
     "grids": GRIDS_COLLECTION,
     "pointclouds": POINT_CLOUDS_COLLECTION,
 }
+
+# Cloud Run hard-kills a request at its 600 s timeout, so a claim older than
+# that plus a margin belongs to a dead run and may be taken over.
+CLAIM_LEASE = timedelta(seconds=660)
 
 
 class StructuredLogHandler(logging.Handler):
@@ -100,13 +106,68 @@ def update_resource(collection: str, resource_id: str, data: dict) -> None:
     update_document_or_cancel(collection, resource_id, data)
 
 
+def is_claimable(doc: dict, now: datetime) -> bool:
+    """Whether a delivery may claim this resource for processing.
+
+    True for a pending doc, or a running doc whose claim has outlived
+    CLAIM_LEASE. A running doc with no claim predates claiming and is
+    treated as stale.
+    """
+    status = doc.get("status")
+    if status == "pending":
+        return True
+    if status == "running":
+        claimed_on = doc.get("claimed_on")
+        return claimed_on is None or now - claimed_on > CLAIM_LEASE
+    return False
+
+
+@firestore.transactional
+def _claim_in_transaction(
+    transaction: firestore.Transaction, ref: firestore.DocumentReference
+) -> tuple[bool, dict]:
+    snapshot = ref.get(transaction=transaction)
+    if not snapshot.exists:
+        raise DocumentNotFoundError(f"Document not found: {ref.path}")
+    doc = snapshot.to_dict()
+    now = datetime.now(UTC)
+    if not is_claimable(doc, now):
+        return False, doc
+    transaction.update(
+        ref, {"status": "running", "modified_on": now, "claimed_on": now}
+    )
+    return True, doc
+
+
+def claim_resource(collection: str, resource_id: str) -> tuple[bool, dict]:
+    """Atomically claim a resource for processing and mark it running.
+
+    Eventarc delivers at least once, and a duplicate delivery must not process
+    the same upload concurrently: each run clears its output before writing
+    (#709). Only the delivery that wins the claim proceeds.
+
+    Returns:
+        (claimed, doc): whether this delivery holds the claim, and the
+        resource doc as read before claiming.
+
+    Raises:
+        DocumentNotFoundError: If the resource document does not exist.
+        CancelledException: If the document was deleted during the claim.
+    """
+    ref = firestore_client.collection(collection).document(resource_id)
+    try:
+        return _claim_in_transaction(firestore_client.transaction(), ref)
+    except NotFound:
+        raise CancelledException(f"Resource {resource_id} was cancelled")
+
+
 @functions_framework.cloud_event
 def process_upload(cloud_event: CloudEvent) -> None:
     """Main entry point. Triggered by Eventarc GCS object finalization.
 
     Extracts bucket and object path from the cloud event, validates the path
-    structure, loads the resource document, checks idempotency, and dispatches
-    to the appropriate handler.
+    structure, claims the resource document, and dispatches to the appropriate
+    handler.
 
     Returning normally (None) signals Eventarc the event was handled.
     Raising an unhandled exception signals Eventarc to retry.
@@ -137,25 +198,26 @@ def process_upload(cloud_event: CloudEvent) -> None:
 
     logger.info("Upload event received", extra=ids)
 
-    # Load resource document
     try:
-        _, snapshot = get_document(collection, resource_id)
-        doc = snapshot.to_dict()
+        claimed, doc = claim_resource(collection, resource_id)
     except DocumentNotFoundError:
         logger.info("Resource not found (already deleted?)", extra=ids)
         return
-
-    # Idempotency: skip if already in a terminal state
-    status = doc.get("status")
-    if status in ("completed", "failed"):
-        logger.info(f"Resource already {status}, skipping", extra=ids)
-        return
-
-    # Mark as running
-    try:
-        update_status(collection, resource_id, "running")
     except CancelledException:
         logger.info("Cancelled before processing started", extra=ids)
+        return
+
+    # Duplicate delivery: already terminal, or another run holds the claim
+    if not claimed:
+        status = doc.get("status")
+        if status == "running":
+            # Raise, don't return: returning acks the event, and if the claiming
+            # run has died, a retry after its lease expires is what finishes it.
+            raise RuntimeError(
+                f"Resource claimed by another run at {doc.get('claimed_on')}; "
+                "retrying later"
+            )
+        logger.info(f"Resource already {status}, skipping", extra=ids)
         return
 
     try:

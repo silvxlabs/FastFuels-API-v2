@@ -66,3 +66,23 @@ def test_gdam_dispatch(mock_handle_gdam):
         inventory, inventory["source"], mock_gdf, progress
     )
     assert "georeference" in result
+
+
+@patch("standgen.handlers.crown_base_height.handle_crown_base_height")
+def test_crown_base_height_dispatch(mock_handle):
+    mock_handle.return_value = {"georeference": {}}
+    inventory = {
+        "source": {
+            "name": "crown_base_height",
+            "source_tree_inventory_id": "test-inv-id",
+        }
+    }
+    mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+    progress = MagicMock()
+
+    result = dispatch_handler(inventory, mock_gdf, progress)
+
+    mock_handle.assert_called_once_with(
+        inventory, inventory["source"], mock_gdf, progress
+    )
+    assert "georeference" in result

@@ -29,6 +29,7 @@ from api.resources.grids.providers.landfire import (
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    resolve_disturbance_plan,
     validate_feature_modifications,
     validate_lfps_coverage,
     validate_target_grid_alignment,
@@ -78,6 +79,7 @@ async def create_landfire_fccs(
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
     - **version**: (optional) LANDFIRE version. Default: "2023".
+    - **disturbance**: (optional) Update for recent LANDFIRE disturbance.
     - **remove_bare_ground**: (optional) Remove bare ground cells (fuelbed ID 0),
                               replaced by neighboring majority. Default: False.
 
@@ -101,11 +103,19 @@ async def create_landfire_fccs(
             body.version,
             domain,
         )
+    disturbance_plan = await asyncio.to_thread(
+        resolve_disturbance_plan,
+        "fccs",
+        body.version,
+        domain,
+        body.disturbance,
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
     source = LandfireFccsSource(
         version=body.version,
+        disturbance=disturbance_plan,
         remove_bare_ground=body.remove_bare_ground,
         boundary_scatter=body.boundary_scatter,
         extent_buffer_cells=body.extent_buffer_cells,

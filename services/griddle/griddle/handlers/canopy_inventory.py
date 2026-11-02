@@ -179,6 +179,15 @@ def _fill_missing_crown_radius(df: pd.DataFrame, column: str) -> None:
                 "fia_species_code."
             ),
         ) from e
+    except ValueError as e:
+        raise ProcessingError(
+            code="CANOPY_FUEL_INPUT_ERROR",
+            message=str(e),
+            suggestion=(
+                "Correct crown_base_height so that 0 <= crown_base_height <= "
+                "height for every tree."
+            ),
+        ) from e
     logger.info(
         f"{int(missing.sum())} trees have no {column}; using their Purves crown radius"
     )
@@ -316,6 +325,7 @@ def fetch_canopy_inventory(
     target_grid_doc: dict | None,
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int = 0,
+    domain_id: str | None = None,
 ) -> xr.Dataset:
     """Derive a 2D canopy fuel grid from a tree inventory.
 
@@ -354,8 +364,15 @@ def fetch_canopy_inventory(
         radius_column,
         include_crown_class=use_crown_class,
         required_columns=required,
+        domain_id=domain_id,
     )
-    require_complete_rows(df, fuel_column, required_columns=required)
+    require_complete_rows(
+        df,
+        fuel_column,
+        required_columns=required,
+        inventory_id=inventory_id,
+        domain_id=domain_id,
+    )
     if df.empty:
         raise ProcessingError(
             code="EMPTY_INVENTORY",

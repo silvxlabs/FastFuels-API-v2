@@ -8,16 +8,36 @@ preserving its bands. The new shape is controlled by the shared
 ``alignment`` discriminated union; see ``api.resources.grids.alignment``.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
-    GridAlignmentSpecification,
+    GridAlignmentGridTarget,
+    GridAlignmentNativeTarget,
     ResamplingMethod,
 )
 from api.resources.grids.modification_models import GridModification
+from api.resources.input_requirements import grid, input_requirements
+
+
+class ResampleDomainTarget(GridAlignmentDomainTarget):
+    """Anchor output to the domain origin at the given cell size."""
+
+    resolution: float = Field(..., ge=1.0)
+
+
+class ResampleNativeTarget(GridAlignmentNativeTarget):
+    """Preserve the source grid's pixel anchor at the given cell size."""
+
+    resolution: float = Field(..., ge=1.0)
+
+
+ResampleAlignmentSpecification = Annotated[
+    ResampleDomainTarget | ResampleNativeTarget | GridAlignmentGridTarget,
+    Field(discriminator="target"),
+]
 
 
 class ResampleSource(BaseModel):
@@ -33,7 +53,7 @@ class ResampleSource(BaseModel):
             "whether the source has changed since."
         ),
     )
-    alignment: GridAlignmentSpecification = Field(
+    alignment: ResampleAlignmentSpecification = Field(
         ...,
         description="Output alignment target.",
     )
@@ -56,12 +76,16 @@ class CreateResampleRequest(BaseModel):
     recomputes shape at the new cell size).
     """
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(grid("source_grid_id", dims=2)),
+    )
+
     source_grid_id: str = Field(..., description="Grid to resample")
-    alignment: GridAlignmentSpecification = Field(
-        default_factory=GridAlignmentDomainTarget,
+    alignment: ResampleAlignmentSpecification = Field(
+        ...,
         description=(
-            'Output alignment target. Default `target="domain"` anchors the '
-            "resampled grid to the domain origin."
+            'Output alignment target. `target="domain"` anchors the resampled '
+            "grid to the domain origin."
         ),
     )
     method_overrides: dict[str, ResamplingMethod] = Field(

@@ -7,12 +7,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from api.resources.keys.schema import (
     Access,
+    CreateApplicationKeyRequest,
     CreateKeyRequest,
     CreateKeyResponse,
+    CreatePersonalKeyRequest,
     Key,
     ListKeysResponse,
     Scope,
 )
+from pydantic import TypeAdapter, ValidationError
 
 
 class TestScope:
@@ -45,45 +48,60 @@ class TestAccess:
         assert Access("application") == Access.APPLICATION
 
 
+def _create_key_request(**data):
+    return TypeAdapter(CreateKeyRequest).validate_python(data)
+
+
 class TestCreateKeyRequest:
     def test_defaults(self):
-        req = CreateKeyRequest(name="Test Key")
+        req = _create_key_request(name="Test Key")
+        assert isinstance(req, CreatePersonalKeyRequest)
         assert req.scopes == [Scope.READ]
         assert req.access == Access.PERSONAL
         assert req.valid_days == 30
-        assert req.application_id is None
         assert req.description is None
 
     def test_name_required(self):
-        with pytest.raises(Exception):
-            CreateKeyRequest()
+        with pytest.raises(ValidationError):
+            _create_key_request()
+
+    def test_empty_name_rejected(self):
+        with pytest.raises(ValidationError):
+            _create_key_request(name="")
 
     def test_application_id_required_for_application_access(self):
-        with pytest.raises(Exception):
-            CreateKeyRequest(name="App Key", access=Access.APPLICATION)
+        with pytest.raises(ValidationError):
+            _create_key_request(name="App Key", access=Access.APPLICATION)
 
     def test_application_access_with_id(self):
-        req = CreateKeyRequest(
+        req = _create_key_request(
             name="App Key",
             access=Access.APPLICATION,
             application_id="abc123",
         )
+        assert isinstance(req, CreateApplicationKeyRequest)
         assert req.application_id == "abc123"
 
+    def test_application_id_published_as_input(self):
+        schema = CreateApplicationKeyRequest.model_json_schema()
+        assert schema["x-input-requirements"] == [
+            {"field": "application_id", "resource": "application"}
+        ]
+
     def test_custom_scopes(self):
-        req = CreateKeyRequest(
+        req = _create_key_request(
             name="RW Key",
             scopes=[Scope.READ, Scope.WRITE],
         )
         assert req.scopes == [Scope.READ, Scope.WRITE]
 
     def test_custom_valid_days(self):
-        req = CreateKeyRequest(name="Short Key", valid_days=7)
+        req = _create_key_request(name="Short Key", valid_days=7)
         assert req.valid_days == 7
 
     def test_valid_days_min(self):
-        with pytest.raises(Exception):
-            CreateKeyRequest(name="Bad Key", valid_days=0)
+        with pytest.raises(ValidationError):
+            _create_key_request(name="Bad Key", valid_days=0)
 
 
 class TestKey:

@@ -25,8 +25,7 @@ from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.schema import Grid
 from api.resources.grids.utils import (
-    validate_grid_dimensionality,
-    validate_grid_has_band,
+    validate_grid_input,
     validate_grids_share_horizontal_lattice,
 )
 from api.schema import JobStatus
@@ -43,8 +42,6 @@ from .schema import (
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
-
-LEAF_AREA_DENSITY_KEY = "leaf_area_density"
 
 
 @router.post(
@@ -81,18 +78,8 @@ async def create_leaflux_irradiance_grid(
         document_status="completed",
     )
 
-    # Validate that we have LAD band
     grid_data = source_snapshot.to_dict()
-    validate_grid_has_band(
-        grid_data=grid_data,
-        grid_id=body.source_lad_grid_id,
-        required=LEAF_AREA_DENSITY_KEY,
-    )
-
-    # Validate that is 3D
-    validate_grid_dimensionality(
-        grid_data=grid_data, grid_id=body.source_lad_grid_id, expected=3
-    )
+    validate_grid_input(body, "source_lad_grid_id", grid_data)
 
     if body.source_terrain_grid_id is not None:
         # Validate terrain grid exists, is owned, is completed
@@ -104,21 +91,7 @@ async def create_leaflux_irradiance_grid(
             document_status="completed",
         )
         terrain_grid_data = terrain_source_snapshot.to_dict()
-
-        # Validate we have elevation band
-        validate_grid_has_band(
-            grid_data=terrain_grid_data,
-            grid_id=body.source_terrain_grid_id,
-            required="elevation",
-        )
-
-        # Validate is 2D
-        validate_grid_dimensionality(
-            grid_data=terrain_grid_data,
-            grid_id=body.source_terrain_grid_id,
-            expected=2,
-        )
-
+        validate_grid_input(body, "source_terrain_grid_id", terrain_grid_data)
         validate_grids_share_horizontal_lattice(
             reference_grid=grid_data,
             candidate_grid=terrain_grid_data,

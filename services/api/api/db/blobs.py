@@ -9,24 +9,43 @@ This is the official async API, not private methods.
 
 import json
 import logging
+import os
 
 import gcsfs
 
 logger = logging.getLogger(__name__)
 
-gcsfs_client: gcsfs.GCSFileSystem = gcsfs.GCSFileSystem(asynchronous=True)
+_gcsfs_client: gcsfs.GCSFileSystem | None = None
+_gcsfs_client_pid: int | None = None
+
+
+def get_gcsfs_client() -> gcsfs.GCSFileSystem:
+    """Return this process's async GCS client, built lazily on first use.
+
+    fsspec async filesystems raise ``RuntimeError: This class is not
+    fork-safe`` when used from a process other than the one that created them.
+    gunicorn ``--preload`` imports this module in the master and then forks the
+    workers, so the client must not be built at import time (#702). It is
+    built on first use and rebuilt if the process ID has changed since.
+    """
+    global _gcsfs_client, _gcsfs_client_pid
+    if _gcsfs_client is None or _gcsfs_client_pid != os.getpid():
+        _gcsfs_client = gcsfs.GCSFileSystem(asynchronous=True)
+        _gcsfs_client_pid = os.getpid()
+    return _gcsfs_client
 
 
 async def upload_json(gcs_path: str, data: dict) -> None:
     """Upload a JSON dict directly to GCS from memory."""
     if gcs_path.startswith("gs://"):
         gcs_path = gcs_path[5:]
-    await gcsfs_client._pipe_file(gcs_path, json.dumps(data).encode())
+    await get_gcsfs_client()._pipe_file(gcs_path, json.dumps(data).encode())
 
 
 async def delete_directory(bucket_name: str, directory_path: str) -> None:
     """Delete a directory and all its contents from GCS."""
     full_path = f"{bucket_name}/{directory_path}"
+    gcsfs_client = get_gcsfs_client()
     if await gcsfs_client._exists(full_path):
         await gcsfs_client._rm(full_path, recursive=True)
 
@@ -38,7 +57,7 @@ async def copy_directory(bucket_name: str, source_path: str, dest_path: str) -> 
     """
     source = f"{bucket_name}/{source_path}"
     dest = f"{bucket_name}/{dest_path}"
-    await gcsfs_client._copy(source, dest, recursive=True)
+    await get_gcsfs_client()._copy(source, dest, recursive=True)
 
 
 async def copy_directory_verified(
@@ -58,6 +77,7 @@ async def copy_directory_verified(
     """
     source = f"{bucket_name}/{source_path}"
     dest = f"{bucket_name}/{dest_path}"
+    gcsfs_client = get_gcsfs_client()
 
     # Both listings must reflect live bucket state, not the shared client's
     # dircache — a stale snapshot would make the verification vacuous.
@@ -89,20 +109,20 @@ async def copy_directory_verified(
 async def delete_file(bucket_name: str, file_path: str) -> None:
     """Delete a single file from GCS."""
     full_path = f"{bucket_name}/{file_path}"
-    await gcsfs_client._rm(full_path)
+    await get_gcsfs_client()._rm(full_path)
 
 
 async def check_exists(bucket_name: str, path: str) -> bool:
     """Check if a file or directory exists in GCS."""
     full_path = f"{bucket_name}/{path}"
-    return await gcsfs_client._exists(full_path)
+    return await get_gcsfs_client()._exists(full_path)
 
 
 async def download_file(gcs_path: str, local_path: str) -> None:
     """Download a file from GCS to local filesystem."""
     if gcs_path.startswith("gs://"):
         gcs_path = gcs_path[5:]
-    await gcsfs_client._get(gcs_path, local_path)
+    await get_gcsfs_client()._get(gcs_path, local_path)
 
 
 async def delete_directory_safe(bucket_name: str, directory_path: str) -> None:

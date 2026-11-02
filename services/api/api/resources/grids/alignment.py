@@ -12,6 +12,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.resources.input_requirements import grid, input_requirements
+
 
 class ResamplingMethod(StrEnum):
     nearest = "nearest"
@@ -64,6 +66,8 @@ class GridAlignmentGridTarget(BaseModel):
     recomputed from the target grid's bounds.
     """
 
+    model_config = ConfigDict(json_schema_extra=input_requirements(grid("grid_id")))
+
     target: Literal["grid"]
     grid_id: str
     resolution: float | None = Field(default=None, ge=1.0)
@@ -97,7 +101,9 @@ class GridLatticeGridTarget(BaseModel):
     new cell size.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid", json_schema_extra=input_requirements(grid("grid_id"))
+    )
 
     target: Literal["grid"]
     grid_id: str

@@ -13,9 +13,10 @@ Used at: POST /v2/domains/{domain_id}/grids/exports/quicfire
 from math import isclose
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.resources.grids.schema import Georeference3D
+from api.resources.input_requirements import grid, input_requirements
 
 
 class FieldSource(BaseModel):
@@ -88,6 +89,8 @@ class QUICFireExportAlignmentGridTarget(BaseModel):
     CRS, transform, and shape become the fire grid's horizontal lattice;
     vertical cell size and layer count are taken from the canopy grid.
     """
+
+    model_config = ConfigDict(json_schema_extra=input_requirements(grid("grid_id")))
 
     target: Literal["grid"]
     grid_id: str = Field(

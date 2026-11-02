@@ -13,6 +13,9 @@ import math
 import numpy as np
 import xarray as xr
 
+from lib.errors import ProcessingError
+from lib.layerset_bands import split_legacy_layerset_key
+
 
 def summarize_dataset(
     ds: xr.Dataset,
@@ -32,21 +35,28 @@ def summarize_dataset(
 
     Returns:
         Mapping of band key -> summary dict, ready to merge into Firestore.
+
+    Raises:
+        ProcessingError: A band in *bands* is not in *ds*.
     """
     result: dict[str, dict] = {}
     for band in bands:
         key = band["key"]
         band_type = band["type"]
-        # Resolve dot-notation keys — layerset bands are stored as
-        # `<var>.<band_coord>` (e.g. "herb.loading") where the variable
-        # is 3D (band, y, x) and the band coord selects the 2D slice.
+        # Every band is its own variable, except in layerset grids
+        # rasterized before #672: those store `<fuel_type>.<property>` keys as
+        # a (band, y, x) fuel-type variable whose band coord selects the slice.
         if key in ds.data_vars:
             da = ds[key]
-        elif "." in key:
-            var, band_coord = key.rsplit(".", 1)
+        elif _has_legacy_layerset_band(ds, key):
+            var, band_coord = split_legacy_layerset_key(key)
             da = ds[var].sel(band=band_coord)
         else:
-            raise KeyError(f"Band key '{key}' not found in dataset")
+            raise ProcessingError(
+                code="BAND_NOT_PRODUCED",
+                message=f"Band '{key}' is listed on the grid but was not produced.",
+                suggestion="Create the grid again. If this persists, report it.",
+            )
 
         if band_type == "continuous":
             result[key] = _summarize_continuous(da, chunk_shape)
@@ -55,6 +65,16 @@ def summarize_dataset(
         else:
             raise ValueError(f"Unknown band type '{band_type}' for key '{key}'")
     return result
+
+
+def _has_legacy_layerset_band(ds: xr.Dataset, key: str) -> bool:
+    """Whether *key* names a band coord of a pre-#672 layerset variable."""
+    if "." not in key:
+        return False
+    var, band_coord = split_legacy_layerset_key(key)
+    if var not in ds.data_vars or "band" not in ds[var].coords:
+        return False
+    return band_coord in ds[var].coords["band"].values.tolist()
 
 
 def _nodata_mask(arr: np.ndarray, nodata) -> np.ndarray:

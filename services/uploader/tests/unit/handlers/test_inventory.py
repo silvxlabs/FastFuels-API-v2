@@ -22,7 +22,7 @@ from uploader.handlers.inventory import (
     _write_parquet,
 )
 
-from lib.errors import ProcessingError
+from lib.errors import CancelledException, ProcessingError
 
 # Domain CRS used across tests (UTM zone 10N — matches typical California domains)
 DOMAIN_CRS = "EPSG:32610"
@@ -629,3 +629,97 @@ class TestCrownRadius:
             tmp_path, monkeypatch, df.to_dict("list")
         )
         assert "crown_radius" not in [c["key"] for c in updates["columns"]]
+
+
+class TestCrownBaseHeight:
+    def _df(self, cbh):
+        return pd.DataFrame(
+            {"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT}
+        ).assign(crown_base_height=cbh)
+
+    def _error(self, cbh) -> ProcessingError:
+        with pytest.raises(ProcessingError) as exc_info:
+            _validate(self._df(cbh))
+        assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
+        return exc_info.value
+
+    def test_valid_values_preserved(self):
+        """0 and a value equal to height (no live crown) are both valid."""
+        result = _validate(self._df([0.0, 15.0, 8.5]))
+        assert list(result["crown_base_height"]) == [0.0, 15.0, 8.5]
+
+    def test_nulls_allowed(self):
+        result = _validate(self._df([None, 4.0, None]))
+        assert result["crown_base_height"].isna().tolist() == [True, False, True]
+
+    def test_negative_rejected(self):
+        err = self._error([2.0, -0.5, 3.0])
+        assert "'column': 'crown_base_height'" in err.suggestion
+
+    def test_above_height_rejected(self):
+        err = self._error([2.0, 15.5, 3.0])
+        assert "crown_base_height must not exceed height" in err.suggestion
+        assert "'index': 1" in err.suggestion
+
+    def test_upload_records_column_after_crown_ratio(self, tmp_path, monkeypatch):
+        data = {
+            "x": SAMPLE_X,
+            "y": SAMPLE_Y,
+            "height": SAMPLE_HEIGHT,
+            "CR": [0.5, 0.4, 0.3],
+            "CBH": [5.0, None, 12.0],
+        }
+        df, updates = TestHandleInventoryTreeIds()._run(
+            tmp_path,
+            monkeypatch,
+            data,
+            {"crown_ratio": "CR", "crown_base_height": "CBH"},
+        )
+        assert df["crown_base_height"].iloc[0] == 5.0
+        assert np.isnan(df["crown_base_height"].iloc[1])
+        keys = [c["key"] for c in updates["columns"]]
+        assert keys.index("crown_base_height") == keys.index("crown_ratio") + 1
+        [col] = [c for c in updates["columns"] if c["key"] == "crown_base_height"]
+        assert col["type"] == "continuous"
+        assert col["unit"] == "m"
+        assert col["summary"]["null_count"] == 1
+
+    def test_crown_ratio_only_stores_no_crown_base(self, tmp_path, monkeypatch):
+        data = {
+            "x": SAMPLE_X,
+            "y": SAMPLE_Y,
+            "height": SAMPLE_HEIGHT,
+            "crown_ratio": [0.5, 0.4, 0.3],
+        }
+        df, updates = TestHandleInventoryTreeIds()._run(tmp_path, monkeypatch, data)
+        assert df["crown_base_height"].isna().all()
+        keys = [c["key"] for c in updates["columns"]]
+        assert "crown_ratio" in keys
+        assert "crown_base_height" not in keys
+
+
+@pytest.mark.parametrize(
+    "error, deleted",
+    [
+        (ProcessingError(code="X", message="x"), True),
+        (CancelledException(), True),
+        (FileNotFoundError(), True),
+        (RuntimeError("transient"), False),
+    ],
+)
+def test_staged_upload_kept_only_for_retry(monkeypatch, error, deleted):
+    """main.py re-raises unexpected errors for an Eventarc retry, which re-reads the upload."""
+    deletes = []
+
+    def fail(*args):
+        raise error
+
+    monkeypatch.setattr(inventory, "download_file", lambda src, dst: None)
+    monkeypatch.setattr(inventory, "get_document", fail)
+    monkeypatch.setattr(inventory, "delete_file", deletes.append)
+    doc = {"domain_id": "d", "source": {"format": "csv"}}
+
+    with pytest.raises(type(error)):
+        inventory.handle_inventory("inv", "bucket", "inventories/inv/up.csv", doc)
+
+    assert deletes == (["gs://bucket/inventories/inv/up.csv"] if deleted else [])

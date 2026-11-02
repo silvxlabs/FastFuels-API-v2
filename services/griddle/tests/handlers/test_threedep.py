@@ -176,6 +176,25 @@ class TestComputeSlopeAspect:
         assert np.all(aspect.values >= 0)
         assert np.all(aspect.values < 360)
 
+    @pytest.mark.parametrize("sentinel", [-999999.0, np.nan])
+    def test_nodata_dem_cells_masked(self, tilted_dem, sentinel):
+        """Cells whose gradient stencil touches nodata are NaN; the rest are exact."""
+        dem = tilted_dem.copy(data=tilted_dem.values.copy())
+        dem.values[40:42, 50:52] = sentinel
+        dem = dem.rio.write_nodata(sentinel)
+
+        slope, aspect = _compute_slope_aspect(dem, cell_size=1.0)
+
+        bad = np.zeros(dem.shape, dtype=bool)
+        bad[39:43, 50:52] = True
+        bad[40:42, 49:53] = True
+        assert np.isnan(slope.values[bad]).all()
+        assert np.isnan(aspect.values[bad]).all()
+        assert np.allclose(slope.values[~bad], 45.0, atol=1e-5)
+        assert np.allclose(aspect.values[~bad], 180.0, atol=1e-5)
+        assert np.isnan(slope.rio.nodata)
+        assert np.isnan(aspect.rio.nodata)
+
     def test_preserves_shape_and_type(self, flat_dem):
         slope, aspect = _compute_slope_aspect(flat_dem, cell_size=1.0)
         assert slope.shape == flat_dem.shape

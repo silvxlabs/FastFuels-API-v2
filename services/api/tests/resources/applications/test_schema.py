@@ -11,12 +11,17 @@ from api.resources.applications.schema import (
     ListApplicationsResponse,
     UpdateApplicationRequest,
 )
+from pydantic import ValidationError
 
 
 class TestCreateApplicationRequest:
     def test_name_required(self):
         with pytest.raises(Exception):
             CreateApplicationRequest()
+
+    def test_empty_name_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateApplicationRequest(name="")
 
     def test_name_only(self):
         req = CreateApplicationRequest(name="My App")

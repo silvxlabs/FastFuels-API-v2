@@ -13,12 +13,13 @@ grid. The rasterization math lives in
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.resources.grids.schema import (
     Band,
     CreateSourceGridRequestBase,
 )
+from api.resources.input_requirements import feature, input_requirements
 
 
 class OverlapMethod(StrEnum):
@@ -59,6 +60,10 @@ class CreateLayersetRasterizeRequest(CreateSourceGridRequestBase):
     ``feature_id``, so the reference is effectively immutable.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(feature("layerset_id", type="layerset")),
+    )
+
     layerset_id: str = Field(
         ...,
         description="Feature ID of an existing layerset uploaded for this domain.",
@@ -87,8 +92,8 @@ def build_layerset_bands() -> list[Band]:
     ``fuel_type`` values in the uploaded layerset GeoJSON — the API has no
     visibility into that at create time. The griddle worker reads the
     GeoJSON, runs ``fastfuels_core.rasterize_layerset``, and writes the
-    full band list (one entry per ``fuel_type × {loading, height,
-    live_fuel_moisture, dead_fuel_moisture, heat_of_combustion}``) back
-    to the Firestore grid doc once rasterization completes.
+    full band list back to the Firestore grid doc once rasterization
+    completes: one band per fuel type and property, keyed
+    ``<quantity>.<fuel type token>`` (see ``lib.layerset_bands``).
     """
     return []

@@ -247,15 +247,29 @@ def save_parquet_replace_with_summary(
     staging_rel = f"{INVENTORIES_BUCKET}/{inventory_id}__rev"
     staging_uri = f"gs://{staging_rel}"
 
-    # Clear any staging dir left behind by a previously failed attempt.
+    fs = get_gcsfs_client()
+
+    # Clear any staging dir left behind by a previously failed attempt — unless
+    # that attempt finished writing it (``_metadata``) and died mid-swap, after
+    # deleting live. Then staging is the only complete copy and live (which
+    # ``ddf`` was read from) is partial, so fail without touching either.
     if exists(staging_uri):
+        staged = {p.rsplit("/", 1)[-1] for p in fs.find(staging_rel)}
+        live = {p.rsplit("/", 1)[-1] for p in fs.find(live_rel)}
+        if "_metadata" in staged and not staged <= live:
+            raise ProcessingError(
+                code="INVENTORY_REWRITE_INCOMPLETE",
+                message=(
+                    f"A previous in-place rewrite of inventory {inventory_id} "
+                    f"was interrupted; its data is preserved at {staging_rel}."
+                ),
+                suggestion="Contact support to restore the inventory.",
+            )
         delete_directory(staging_uri)
 
     stats, forestry_metrics = _build_delayed_graph(
         ddf, staging_uri, columns, inventory_type, domain_gdf, top_species_groups
     )
-
-    fs = get_gcsfs_client()
 
     # dask wrote staging through its own gcsfs instance, and the exists() probe
     # above cached this client's listing of the (then-absent) staging dir. Drop
@@ -281,7 +295,7 @@ def save_parquet_replace_with_summary(
                 f"{len(live_files)} of {len(staged_files)} files; staging "
                 f"({staging_rel}) is preserved for recovery."
             ),
-            suggestion="Retry the modification.",
+            suggestion="Contact support to restore the inventory.",
         )
     delete_directory(staging_uri)
 

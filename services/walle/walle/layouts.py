@@ -9,6 +9,7 @@ descriptor rather than a blanket ``<bucket>/<id>/`` rule.
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from lib.config import (
@@ -133,6 +134,21 @@ def list_artifact_ids(layout: ResourceLayout) -> dict[str, str]:
         if base.endswith(_PARQUET):
             result[base[: -len(_PARQUET)]] = path
     return result
+
+
+def artifact_mtime(path: str) -> datetime | None:
+    """Newest object write time under an artifact (prefix or single object).
+
+    GCS "directories" carry no timestamp, so this lists the objects. ``None``
+    if nothing is there.
+    """
+    fs = get_gcsfs_client()
+    try:
+        objects = fs.find(path, detail=True)
+    except FileNotFoundError:
+        return None
+    times = [o["mtime"] for o in objects.values() if o.get("mtime")]
+    return max(times, default=None)
 
 
 def delete_artifact(path: str) -> None:

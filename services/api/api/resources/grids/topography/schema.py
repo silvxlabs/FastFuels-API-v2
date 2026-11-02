@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.providers.landfire import LandfireSource
 from api.resources.grids.providers.threedep import ThreeDepSource
 from api.resources.grids.schema import (
@@ -29,7 +30,7 @@ class LandfireTopographyVersion(StrEnum):
     v2020 = "2020"
 
 
-class TopographyBand(StrEnum):
+class TopographyBand(BandEnum):
     """Available bands for topographic data."""
 
     elevation = "elevation"
@@ -55,7 +56,7 @@ TOPOGRAPHY_BAND_DEFS = {
     TopographyBand.aspect: {
         "key": "aspect",
         "name": "Aspect",
-        "description": "Downslope compass direction, degrees clockwise from north (0-360).",
+        "description": "Downslope compass direction, degrees clockwise from north (0-360). Flat cells are 0.",
         "type": BandType.continuous,
         "unit": "deg",
     },
@@ -157,6 +158,9 @@ class ThreeDepCoverageResponse(BaseModel):
     tile_count: int
     tiles: list[str]
     acquisition_dates: list[str] | None = None
+
+
+publish_band_defs(TopographyBand, TOPOGRAPHY_BAND_DEFS)
 
 
 def build_topography_bands(requested: list[TopographyBand]) -> list[Band]:

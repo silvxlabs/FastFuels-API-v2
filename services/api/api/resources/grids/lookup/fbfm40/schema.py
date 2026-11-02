@@ -7,14 +7,15 @@ Converts categorical FBFM40 codes (from `/grids/fbfm40/landfire`) to
 continuous fuel parameters using Scott-Burgan 40 lookup tables.
 """
 
-from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import band, input_requirements
 
 
 class Fbfm40LookupSource(LookupSource):
@@ -28,9 +29,17 @@ class Fbfm40LookupSource(LookupSource):
     source_band: str = Field(
         default="fbfm", description="Band in source grid containing FBFM codes"
     )
+    herbaceous_curing: float | None = Field(
+        default=None,
+        description=(
+            "Fraction of herbaceous load cured in dynamic fuel models. Null for "
+            "grids created before curing was supported, whose herbaceous load "
+            "stayed live."
+        ),
+    )
 
 
-class Fbfm40LookupBand(StrEnum):
+class Fbfm40LookupBand(BandEnum):
     """Bands available from FBFM40/SB40 lookup tables."""
 
     fuel_load_1hr = "fuel_load.1hr"
@@ -38,11 +47,15 @@ class Fbfm40LookupBand(StrEnum):
     fuel_load_100hr = "fuel_load.100hr"
     fuel_load_live_herb = "fuel_load.live_herb"
     fuel_load_live_woody = "fuel_load.live_woody"
+    fuel_load_dead_herb = "fuel_load.dead_herb"
+    fuel_load_fine_dead = "fuel_load.fine_dead"
     savr_1hr = "savr.1hr"
     savr_10hr = "savr.10hr"
     savr_100hr = "savr.100hr"
     savr_live_herb = "savr.live_herb"
     savr_live_woody = "savr.live_woody"
+    savr_dead_herb = "savr.dead_herb"
+    savr_fine_dead = "savr.fine_dead"
     fuel_depth = "fuel_depth"
 
 
@@ -53,12 +66,29 @@ class CreateFbfm40LookupRequest(BaseModel):
     because derived grids carry the same domain reference as their source.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            band("source_band", of="source_grid_id", quantity="fbfm"),
+        ),
+    )
+
     source_grid_id: str = Field(..., description="Grid containing FBFM40 codes")
     source_band: str = Field(
         default="fbfm",
-        description="Band in source grid containing FBFM codes",
+        description="A `fbfm` band of the source grid holding the FBFM codes.",
     )
     bands: list[Fbfm40LookupBand] = Field(..., min_length=1)
+    herbaceous_curing: float = Field(
+        default=0.67,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of herbaceous load that is cured (0 = green, 1 = fully "
+            "cured). In dynamic fuel models, this fraction of the live "
+            "herbaceous load moves to dead herbaceous fuel. Defaults to 0.67, "
+            "the two-thirds-cured reference scenario of Scott and Burgan (2005)."
+        ),
+    )
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)
     tags: list[str] = Field(default_factory=list, max_length=50)
@@ -94,13 +124,34 @@ FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupBand, dict] = {
     },
     Fbfm40LookupBand.fuel_load_live_herb: {
         "name": "Live Herbaceous Fuel Load",
-        "description": "Oven-dry mass per unit area of live herbaceous fuels.",
+        "description": (
+            "Oven-dry mass per unit area of live herbaceous fuels: the "
+            "uncured part of the herbaceous load."
+        ),
         "type": BandType.continuous,
         "unit": "kg/m**2",
     },
     Fbfm40LookupBand.fuel_load_live_woody: {
         "name": "Live Woody Fuel Load",
         "description": "Oven-dry mass per unit area of live woody fuels.",
+        "type": BandType.continuous,
+        "unit": "kg/m**2",
+    },
+    Fbfm40LookupBand.fuel_load_dead_herb: {
+        "name": "Dead Herbaceous Fuel Load",
+        "description": (
+            "Oven-dry mass per unit area of cured herbaceous fuels. Takes the "
+            "dead 1-hour fuel moisture."
+        ),
+        "type": BandType.continuous,
+        "unit": "kg/m**2",
+    },
+    Fbfm40LookupBand.fuel_load_fine_dead: {
+        "name": "Fine Dead Fuel Load",
+        "description": (
+            "Oven-dry mass per unit area of fine dead fuels: 1-hour plus dead "
+            "herbaceous. Takes the dead 1-hour fuel moisture."
+        ),
         "type": BandType.continuous,
         "unit": "kg/m**2",
     },
@@ -134,6 +185,24 @@ FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupBand, dict] = {
         "type": BandType.continuous,
         "unit": "1/m",
     },
+    Fbfm40LookupBand.savr_dead_herb: {
+        "name": "Dead Herbaceous Surface-Area-to-Volume Ratio",
+        "description": (
+            "Surface-area-to-volume ratio of dead herbaceous fuels, the same "
+            "as live herbaceous."
+        ),
+        "type": BandType.continuous,
+        "unit": "1/m",
+    },
+    Fbfm40LookupBand.savr_fine_dead: {
+        "name": "Fine Dead Surface-Area-to-Volume Ratio",
+        "description": (
+            "Load-weighted surface-area-to-volume ratio of 1-hour and dead "
+            "herbaceous fuels."
+        ),
+        "type": BandType.continuous,
+        "unit": "1/m",
+    },
     Fbfm40LookupBand.fuel_depth: {
         "name": "Fuel Bed Depth",
         "description": "Vertical depth of the surface fuel bed.",
@@ -141,6 +210,9 @@ FBFM40_LOOKUP_BAND_METADATA: dict[Fbfm40LookupBand, dict] = {
         "unit": "m",
     },
 }
+
+
+publish_band_defs(Fbfm40LookupBand, FBFM40_LOOKUP_BAND_METADATA)
 
 
 def get_fbfm40_lookup_band(band: Fbfm40LookupBand, index: int) -> Band:

@@ -14,7 +14,7 @@ Notes:
 - ``rasterize_layerset`` uses random placement for the ``random_clusters``
   distribution and `seed` is not threaded through the API, so pixel-value
   assertions would be flaky. The tests assert on layout invariants only:
-  variable set, dim ordering, band coord, CRS, and the Grid doc's bands
+  variable set (one 2D variable per band key), CRS, and the Grid doc's bands
   field written back by the worker.
 - ``alignment.resolution`` is pinned to 10.0 m in the grid template to keep
   test runtime tight while still exercising real rasterization.
@@ -25,21 +25,25 @@ import numpy as np
 from lib.config import GRIDS_COLLECTION
 from lib.firestore.documents import get_document
 
-# fastfuels_core.rasterize_layerset's 5-band per-variable output coord.
-EXPECTED_BAND_COORD = [
-    "loading",
-    "height",
-    "live_fuel_moisture",
-    "dead_fuel_moisture",
-    "heat_of_combustion",
-]
-
 # fuel_type values present in the Lubrecht layerset fixture.
 EXPECTED_FUEL_TYPES = {"shrub", "herb", "litter"}
 
+# One stored variable per band, keyed `<quantity>.<fuel type>`.
+EXPECTED_KEYS = {
+    f"{prefix}.{fuel_type}"
+    for prefix in (
+        "fuel_load",
+        "fuel_depth",
+        "fuel_moisture.live",
+        "fuel_moisture.dead",
+        "heat_content",
+    )
+    for fuel_type in EXPECTED_FUEL_TYPES
+}
+
 
 def test_blackfoot_example_layerset_native_rasterization(griddle_runner):
-    """Native-alignment rasterize: one var per fuel_type, 5 bands each, EPSG:32612.
+    """Native-alignment rasterize: one 2D var per band (3 fuel types x 5), EPSG:32612.
 
     Also verifies that ``handle_layerset`` writes the Grid doc's ``bands``
     field back to Firestore after rasterization (3 vars × 5 bands = 15 entries).
@@ -58,16 +62,13 @@ def test_blackfoot_example_layerset_native_rasterization(griddle_runner):
     )
     ds = result.ds
 
-    # One xr.DataArray per unique fuel_type
-    assert set(ds.data_vars) == EXPECTED_FUEL_TYPES
+    # One 2D variable per band, named by its key
+    assert set(ds.data_vars) == EXPECTED_KEYS
 
-    for var_name in EXPECTED_FUEL_TYPES:
-        da = ds[var_name]
-        assert da.dims == ("band", "y", "x"), (
-            f"{var_name} dims = {da.dims}, expected (band, y, x)"
-        )
-        assert da.dtype == np.float32, f"{var_name} dtype = {da.dtype}"
-        assert list(da.coords["band"].values) == EXPECTED_BAND_COORD
+    for key in EXPECTED_KEYS:
+        da = ds[key]
+        assert da.dims == ("y", "x"), f"{key} dims = {da.dims}, expected (y, x)"
+        assert da.dtype == np.float32, f"{key} dtype = {da.dtype}"
 
     # Native alignment preserves the layerset's declared CRS.
     assert "32612" in str(ds.rio.crs)
@@ -81,17 +82,18 @@ def test_blackfoot_example_layerset_native_rasterization(griddle_runner):
 
     # Every band entry is a continuous physical quantity; spot-check units.
     assert {b["type"] for b in bands} == {"continuous"}
+    assert {b["key"] for b in bands} == EXPECTED_KEYS
     unit_for = {b["key"]: b["unit"] for b in bands}
-    assert unit_for["shrub.loading"] == "kg/m**2"
-    assert unit_for["herb.height"] == "m"
-    assert unit_for["litter.live_fuel_moisture"] == "%"
-    assert unit_for["shrub.heat_of_combustion"] == "kJ/kg"
+    assert unit_for["fuel_load.shrub"] == "kg/m**2"
+    assert unit_for["fuel_depth.herb"] == "m"
+    assert unit_for["fuel_moisture.live.litter"] == "%"
+    assert unit_for["heat_content.shrub"] == "kJ/kg"
 
     # Worker-derived bands carry human-readable name/description for the webapp.
     assert all(b.get("name") for b in bands)
     assert all(b.get("description") for b in bands)
     name_for = {b["key"]: b["name"] for b in bands}
-    assert name_for["shrub.loading"] == "Shrub Fuel Loading"
+    assert name_for["fuel_load.shrub"] == "Shrub Fuel Load"
 
 
 def test_blackfoot_example_layerset_domain_alignment(griddle_runner):
@@ -100,10 +102,11 @@ def test_blackfoot_example_layerset_domain_alignment(griddle_runner):
     ``blue_mtn.json`` declares EPSG:32611 while the example layerset is
     EPSG:32612, so a successful run proves the per-variable post-process
     reprojection (mirroring ``resample.py``) wired in Task 8 works
-    end-to-end across multi-variable, multi-band Datasets. Note: blue_mtn's
-    extent does not spatially overlap the layerset polygons, so this test
-    asserts only the reprojection plumbing — the data values land outside
-    the destination extent and the Zarr is expected to be all-NaN.
+    end-to-end across multi-variable, multi-band Datasets (reprojected
+    before flattening). Note: blue_mtn's extent does not spatially overlap
+    the layerset polygons, so this test asserts only the reprojection
+    plumbing — the data values land outside the destination extent and the
+    Zarr is expected to be all-NaN.
     """
     result = griddle_runner(
         "blue_mtn.json",
@@ -123,12 +126,10 @@ def test_blackfoot_example_layerset_domain_alignment(griddle_runner):
     # Output is reprojected to the domain's CRS (blue_mtn → EPSG:32611).
     assert "32611" in str(ds.rio.crs)
 
-    # Variable set and band coord are unchanged by reprojection.
-    assert set(ds.data_vars) == EXPECTED_FUEL_TYPES
-    for var_name in EXPECTED_FUEL_TYPES:
-        da = ds[var_name]
-        assert da.dims == ("band", "y", "x")
-        assert list(da.coords["band"].values) == EXPECTED_BAND_COORD
+    # The flat band layout is unchanged by reprojection.
+    assert set(ds.data_vars) == EXPECTED_KEYS
+    for key in EXPECTED_KEYS:
+        assert ds[key].dims == ("y", "x")
 
     # Horizontal extent matches the domain lattice (varies across variables
     # only in residual coord precision; size is identical per the

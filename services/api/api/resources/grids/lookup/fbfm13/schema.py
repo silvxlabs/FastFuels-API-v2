@@ -8,14 +8,15 @@ Converts categorical Anderson 13 fuel model codes (from
 Anderson 13 lookup table.
 """
 
-from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import band, input_requirements
 
 
 class Fbfm13LookupSource(LookupSource):
@@ -31,7 +32,7 @@ class Fbfm13LookupSource(LookupSource):
     )
 
 
-class Fbfm13LookupBand(StrEnum):
+class Fbfm13LookupBand(BandEnum):
     """Bands available from the Anderson 13 lookup table."""
 
     fuel_load_1hr = "fuel_load.1hr"
@@ -52,10 +53,16 @@ class CreateFbfm13LookupRequest(BaseModel):
     because derived grids carry the same domain reference as their source.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            band("source_band", of="source_grid_id", quantity="fbfm13"),
+        ),
+    )
+
     source_grid_id: str = Field(..., description="Grid containing FBFM13 codes")
     source_band: str = Field(
         default="fbfm13",
-        description="Band in source grid containing FBFM13 codes",
+        description="A `fbfm13` band of the source grid holding the FBFM13 codes.",
     )
     bands: list[Fbfm13LookupBand] = Field(..., min_length=1)
     name: str = Field("", max_length=255)
@@ -128,6 +135,9 @@ FBFM13_LOOKUP_BAND_METADATA: dict[Fbfm13LookupBand, dict] = {
         "unit": "m",
     },
 }
+
+
+publish_band_defs(Fbfm13LookupBand, FBFM13_LOOKUP_BAND_METADATA)
 
 
 def get_fbfm13_lookup_band(band: Fbfm13LookupBand, index: int) -> Band:

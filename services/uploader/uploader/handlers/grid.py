@@ -19,6 +19,7 @@ import rioxarray  # noqa: F401 — registers .rio accessor on xarray objects
 import xarray as xr
 from rioxarray.exceptions import NoDataInBounds
 
+from lib.band_quantities import band_mismatch, check_band_key
 from lib.config import DOMAINS_COLLECTION, GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
@@ -259,15 +260,12 @@ def handle_grid_netcdf(
 
         bands = []
         for i, var_name in enumerate(dataset.data_vars):
-            da = dataset[var_name]
-            band_type = (
-                "categorical" if np.issubdtype(da.dtype, np.integer) else "continuous"
-            )
+            quantity = check_band_key(str(var_name))
             bands.append(
                 {
                     "key": str(var_name),
-                    "type": band_type,
-                    "unit": da.attrs.get("units"),
+                    "type": quantity.type,
+                    "unit": quantity.unit,
                     "index": i,
                 }
             )
@@ -284,6 +282,36 @@ def handle_grid_netcdf(
                 "size_bytes": storage_size(output_path),
                 "progress": {"message": "Complete", "percent": 100},
             },
+        )
+
+
+def _check_netcdf_band(var_name: str, da: xr.DataArray) -> None:
+    """Fail unless the variable name is a band key its data and units fit.
+
+    The key's quantity sets the band's type and unit (lib.band_quantities). A
+    `units` attribute is optional but must match; categorical codes must be
+    stored as integers.
+    """
+    try:
+        quantity = check_band_key(var_name)
+    except ValueError as e:
+        raise ProcessingError(
+            code="INVALID_BAND_KEY",
+            message=f"Variable {var_name!r}: {e}",
+            suggestion="Rename the variable to a band key, e.g. 'fuel_load.1hr'.",
+        )
+    unit = da.attrs.get("units", quantity.unit)
+    if reason := band_mismatch(var_name, quantity.type, unit):
+        raise ProcessingError(
+            code="INVALID_BAND_UNITS", message=f"Variable {var_name!r}: {reason}."
+        )
+    if quantity.type == "categorical" and not np.issubdtype(da.dtype, np.integer):
+        raise ProcessingError(
+            code="INVALID_BAND_DTYPE",
+            message=(
+                f"Variable {var_name!r} holds categorical codes but is stored as "
+                f"{da.dtype}; store it as an integer type."
+            ),
         )
 
 
@@ -310,6 +338,7 @@ def _build_netcdf_dataset(
 
     Raises:
         ProcessingError: WRONG_DIMS, MISSING_CRS, CRS_MISMATCH, INVALID_UNITS,
+            INVALID_BAND_KEY, INVALID_BAND_UNITS, INVALID_BAND_DTYPE,
             MISSING_Z_POSITIVE, SINGLE_Z_LAYER, NONUNIFORM_Z, NON_SQUARE_PIXELS,
             or NO_OVERLAP per spec.
     """
@@ -363,15 +392,15 @@ def _build_netcdf_dataset(
 
     for var_name, da in ds.data_vars.items():
         unit = da.attrs.get("units")
-        if unit is None:
-            continue
-        try:
-            validate_unit(unit)
-        except ValueError as e:
-            raise ProcessingError(
-                code="INVALID_UNITS",
-                message=f"Variable {var_name!r} has invalid unit {unit!r}: {e}",
-            )
+        if unit is not None:
+            try:
+                validate_unit(unit)
+            except ValueError as e:
+                raise ProcessingError(
+                    code="INVALID_UNITS",
+                    message=f"Variable {var_name!r} has invalid unit {unit!r}: {e}",
+                )
+        _check_netcdf_band(str(var_name), da)
 
     is_3d = "z" in ds.sizes
     if is_3d:

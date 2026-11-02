@@ -15,7 +15,10 @@ from typing import Literal
 from pydantic import Field, field_validator
 
 from api.resources.grids.providers.landfire import (
+    LANDFIRE_DISTURBANCE_RELEASES,
     BoundaryScatter,
+    LandfireDisturbancePlan,
+    LandfireDisturbanceRequest,
     LandfireSource,
     NonBurnableFuelModel,
     check_no_duplicate_non_burnable,
@@ -37,6 +40,8 @@ LandfireFbfm13Version = StrEnum(
     {f"v{version}": version for version in _FBFM13_ALL_VERSIONS},
 )
 
+_RELEASES = LANDFIRE_DISTURBANCE_RELEASES["fbfm13"]
+
 
 class LandfireFbfm13Source(LandfireSource):
     """Source for LANDFIRE FBFM13 (Anderson 13 Fire Behavior Fuel Model).
@@ -49,6 +54,7 @@ class LandfireFbfm13Source(LandfireSource):
     description: Literal[
         "LANDFIRE FBFM13 fuel model codes (Anderson 13 classification)"
     ] = "LANDFIRE FBFM13 fuel model codes (Anderson 13 classification)"
+    disturbance: LandfireDisturbancePlan | None = None
     remove_non_burnable: list[str] | None = None
     boundary_scatter: BoundaryScatter | None = None
 
@@ -66,6 +72,14 @@ class CreateLandfireFbfm13Request(CreateSourceGridRequestBase):
             "LANDFIRE version. Most years are served from staged LANDFIRE data; "
             f"{', '.join(LANDFIRE_VERSIONS['fbfm13']['lfps_available'])} "
             "is instead fetched on demand from LANDFIRE Product Service."
+        ),
+    )
+    disturbance: LandfireDisturbanceRequest | None = Field(
+        default=None,
+        description=(
+            f"For domains the LANDFIRE {_RELEASES['newest']} release doesn't fully cover "
+            f"yet, update the {_RELEASES['baseline']} version for recent disturbance "
+            f"(`version` must be {_RELEASES['baseline']})."
         ),
     )
     remove_non_burnable: list[NonBurnableFuelModel] | None = None

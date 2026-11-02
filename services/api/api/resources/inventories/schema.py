@@ -136,6 +136,7 @@ BASE_INVENTORY_COLUMNS = [
     Column(key="dbh", type=ColumnType.continuous, unit="cm"),
     Column(key="height", type=ColumnType.continuous, unit="m"),
     Column(key="crown_ratio", type=ColumnType.continuous),
+    Column(key="crown_base_height", type=ColumnType.continuous, unit="m"),
 ]
 
 # Columns produced by CHM stem isolation: height and position only — no dbh,

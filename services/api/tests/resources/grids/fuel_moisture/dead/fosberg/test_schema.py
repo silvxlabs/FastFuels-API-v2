@@ -36,7 +36,7 @@ def _body(**overrides) -> dict:
 
 class TestDead1hrBand:
     def test_band_key_and_metadata(self):
-        assert DEAD_1HR_BAND.key == "fuel_moisture.dead.1hr"
+        assert DEAD_1HR_BAND.key == "fuel_moisture.1hr"
         assert DEAD_1HR_BAND.type == BandType.continuous
         assert DEAD_1HR_BAND.unit == "%"
         assert DEAD_1HR_BAND.index == 0

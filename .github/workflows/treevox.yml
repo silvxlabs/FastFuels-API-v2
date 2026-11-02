@@ -86,6 +86,7 @@ jobs:
               GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
               GCP_REGION=${{ env.REGION }},\
               GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
+              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
               INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
               DUET_BINARY_GCS=${{ secrets.DUET_BINARY_GCS }}" \
             --quiet
@@ -121,6 +122,7 @@ jobs:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.REGION }}
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
+          FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
         run: uv run pytest tests/ --ignore=tests/integration -v
 
@@ -130,6 +132,7 @@ jobs:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.REGION }}
           GRIDS_BUCKET: ${{ secrets.GRIDS_BUCKET }}
+          FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
           DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
           INFRA_ENV: ${{ needs.determine-environment.outputs.deploy_env }}

@@ -216,6 +216,28 @@ class TestExportLandscape:
         assert ch[1, 2] == -9999
         assert (ch != -9999).sum() == _NY * _NX - 1
 
+    @pytest.mark.parametrize(
+        ("role", "dtype", "sentinel", "band_index", "valid"),
+        [
+            ("cbd", np.float32, -9999.0, 8, 12),  # scaled x100 → was clipped
+            ("cc", np.uint8, 255, 5, 45),  # unscaled int code → was data
+        ],
+    )
+    def test_band_nodata_sentinel_becomes_nodata(
+        self, captured_tif, patch_load_grid, role, dtype, sentinel, band_index, valid
+    ):
+        values = _role_values()
+        values[role] = values[role].astype(dtype)
+        values[role][1, 2] = sentinel
+        grids = _build_grids(values)
+        grids["canopy"][role].rio.write_nodata(sentinel, inplace=True)
+        with patch_load_grid(grids):
+            export_landscape({"id": "e1", "name": ""}, _build_source(), noop_progress)
+        with rasterio.open(captured_tif["tif_path"]) as src:
+            band = src.read(band_index)
+        assert band[1, 2] == -9999
+        assert band[0, 0] == valid
+
     def test_oversized_role_grid_cropped(self, captured_tif, patch_load_grid):
         # Role grids extend one cell west and north of the landscape; the
         # handler must crop by integer slicing to the landscape window.

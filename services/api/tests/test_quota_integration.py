@@ -31,7 +31,7 @@ from lib.config import (
     KEYS_COLLECTION,
     USERS_COLLECTION,
 )
-from tests.conftest import TEST_URL
+from tests.conftest import SKIP_DISPATCH, TEST_URL
 from tests.fixtures import (
     make_application_data,
     make_domain_data,
@@ -180,7 +180,9 @@ def owner_env(firestore_client):
             ).set(app)
             created.append((APPLICATIONS_COLLECTION, app["id"]))
 
-        owner_client = Client(base_url=TEST_URL, headers={"API-KEY": secret})
+        owner_client = Client(
+            base_url=TEST_URL, headers={"API-KEY": secret, **SKIP_DISPATCH}
+        )
         clients.append(owner_client)
         return owner_client, domain["id"]
 

@@ -102,6 +102,7 @@ class TestCreateFbfm40Lookup:
         assert data["source"]["table"] == "fbfm40"
         assert data["source"]["source_grid_id"] == complete_fbfm40_grid["id"]
         assert data["source"]["source_band"] == "fbfm"
+        assert data["source"]["herbaceous_curing"] == 0.67
 
         # Check bands
         assert len(data["bands"]) == 1
@@ -109,6 +110,41 @@ class TestCreateFbfm40Lookup:
         assert data["bands"][0]["type"] == "continuous"
         assert data["bands"][0]["unit"] == "kg/m**2"
         assert data["bands"][0]["index"] == 0
+
+    def test_herbaceous_curing_stored_on_source(
+        self, client, domain_for_testing, complete_fbfm40_grid
+    ):
+        """The requested curing fraction is recorded on the grid's source."""
+        request_body = {
+            "source_grid_id": complete_fbfm40_grid["id"],
+            "bands": ["fuel_load.fine_dead", "savr.fine_dead"],
+            "herbaceous_curing": 1.0,
+        }
+
+        response = client.post(self.route(domain_for_testing["id"]), json=request_body)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["source"]["herbaceous_curing"] == 1.0
+        assert [b["key"] for b in data["bands"]] == [
+            "fuel_load.fine_dead",
+            "savr.fine_dead",
+        ]
+        assert [b["unit"] for b in data["bands"]] == ["kg/m**2", "1/m"]
+
+    def test_herbaceous_curing_out_of_range_returns_422(
+        self, client, domain_for_testing, complete_fbfm40_grid
+    ):
+        """A curing fraction above 1 (e.g. a percentage) is rejected."""
+        request_body = {
+            "source_grid_id": complete_fbfm40_grid["id"],
+            "bands": ["fuel_load.fine_dead"],
+            "herbaceous_curing": 67,
+        }
+
+        response = client.post(self.route(domain_for_testing["id"]), json=request_body)
+
+        assert response.status_code == 422
 
     def test_request_with_metadata(
         self, client, domain_for_testing, complete_fbfm40_grid

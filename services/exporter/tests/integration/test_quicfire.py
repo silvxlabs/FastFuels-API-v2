@@ -94,7 +94,7 @@ def full_export(quicfire_sources, quicfire_exporter_runner):
         source_overrides={
             "topography": {"grid_id": sources["topography"], "band": "elevation"},
             "canopy_savr": {"grid_id": sources["canopy"], "band": "savr.foliage"},
-            "surface_savr": {"grid_id": sources["lookup"], "band": "savr.1hr"},
+            "surface_savr": {"grid_id": sources["lookup"], "band": "savr.fine_dead"},
         },
     )
     out_dir = _download_and_extract(export)
@@ -122,13 +122,13 @@ def expected_bands(quicfire_sources) -> dict[str, np.ndarray]:
             np.nan_to_num(_load_band(sources["canopy"], "savr.foliage", rank=3))
         ),
         "surf_load": _y_flip_2d(
-            np.nan_to_num(_load_band(sources["lookup"], "fuel_load.1hr", rank=2))
+            np.nan_to_num(_load_band(sources["lookup"], "fuel_load.fine_dead", rank=2))
         ),
         "surf_depth": _y_flip_2d(
             np.nan_to_num(_load_band(sources["lookup"], "fuel_depth", rank=2))
         ),
         "surf_savr": _y_flip_2d(
-            np.nan_to_num(_load_band(sources["lookup"], "savr.1hr", rank=2))
+            np.nan_to_num(_load_band(sources["lookup"], "savr.fine_dead", rank=2))
         ),
         "surf_moist_frac": _y_flip_2d(
             np.nan_to_num(

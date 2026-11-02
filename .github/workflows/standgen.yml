@@ -7,7 +7,7 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT }}
   # Public GDAM allometry inference API. Literal (not a secret) so an unset
   # secret can't override the correct default with an empty string.
-  GDAM_API_URL: https://gdam-api-v2-782971006568.us-west1.run.app
+  GDAM_API_URL: https://api.fastfuels.silvxlabs.com/gdam
 
 on:
   push:

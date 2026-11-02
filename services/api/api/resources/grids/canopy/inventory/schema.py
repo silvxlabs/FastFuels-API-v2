@@ -32,6 +32,7 @@ from pydantic import (
     model_validator,
 )
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.alignment import (
     GridLatticeDomainTarget,
     GridLatticeSpecification,
@@ -46,6 +47,8 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassUnit,
     InventoryColumnMaxCrownRadiusSource,
 )
+from api.resources.input_requirements import input_requirements, inventory
+from lib.inventory_io import CANOPY_BASE_COLUMNS
 
 # Cell size applied when the request's domain-target alignment omits
 # `resolution`. An inventory has no native raster cell size to inherit, so
@@ -53,7 +56,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
 DEFAULT_INVENTORY_CANOPY_RESOLUTION_M = 30.0
 
 
-class InventoryCanopyBand(StrEnum):
+class InventoryCanopyBand(BandEnum):
     """Selectable bands on the inventory canopy source.
 
     The first four share keys and units with the LANDFIRE canopy source, so
@@ -79,22 +82,25 @@ CFL_BAND_DEF = {
 }
 
 
+# The four LANDFIRE-parity bands reuse LANDFIRE_CANOPY_BAND_DEFS.
+INVENTORY_CANOPY_BAND_DEFS: dict[InventoryCanopyBand, dict] = {
+    band: CFL_BAND_DEF
+    if band is InventoryCanopyBand.cfl
+    else LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand(band.value)]
+    for band in InventoryCanopyBand
+}
+
+publish_band_defs(InventoryCanopyBand, INVENTORY_CANOPY_BAND_DEFS)
+
+
 def build_inventory_canopy_bands(
     requested: list[InventoryCanopyBand],
 ) -> list[Band]:
-    """Build Band objects for requested bands with indices in request order.
-
-    The four LANDFIRE-parity bands reuse LANDFIRE_CANOPY_BAND_DEFS; ``cfl``
-    uses its own definition.
-    """
-    bands = []
-    for i, band in enumerate(requested):
-        if band is InventoryCanopyBand.cfl:
-            bands.append(Band(index=i, **CFL_BAND_DEF))
-        else:
-            band_def = LANDFIRE_CANOPY_BAND_DEFS[LandfireCanopyFuelBand(band.value)]
-            bands.append(Band(index=i, **band_def))
-    return bands
+    """Build Band objects for requested bands with indices in request order."""
+    return [
+        Band(index=i, **INVENTORY_CANOPY_BAND_DEFS[band])
+        for i, band in enumerate(requested)
+    ]
 
 
 class CanopyBiomassEquations(StrEnum):
@@ -117,7 +123,7 @@ class CanopyCrownWidthEquations(StrEnum):
 
     ``purves`` (Purves et al. 2007) is the national default and the one
     the tree voxelization endpoint uses; it varies with height and
-    crown ratio as well as diameter. ``crookston_stage`` (Crookston &
+    crown base height as well as diameter. ``crookston_stage`` (Crookston &
     Stage 1999, RMRS-GTR-24, reached through FVS) is the crown width
     behind FuelCalc's canopy cover — diameter alone above breast
     height, with regionally fitted coefficients — and is offered for
@@ -428,7 +434,8 @@ class CanopyCbdDepth(StrEnum):
     the requested `cbh`/`chm` threshold settings — those bands must be
     requested with the `bulk_density_threshold` method so the depth's
     definition is recorded on the grid. `mean_crown_length` is the mean of
-    per-tree crown lengths (the depth Cruz et al. 2003 used).
+    per-tree crown lengths, height − crown_base_height (the depth Cruz et
+    al. 2003 used).
     `biomass_percentile` is the height span holding the central 80% of
     canopy biomass (10th to 90th percentile; Albini 1996).
     `height_percentile` is the 90th-percentile tree height minus the
@@ -564,7 +571,7 @@ class CanopyCbhMean(BaseModel):
     """CBH as the mean of the per-tree crown base heights in each cell.
 
     Van Wagner's (1977) stand-mean definition — a plain summary of the
-    per-tree crown bases (`height * (1 - crown_ratio)`), one tree one vote
+    per-tree `crown_base_height` values, one tree one vote
     unless `weight_by_available_fuel` is set. A distinct convention from
     the `bulk_density_threshold` profile method; the two diverge where tree
     height varies within a cell.
@@ -845,7 +852,12 @@ class CreateInventoryCanopyRequest(InventoryCanopySourceBase):
     metrics.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra=input_requirements(
+            inventory("source_inventory_id", columns=CANOPY_BASE_COLUMNS),
+        ),
+    )
 
     name: str = Field("", max_length=255)
     description: str = Field("", max_length=2000)

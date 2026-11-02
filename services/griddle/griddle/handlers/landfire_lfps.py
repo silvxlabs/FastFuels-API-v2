@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import geopandas as gpd
+import rioxarray
 from rasterio.transform import array_bounds
 from rasterio.warp import transform_bounds
 
@@ -27,6 +28,7 @@ from lib.alignment import resolve_alignment_destination
 from lib.errors import ProcessingError
 from lib.landfire import (
     SEASON_CODES,
+    LfpsJob,
     LfpsJobFailedError,
     download,
     lfps_acronym,
@@ -143,6 +145,57 @@ def _seasonal_fbfm40_layer_name(product: str, version: str, season: str) -> str:
     return match.layer_name
 
 
+def _submit_and_wait(
+    layer_desc: str,
+    layers: list[str],
+    aoi: str,
+    progress: Callable[[str, int | None], None],
+) -> LfpsJob:
+    """Submit an LFPS job for `layers` and block until it succeeds."""
+    progress(f"Submitting LANDFIRE Product Service job for {layer_desc}...", 10)
+    job = submit_job(layers, aoi)
+
+    deadline = time.monotonic() + _LFPS_JOB_TIMEOUT_SECONDS
+    try:
+        while job.status != "Succeeded":
+            if time.monotonic() > deadline:
+                raise ProcessingError(
+                    code="LFPS_TIMEOUT",
+                    message=(
+                        f"LFPS job {job.job_id} did not finish within "
+                        f"{_LFPS_JOB_TIMEOUT_SECONDS}s."
+                    ),
+                    suggestion="Try again later, or contact support if this persists.",
+                )
+            progress(f"Waiting on LANDFIRE Product Service ({job.status})...", 30)
+            time.sleep(_LFPS_POLL_DELAY_SECONDS)
+            job = poll_status(job.job_id)
+    except LfpsJobFailedError as e:
+        raise ProcessingError(code="LFPS_JOB_FAILED", message=str(e))
+
+    return job
+
+
+@contextmanager
+def _download_and_unzip(
+    job: LfpsJob, progress: Callable[[str, int | None], None]
+) -> Iterator[Path]:
+    """Download a succeeded job's output and unzip it to a temp directory.
+
+    The directory is removed once the caller's `with` block exits.
+    """
+    progress("LANDFIRE Product Service job complete, downloading...", 70)
+    zip_bytes = download(job)
+
+    work = Path(tempfile.mkdtemp(prefix="lfps_"))
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            zf.extractall(work)
+        yield work
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 @contextmanager
 def fetch_lfps(
     roi: gpd.GeoDataFrame,
@@ -181,35 +234,9 @@ def fetch_lfps(
     """
     layer = _lfps_layer_name(product, version, season)
     aoi = _lfps_aoi_bbox(roi, alignment, target_grid_doc, extent_buffer_cells)
-    progress(f"Submitting LANDFIRE Product Service job for {layer}...", 10)
-    job = submit_job([layer], aoi)
+    job = _submit_and_wait(layer, [layer], aoi, progress)
 
-    deadline = time.monotonic() + _LFPS_JOB_TIMEOUT_SECONDS
-    try:
-        while job.status != "Succeeded":
-            if time.monotonic() > deadline:
-                raise ProcessingError(
-                    code="LFPS_TIMEOUT",
-                    message=(
-                        f"LFPS job {job.job_id} did not finish within "
-                        f"{_LFPS_JOB_TIMEOUT_SECONDS}s."
-                    ),
-                    suggestion="Try again later, or contact support if this persists.",
-                )
-            progress(f"Waiting on LANDFIRE Product Service ({job.status})...", 30)
-            time.sleep(_LFPS_POLL_DELAY_SECONDS)
-            job = poll_status(job.job_id)
-    except LfpsJobFailedError as e:
-        raise ProcessingError(code="LFPS_JOB_FAILED", message=str(e))
-
-    progress("LANDFIRE Product Service job complete, downloading...", 70)
-    zip_bytes = download(job)
-
-    work = Path(tempfile.mkdtemp(prefix="lfps_"))
-    try:
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            zf.extractall(work)
-
+    with _download_and_unzip(job, progress) as work:
         # LFPS zips also carry .tfw/.aux.xml/VAT sidecar files alongside
         # the one GeoTIFF -- filtering by suffix cleanly excludes those.
         tifs = list(work.glob("*.tif"))
@@ -220,5 +247,80 @@ def fetch_lfps(
             )
 
         yield str(tifs[0])
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+
+
+@contextmanager
+def fetch_lfps_multi(
+    roi: gpd.GeoDataFrame,
+    layers: dict[str, str],
+    alignment: dict,
+    target_grid_doc: dict | None,
+    extent_buffer_cells: int,
+    progress: Callable[[str, int | None], None],
+) -> Iterator[str]:
+    """Submit one LFPS job for several LANDFIRE layers, wait for it, and
+    yield a local path to the downloaded, unzipped multi-band GeoTIFF.
+
+    LFPS returns one band per layer, in submission order. That order is
+    checked against the result's own `long_name` tag before the path is
+    handed back, so a caller can rely on `list(layers)[i]` being band
+    `i + 1` (bands are 1-indexed).
+
+    Args:
+        roi: GeoDataFrame defining the region of interest.
+        layers: LANDFIRE_VERSIONS registry key -> version, in the order the
+            bands should come out, e.g. {"fdist": "2024", "fvt": "2024"}.
+        alignment, target_grid_doc, extent_buffer_cells, progress: As in
+            `fetch_lfps`.
+
+    Yields:
+        Local path to the downloaded, unzipped multi-band GeoTIFF.
+
+    Raises:
+        ValueError: Fewer than two layers were given.
+        ProcessingError: LFPS returned no GeoTIFF, more than one, or bands
+            in an order that doesn't match `layers`.
+    """
+    if len(layers) < 2:
+        raise ValueError(
+            "fetch_lfps_multi needs at least two layers; use fetch_lfps for one."
+        )
+    layer_names = [
+        _lfps_layer_name(product, version) for product, version in layers.items()
+    ]
+    aoi = _lfps_aoi_bbox(roi, alignment, target_grid_doc, extent_buffer_cells)
+    job = _submit_and_wait(", ".join(layer_names), layer_names, aoi, progress)
+
+    with _download_and_unzip(job, progress) as work:
+        tifs = list(work.glob("*.tif"))
+        if not tifs:
+            raise ProcessingError(
+                code="LFPS_OUTPUT_INVALID",
+                message="LFPS job output zip contained no GeoTIFF.",
+            )
+        if len(tifs) > 1:
+            raise ProcessingError(
+                code="LFPS_OUTPUT_INVALID",
+                message=(
+                    f"Expected one multi-band GeoTIFF for a {len(layers)}-layer "
+                    f"job, got {len(tifs)} separate files."
+                ),
+            )
+
+        raster = rioxarray.open_rasterio(tifs[0])
+        try:
+            returned = raster.attrs.get("long_name")
+        finally:
+            raster.close()
+        expected = tuple(f"{name}_CONUS" for name in layer_names)
+        if returned != expected:
+            raise ProcessingError(
+                code="LFPS_BAND_ORDER_MISMATCH",
+                message=(
+                    f"LFPS returned bands {returned!r}, expected {expected!r} "
+                    "(submitted layer order). Band-to-layer mapping can't be "
+                    "trusted by position."
+                ),
+            )
+
+        yield str(tifs[0])

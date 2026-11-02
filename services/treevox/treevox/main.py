@@ -139,7 +139,11 @@ def process_grid_request(request: Request):
         chunks_doc = compute_chunks_doc(
             result.georeference["shape"], result.chunk_shape
         )
-        update_metadata(grid_id, {"chunks": chunks_doc})
+        metadata = {"chunks": chunks_doc}
+        # Dotted keys merge into the stored source map instead of replacing it.
+        for key, value in (getattr(result, "source_updates", None) or {}).items():
+            metadata[f"source.{key}"] = value
+        update_metadata(grid_id, metadata)
         update_status(grid_id, "completed", georeference=result.georeference)
 
         logger.info("Processing complete", extra=ids)

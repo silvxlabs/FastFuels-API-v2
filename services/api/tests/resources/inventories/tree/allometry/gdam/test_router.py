@@ -20,6 +20,13 @@ _POSITION_HEIGHT_COLUMNS = [
     {"key": "height", "type": "continuous", "unit": "m"},
 ]
 _SOURCE_CHECKSUM = "src-checksum-123"
+# Position + height plus every crown base height input.
+_FULL_MORPHOLOGY_COLUMNS = [
+    *_POSITION_HEIGHT_COLUMNS,
+    {"key": "dbh", "type": "continuous", "unit": "cm"},
+    {"key": "crown_ratio", "type": "continuous"},
+    {"key": "fia_species_code", "type": "categorical"},
+]
 
 # --- Fixtures ---
 
@@ -35,6 +42,24 @@ def source_tree_inventory(firestore_client, domain_for_testing):
     )
     inventory_data["columns"] = _POSITION_HEIGHT_COLUMNS
     inventory_data["checksum"] = _SOURCE_CHECKSUM
+    doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+        inventory_data["id"]
+    )
+    doc_ref.set(inventory_data)
+    yield inventory_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def full_morphology_inventory(firestore_client, domain_for_testing):
+    """A completed tree inventory with species, dbh, crown ratio and height."""
+    inventory_data = make_inventory_data(
+        domain_id=domain_for_testing["id"],
+        name="Full morphology source for GDAM tests",
+        status="completed",
+        inventory_type="tree",
+    )
+    inventory_data["columns"] = _FULL_MORPHOLOGY_COLUMNS
     doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
         inventory_data["id"]
     )
@@ -103,6 +128,7 @@ class TestCreateGdamInventory:
         assert data["description"] == ""
         assert data["tags"] == []
         assert data["georeference"] is None
+        assert isinstance(data["checksum"], str) and len(data["checksum"]) == 32
 
         # Source records the lineage, including the source checksum at create time.
         assert data["source"]["name"] == "gdam"
@@ -110,7 +136,7 @@ class TestCreateGdamInventory:
         assert data["source"]["source_tree_inventory_checksum"] == _SOURCE_CHECKSUM
 
         # Columns reflect the source set plus exactly what GDAM imputes (all
-        # three by default) — not the full base set. fia_status_code is never
+        # four by default) — not the full base set. fia_status_code is never
         # imputed, so it must not appear.
         assert [c["key"] for c in data["columns"]] == [
             "x",
@@ -119,6 +145,7 @@ class TestCreateGdamInventory:
             "dbh",
             "crown_ratio",
             "fia_species_code",
+            "crown_base_height",
         ]
 
     def test_request_with_metadata(
@@ -143,7 +170,7 @@ class TestCreateGdamInventory:
     def test_impute_columns_default_persisted(
         self, client, domain_for_testing, source_tree_inventory
     ):
-        """Omitting impute_columns persists all three columns in the source."""
+        """Omitting impute_columns persists all four columns in the source."""
         response = client.post(
             self.route(domain_for_testing["id"]),
             json={"source_tree_inventory_id": source_tree_inventory["id"]},
@@ -153,6 +180,7 @@ class TestCreateGdamInventory:
             "dbh",
             "crown_ratio",
             "fia_species_code",
+            "crown_base_height",
         ]
 
     def test_impute_columns_subset_persisted(
@@ -168,6 +196,111 @@ class TestCreateGdamInventory:
         )
         assert response.status_code == 201
         assert response.json()["source"]["impute_columns"] == ["fia_species_code"]
+
+    def test_crown_base_height_without_inputs_returns_422(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """crown_base_height alone with an equation on a position+height source
+        returns 422."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": source_tree_inventory["id"],
+                "impute_columns": ["crown_base_height"],
+                "crown_base_height_model": {"name": "fia_national_logit_2026"},
+            },
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        for key in ("dbh", "crown_ratio", "fia_species_code"):
+            assert key in detail
+
+    def test_gdam_crown_base_height_needs_no_inputs(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """With the default gdam model, crown_base_height alone needs only
+        position and height."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": source_tree_inventory["id"],
+                "impute_columns": ["crown_base_height"],
+            },
+        )
+        assert response.status_code == 201
+        source = response.json()["source"]
+        assert source["crown_base_height_model"] == {"name": "gdam"}
+        assert source["conditioned_columns"] == []
+
+    def test_new_source_fields_default_persisted(
+        self, client, domain_for_testing, source_tree_inventory
+    ):
+        """overwrite, the crown base height model and the conditioned columns
+        are recorded on the source."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"source_tree_inventory_id": source_tree_inventory["id"]},
+        )
+        assert response.status_code == 201
+        source = response.json()["source"]
+        assert source["overwrite"] is False
+        assert source["crown_base_height_model"] == {"name": "gdam"}
+        assert source["conditioned_columns"] == []
+
+    def test_overwrite_persisted_and_excluded_from_conditioning(
+        self, client, domain_for_testing, full_morphology_inventory
+    ):
+        """Overwritten columns are not conditioned on; the rest are."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": full_morphology_inventory["id"],
+                "impute_columns": ["crown_ratio", "crown_base_height"],
+                "overwrite": True,
+                "crown_base_height_model": {"name": "toney_reeves_2009"},
+            },
+        )
+        assert response.status_code == 201
+        source = response.json()["source"]
+        assert source["impute_columns"] == ["crown_ratio", "crown_base_height"]
+        assert source["overwrite"] is True
+        assert source["crown_base_height_model"] == {"name": "toney_reeves_2009"}
+        assert source["conditioned_columns"] == ["dbh", "fia_species_code"]
+
+    def test_crown_base_height_alone_with_inputs_creates_inventory(
+        self, client, domain_for_testing, full_morphology_inventory
+    ):
+        """crown_base_height alone with an equation runs only the equation: no
+        GDAM conditioning."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": full_morphology_inventory["id"],
+                "impute_columns": ["crown_base_height"],
+                "crown_base_height_model": {"name": "fia_national_logit_2026"},
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["conditioned_columns"] == []
+
+    def test_gdam_crown_base_height_alone_conditions_on_present_columns(
+        self, client, domain_for_testing, full_morphology_inventory
+    ):
+        """crown_base_height alone with gdam calls GDAM, conditioned on every
+        morphology column the source has."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_tree_inventory_id": full_morphology_inventory["id"],
+                "impute_columns": ["crown_base_height"],
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["source"]["conditioned_columns"] == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+        ]
 
     def test_impute_columns_empty_returns_422(
         self, client, domain_for_testing, source_tree_inventory
@@ -286,6 +419,41 @@ class TestCreateGdamInventory:
         finally:
             doc_ref.delete()
 
+    def test_source_with_empty_heights_returns_422(
+        self, client, firestore_client, domain_for_testing
+    ):
+        """A height column with empty values returns 422: GDAM needs every tree's."""
+        inventory_data = make_inventory_data(
+            domain_id=domain_for_testing["id"],
+            name="Source with empty heights",
+            status="completed",
+            inventory_type="tree",
+        )
+        inventory_data["columns"] = [
+            {"key": "x", "type": "continuous", "unit": "m"},
+            {"key": "y", "type": "continuous", "unit": "m"},
+            {
+                "key": "height",
+                "type": "continuous",
+                "unit": "m",
+                "summary": {"null_count": 3},
+            },
+        ]
+        doc_ref = firestore_client.collection(INVENTORIES_COLLECTION).document(
+            inventory_data["id"]
+        )
+        doc_ref.set(inventory_data)
+
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"source_tree_inventory_id": inventory_data["id"]},
+            )
+            assert response.status_code == 422
+            assert "empty values" in response.json()["detail"]
+        finally:
+            doc_ref.delete()
+
     def test_non_tree_source_returns_422(
         self, client, firestore_client, domain_for_testing
     ):
@@ -320,13 +488,21 @@ class TestCreateGdamInventory:
         client,
         domain_for_testing,
         source_tree_inventory,
+        full_morphology_inventory,
         example_name,
         example_value,
     ):
         """Each documented GDAM example should successfully create an inventory."""
         body = {**example_value}
+        # The overwrite example re-predicts crown ratio only, so its source
+        # needs the other crown base height inputs.
+        source = (
+            full_morphology_inventory
+            if example_name == "overwrite"
+            else source_tree_inventory
+        )
         if body.get("source_tree_inventory_id") == "PLACEHOLDER_INVENTORY_ID":
-            body["source_tree_inventory_id"] = source_tree_inventory["id"]
+            body["source_tree_inventory_id"] = source["id"]
 
         response = client.post(self.route(domain_for_testing["id"]), json=body)
 

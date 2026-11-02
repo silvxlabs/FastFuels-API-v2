@@ -56,6 +56,11 @@ EXAMPLE_FBFM40_LATEST_RELEASE = {
     "version": LANDFIRE_VERSIONS["fbfm40"]["lfps_available"][0],
 }
 
+EXAMPLE_FBFM40_DISTURBANCE = {
+    "name": "FBFM40 with recent disturbance",
+    "disturbance": {"source": "landfire"},
+}
+
 CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_FBFM40_MINIMAL,
@@ -142,6 +147,17 @@ CREATE_LANDFIRE_FBFM40_OPENAPI_EXAMPLES = {
             "Product Service as it becomes available region by region — "
             "more current landscape conditions than the staged national release. "
             "See https://landfire.gov/data for the delivery schedule."
+        ),
+    },
+    "with_disturbance": {
+        "value": EXAMPLE_FBFM40_DISTURBANCE,
+        "summary": "Updated for recent disturbance",
+        "description": (
+            "For domains the newest LANDFIRE release doesn't fully cover yet, "
+            "updates the previous release's fuel model for recent LANDFIRE "
+            "disturbance. Rejected with 422 where the newest release already "
+            "fully covers the domain. Check coverage first with "
+            "/grids/fbfm40/landfire/coverage."
         ),
     },
 }

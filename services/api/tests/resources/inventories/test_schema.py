@@ -8,6 +8,7 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.inventories.schema import (
+    BASE_INVENTORY_COLUMNS,
     CategoricalColumnSummary,
     Column,
     ColumnType,
@@ -259,6 +260,40 @@ class TestPimInventorySource:
         assert source.source_pim_grid_checksum == "sum123"
         assert source.model_dump()["source_pim_grid_checksum"] == "sum123"
 
+    def test_crown_base_height_model_records_refit(self):
+        source = PimInventorySource(
+            source_pim_grid_id="grid123",
+            point_process="inhomogeneous_poisson",
+            seed=42,
+        )
+        assert source.model_dump()["crown_base_height_model"] == {
+            "name": "fia_national_logit_2026"
+        }
+
+    def test_stored_doc_without_crown_base_height_model_validates(self):
+        source = PimInventorySource.model_validate(
+            {
+                "name": "pim",
+                "source_pim_grid_id": "grid123",
+                "point_process": "inhomogeneous_poisson",
+                "seed": 42,
+            }
+        )
+        assert source.crown_base_height_model.name == "fia_national_logit_2026"
+
+    def test_stored_crown_base_height_model_round_trips(self):
+        source = PimInventorySource.model_validate(
+            {
+                "source_pim_grid_id": "grid123",
+                "point_process": "inhomogeneous_poisson",
+                "seed": 42,
+                "crown_base_height_model": {"name": "randolph_2010"},
+            }
+        )
+        assert source.model_dump()["crown_base_height_model"] == {
+            "name": "randolph_2010"
+        }
+
 
 class TestCreatePimInventoryRequest:
     """Tests for CreatePimInventoryRequest model."""
@@ -404,6 +439,20 @@ class TestInventoryDataResponse:
         )
         assert resp.num_rows == 0
         assert resp.data == []
+
+
+class TestBaseInventoryColumns:
+    """Tests for the PIM-expanded base column set."""
+
+    def test_crown_base_height_is_continuous_metres(self):
+        col = next(c for c in BASE_INVENTORY_COLUMNS if c.key == "crown_base_height")
+        assert col.type == ColumnType.continuous
+        assert col.unit == "m"
+
+    def test_units_are_canonical(self):
+        for col in BASE_INVENTORY_COLUMNS:
+            if col.unit is not None:
+                validate_unit(col.unit)
 
 
 class TestColumnSummary:

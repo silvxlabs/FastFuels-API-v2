@@ -10,6 +10,7 @@ from api.resources.grids.fccs.examples import (
     LFPS_FCCS_EXAMPLE_VALUES,
     STAGED_FCCS_EXAMPLE_VALUES,
 )
+from api.resources.grids.providers.landfire import LANDFIRE_DISTURBANCE_RELEASES
 
 from lib.landfire import LANDFIRE_VERSIONS
 
@@ -224,3 +225,41 @@ class TestLandfireCoverage:
     def test_has_no_seasonal_releases(self, client, lfps_covered_domain):
         body = client.get(self.route(lfps_covered_domain["id"])).json()
         assert all(r["season"] is None for r in body["releases"])
+
+
+class TestDisturbance:
+    """Disturbance requests are rejected unless the baseline and coverage fit."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/fccs/landfire"
+
+    def test_unknown_source_rejected(self, client, domain_for_testing):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={"disturbance": {"source": "feature"}},
+        )
+        assert response.status_code == 422
+
+    def test_non_baseline_version_rejected(self, client, lfps_covered_domain):
+        """FCCS's only non-baseline version is the LFPS one, so this uses the
+        covered Kingman domain to get past the LFPS coverage check first."""
+        response = client.post(
+            self.route(lfps_covered_domain["id"]),
+            json={"version": "2025", "disturbance": {"source": "landfire"}},
+        )
+        baseline = LANDFIRE_DISTURBANCE_RELEASES["fccs"]["baseline"]
+        assert response.status_code == 422
+        assert f"'{baseline}'" in response.json()["detail"]
+        assert "<" not in response.json()["detail"]
+
+    def test_domain_fully_covered_by_newest_release_rejected(
+        self, client, lfps_covered_domain
+    ):
+        """The Kingman domain is fully covered by the 2025 release, so
+        disturbance adjustment is redundant there."""
+        response = client.post(
+            self.route(lfps_covered_domain["id"]),
+            json={"disturbance": {"source": "landfire"}},
+        )
+        assert response.status_code == 422
+        assert "already fully covers" in response.json()["detail"]

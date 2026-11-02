@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
@@ -5,12 +8,15 @@ from fastapi.routing import APIRoute
 from api.auth import authenticate_user
 from api.dependencies import API_PREFIX
 from api.resources.applications.router import router as applications_router
+from api.resources.band_metadata import BAND_METADATA_DOC
 from api.resources.domains.router import router as domain_router
+from api.resources.domains.validate import validate_domain
 from api.resources.exports.router import router as exports_router
 from api.resources.features.router import router as features_router
 from api.resources.features.router import wildcard_router as features_wildcard_router
 from api.resources.grids.router import router as grids_router
 from api.resources.grids.router import wildcard_router as grids_wildcard_router
+from api.resources.input_requirements import INPUT_REQUIREMENTS_DOC
 from api.resources.inventories.router import router as inventories_router
 from api.resources.inventories.router import (
     wildcard_router as inventories_wildcard_router,
@@ -21,6 +27,7 @@ from api.resources.point_clouds.router import (
     wildcard_router as point_clouds_wildcard_router,
 )
 from api.resources.users.router import router as users_router
+from api.tasks import SkipDispatchMiddleware
 from lib.config import DEPLOYMENT_ENV
 
 CORS_ORIGINS = {
@@ -70,7 +77,12 @@ Read the design philosophy and resource guides in the
 [FastFuels-API-v2 repository](https://github.com/silvxlabs/FastFuels-API-v2)
 before integrating — v2 favors explicit, reproducible primitives over the
 convenience helpers that shipped in v1.
+"""
 
+API_DESCRIPTION += INPUT_REQUIREMENTS_DOC
+API_DESCRIPTION += BAND_METADATA_DOC
+
+API_DESCRIPTION += """
 ## Feedback
 
 Found a bug or have a request? Open an issue on
@@ -114,7 +126,51 @@ OPENAPI_TAGS = [
 ]
 
 
+logger = logging.getLogger(__name__)
+
+_WARMUP_GEOJSON = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-121.50, 38.50],
+                        [-121.49, 38.50],
+                        [-121.49, 38.51],
+                        [-121.50, 38.51],
+                        [-121.50, 38.50],
+                    ]
+                ],
+            },
+        }
+    ],
+}
+
+
+def _warm_startup_costs() -> None:
+    """Pay per-process one-time setup costs before the first request does."""
+    try:
+        app.openapi()
+    except Exception:
+        logger.warning("OpenAPI warm-up failed", exc_info=True)
+    try:
+        validate_domain(_WARMUP_GEOJSON)
+    except Exception:
+        logger.warning("Domain validation warm-up failed", exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _warm_startup_costs()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="FastFuels API",
     summary="3D fuels for next-generation fire behavior models.",
     description=API_DESCRIPTION,
@@ -175,6 +231,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=EXPOSE_HEADERS,
 )
+app.add_middleware(SkipDispatchMiddleware)
 
 api_router = APIRouter()
 

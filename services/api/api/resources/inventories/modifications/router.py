@@ -80,8 +80,8 @@ async def apply_modifications(
     clears the inventory of all trees; use it deliberately.
 
     **Attribute conditions** compare a single tree attribute against a value:
-    - `attribute`: one of `dbh`, `height`, `crown_ratio`, `fia_species_code`,
-      `tree_id`
+    - `attribute`: one of `dbh` (cm), `height` (m), `crown_base_height` (m),
+      `fia_species_code`, `tree_id`
     - `operator`: `eq`, `ne`, `gt`, `lt`, `ge`, `le`
       (`fia_species_code` and `tree_id` only support `eq`/`ne`)
     - `value`: number, string, or list for `eq`/`ne`
@@ -94,8 +94,9 @@ async def apply_modifications(
 
     **Expression conditions** use a boolean expression:
     - `expression`: e.g., `"dbh < 5 and height < 2"`
-    - Only `dbh`, `height`, `crown_ratio` are allowed in expressions
-    - Expressions always use native units (cm, m, 0-1 fraction)
+    - Only `dbh`, `height`, `crown_base_height` are allowed in expressions
+    - Expressions always use native units (`dbh` in cm, `height` and
+      `crown_base_height` in m)
 
     **Spatial conditions** test each tree's location (a point) against a
     geometry. Two variants discriminated by the required `source` field:

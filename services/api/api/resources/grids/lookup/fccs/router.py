@@ -24,8 +24,8 @@ from api.resources.grids.lookup.fccs.schema import (
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    validate_band_of,
     validate_feature_modifications,
-    validate_grid_has_band,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -135,7 +135,7 @@ async def create_fccs_lookup(
     source_grid_data = source_snapshot.to_dict()
 
     # Validate source grid has the required band
-    validate_grid_has_band(source_grid_data, body.source_grid_id, body.source_band)
+    validate_band_of(body, "source_band", source_grid_data)
 
     bands = [get_fccs_lookup_band(band, index) for index, band in enumerate(body.bands)]
 

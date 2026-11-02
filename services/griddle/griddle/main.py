@@ -30,6 +30,7 @@ from lib.firestore import (
 )
 from lib.gcs import storage_size
 from lib.grids import compute_chunks_doc
+from lib.layerset_bands import split_legacy_layerset_key
 
 CHUNK_SHAPE = (512, 512)
 
@@ -221,11 +222,12 @@ def _band_nodata(result, key: str):
 
     Reads the value the data actually carries (the source raster's nodata tag,
     or the fill a constructed band uses) — it is not invented. Layerset band
-    keys are ``<var>.<band>`` while nodata lives on the variable, so fall back
-    to the pre-dot variable name. Returns ``None`` when the band has no nodata,
-    or when the sentinel is NaN (which has no JSON representation).
+    keys from before #672 are ``<var>.<band>`` while nodata lives on the
+    variable, so fall back to the variable name. Returns ``None`` when the
+    band has no nodata, or when the sentinel is NaN (which has no JSON
+    representation).
     """
-    var = key if key in result.data_vars else key.rsplit(".", 1)[0]
+    var = key if key in result.data_vars else split_legacy_layerset_key(key)[0]
     if var not in result.data_vars:
         return None
     nodata = result[var].rio.nodata
@@ -320,11 +322,9 @@ def process_grid_request(request: Request):
             # In-place modification (#277): the grid already has rendered
             # data. Load its own zarr and apply only the queued delta —
             # never re-fetch from the upstream source, which may have
-            # drifted and would silently change untouched cells. The .load()
-            # is required: apply_modifications mutates band arrays in place,
-            # which is lost on a lazy (dask-backed) Dataset.
+            # drifted and would silently change untouched cells.
             update_progress(grid_id, "Applying modifications...", 40)
-            result = load_zarr(grid_id).load()
+            result = load_zarr(grid_id)
             apply_modifications(result, pending_modifications, grid["domain_id"])
 
             # Merge the applied delta into the cumulative ledger atomically

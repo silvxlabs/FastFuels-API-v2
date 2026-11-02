@@ -12,11 +12,11 @@ sources (FCCS, etc.) are added, this predefined list may need to evolve
 into a more scalable system (e.g., free-form keys with a reference endpoint).
 """
 
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.schema import (
     Band,
     BandType,
@@ -25,7 +25,7 @@ from api.resources.grids.schema import (
 )
 
 
-class UniformBand(StrEnum):
+class UniformBand(BandEnum):
     """Predefined bands available for uniform grids."""
 
     fuel_moisture_1hr = "fuel_moisture.1hr"
@@ -169,6 +169,9 @@ class CreateUniformRequest(CreateGridRequestBase):
         """Ensure no duplicate band keys in bands."""
         validate_no_duplicates([b.key for b in self.bands])
         return self
+
+
+publish_band_defs(UniformBand, UNIFORM_BAND_DEFS)
 
 
 def build_uniform_bands(inputs: list[UniformBandInput]) -> list[Band]:

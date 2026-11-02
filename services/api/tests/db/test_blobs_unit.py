@@ -4,8 +4,10 @@ Unit tests for api.db.blobs module.
 Tests GCS blob operations with mocked gcsfs client.
 """
 
+import os
 from unittest.mock import AsyncMock, patch
 
+import gcsfs
 import pytest
 from api.db import blobs
 
@@ -15,8 +17,39 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture
 def mock_gcsfs():
     mock = AsyncMock()
-    with patch.object(blobs, "gcsfs_client", mock):
+    with patch.object(blobs, "get_gcsfs_client", return_value=mock):
         yield mock
+
+
+@pytest.fixture
+def keep_gcsfs_client_alive():
+    """Undo what a patched PID does to shared gcsfs state.
+
+    fsspec clears its instance cache when it sees a new PID, which drops the
+    only strong reference to the process-wide client. Its weakref finalizer
+    then fires at an arbitrary later GC, schedules ``session.close()`` on
+    whatever event loop is running, and fails with "attached to a different
+    loop" in an unrelated test.
+    """
+    blobs.get_gcsfs_client()
+    cls = gcsfs.GCSFileSystem
+    saved = (blobs._gcsfs_client, blobs._gcsfs_client_pid, dict(cls._cache), cls._pid)
+    yield
+    blobs._gcsfs_client, blobs._gcsfs_client_pid, cache, cls._pid = saved
+    cls._cache.update(cache)
+
+
+class TestGetGcsfsClient:
+    def test_reuses_client_within_process(self):
+        assert blobs.get_gcsfs_client() is blobs.get_gcsfs_client()
+
+    def test_rebuilds_client_after_pid_change(self, keep_gcsfs_client_alive):
+        parent_client = blobs.get_gcsfs_client()
+
+        with patch.object(blobs.os, "getpid", return_value=os.getpid() + 1):
+            child_client = blobs.get_gcsfs_client()
+            assert child_client is not parent_client
+            child_client.loop  # raises "not fork-safe" on a parent-built client
 
 
 class TestDeleteDirectory:

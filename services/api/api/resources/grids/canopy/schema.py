@@ -15,6 +15,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.alignment import (
     GridLatticeDomainTarget,
     GridLatticeSpecification,
@@ -27,9 +28,11 @@ from api.resources.grids.schema import (
     TileMetadata,
     validate_no_duplicates,
 )
+from api.resources.input_requirements import input_requirements, point_cloud
+from api.resources.point_clouds.schema import PointCloudType
 
 
-class LandfireCanopyFuelBand(StrEnum):
+class LandfireCanopyFuelBand(BandEnum):
     """Selectable bands on the LANDFIRE canopy fuel source.
 
     These are the four LANDFIRE canopy fuel products: canopy height
@@ -75,6 +78,9 @@ LANDFIRE_CANOPY_BAND_DEFS = {
         "unit": "%",
     },
 }
+
+
+publish_band_defs(LandfireCanopyFuelBand, LANDFIRE_CANOPY_BAND_DEFS)
 
 
 def build_landfire_canopy_bands(
@@ -371,6 +377,12 @@ class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
     comes from `alignment.resolution`, defaulting to 1 m — unlike the
     raster-backed canopy sources there is no source pixel size to inherit.
     """
+
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            point_cloud("source_point_cloud_id", type=PointCloudType.als.value)
+        ),
+    )
 
     source_point_cloud_id: str = Field(
         description="ID of the point cloud to rasterize. Must be an ALS cloud in this domain."

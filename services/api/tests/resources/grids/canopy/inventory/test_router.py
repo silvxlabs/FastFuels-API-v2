@@ -370,7 +370,12 @@ class TestInventoryCanopyValidation:
             detail = response.json()["detail"]
             assert "null" in detail
             assert "'dbh'" in detail
-            assert "allometry" in detail
+            domain_id = domain_for_testing["id"]
+            assert (
+                f"POST /domains/{domain_id}/inventories/tree/allometry/gdam with "
+                f'body {{"source_tree_inventory_id": "{data["id"]}", '
+                '"impute_columns": ["dbh"]}'
+            ) in detail
         finally:
             doc_ref.delete()
 

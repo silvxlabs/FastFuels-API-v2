@@ -3,7 +3,7 @@
 Looks up 1-hour dead fuel moisture from a topography grid (slope + aspect,
 degrees) and a leaflux surface irradiance grid, using the Fosberg & Deeming
 (1971) model in ``fastfuels_core``. Per-cell shading is ``1 - surface_relative``.
-The output is a single 2-D ``fuel_moisture.dead.1hr`` band on the topography
+The output is a single 2-D ``fuel_moisture.1hr`` band on the topography
 grid's lattice.
 
 The request is validated by the API (ownership, band presence, source grid
@@ -26,7 +26,7 @@ from lib.errors import ProcessingError
 SLOPE_KEY = "slope"
 ASPECT_KEY = "aspect"
 SURFACE_IRRADIANCE_KEY = "irradiance.surface.relative"
-OUTPUT_KEY = "fuel_moisture.dead.1hr"
+OUTPUT_KEY = "fuel_moisture.1hr"
 
 # The core's `elevation` is a relative-to-weather-station category index, not an
 # actual elevation: 0=below, 1=near (no correction), 2=above.

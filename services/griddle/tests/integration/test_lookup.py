@@ -53,6 +53,9 @@ def test_fbfm40_lookup(griddle_runner, source_grid):
         "fuel_load.1hr",
         "fuel_load.10hr",
         "fuel_depth",
+        "fuel_load.dead_herb",
+        "fuel_load.fine_dead",
+        "savr.fine_dead",
     ]:
         assert var in ds.data_vars, f"Missing variable: {var}"
         assert ds[var].dims == ("y", "x")
@@ -61,6 +64,16 @@ def test_fbfm40_lookup(griddle_runner, source_grid):
         )
 
     assert (ds["fuel_depth"].values >= 0).all()
+
+    # Blue Mountain has grass models, so some herbaceous load cures.
+    assert (ds["fuel_load.dead_herb"].values > 0).any()
+
+    # Fine dead fuel is 1-hr plus cured herbaceous fuel.
+    np.testing.assert_allclose(
+        ds["fuel_load.fine_dead"].values,
+        ds["fuel_load.1hr"].values + ds["fuel_load.dead_herb"].values,
+        rtol=1e-6,
+    )
 
 
 def test_fccs_lookup_table_schema(griddle_runner):

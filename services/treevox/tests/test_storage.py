@@ -58,6 +58,7 @@ class TestBandSpecs:
             "tree_id",
             "irradiance.canopy.relative",
             "irradiance.surface.relative",
+            "_bulk_density_total",
         }
         assert set(storage.BAND_SPECS) == expected
 

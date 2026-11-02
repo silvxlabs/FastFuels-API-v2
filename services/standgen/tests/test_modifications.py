@@ -8,6 +8,7 @@ unit conversion, clamping, and the full apply_modifications pipeline.
 import json
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pytest
 from shapely.geometry import box, mapping
@@ -40,6 +41,7 @@ def sample_df():
             "dbh": [2.0, 10.0, 5.0, 1.0, 30.0],  # cm
             "height": [1.5, 15.0, 8.0, 0.5, 25.0],  # m
             "crown_ratio": [0.3, 0.6, 0.4, 0.2, 0.5],
+            "crown_base_height": [1.05, 6.0, 4.8, 0.4, 12.5],  # m
         }
     )
 
@@ -60,9 +62,9 @@ class TestConvertValue:
         result = convert_value("dbh", 100.0, "mm")
         assert pytest.approx(result, rel=1e-3) == 10.0
 
-    def test_dimensionless_passthrough(self):
-        result = convert_value("crown_ratio", 0.5, None)
-        assert result == 0.5
+    def test_crown_base_height_feet_to_meters(self):
+        result = convert_value("crown_base_height", 10.0, "ft")
+        assert pytest.approx(result, rel=1e-3) == 3.048
 
     def test_unknown_attribute_passthrough(self):
         result = convert_value("fia_species_code", 93, None)
@@ -129,8 +131,8 @@ class TestEvaluateExpression:
         assert mask.tolist() == [True, False, False, True, False]
 
     def test_math_expression(self, sample_df):
-        mask = evaluate_expression(sample_df, "height * crown_ratio < 1.0")
-        # 1.5*0.3=0.45, 15*0.6=9, 8*0.4=3.2, 0.5*0.2=0.1, 25*0.5=12.5
+        mask = evaluate_expression(sample_df, "height - crown_base_height < 1.0")
+        # Crown lengths: 0.45, 9, 3.2, 0.1, 12.5
         assert mask.tolist() == [True, False, False, True, False]
 
 
@@ -201,12 +203,87 @@ class TestApplyAction:
         result = apply_action(sample_df.copy(), action, mask)
         assert result.loc[0, "dbh"] == pytest.approx(99.0)
 
-    def test_clamp_crown_ratio(self, sample_df):
-        action = {"attribute": "crown_ratio", "modifier": "add", "value": 2.0}
+    def test_replace_crown_base_height_in_feet(self, sample_df):
+        action = {
+            "attribute": "crown_base_height",
+            "modifier": "replace",
+            "value": 10.0,
+            "unit": "ft",
+        }
+        mask = pd.Series([False, True, False, False, False])
+        result = apply_action(sample_df.copy(), action, mask)
+        assert result.loc[1, "crown_base_height"] == pytest.approx(3.048, rel=1e-3)
+        assert result.loc[0, "crown_base_height"] == pytest.approx(1.05)
+
+    def test_add_crown_base_height_in_feet(self, sample_df):
+        action = {
+            "attribute": "crown_base_height",
+            "modifier": "add",
+            "value": 1.0,
+            "unit": "ft",
+        }
+        mask = pd.Series([False, True, False, False, False])
+        result = apply_action(sample_df.copy(), action, mask)
+        assert result.loc[1, "crown_base_height"] == pytest.approx(
+            6.0 + 0.3048, rel=1e-6
+        )
+
+    def test_clamp_crown_base_height_to_tree_height(self, sample_df):
+        action = {"attribute": "crown_base_height", "modifier": "add", "value": 5.0}
+        mask = pd.Series([True, True, True, False, False])
+        result = apply_action(sample_df.copy(), action, mask)
+        # 1.05+5 > 1.5 -> 1.5; 6+5=11 <= 15; 4.8+5 > 8 -> 8
+        assert result["crown_base_height"].tolist() == pytest.approx(
+            [1.5, 11.0, 8.0, 0.4, 12.5]
+        )
+
+    def test_clamp_crown_base_height_non_negative(self, sample_df):
+        action = {
+            "attribute": "crown_base_height",
+            "modifier": "subtract",
+            "value": 5.0,
+        }
+        mask = pd.Series([True, True, False, False, False])
+        result = apply_action(sample_df.copy(), action, mask)
+        assert result["crown_base_height"].tolist() == pytest.approx(
+            [0.0, 1.0, 4.8, 0.4, 12.5]
+        )
+
+    def test_crown_base_height_nan_height_unbounded_above(self):
+        df = pd.DataFrame(
+            {"height": [np.nan, 10.0], "crown_base_height": [3.0, np.nan]}
+        )
+        action = {"attribute": "crown_base_height", "modifier": "add", "value": 20.0}
+        result = apply_action(df, action, pd.Series([True, True]))
+        assert result.loc[0, "crown_base_height"] == pytest.approx(23.0)
+        assert np.isnan(result.loc[1, "crown_base_height"])
+
+    def test_height_decrease_cuts_crown_base(self, sample_df):
+        action = {"attribute": "height", "modifier": "multiply", "value": 0.5}
+        mask = pd.Series([True, True, True, True, False])
+        result = apply_action(sample_df.copy(), action, mask)
+        # New heights 0.75, 7.5, 4.0, 0.25; crown bases above them are cut.
+        assert result["crown_base_height"].tolist() == pytest.approx(
+            [0.75, 6.0, 4.0, 0.25, 12.5]
+        )
+
+    def test_height_increase_keeps_crown_base(self, sample_df):
+        action = {"attribute": "height", "modifier": "add", "value": 10.0}
         mask = pd.Series([True, True, True, True, True])
         result = apply_action(sample_df.copy(), action, mask)
-        # All values should be clamped to 1.0
-        assert (result["crown_ratio"] <= 1.0).all()
+        assert result["crown_base_height"].tolist() == pytest.approx(
+            sample_df["crown_base_height"].tolist()
+        )
+
+    def test_height_action_without_crown_base_column(self, sample_df):
+        df = sample_df.drop(columns=["crown_base_height"])
+        action = {"attribute": "height", "modifier": "multiply", "value": 0.5}
+        mask = pd.Series([True, True, True, True, True])
+        result = apply_action(df, action, mask)
+        assert "crown_base_height" not in result.columns
+        assert result["height"].tolist() == pytest.approx(
+            (sample_df["height"] * 0.5).tolist()
+        )
 
     def test_clamp_dbh_non_negative(self, sample_df):
         action = {"attribute": "dbh", "modifier": "subtract", "value": 100.0}
@@ -244,7 +321,9 @@ class TestApplySingleModification:
         assert result.loc[0, "height"] == pytest.approx(1.5)
 
     def test_empty_df(self):
-        df = pd.DataFrame(columns=["dbh", "height", "crown_ratio", "fia_species_code"])
+        df = pd.DataFrame(
+            columns=["dbh", "height", "crown_base_height", "fia_species_code"]
+        )
         mod = {
             "conditions": [{"attribute": "dbh", "operator": "lt", "value": 5.0}],
             "actions": [{"modifier": "remove"}],
@@ -309,12 +388,12 @@ class TestApplyModifications:
     def test_expression_remove(self, sample_df):
         mods = [
             {
-                "conditions": [{"expression": "height * crown_ratio < 1.0"}],
+                "conditions": [{"expression": "height - crown_base_height < 1.0"}],
                 "actions": [{"modifier": "remove"}],
             }
         ]
         result = apply_modifications(sample_df.copy(), mods)
-        # Removes rows where h*cr < 1: 0.45 and 0.1
+        # Removes rows with crown length < 1 m: 0.45 and 0.1
         assert len(result) == 3
 
     def test_unit_conversion_in_condition(self, sample_df):

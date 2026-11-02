@@ -7,6 +7,7 @@ Shared validation and computation utilities for grid endpoints.
 from math import ceil, hypot, isclose
 
 from fastapi import HTTPException, status
+from pydantic import BaseModel
 
 from api.db.documents import firestore_client, get_document_async
 from api.resources.exports.schema import GridExportFormat
@@ -20,8 +21,17 @@ from api.resources.grids.modification_models import (
     GridFeatureSpatialCondition,
     GridModification,
 )
+from api.resources.grids.providers.landfire import (
+    LANDFIRE_DISTURBANCE_FDIST_VERSION,
+    LANDFIRE_DISTURBANCE_LDIST_VERSION,
+    LANDFIRE_DISTURBANCE_RELEASES,
+    LandfireDisturbancePlan,
+    LandfireDisturbanceRequest,
+)
 from api.resources.grids.schema import BandType, GridDataChunkMetadata
+from api.resources.input_requirements import requirements_for
 from api.resources.modifications import stringify_modification_coordinates
+from lib.band_quantities import band_quantity
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
@@ -89,6 +99,59 @@ def validate_lfps_coverage(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Can't fetch {product!r} version {version!r}{season_clause}: {reason}; {info}.",
         )
+
+
+def resolve_disturbance_plan(
+    product: str,
+    version: str,
+    domain: dict,
+    disturbance: LandfireDisturbanceRequest | None,
+) -> LandfireDisturbancePlan | None:
+    """Resolve a disturbance request into the plan stored on the grid.
+
+    Disturbance adjustment only applies to a domain LANDFIRE's newest
+    release doesn't fully cover yet, starting from `product`'s baseline
+    version.
+
+    This is a plain sync function -- `covers_annual` makes a real HTTP call
+    to LFPS, so async callers should wrap it with `asyncio.to_thread(...)`.
+
+    Raises:
+        HTTPException(422): `version` isn't the baseline for `product`, or
+            the newest release already fully covers the domain.
+    """
+    if not isinstance(disturbance, LandfireDisturbanceRequest):
+        return None
+
+    version = str(version)
+    releases = LANDFIRE_DISTURBANCE_RELEASES[product]
+    baseline, newest = releases["baseline"], releases["newest"]
+
+    if version != baseline:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Disturbance adjustment for {product!r} starts from version "
+                f"{baseline!r}, not {version!r}; omit `version` or set it to "
+                f"{baseline!r}."
+            ),
+        )
+
+    geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
+    if covers_annual(product, newest, geometry) is CoverageStatus.FULL:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Disturbance adjustment isn't needed: {product!r} version "
+                f"{newest!r} already fully covers this domain; create the grid "
+                f"with that version instead."
+            ),
+        )
+
+    return LandfireDisturbancePlan(
+        ldist_version=LANDFIRE_DISTURBANCE_LDIST_VERSION,
+        fdist_version=LANDFIRE_DISTURBANCE_FDIST_VERSION,
+    )
 
 
 def resolve_modification_fuel_model_labels(
@@ -254,7 +317,7 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Grid {grid_id} has no georeference. The grid must be fully "
-                f"processed before it can be used in a combined export."
+                f"processed before it can be used as an input."
             ),
         )
     rank = len(georeference.get("shape", []))
@@ -262,6 +325,55 @@ def validate_grid_dimensionality(grid_data: dict, grid_id: str, expected: int) -
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(f"Grid {grid_id} is {rank}D, expected {expected}D for this role."),
+        )
+
+
+def validate_grid_input(body: BaseModel, field: str, grid_data: dict) -> None:
+    """Check an input grid against the request's requirements for ``field``.
+
+    Raises:
+        HTTPException(422): If the grid comes from the wrong source, has the
+            wrong rank, or lacks a required band.
+    """
+    grid_id = getattr(body, field)
+    source = (grid_data.get("source") or {}).get("name")
+    for req in requirements_for(body, field):
+        if "source" in req and source != req["source"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"`{field}` must name a {req['source']!r} grid; grid {grid_id} "
+                    f"comes from {source!r}."
+                ),
+            )
+        if "dims" in req:
+            validate_grid_dimensionality(grid_data, grid_id, req["dims"])
+        if "bands" in req:
+            validate_grid_has_band(grid_data, grid_id, req["bands"])
+
+
+def validate_band_of(body: BaseModel, field: str, grid_data: dict) -> None:
+    """Check that band ``field`` is on its grid and has the required quantity.
+
+    Raises:
+        HTTPException(422): If the band is missing or holds another quantity.
+    """
+    (req,) = requirements_for(body, field)
+    band_key = getattr(body, field)
+    grid_id = getattr(body, req["of"])
+    validate_grid_has_band(grid_data, grid_id, band_key)
+    if band_quantity(band_key) != req["quantity"]:
+        matching = [
+            b["key"]
+            for b in grid_data.get("bands", [])
+            if band_quantity(b["key"]) == req["quantity"]
+        ]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"`{field}` must name a {req['quantity']!r} band; {band_key!r} "
+                f"is not. {req['quantity']!r} bands on grid {grid_id}: {matching}."
+            ),
         )
 
 
@@ -370,10 +482,12 @@ async def validate_target_grid_alignment(
     alignment: GridAlignmentSpecification | GridLatticeSpecification,
     owner_id: str,
     domain_id: str,
+    domain_crs: str | None = None,
 ) -> None:
     """When ``alignment.target == "grid"``, verify the named target grid
     exists, is owned by ``owner_id``, lives in ``domain_id``, is completed,
-    and has a georeference. No-op for other alignment targets.
+    and has a georeference. No-op for other alignment targets. When
+    ``domain_crs`` is given, the target grid must also be in that CRS.
 
     Owner and domain mismatches return 404 (not 403) to avoid leaking
     document existence. Status mismatches return 422.
@@ -381,8 +495,8 @@ async def validate_target_grid_alignment(
     Raises:
         HTTPException(404): Target grid missing, owned by another user, or
             in another domain.
-        HTTPException(422): Target grid is not completed or has no
-            georeference.
+        HTTPException(422): Target grid is not completed, has no
+            georeference, or is not in ``domain_crs``.
     """
     if not isinstance(alignment, GridAlignmentGridTarget | GridLatticeGridTarget):
         return
@@ -393,7 +507,19 @@ async def validate_target_grid_alignment(
         domain_id=domain_id,
         document_status="completed",
     )
-    validate_grid_has_georeference(snapshot.to_dict(), alignment.grid_id)
+    grid = snapshot.to_dict()
+    validate_grid_has_georeference(grid, alignment.grid_id)
+    grid_crs = grid["georeference"].get("crs")
+    if domain_crs is not None and not crs_equal(grid_crs, domain_crs):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"The alignment target grid {alignment.grid_id} is in "
+                f"{grid_crs}, but this domain's point clouds are stored in "
+                f"{domain_crs}. Align to a grid in this domain's CRS, or use "
+                f"alignment.target 'domain'."
+            ),
+        )
 
 
 async def validate_feature_modifications(

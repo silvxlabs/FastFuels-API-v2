@@ -76,13 +76,28 @@ class TestFbfm40LookupSource:
         assert source.source_grid_checksum == "sum123"
         assert source.model_dump()["source_grid_checksum"] == "sum123"
 
+    def test_herbaceous_curing_defaults_to_none(self):
+        """Sources stored before curing existed read back as no curing."""
+        source = Fbfm40LookupSource(source_grid_id="grid-123")
+        assert source.herbaceous_curing is None
+
+    def test_herbaceous_curing_round_trips(self):
+        source = Fbfm40LookupSource(source_grid_id="grid-123", herbaceous_curing=0.5)
+        assert source.model_dump()["herbaceous_curing"] == 0.5
+
 
 class TestFbfm40LookupBand:
     """Tests for Fbfm40LookupBand enum."""
 
-    def test_has_11_members(self):
-        """There are exactly 11 predefined bands."""
-        assert len(Fbfm40LookupBand) == 11
+    def test_has_15_members(self):
+        """There are exactly 15 predefined bands."""
+        assert len(Fbfm40LookupBand) == 15
+
+    def test_cured_bands(self):
+        assert Fbfm40LookupBand.fuel_load_dead_herb == "fuel_load.dead_herb"
+        assert Fbfm40LookupBand.fuel_load_fine_dead == "fuel_load.fine_dead"
+        assert Fbfm40LookupBand.savr_dead_herb == "savr.dead_herb"
+        assert Fbfm40LookupBand.savr_fine_dead == "savr.fine_dead"
 
     def test_fuel_load_1hr(self):
         assert Fbfm40LookupBand.fuel_load_1hr == "fuel_load.1hr"
@@ -139,6 +154,25 @@ class TestCreateFbfm40LookupRequest:
         assert request.description == ""
         assert request.tags == []
         assert request.modifications == []
+        assert request.herbaceous_curing == 0.67
+
+    @pytest.mark.parametrize("curing", [0.0, 0.5, 1.0])
+    def test_herbaceous_curing_accepts_fractions(self, curing):
+        request = CreateFbfm40LookupRequest(
+            source_grid_id="grid-123",
+            bands=["fuel_load.fine_dead"],
+            herbaceous_curing=curing,
+        )
+        assert request.herbaceous_curing == curing
+
+    @pytest.mark.parametrize("curing", [-0.1, 1.1, 67])
+    def test_herbaceous_curing_outside_0_1_rejected(self, curing):
+        with pytest.raises(ValidationError):
+            CreateFbfm40LookupRequest(
+                source_grid_id="grid-123",
+                bands=["fuel_load.fine_dead"],
+                herbaceous_curing=curing,
+            )
 
     def test_source_grid_id_is_required(self):
         """source_grid_id field is required."""
@@ -222,6 +256,8 @@ class TestFbfm40LookupBandMetadata:
             Fbfm40LookupBand.fuel_load_100hr,
             Fbfm40LookupBand.fuel_load_live_herb,
             Fbfm40LookupBand.fuel_load_live_woody,
+            Fbfm40LookupBand.fuel_load_dead_herb,
+            Fbfm40LookupBand.fuel_load_fine_dead,
         ]:
             meta = FBFM40_LOOKUP_BAND_METADATA[b]
             assert meta["type"] == BandType.continuous
@@ -235,6 +271,8 @@ class TestFbfm40LookupBandMetadata:
             Fbfm40LookupBand.savr_100hr,
             Fbfm40LookupBand.savr_live_herb,
             Fbfm40LookupBand.savr_live_woody,
+            Fbfm40LookupBand.savr_dead_herb,
+            Fbfm40LookupBand.savr_fine_dead,
         ]:
             meta = FBFM40_LOOKUP_BAND_METADATA[b]
             assert meta["type"] == BandType.continuous

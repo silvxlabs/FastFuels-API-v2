@@ -90,9 +90,9 @@ async def create_key(request: Request, body: CreateKeyRequest) -> CreateKeyRespo
         await _get_application_for_ownership(
             body.application_id, owner_id=request.state.id
         )
-        owner_id = body.application_id
+        owner_id = application_id = body.application_id
     else:
-        owner_id = request.state.id
+        owner_id, application_id = request.state.id, None
 
     raw_secret = secrets.token_hex(32)
     key_id = hash_api_key(raw_secret)
@@ -106,7 +106,7 @@ async def create_key(request: Request, body: CreateKeyRequest) -> CreateKeyRespo
         valid_days=body.valid_days,
         scopes=body.scopes,
         access=body.access,
-        application_id=body.application_id,
+        application_id=application_id,
     )
 
     # Calculate expiration
@@ -173,16 +173,17 @@ async def get_key_by_id(request: Request, key_id: str) -> Key:
     """Get an API key by ID with two-tier ownership check."""
     _, snapshot = await get_document_async(KEYS_COLLECTION, key_id)
     key_data = snapshot.to_dict()
+    access = key_data.get("access", Access.PERSONAL)
 
     # Two-tier ownership: personal keys check direct ownership,
     # application keys check that user owns the application
-    if key_data["access"] == Access.PERSONAL:
+    if access == Access.PERSONAL:
         if key_data["owner_id"] != request.state.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Key not found",
             )
-    elif key_data["access"] == Access.APPLICATION:
+    elif access == Access.APPLICATION:
         await _get_application_for_ownership(
             key_data["owner_id"], owner_id=request.state.id
         )
@@ -204,14 +205,15 @@ async def delete_key(request: Request, key_id: str) -> None:
     """Delete an API key with ownership check. Clears the auth cache."""
     _, snapshot = await get_document_async(KEYS_COLLECTION, key_id)
     key_data = snapshot.to_dict()
+    access = key_data.get("access", Access.PERSONAL)
 
-    if key_data["access"] == Access.PERSONAL:
+    if access == Access.PERSONAL:
         if key_data["owner_id"] != request.state.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Key not found",
             )
-    elif key_data["access"] == Access.APPLICATION:
+    elif access == Access.APPLICATION:
         await _get_application_for_ownership(
             key_data["owner_id"], owner_id=request.state.id
         )

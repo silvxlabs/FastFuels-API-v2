@@ -19,6 +19,25 @@ from api.resources.grids.alignment import (
 )
 from lib.landfire import CoverageStatus, LandfireRelease
 
+# Disturbance adjustment brings a fuel model up to date where LANDFIRE's newest
+# release doesn't fully cover the domain yet. `baseline` is the version the
+# adjustment starts from; `newest` is the release whose full coverage makes the
+# adjustment redundant.
+#
+# These are the 2025 values. When LANDFIRE publishes 2026, FBFM13 and FBFM40
+# only need their years bumped. FCCS needs a logic change: there is no 2026
+# FCCS release, so its baseline becomes FCCS 2025 and the plan depends on
+# whether 2025 is available (FDist 2026 in "fdist" mode, otherwise FDist 2025
+# plus LDist 2026). That needs a second plan shape, since "fdist" mode has no
+# LDist.
+LANDFIRE_DISTURBANCE_RELEASES = {
+    "fbfm13": {"baseline": "2024", "newest": "2025"},
+    "fbfm40": {"baseline": "2024", "newest": "2025"},
+    "fccs": {"baseline": "2023", "newest": "2025"},
+}
+LANDFIRE_DISTURBANCE_LDIST_VERSION = "2025"
+LANDFIRE_DISTURBANCE_FDIST_VERSION = "2024"
+
 
 class BoundaryScatter(BaseModel):
     """Controls stochastic scattering of category boundaries.
@@ -43,6 +62,36 @@ class BoundaryScatter(BaseModel):
     seed: int = Field(
         42,
         description="Random seed for reproducible scattering.",
+    )
+
+
+class LandfireDisturbanceRequest(BaseModel):
+    """Request for a disturbance-adjusted LANDFIRE fuel model grid.
+
+    The API chooses the baseline version and disturbance layers, and
+    stores that choice on the grid as a `LandfireDisturbancePlan`.
+    """
+
+    source: Literal["landfire"] = Field(
+        description="Where the disturbance comes from. Only 'landfire' is supported."
+    )
+
+
+class LandfireDisturbancePlan(BaseModel):
+    """The disturbance adjustment the API resolved, stored on the grid's source."""
+
+    source: Literal["landfire"] = Field(
+        default="landfire", description="Where the disturbance comes from."
+    )
+    mode: Literal["ldist_and_last_year_fdist"] = Field(
+        default="ldist_and_last_year_fdist",
+        description="Applies the latest annual disturbance on top of last year's FDist.",
+    )
+    ldist_version: str = Field(
+        description="LANDFIRE annual disturbance (LDist) release applied."
+    )
+    fdist_version: str = Field(
+        description="LANDFIRE FDist release applied beneath the LDist."
     )
 
 

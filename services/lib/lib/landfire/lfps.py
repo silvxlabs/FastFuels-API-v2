@@ -5,11 +5,13 @@ LFPS is an ArcGIS GeoProcessing Server: submit a job, poll until it finishes,
 then download the output from a URL the job carries once done.
 
 Only the request shape our own pipeline needs is exposed. `Resample_Resolution`,
-`Edit_Rule`, `Edit_Mask`, `Include_Layer_List_XML_File`, `Output_Projection`,
-and the Map Zone AOI form are deliberately not parameters here: resampling,
-reprojection, and non-burnable reclassification already happen in our own
-post-fetch pipeline, so an LFPS fetch goes through the same path as a
-stored-COG raster rather than being edited twice.
+Edit_Rule`, `Edit_Mask`, `Include_Layer_List_XML_File`, and the Map Zone AOI
+form are deliberately not parameters here: resampling and non-burnable
+reclassification already happen in our own post-fetch pipeline, so an LFPS
+fetch goes through the same path as a stored-COG raster rather than being
+edited twice. `Output_Projection` is fixed to EPSG:5070, LANDFIRE's native
+grid. Left unset, LFPS resamples into a localized Albers centered on the AOI,
++which shifts values by a fraction of a pixel against the staged COGs.
 
 All functions are synchronous. The API wraps blocking I/O calls with
 asyncio.to_thread() to avoid blocking the event loop.
@@ -24,6 +26,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import cache
 
 import geopandas as gpd
 import requests
@@ -40,6 +43,8 @@ from lib.landfire.config import (
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://lfps.usgs.gov/api"
+
+_OUTPUT_PROJECTION = 5070
 
 # LFPS's own timeout guidance puts typical jobs at 12s-7min and a hard fail at
 # 2 hours; this is just the HTTP request timeout for each individual call.
@@ -180,6 +185,7 @@ def submit_job(layers: list[str], aoi: str) -> LfpsJob:
         "Email": LANDFIRE_USER_EMAIL,
         "Layer_List": ";".join(layers),
         "Area_of_Interest": aoi,
+        "Output_Projection": _OUTPUT_PROJECTION,
     }
     response = requests.get(
         f"{BASE_URL}/job/submit", params=params, timeout=_REQUEST_TIMEOUT
@@ -250,7 +256,7 @@ def _parse_job(data: dict) -> LfpsJob:
 # Checks whether a domain falls inside LANDFIRE's current coverage for the
 # requested product/version. CONUS-wide products skip the GeoArea check.
 #
-# Boundaries are loaded at import time in EPSG:5070. Callers must pass
+# Boundaries are loaded on first use (network I/O) in EPSG:5070. Callers must pass
 # `geometry` already reprojected to that CRS.
 
 _BOUNDARY_CRS_EPSG = 5070
@@ -267,13 +273,14 @@ def _load_boundaries(filename: str, key: str) -> dict[str, BaseGeometry]:
     return dict(zip(gdf[key], gdf.geometry))
 
 
-GEOAREA_BOUNDARIES: dict[str, BaseGeometry] = _load_boundaries(
-    "LF_GeoAreas.parquet", key="geoArea"
-)
+@cache
+def _geoarea_boundaries() -> dict[str, BaseGeometry]:
+    return _load_boundaries("LF_GeoAreas.parquet", key="geoArea")
 
-SEASONAL_BOUNDARIES: dict[str, BaseGeometry] = _load_boundaries(
-    "LF_SeasonalRegions.parquet", key="season"
-)
+
+@cache
+def _seasonal_boundaries() -> dict[str, BaseGeometry]:
+    return _load_boundaries("LF_SeasonalRegions.parquet", key="season")
 
 
 class CoverageStatus(StrEnum):
@@ -317,7 +324,7 @@ def covers_annual(product: str, version: str, geometry: BaseGeometry) -> Coverag
 
     remaining = geometry
     touched_covered = False
-    for code, boundary in GEOAREA_BOUNDARIES.items():
+    for code, boundary in _geoarea_boundaries().items():
         if not boundary.intersects(geometry):
             continue
         if code in covered_geoareas:
@@ -379,7 +386,7 @@ def covers_seasonal(
             `LfpsProduct.acronym` (e.g. "fbfm40" matches "FBFM40").
         version: LANDFIRE version year (e.g. "2025") -- matched against
             LFPS's "LF{version}" format.
-        season: A key in SEASONAL_BOUNDARIES (e.g. "SP").
+        season: A key in the seasonal boundaries (e.g. "SP").
         geometry: Domain geometry, already reprojected to EPSG:5070.
 
     Returns:
@@ -389,7 +396,7 @@ def covers_seasonal(
     if resolve_lf_product(product, version, season) is None:
         return CoverageStatus.NO_SUCH_PRODUCT
 
-    boundary = SEASONAL_BOUNDARIES[season]
+    boundary = _seasonal_boundaries()[season]
     if not boundary.intersects(geometry):
         return CoverageStatus.NONE
     remaining = geometry.difference(boundary)

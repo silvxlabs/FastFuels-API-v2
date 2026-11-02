@@ -50,6 +50,11 @@ def domain_id(domain_for_testing):
     return domain_for_testing["id"]
 
 
+def detected_from(grid_id: str) -> dict:
+    """The source of a `tree/chm` inventory detected from `grid_id`."""
+    return {"name": "chm", "source_chm_grid_id": grid_id}
+
+
 def inventory(domain_id, **kwargs) -> dict:
     data = make_inventory_data(
         domain_id=domain_id,
@@ -75,13 +80,15 @@ def chm_grid(domain_id, cell=1.0, bands=None, **kwargs) -> dict:
 
 
 @pytest.fixture(scope="module")
-def tree_inventory(seed, domain_id):
-    return seed(INVENTORIES_COLLECTION, inventory(domain_id))
+def chm(seed, domain_id):
+    return seed(GRIDS_COLLECTION, chm_grid(domain_id))
 
 
 @pytest.fixture(scope="module")
-def chm(seed, domain_id):
-    return seed(GRIDS_COLLECTION, chm_grid(domain_id))
+def tree_inventory(seed, domain_id, chm):
+    return seed(
+        INVENTORIES_COLLECTION, inventory(domain_id, source=detected_from(chm["id"]))
+    )
 
 
 class TestCreateChmCrownFeature:
@@ -236,10 +243,28 @@ class TestCreateChmCrownFeature:
         self, client, seed, domain_id, tree_inventory, cell
     ):
         doc = seed(GRIDS_COLLECTION, chm_grid(domain_id, cell=cell))
-        response = client.post(
-            self.route(domain_id), json=self.body(tree_inventory, doc)
+        trees = seed(
+            INVENTORIES_COLLECTION,
+            inventory(domain_id, source=detected_from(doc["id"])),
         )
+        response = client.post(self.route(domain_id), json=self.body(trees, doc))
         assert response.status_code == 201, response.json()
+
+    def test_trees_detected_from_another_chm_rejected(
+        self, client, seed, domain_id, chm
+    ):
+        doc = seed(
+            INVENTORIES_COLLECTION, inventory(domain_id, source=detected_from("0" * 32))
+        )
+        response = client.post(self.route(domain_id), json=self.body(doc, chm))
+        assert response.status_code == 422
+        assert "was not detected from" in response.json()["detail"]
+
+    def test_trees_not_from_a_chm_rejected(self, client, seed, domain_id, chm):
+        doc = seed(INVENTORIES_COLLECTION, inventory(domain_id))  # a PIM inventory
+        response = client.post(self.route(domain_id), json=self.body(doc, chm))
+        assert response.status_code == 422
+        assert "was not detected from" in response.json()["detail"]
 
     def test_missing_sources_return_404(self, client, domain_id, tree_inventory, chm):
         missing = "0" * 32

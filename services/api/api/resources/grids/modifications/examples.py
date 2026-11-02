@@ -135,6 +135,7 @@ EXAMPLE_ZERO_FUEL_IN_POLYGON = {
                             ]
                         ],
                     },
+                    "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
                     "buffer_m": 5,
                 }
             ],
@@ -178,6 +179,7 @@ EXAMPLE_REPLACE_GR1_WITH_GR2_IN_POLYGON = {
                             ]
                         ],
                     },
+                    "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
                 },
             ],
             "actions": [{"band": "fbfm", "modifier": "replace", "value": 102}],

@@ -295,7 +295,8 @@ class TestCreateResample:
         response = client.post(route, json=request_body)
 
         assert response.status_code == 422
-        assert "resolution" in response.json()["detail"].lower()
+        locs = [err["loc"] for err in response.json()["detail"]]
+        assert ["body", "alignment", "domain", "resolution"] in locs
 
     def test_missing_resolution_for_native_target_returns_422(
         self, client, domain_for_testing, complete_grid
@@ -310,7 +311,8 @@ class TestCreateResample:
         response = client.post(route, json=request_body)
 
         assert response.status_code == 422
-        assert "resolution" in response.json()["detail"].lower()
+        locs = [err["loc"] for err in response.json()["detail"]]
+        assert ["body", "alignment", "native", "resolution"] in locs
 
     def test_target_grid_alignment_validates_target_grid(
         self, client, domain_for_testing, complete_grid

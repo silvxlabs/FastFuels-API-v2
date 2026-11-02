@@ -432,7 +432,14 @@ async def create_point_cloud_chm(
             ),
         )
 
-    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
+    # Returns are read in the domain CRS and not reprojected, so a target
+    # lattice in another CRS would misplace every cell.
+    await validate_target_grid_alignment(
+        body.alignment,
+        owner_id,
+        domain_id,
+        domain_crs=domain["crs"]["properties"]["name"],
+    )
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
     # Against a grid, `resolution: null` already means something — match that

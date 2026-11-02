@@ -7,14 +7,15 @@ Converts categorical FCCS codes (from `/grids/fccs/landfire`) to continuous
 fuel parameters using the FOFEM FCCS fuelbed lookup table.
 """
 
-from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from api.resources.band_metadata import BandEnum, publish_band_defs
 from api.resources.grids.lookup.schema import LookupSource
 from api.resources.grids.modification_models import GridModification
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
+from api.resources.input_requirements import band, input_requirements
 
 
 class FccsLookupSource(LookupSource):
@@ -30,7 +31,7 @@ class FccsLookupSource(LookupSource):
     )
 
 
-class FccsLookupBand(StrEnum):
+class FccsLookupBand(BandEnum):
     """Bands available from the FOFEM FCCS fuelbed lookup table.
 
     A starting subset of the parameters FOFEM provides. Region/scenario
@@ -59,10 +60,16 @@ class CreateFccsLookupRequest(BaseModel):
     because derived grids carry the same domain reference as their source.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra=input_requirements(
+            band("source_band", of="source_grid_id", quantity="fccs"),
+        ),
+    )
+
     source_grid_id: str = Field(..., description="Grid containing FCCS codes")
     source_band: str = Field(
         default="fccs",
-        description="Band in source grid containing FCCS codes",
+        description="A `fccs` band of the source grid holding the FCCS codes.",
     )
     bands: list[FccsLookupBand] = Field(..., min_length=1)
     name: str = Field("", max_length=255)
@@ -161,6 +168,9 @@ FCCS_LOOKUP_BAND_METADATA: dict[FccsLookupBand, dict] = {
         "unit": "kg/m**2",
     },
 }
+
+
+publish_band_defs(FccsLookupBand, FCCS_LOOKUP_BAND_METADATA)
 
 
 def get_fccs_lookup_band(band: FccsLookupBand, index: int) -> Band:

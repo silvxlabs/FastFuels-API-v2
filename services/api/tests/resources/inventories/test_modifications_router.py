@@ -271,7 +271,7 @@ class TestApplyModificationsInPlace:
         body = {
             "modifications": [
                 {
-                    "conditions": {"expression": "height * crown_ratio < 1.0"},
+                    "conditions": {"expression": "height - crown_base_height < 1.0"},
                     "actions": {"modifier": "remove"},
                 }
             ]

@@ -51,15 +51,15 @@ from lib.config import (
     GRIDS_COLLECTION,
     INVENTORIES_COLLECTION,
 )
-from lib.inventory_io import canopy_required_columns
+from lib.inventory_io import (
+    IMPUTABLE_COLUMNS,
+    allometry_request,
+    canopy_required_columns,
+)
 
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
-
-# Columns the allometry endpoint can impute from position + height; position
-# and height themselves cannot be imputed.
-ALLOMETRY_IMPUTABLE_COLUMNS = frozenset({"dbh", "crown_ratio", "fia_species_code"})
 
 
 def _required_columns(body: CreateInventoryCanopyRequest) -> set[str]:
@@ -120,7 +120,7 @@ async def create_inventory_canopy_grid(
 
     - **source_inventory_id**: (required) ID of a completed tree inventory in
       this domain. Required columns depend on the selected methods; the
-      defaults need `x`, `y`, `height`, `crown_ratio`, `dbh`, and
+      defaults need `x`, `y`, `height`, `crown_base_height`, `dbh`, and
       `fia_species_code`. Required columns must have no null values; a null
       `fia_status_code` counts as live.
     - **alignment**: (optional) Output lattice. Against the domain (the
@@ -203,16 +203,20 @@ async def create_inventory_canopy_grid(
         inventory_data, _required_columns(body), nullable
     )
     if missing_columns:
-        imputable_missing = sorted(missing_columns & ALLOMETRY_IMPUTABLE_COLUMNS)
-        source_only_missing = sorted(missing_columns - ALLOMETRY_IMPUTABLE_COLUMNS)
-        guidance = []
-        if imputable_missing:
-            guidance.append(
-                f"Impute {imputable_missing} with the allometry endpoint (POST "
-                f"/domains/{domain_id}/inventories/tree/allometry/gdam with "
-                f"source_tree_inventory_id='{body.source_inventory_id}'), then "
-                f"derive canopy metrics from the resulting inventory."
-            )
+        # Columns the source carries with no nulls: the crown base model's
+        # inputs must be imputed with it when the source lacks them.
+        source_keys = {
+            c["key"] if isinstance(c, dict) else c
+            for c in inventory_data.get("columns", [])
+        }
+        complete = source_keys - incomplete_inventory_columns(
+            inventory_data, source_keys
+        )
+        request = allometry_request(
+            missing_columns, complete, domain_id, body.source_inventory_id
+        )
+        source_only_missing = sorted(missing_columns - IMPUTABLE_COLUMNS)
+        guidance = [request] if request else []
         if source_only_missing:
             guidance.append(
                 f"Column(s) {source_only_missing} cannot be imputed and must be "

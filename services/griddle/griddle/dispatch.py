@@ -128,7 +128,9 @@ def dispatch_handler(
         case "uniform":
             return handle_uniform(domain_gdf, source, progress_callback)
         case "canopy":
-            return handle_canopy(domain_gdf, source, progress_callback)
+            return handle_canopy(
+                domain_gdf, source, progress_callback, domain_id=grid["domain_id"]
+            )
         case "3dep":
             return handle_3dep(domain_gdf, source, progress_callback)
         case "compose":
@@ -153,6 +155,26 @@ def handle_landfire(
     extent_buffer_cells = source.get("extent_buffer_cells", 0)
     alignment = source.get("alignment") or {"target": "domain"}
     target_grid_doc = _load_target_grid_doc(alignment)
+
+    # A disturbance plan stored on a fuel model grid's source means the grid is
+    # built from the plan; the API decides it, griddle only executes it.
+    disturbance = source.get("disturbance")
+    if disturbance and product in ("fbfm13", "fbfm40", "fccs"):
+        version = source.get("version", LANDFIRE_VERSIONS[product]["default"])
+        progress(f"Fetching LANDFIRE {product} v{version} with disturbance...", 10)
+        return landfire.fetch_disturbed_fuel(
+            domain_gdf,
+            product,
+            version,
+            disturbance,
+            progress,
+            remove_non_burnable=source.get("remove_non_burnable"),
+            remove_bare_ground=source.get("remove_bare_ground", False),
+            boundary_scatter=source.get("boundary_scatter"),
+            extent_buffer_cells=extent_buffer_cells,
+            alignment=alignment,
+            target_grid_doc=target_grid_doc,
+        )
 
     match product:
         case "annual_disturbance":
@@ -304,12 +326,13 @@ def handle_layerset(
         target_grid_doc=target_grid_doc,
     )
 
-    # Persist the real bands list — see docstring above.
-    bands = layerset.build_layerset_bands(ds)
+    # Store one variable per band, named by its key, and persist the real
+    # bands list — see docstring above.
+    flat, bands = layerset.flatten_layerset(ds)
     update_grid_metadata(grid["id"], {"bands": bands})
     grid["bands"] = bands  # keep the in-memory dict consistent for the caller
 
-    return ds
+    return flat
 
 
 def handle_lookup(
@@ -326,18 +349,25 @@ def handle_lookup(
         case "fbfm13":
             return lookup.fbfm13_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
             )
         case "fbfm40":
+            # Grids created before #675 carry no curing; their herbaceous load
+            # stayed live.
+            curing = source.get("herbaceous_curing")
             return lookup.fbfm40_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
+                herbaceous_curing=0.0 if curing is None else curing,
             )
         case "fccs":
             return lookup.fccs_lookup(
                 source_grid_id=source["source_grid_id"],
+                source_band=source["source_band"],
                 bands=grid["bands"],
                 progress=progress,
             )
@@ -457,6 +487,7 @@ def handle_canopy(
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
+    domain_id: str | None = None,
 ) -> xr.Dataset:
     """Handle canopy source grids."""
     product = source["product"]
@@ -543,6 +574,7 @@ def handle_canopy(
                 target_grid_doc=target_grid_doc,
                 progress=progress,
                 extent_buffer_cells=extent_buffer_cells,
+                domain_id=domain_id,
             )
         case _:
             raise ProcessingError(

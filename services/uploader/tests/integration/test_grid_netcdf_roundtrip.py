@@ -151,7 +151,7 @@ def _export_netcdf_to_uploads(
     HDF5 / numpy wheel combinations (CI hits this; macOS arm64 does not).
     The roundtrip-test datasets are tiny (kilobytes), so eager load is
     cheap; the real production exporter on Cloud Run has the same
-    vulnerability for int-dtype grids and tracks #__ separately.
+    vulnerability for int-dtype grids and tracks #647 separately.
     """
     ds = xr.open_zarr(src_zarr_path, decode_coords="all").load()
     for k in _INTERNAL_ATTRS_TO_STRIP:

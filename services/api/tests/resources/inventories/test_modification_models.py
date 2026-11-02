@@ -18,6 +18,11 @@ from api.resources.inventories.modification_models import (
     RemoveAction,
 )
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
+from api.resources.inventories.tree.chm.schema import CreateChmInventoryRequest
+from api.resources.inventories.tree.pim.fusion.chm.schema import (
+    CreatePimChmFusionInventoryRequest,
+)
+from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
 from pydantic import ValidationError
 
 
@@ -25,7 +30,8 @@ class TestInventoryAttribute:
     def test_all_values(self):
         assert InventoryAttribute.dbh == "dbh"
         assert InventoryAttribute.height == "height"
-        assert InventoryAttribute.crown_ratio == "crown_ratio"
+        assert InventoryAttribute.crown_base_height == "crown_base_height"
+        assert "crown_ratio" not in set(InventoryAttribute)
         assert InventoryAttribute.fia_species_code == "fia_species_code"
 
     def test_attribute_units_keys_match(self):
@@ -98,18 +104,6 @@ class TestInventoryModificationCondition:
         )
         assert cond.unit == "ft"
 
-    def test_crown_ratio_dimensionless(self):
-        cond = InventoryModificationCondition(
-            attribute="crown_ratio", operator="gt", value=0.5
-        )
-        assert cond.unit is None
-
-    def test_crown_ratio_rejects_length_unit(self):
-        with pytest.raises(ValidationError, match="not dimensionless"):
-            InventoryModificationCondition(
-                attribute="crown_ratio", operator="gt", value=0.5, unit="cm"
-            )
-
     def test_list_value_with_gt_rejected(self):
         with pytest.raises(ValidationError, match="List values"):
             InventoryModificationCondition(
@@ -141,7 +135,13 @@ class TestInventoryExpressionCondition:
         assert cond.expression == "dbh < 5 and height < 2"
 
     def test_expression_with_math(self):
-        InventoryExpressionCondition(expression="height * crown_ratio < 1.0")
+        InventoryExpressionCondition(expression="height - crown_base_height < 1.0")
+
+    def test_crown_ratio_rejected_listing_crown_base_height(self):
+        with pytest.raises(ValidationError) as exc:
+            InventoryExpressionCondition(expression="height * crown_ratio < 1.0")
+        assert "disallowed name 'crown_ratio'" in str(exc.value)
+        assert "crown_base_height" in str(exc.value)
 
     def test_expression_with_division(self):
         InventoryExpressionCondition(expression="height / dbh > 100")
@@ -621,3 +621,90 @@ class TestTreeIdAttribute:
             actions={"modifier": "remove"},
         )
         assert isinstance(mod.actions[0], RemoveAction)
+
+
+class TestCrownBaseHeight:
+    def test_condition_with_length_unit(self):
+        cond = InventoryModificationCondition(
+            attribute="crown_base_height", operator="lt", value=6, unit="ft"
+        )
+        assert cond.attribute == InventoryAttribute.crown_base_height
+        assert ATTRIBUTE_UNITS["crown_base_height"] == "m"
+
+    def test_action(self):
+        action = InventoryModificationAction(
+            attribute="crown_base_height", modifier="add", value=1.5
+        )
+        assert action.attribute == InventoryAttribute.crown_base_height
+
+    def test_dimensionless_unit_rejected(self):
+        with pytest.raises(ValidationError, match="not compatible"):
+            InventoryModificationCondition(
+                attribute="crown_base_height",
+                operator="lt",
+                value=0.5,
+                unit="dimensionless",
+            )
+
+    def test_request_accepts_crown_base_height(self):
+        req = ApplyModificationsRequest(
+            modifications=[
+                {
+                    "conditions": [
+                        {
+                            "attribute": "crown_base_height",
+                            "operator": "lt",
+                            "value": 2,
+                        },
+                        {"expression": "height - crown_base_height < 1.0"},
+                    ],
+                    "actions": {
+                        "attribute": "crown_base_height",
+                        "modifier": "replace",
+                        "value": 2,
+                    },
+                }
+            ]
+        )
+        assert len(req.modifications) == 1
+
+
+CROWN_RATIO_MODIFICATIONS = {
+    "attribute_condition": {
+        "conditions": {"attribute": "crown_ratio", "operator": "lt", "value": 0.2},
+        "actions": {"modifier": "remove"},
+    },
+    "action": {
+        "actions": {"attribute": "crown_ratio", "modifier": "multiply", "value": 0.9},
+    },
+    "expression": {
+        "conditions": {"expression": "height * crown_ratio < 1.0"},
+        "actions": {"modifier": "remove"},
+    },
+}
+
+REQUEST_BUILDERS = {
+    "apply": lambda mods: ApplyModificationsRequest(modifications=mods),
+    "pim": lambda mods: CreatePimInventoryRequest(
+        source_pim_grid_id="pim123", modifications=mods
+    ),
+    "chm": lambda mods: CreateChmInventoryRequest(
+        source_chm_grid_id="chm123", modifications=mods
+    ),
+    "pim_chm_fusion": lambda mods: CreatePimChmFusionInventoryRequest(
+        source_pim_grid_id="pim123", source_chm_grid_id="chm123", modifications=mods
+    ),
+}
+
+
+class TestCrownRatioNotAnAttribute:
+    @pytest.mark.parametrize("request_name", REQUEST_BUILDERS)
+    @pytest.mark.parametrize("case", CROWN_RATIO_MODIFICATIONS)
+    def test_requests_reject_crown_ratio(self, request_name, case):
+        """The error names crown_ratio's input and lists crown_base_height."""
+        mods = [CROWN_RATIO_MODIFICATIONS[case]]
+        with pytest.raises(ValidationError) as exc:
+            REQUEST_BUILDERS[request_name](mods)
+        message = str(exc.value)
+        assert "crown_ratio" in message
+        assert "crown_base_height" in message

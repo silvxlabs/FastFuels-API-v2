@@ -23,7 +23,7 @@ from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispat
 from api.resources.crown_segmentation import MAX_CROWN_SEGMENTATION_RESOLUTION_M
 from api.resources.grids.utils import (
     validate_band_unit,
-    validate_grid_has_band,
+    validate_grid_input,
     validate_grid_resolution,
 )
 from api.resources.inventories.schema import (
@@ -123,7 +123,7 @@ async def create_chm_inventory(
     # meter height threshold and sizes detection windows against the metric-CRS
     # resolution without ever converting units, so a non-meter CHM would run but
     # produce silently-wrong tree heights and windows.
-    validate_grid_has_band(source_grid_data, body.source_chm_grid_id, "chm")
+    validate_grid_input(body, "source_chm_grid_id", source_grid_data)
     validate_band_unit(source_grid_data, body.source_chm_grid_id, "chm", "m")
 
     columns = list(CHM_INVENTORY_COLUMNS)

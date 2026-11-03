@@ -100,11 +100,11 @@ class TestCreateApplication:
 
         try:
             # Use a separate client with the application key
-            from tests.conftest import CI_BYPASS, TEST_URL
+            from tests.conftest import TEST_URL
 
             with Client(
                 base_url=TEST_URL,
-                headers={"API-KEY": secret, **CI_BYPASS},
+                headers={"API-KEY": secret},
             ) as app_client:
                 response = app_client.post(self.route, json={"name": "Should Fail"})
                 assert response.status_code == 403

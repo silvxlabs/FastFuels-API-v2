@@ -21,7 +21,7 @@ from lib.config import (
     KEYS_COLLECTION,
     USERS_COLLECTION,
 )
-from tests.conftest import CI_BYPASS, TEST_URL
+from tests.conftest import TEST_URL
 from tests.fixtures import (
     make_application_data,
     make_domain_data,
@@ -107,9 +107,7 @@ def owner_env(firestore_client):
                 ).set(feat)
                 created.append((FEATURES_COLLECTION, feat["id"]))
 
-        owner_client = Client(
-            base_url=TEST_URL, headers={"API-KEY": secret, **CI_BYPASS}
-        )
+        owner_client = Client(base_url=TEST_URL, headers={"API-KEY": secret})
         clients.append(owner_client)
         return owner_client, owner_id, domain["id"]
 

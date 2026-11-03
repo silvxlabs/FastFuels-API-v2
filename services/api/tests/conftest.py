@@ -47,8 +47,6 @@ from tests.fixtures import (
 TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080").rstrip("/") + API_PREFIX
 TEST_API_KEY = os.environ.get("TEST_API_KEY", "")
 SKIP_DISPATCH = {SKIP_DISPATCH_HEADER: "1"}
-# Cloud Armor exempts requests carrying this shared secret from its per-IP throttle.
-CI_BYPASS = {"X-FastFuels-CI": v} if (v := os.getenv("FASTFUELS_CI_BYPASS")) else {}
 
 
 @pytest.fixture(scope="session")
@@ -70,7 +68,7 @@ def client(test_owner_id):
     Depends on ``test_owner_id`` so ``fixtures.DEFAULT_OWNER_ID`` is populated
     before any test seeds data through the shared client.
     """
-    headers = {"API-KEY": TEST_API_KEY, **SKIP_DISPATCH, **CI_BYPASS}
+    headers = {"API-KEY": TEST_API_KEY, **SKIP_DISPATCH}
     with Client(base_url=TEST_URL, headers=headers, timeout=30.0) as client:
         yield client
 
@@ -116,7 +114,7 @@ def isolated_owner(firestore_client):
         tracked.append((collection, doc["id"]))
         return doc
 
-    headers = {"API-KEY": secret, **SKIP_DISPATCH, **CI_BYPASS}
+    headers = {"API-KEY": secret, **SKIP_DISPATCH}
     with Client(base_url=TEST_URL, headers=headers, timeout=30.0) as c:
         yield c, owner_id, seed
 

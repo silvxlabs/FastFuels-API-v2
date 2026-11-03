@@ -79,7 +79,7 @@ REQUIRED_COLUMNS = ("x", "y", "height")
 # as trees detected on a canopy height model are.
 GDAM_MODEL = {
     "name": "flow_matching",
-    "version": "v3_conus.1",
+    "version": "v3_conus.2",
     "tree_observation": "overhead",
 }
 

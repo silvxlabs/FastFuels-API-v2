@@ -36,7 +36,7 @@ _UTM10N = "EPSG:32610"
 def recorded_gdam_response():
     """A real GDAM /predict/batch response captured by the planning probe.
 
-    The recording predates UNCRCD, which every v3_conus.1 row carries; it is
+    The recording predates UNCRCD, which every v3_conus.2 row carries; it is
     appended here as CR + 10 percent.
     """
     response = json.loads((DATA_DIR / "gdam_batch_response.json").read_text())
@@ -192,7 +192,7 @@ class TestBuildBatchPayload:
         payload = build_batch_payload(df, _UTM10N, seed=42)
         assert payload["model"] == {
             "name": "flow_matching",
-            "version": "v3_conus.1",
+            "version": "v3_conus.2",
             "tree_observation": "overhead",
             "seed": 42,
         }
@@ -1375,7 +1375,7 @@ class TestGdamCrownBaseModel:
         assert result["crown_base_height"].dtype == "float64"
         assert list(result["crown_ratio"]) == pytest.approx([0.40, 0.40])
         assert mock_post.call_count == 1
-        assert mock_post.call_args.kwargs["json"]["model"]["version"] == "v3_conus.1"
+        assert mock_post.call_args.kwargs["json"]["model"]["version"] == "v3_conus.2"
 
     def test_crown_base_clamped_to_height(self, mock_domain_gdf):
         def over_post(url, json=None, timeout=None):
@@ -1541,7 +1541,7 @@ class TestGdamCrownBaseModel:
 
 
 class TestRefitIgnoresUncrcd:
-    """A refit crown base model still pins v3_conus.1 but ignores its UNCRCD."""
+    """A refit crown base model still pins v3_conus.2 but ignores its UNCRCD."""
 
     def test_refit_ignores_uncrcd_and_pins_v3(self, mock_domain_gdf):
         def wild_uncrcd(url, json=None, timeout=None):
@@ -1555,7 +1555,7 @@ class TestRefitIgnoresUncrcd:
             gdam.handle_gdam(
                 dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
             )
-        assert mock_post.call_args.kwargs["json"]["model"]["version"] == "v3_conus.1"
+        assert mock_post.call_args.kwargs["json"]["model"]["version"] == "v3_conus.2"
         result = saved["df"]
         expected = crown_base_height(
             result["fia_species_code"],

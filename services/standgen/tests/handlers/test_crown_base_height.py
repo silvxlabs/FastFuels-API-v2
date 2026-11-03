@@ -339,7 +339,7 @@ class TestGdamModel:
         assert list(result.columns) == ["x", "y", "height", "crown_base_height"]
         # UNCRCD 55 percent -> crown base at 45% of the height.
         assert list(result["crown_base_height"]) == pytest.approx([4.5, 9.0])
-        assert mock_post.call_args.kwargs["json"]["model"]["version"] == "v3_conus.1"
+        assert mock_post.call_args.kwargs["json"]["model"]["version"] == "v3_conus.2"
 
     def test_writes_only_crown_base_height(self, mock_domain_gdf):
         frame = _frame()

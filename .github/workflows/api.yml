@@ -159,6 +159,8 @@ jobs:
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
-          TEST_API_URL: ${{ needs.deploy.outputs.service_url }}
+          # Prod is tested through the load balancer, as users reach it.
+          TEST_API_URL: ${{ needs.determine-environment.outputs.deploy_env == 'prod' && 'https://api.fastfuels.silvxlabs.com' || needs.deploy.outputs.service_url }}
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+          FASTFUELS_CI_BYPASS: ${{ secrets.FASTFUELS_CI_BYPASS }}
         run: uv run pytest tests/ -v

@@ -21,6 +21,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.crown_segmentation import MAX_CROWN_SEGMENTATION_RESOLUTION_M
 from api.resources.features.crown.examples import CREATE_CROWN_OPENAPI_EXAMPLES
 from api.resources.features.crown.schema import (
@@ -188,6 +189,7 @@ async def create_chm_crown_feature(
         "georeference": None,
         "error": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(inventory_data, grid_data),
         "owner_id": owner_id,
     }
 

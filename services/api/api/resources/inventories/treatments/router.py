@@ -26,6 +26,7 @@ from google.cloud import firestore
 from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.inventories.schema import Inventory
 from api.resources.inventories.treatments.examples import (
     APPLY_TREATMENTS_OPENAPI_EXAMPLES,
@@ -148,7 +149,9 @@ async def apply_treatments(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_feature_conditions(body.treatments, owner_id, domain_id)
+    referenced_features = await validate_feature_conditions(
+        body.treatments, owner_id, domain_id
+    )
     validate_inventory_wide_treatment_area(domain, body.treatments)
 
     new_treatments = stringify_modification_coordinates(
@@ -208,6 +211,7 @@ async def apply_treatments(
         # so derivatives become detectably stale (#304).
         update = {
             "pending_treatments": pending + new_treatments,
+            "attributions": inherit_attributions(inventory_data, *referenced_features),
             "checksum": new_checksum,
             "status": JobStatus.pending.value,
             "progress": None,

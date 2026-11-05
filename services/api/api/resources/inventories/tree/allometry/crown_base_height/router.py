@@ -22,6 +22,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.grids.utils import incomplete_inventory_columns
 from api.resources.inventories.schema import Inventory
 from api.resources.inventories.tree.allometry.crown_base_height.examples import (
@@ -246,6 +247,7 @@ async def create_crown_base_height_inventory(
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(source_data),
         "owner_id": owner_id,
     }
 

@@ -20,6 +20,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.crown_segmentation import MAX_CROWN_SEGMENTATION_RESOLUTION_M
 from api.resources.grids.utils import (
     validate_band_unit,
@@ -103,7 +104,7 @@ async def create_chm_inventory(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_feature_conditions(
+    referenced_features = await validate_feature_conditions(
         [*body.modifications, *body.treatments], owner_id, domain_id
     )
 
@@ -167,6 +168,7 @@ async def create_chm_inventory(
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(source_grid_data, *referenced_features),
         "owner_id": owner_id,
     }
 

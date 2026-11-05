@@ -20,6 +20,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.grids.utils import validate_grid_input
 from api.resources.inventories.schema import BASE_INVENTORY_COLUMNS, Inventory
 from api.resources.inventories.tree.pim.examples import CREATE_PIM_OPENAPI_EXAMPLES
@@ -114,7 +115,7 @@ async def create_pim_inventory(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_feature_conditions(
+    referenced_features = await validate_feature_conditions(
         [*body.modifications, *body.treatments], owner_id, domain_id
     )
     validate_inventory_wide_treatment_area(domain, body.treatments)
@@ -163,6 +164,7 @@ async def create_pim_inventory(
         "georeference": None,
         "error": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(source_grid_data, *referenced_features),
         "owner_id": owner_id,
     }
 

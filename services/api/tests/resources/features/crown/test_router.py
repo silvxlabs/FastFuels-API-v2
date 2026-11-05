@@ -10,8 +10,8 @@ import uuid
 import pytest
 from api.resources.features.crown.examples import CROWN_EXAMPLE_VALUES
 
-from lib.config import GRIDS_COLLECTION, INVENTORIES_COLLECTION
-from tests.fixtures import make_grid_data, make_inventory_data
+from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION, INVENTORIES_COLLECTION
+from tests.fixtures import make_grid_data, make_inventory_data, make_osm_attribution
 
 TREE_COLUMNS = [
     {"key": "tree_id", "type": "categorical", "unit": None},
@@ -20,6 +20,14 @@ TREE_COLUMNS = [
     {"key": "height", "type": "continuous", "unit": "m"},
 ]
 CHM_BAND = {"key": "chm", "type": "continuous", "unit": "m", "index": 0}
+META_ATTRIBUTION = {
+    "dataset": "Meta CHM",
+    "license_name": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "citation": "Meta and World Resources Institute",
+    "access_url": "https://registry.opendata.aws/dataforgood-fb-forests/",
+    "accessed_on": "2026-10-01",
+}
 
 
 def georeference(cell: float) -> dict:
@@ -282,3 +290,40 @@ class TestCreateChmCrownFeature:
             json=self.body(tree_inventory, chm),
         )
         assert response.status_code == 404
+
+
+class TestCrownFeatureAttributions:
+    """A crown feature inherits the attributions of its source CHM grid and
+    tree inventory (#775)."""
+
+    def test_inherits_grid_and_inventory_attributions(
+        self, client, firestore_client, seed, domain_id
+    ):
+        grid = chm_grid(domain_id)
+        grid["attributions"] = [META_ATTRIBUTION]
+        seed(GRIDS_COLLECTION, grid)
+        trees = inventory(domain_id, source=detected_from(grid["id"]))
+        osm = make_osm_attribution()
+        trees["attributions"] = [osm]
+        seed(INVENTORIES_COLLECTION, trees)
+
+        response = client.post(
+            f"/domains/{domain_id}/features/crown/chm",
+            json={"source_inventory_id": trees["id"], "source_chm_grid_id": grid["id"]},
+        )
+        assert response.status_code == 201, response.text
+        feature_id = response.json()["id"]
+        try:
+            expected = [META_ATTRIBUTION, osm]
+            assert response.json()["attributions"] == expected
+            stored = (
+                firestore_client.collection(FEATURES_COLLECTION)
+                .document(feature_id)
+                .get()
+                .to_dict()
+            )
+            assert stored["attributions"] == expected
+        finally:
+            firestore_client.collection(FEATURES_COLLECTION).document(
+                feature_id
+            ).delete()

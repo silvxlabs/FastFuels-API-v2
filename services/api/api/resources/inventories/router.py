@@ -498,8 +498,8 @@ async def duplicate_inventory(
 
     This is a true clone, not a re-derivation. The finished data is byte-copied;
     no regeneration is performed. The copy carries over the source's `source`,
-    `modifications`, `treatments`, `columns`, `georeference`, and `checksum`
-    verbatim — only its `id` and timestamps differ.
+    `modifications`, `treatments`, `columns`, `georeference`, `attributions`,
+    and `checksum` verbatim — only its `id` and timestamps differ.
 
     ## Request Body (optional)
 

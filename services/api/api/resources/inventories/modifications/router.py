@@ -25,6 +25,7 @@ from google.cloud import firestore
 from api.db.documents import firestore_client
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.inventories.modifications.examples import (
     APPLY_MODIFICATIONS_OPENAPI_EXAMPLES,
 )
@@ -159,7 +160,9 @@ async def apply_modifications(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_feature_conditions(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_conditions(
+        body.modifications, owner_id, domain_id
+    )
 
     new_modifications = stringify_modification_coordinates(
         [m.model_dump() for m in body.modifications]
@@ -202,6 +205,7 @@ async def apply_modifications(
         # now so derivatives become detectably stale (#304).
         update = {
             "pending_modifications": pending + new_modifications,
+            "attributions": inherit_attributions(inventory_data, *referenced_features),
             "checksum": new_checksum,
             "status": JobStatus.pending.value,
             "progress": None,

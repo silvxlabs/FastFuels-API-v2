@@ -16,6 +16,7 @@ import pytest
 from shapely.geometry import MultiPoint, Point, box
 from uploader.handlers import inventory
 from uploader.handlers.inventory import (
+    ROW_GROUP_SIZE,
     _column_summary,
     _parse,
     _validate,
@@ -412,6 +413,27 @@ class TestWriteParquet:
 
         result = pd.read_parquet(path)
         pd.testing.assert_frame_equal(result, df)
+
+    def test_caps_row_groups_and_lists_them_in_metadata(self, tmp_path):
+        """An upload over ROW_GROUP_SIZE rows splits into several row groups,
+        and ``_metadata`` lists every one with its file path (#763)."""
+        n = 2 * ROW_GROUP_SIZE + 1
+        df = pd.DataFrame({"x": np.arange(n, dtype=float)})
+        path = tmp_path / "inv"
+        _write_parquet(df, str(path))
+
+        files = [p.name for p in path.glob("*.parquet")]
+        assert len(files) == 1
+        metadata = pq.read_metadata(path / "_metadata")
+        assert [
+            metadata.row_group(i).num_rows for i in range(metadata.num_row_groups)
+        ] == [ROW_GROUP_SIZE, ROW_GROUP_SIZE, 1]
+        assert {
+            metadata.row_group(i).column(0).file_path
+            for i in range(metadata.num_row_groups)
+        } == set(files)
+        assert pq.read_metadata(path / files[0]).num_row_groups == 3
+        pd.testing.assert_frame_equal(pd.read_parquet(path), df)
 
 
 class TestTreeIdValidation:

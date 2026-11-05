@@ -209,15 +209,23 @@ class TestSubmitJob:
             "status": "Pending",
             "messages": [],
         }
-        with patch(
-            "lib.landfire.lfps.requests.get",
-            return_value=mock_response(response_body),
+        with (
+            patch("lib.landfire.lfps.LANDFIRE_USER_EMAIL", "test@example.com"),
+            patch(
+                "lib.landfire.lfps.requests.get",
+                return_value=mock_response(response_body),
+            ),
         ):
             job = submit_job(["LF2024_FBFM40"], "-114.2 46.8 -114.1 46.9")
 
         assert job.job_id == "job-123"
         assert job.status == "Pending"
         assert job.output_file is None
+
+    def test_raises_when_email_is_unset(self):
+        with patch("lib.landfire.lfps.LANDFIRE_USER_EMAIL", None):
+            with pytest.raises(RuntimeError, match="LANDFIRE_USER_EMAIL"):
+                submit_job(["LF2024_FBFM40"], "-114.2 46.8 -114.1 46.9")
 
 
 class TestPollStatus:

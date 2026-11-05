@@ -119,6 +119,7 @@ jobs:
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
+          LANDFIRE_USER_EMAIL: ${{ secrets.LANDFIRE_USER_EMAIL }}
         run: uv run pytest tests/ --ignore=tests/integration -v
 
       - name: Run integration tests
@@ -132,6 +133,7 @@ jobs:
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
           INVENTORIES_BUCKET: ${{ secrets.INVENTORIES_BUCKET }}
+          LANDFIRE_USER_EMAIL: ${{ secrets.LANDFIRE_USER_EMAIL }}
           DEPLOYMENT_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
           INFRA_ENV: ${{ needs.determine-environment.outputs.deploy_env }}
         run: uv run pytest tests/integration/ -n auto -v

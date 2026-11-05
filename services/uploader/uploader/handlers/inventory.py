@@ -71,6 +71,12 @@ _OPTIONAL_COLUMNS = [
     c for c in _COLUMN_METADATA if c not in ("tree_id", "x", "y", "height")
 ]
 
+# Missing optional columns are padded with typed nulls for validation; None
+# would make object columns, which pandera coerces row by row.
+_PADDING_DTYPES = {
+    c: "Int64" if c.startswith("fia_") else "float64" for c in _OPTIONAL_COLUMNS
+}
+
 
 # tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
 MAX_TREE_ID = 2_147_483_647
@@ -328,9 +334,9 @@ def _collect(batches, bounds: tuple, stages: _Stages) -> pa.Table:
                     if f.name in provided and f.name != "tree_id"
                 ]
             )
-        for col in _OPTIONAL_COLUMNS:
+        for col, dtype in _PADDING_DTYPES.items():
             if col not in df.columns:
-                df[col] = None
+                df[col] = pd.Series(index=df.index, dtype=dtype)
         try:
             with stages("validate"):
                 df = _BATCH_SCHEMA.validate(df, lazy=True)

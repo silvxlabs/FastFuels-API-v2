@@ -144,8 +144,16 @@ def geo_batches(
         ProcessingError: ``INVALID_GEOMETRY_TYPE`` for a geometry other than a
             Point or MultiPoint, reported from the first batch that has one;
             ``EMPTY_FILE`` for a file without features.
+        OSError: If the read returned a different number of features than
+            the file has, so that main.py retries the upload instead of
+            keeping a partial inventory.
     """
-    path = "/vsigs/" + src.removeprefix("gs://") if src.startswith("gs://") else src
+    path = src
+    if src.startswith("gs://"):
+        # The GeoJSON driver reads the file front to back, twice; streaming
+        # overlaps the download with parsing. GeoPackage needs random access.
+        prefix = "/vsigs_streaming/" if fmt == "geojson" else "/vsigs/"
+        path = prefix + src.removeprefix("gs://")
     with pyogrio.open_arrow(path, batch_size=batch_size, use_pyarrow=True) as (
         meta,
         reader,
@@ -192,6 +200,11 @@ def geo_batches(
             df.index = pd.RangeIndex(offset, offset + len(df))
             offset += len(df)
             yield df
+    # GDAL ends the feature read without an error when the connection drops
+    # or a request fails partway, so the count from a fresh open is compared.
+    expected = pyogrio.read_info(path)["features"]
+    if expected >= 0 and features != expected:
+        raise OSError(f"Read {features} of {expected} features from {src}.")
     if features == 0:
         raise ProcessingError(
             code="EMPTY_FILE",

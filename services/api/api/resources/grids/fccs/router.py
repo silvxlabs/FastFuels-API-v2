@@ -36,7 +36,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
-from lib.attributions import merge_attributions
+from lib.attributions import inherit_attributions
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.landfire import LANDFIRE_VERSIONS, list_releases
@@ -139,9 +139,7 @@ async def create_landfire_fccs(
         "bands": [FCCS_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
-        "attributions": merge_attributions(
-            *(f.get("attributions") for f in referenced_features)
-        ),
+        "attributions": inherit_attributions(*referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

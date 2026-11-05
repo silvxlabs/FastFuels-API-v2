@@ -1,6 +1,11 @@
 """Tests for lib.attributions."""
 
-from lib.attributions import OPENSTREETMAP, make_attribution, merge_attributions
+from lib.attributions import (
+    OPENSTREETMAP,
+    inherit_attributions,
+    make_attribution,
+    merge_attributions,
+)
 
 
 def _entry(dataset: str, license_name: str, accessed_on: str) -> dict:
@@ -53,3 +58,17 @@ class TestMergeAttributions:
         merged = merge_attributions([osm])
         merged[0]["accessed_on"] = "1999-01-01"
         assert osm["accessed_on"] == "2026-11-05"
+
+
+class TestInheritAttributions:
+    def test_no_parents(self):
+        assert inherit_attributions() == []
+
+    def test_missing_and_none_attributions(self):
+        assert inherit_attributions({}, {"attributions": None}) == []
+
+    def test_merges_parent_lists(self):
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        meta = _entry("Meta CHM", "CC-BY-4.0", "2026-11-05")
+        parents = [{"attributions": [osm]}, {"attributions": [meta, dict(osm)]}]
+        assert inherit_attributions(*parents) == [meta, osm]

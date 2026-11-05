@@ -51,7 +51,7 @@ from api.resources.grids.utils import (
 from api.resources.point_clouds.schema import PointCloudType
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
-from lib.attributions import merge_attributions
+from lib.attributions import inherit_attributions
 from lib.config import (
     GRIDDLE_QUEUE,
     GRIDDLE_SERVICE,
@@ -141,9 +141,7 @@ async def create_meta_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": merge_attributions(
-            *(f.get("attributions") for f in referenced_features)
-        ),
+        "attributions": inherit_attributions(*referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -222,9 +220,7 @@ async def create_naip_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": merge_attributions(
-            *(f.get("attributions") for f in referenced_features)
-        ),
+        "attributions": inherit_attributions(*referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -317,9 +313,7 @@ async def create_landfire_canopy(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": merge_attributions(
-            *(f.get("attributions") for f in referenced_features)
-        ),
+        "attributions": inherit_attributions(*referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -499,9 +493,7 @@ async def create_point_cloud_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": merge_attributions(
-            *(f.get("attributions") for f in referenced_features)
-        ),
+        "attributions": inherit_attributions(*referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

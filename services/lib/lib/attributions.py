@@ -42,3 +42,13 @@ def merge_attributions(*attribution_lists: list[dict] | None) -> list[dict]:
             if kept is None or entry["accessed_on"] < kept["accessed_on"]:
                 merged[key] = dict(entry)
     return [merged[key] for key in sorted(merged)]
+
+
+def inherit_attributions(*parents: dict) -> list[dict]:
+    """Merge the ``attributions`` of parent resource documents.
+
+    ``parents`` are Firestore documents (features, grids, inventories) a child
+    resource is built from; a missing or ``None`` ``attributions`` key counts
+    as empty.
+    """
+    return merge_attributions(*(parent.get("attributions") for parent in parents))

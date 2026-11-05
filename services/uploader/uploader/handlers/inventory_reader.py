@@ -21,7 +21,8 @@ from lib.errors import ProcessingError
 
 BATCH_SIZE = 65_536
 
-# pyarrow's null markers plus the two pandas adds, so empty cells match pd.read_csv.
+# pyarrow's null markers plus the two more pandas has, so missing values match
+# pd.read_csv.
 _CSV_NULL_VALUES = [*pacsv.ConvertOptions().null_values, "None", "<NA>"]
 
 _POINT, _MULTIPOINT = 0, 4
@@ -59,7 +60,7 @@ def csv_batches(
     fs, path = pafs.FileSystem.from_uri(src)
     with fs.open_input_stream(path) as f:
         head = f.read(1 << 20)
-    header = head[: head.find(b"\n") + 1] or head
+    header = head.split(b"\n", 1)[0] + b"\n"
     names = pacsv.read_csv(pa.BufferReader(header)).column_names
     keep = [c for c in names if rename.get(c, c) in columns]
     row_bytes = max(1, len(head) // max(1, head.count(b"\n")))
@@ -72,16 +73,18 @@ def csv_batches(
     )
 
     offset = 0
-    with fs.open_input_stream(path) as f:
-        reader = pacsv.open_csv(
-            f, read_options=read_options, convert_options=convert_options
-        )
-        for batch in reader:
-            df = _strings_to_numbers(batch) if as_strings else batch.to_pandas()
-            df.columns = [rename.get(c, c) for c in df.columns]
-            df.index = pd.RangeIndex(offset, offset + len(df))
-            offset += len(df)
-            yield df
+    # Without a line break the file is its header alone, which open_csv rejects.
+    if b"\n" in head or b"\r" in head:
+        with fs.open_input_stream(path) as f:
+            reader = pacsv.open_csv(
+                f, read_options=read_options, convert_options=convert_options
+            )
+            for batch in reader:
+                df = _strings_to_numbers(batch) if as_strings else batch.to_pandas()
+                df.columns = [rename.get(c, c) for c in df.columns]
+                df.index = pd.RangeIndex(offset, offset + len(df))
+                offset += len(df)
+                yield df
     if offset == 0:
         yield pd.DataFrame(
             {rename.get(c, c): pd.Series([], dtype="float64") for c in keep}

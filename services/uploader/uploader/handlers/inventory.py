@@ -4,9 +4,9 @@ Inventory upload handler for the Uploader service.
 Processes uploaded inventory files (CSV, GeoJSON, GeoPackage), validates
 against the inventory schema, and writes Parquet to INVENTORIES_BUCKET.
 
-The upload is streamed from GCS in batches, so memory holds only the compact
-typed columns of the trees kept in the domain. They are sorted once, by 1 km
-tile along a Hilbert curve, so each Parquet row group covers a compact area.
+The upload is streamed from GCS in batches, and the trees kept in the domain
+are sorted once, by 1 km tile along a Hilbert curve, so each Parquet row group
+covers a compact area.
 """
 
 import math

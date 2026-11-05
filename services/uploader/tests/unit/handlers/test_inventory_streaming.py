@@ -337,11 +337,26 @@ class TestMatchesEager:
         streamed = _compare(tmp_path, monkeypatch, fmt, path)
         assert streamed.code == "EMPTY_FILE"
 
-    def test_header_only_csv(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("text", ["x,y,height\n", "x,y,height", "x,y,height\r"])
+    def test_header_only_csv(self, tmp_path, monkeypatch, text):
         path = tmp_path / "trees.csv"
-        path.write_text("x,y,height\n")
+        path.write_bytes(text.encode())
         streamed = _compare(tmp_path, monkeypatch, "csv", path)
         assert streamed.code == "EMPTY_AFTER_FILTER"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "﻿x,y,Höhe\n500100,4200100,3\n",
+            "x,y,Höhe\r\n500100,4200100,3\r\n",
+            "x,y,Höhe\r500100,4200100,3\r500200,4200200,4",
+        ],
+        ids=["bom_unicode_header", "crlf", "cr"],
+    )
+    def test_csv_encodings_and_line_endings(self, tmp_path, monkeypatch, text):
+        path = tmp_path / "trees.csv"
+        path.write_bytes(text.encode())
+        _compare(tmp_path, monkeypatch, "csv", path, {"height": "Höhe"})
 
     def test_all_trees_outside_domain(self, tmp_path, monkeypatch):
         df = _trees(3000, 13)

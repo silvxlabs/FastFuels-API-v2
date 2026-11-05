@@ -6,11 +6,11 @@ No GCP I/O — all file operations use local /tmp paths.
 """
 
 import math
-import shutil
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from shapely.geometry import MultiPoint, Point, box
@@ -335,13 +335,17 @@ class TestValidate:
         assert pd.isna(result["fia_species_code"].iloc[1])
 
 
+def _summary(values, col_type, key="v", type=None):
+    return _column_summary(pa.chunked_array([values], type=type), key, col_type)
+
+
 class TestColumnSummary:
     """Per-column summaries must match the API's ColumnSummary schema shape and
     never carry a non-finite float — the API serves inventories with a
     JSONResponse (allow_nan=False), so a NaN stat would 500 the GET."""
 
     def test_continuous_summary_fields(self):
-        summary = _column_summary(pd.Series([2.0, 4.0, 6.0, None]), "continuous")
+        summary = _summary([2.0, 4.0, 6.0, None], "continuous")
         assert summary["type"] == "continuous"
         assert summary["count"] == 3
         assert summary["null_count"] == 1
@@ -351,7 +355,7 @@ class TestColumnSummary:
         assert summary["std"] == pytest.approx(2.0)
 
     def test_continuous_summary_shape(self):
-        summary = _column_summary(pd.Series([1.0, 2.0]), "continuous")
+        summary = _summary([1.0, 2.0], "continuous")
         assert set(summary) == {
             "type",
             "count",
@@ -365,16 +369,14 @@ class TestColumnSummary:
     def test_single_value_continuous_std_is_none(self):
         """Sample std (ddof=1) of a lone value is NaN — a single-row upload.
         It must be sanitized to None while the finite stats stay."""
-        summary = _column_summary(pd.Series([5.0]), "continuous")
+        summary = _summary([5.0], "continuous")
         assert summary["count"] == 1
         assert summary["std"] is None
         assert summary["min"] == 5.0
         assert summary["mean"] == 5.0
 
     def test_all_null_continuous_stats_are_none(self):
-        summary = _column_summary(
-            pd.Series([None, None], dtype="float64"), "continuous"
-        )
+        summary = _summary([None, None], "continuous", type=pa.float64())
         assert summary["count"] == 0
         assert summary["null_count"] == 2
         assert summary["min"] is None
@@ -383,7 +385,7 @@ class TestColumnSummary:
         assert summary["std"] is None
 
     def test_categorical_summary(self):
-        summary = _column_summary(pd.Series([122, 202, 122, None]), "categorical")
+        summary = _summary([122, 202, 122, None], "categorical")
         assert summary["type"] == "categorical"
         assert summary["count"] == 3
         assert summary["null_count"] == 1
@@ -391,40 +393,57 @@ class TestColumnSummary:
         assert set(summary) == {"type", "count", "null_count", "unique_count"}
 
     def test_no_stat_is_non_finite(self):
-        summary = _column_summary(pd.Series([5.0]), "continuous")
+        summary = _summary([5.0], "continuous")
         for value in summary.values():
             assert not (isinstance(value, float) and not math.isfinite(value))
 
 
-class TestWriteParquet:
-    def test_no_null_dask_index_in_schema(self, tmp_path):
-        """dask's synthetic RangeIndex column must not be written (#335)."""
-        df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
-        path = str(tmp_path / "inv")
-        _write_parquet(df, path)
+# Domain bounds covering the sample trees, for _write_parquet's tile order.
+SAMPLE_BOUNDS = (499_950.0, 4_199_950.0, 500_250.0, 4_200_250.0)
 
-        metadata = pq.read_metadata(f"{path}/_metadata")
-        assert metadata.schema.to_arrow_schema().names == ["x", "y", "height"]
+
+class TestWriteParquet:
+    def _table(self, **columns):
+        n = len(next(iter(columns.values())))
+        tree_id = pa.array(np.arange(1, n + 1), pa.int32())
+        return pa.table({"tree_id": tree_id} | columns)
+
+    def test_schema_is_canonical_and_padded(self, tmp_path):
+        """Every v2 column is written in canonical order; absent ones are null,
+        and no synthetic index column leaks in (#335)."""
+        table = self._table(x=SAMPLE_X, y=SAMPLE_Y, height=SAMPLE_HEIGHT)
+        _write_parquet(table, SAMPLE_BOUNDS, str(tmp_path))
+
+        metadata = pq.read_metadata(tmp_path / "_metadata")
+        assert metadata.schema.to_arrow_schema().names == list(
+            inventory._COLUMN_METADATA
+        )
+        result = pd.read_parquet(tmp_path)
+        assert result["dbh"].isna().all()
+        assert result["fia_species_code"].dtype == "Int64"
 
     def test_round_trip_preserves_data(self, tmp_path):
-        df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
-        path = str(tmp_path / "inv")
-        _write_parquet(df, path)
+        table = self._table(x=SAMPLE_X, y=SAMPLE_Y, height=SAMPLE_HEIGHT)
+        _write_parquet(table, SAMPLE_BOUNDS, str(tmp_path))
 
-        result = pd.read_parquet(path)
-        pd.testing.assert_frame_equal(result, df)
+        result = pd.read_parquet(tmp_path).sort_values("tree_id")
+        assert list(result["tree_id"]) == [1, 2, 3]
+        assert list(result["x"]) == SAMPLE_X
+        assert list(result["height"]) == SAMPLE_HEIGHT
 
     def test_caps_row_groups_and_lists_them_in_metadata(self, tmp_path):
         """An upload over ROW_GROUP_SIZE rows splits into several row groups,
         and ``_metadata`` lists every one with its file path (#763)."""
         n = 2 * ROW_GROUP_SIZE + 1
-        df = pd.DataFrame({"x": np.arange(n, dtype=float)})
-        path = tmp_path / "inv"
-        _write_parquet(df, str(path))
+        x = np.linspace(SAMPLE_BOUNDS[0], SAMPLE_BOUNDS[2], n)
+        y = np.full(n, SAMPLE_BOUNDS[1])
+        _write_parquet(
+            self._table(x=x, y=y, height=np.ones(n)), SAMPLE_BOUNDS, str(tmp_path)
+        )
 
-        files = [p.name for p in path.glob("*.parquet")]
+        files = [p.name for p in tmp_path.glob("*.parquet")]
         assert len(files) == 1
-        metadata = pq.read_metadata(path / "_metadata")
+        metadata = pq.read_metadata(tmp_path / "_metadata")
         assert [
             metadata.row_group(i).num_rows for i in range(metadata.num_row_groups)
         ] == [ROW_GROUP_SIZE, ROW_GROUP_SIZE, 1]
@@ -432,8 +451,9 @@ class TestWriteParquet:
             metadata.row_group(i).column(0).file_path
             for i in range(metadata.num_row_groups)
         } == set(files)
-        assert pq.read_metadata(path / files[0]).num_row_groups == 3
-        pd.testing.assert_frame_equal(pd.read_parquet(path), df)
+        assert pq.read_metadata(tmp_path / files[0]).num_row_groups == 3
+        tree_ids = pd.read_parquet(tmp_path)["tree_id"].sort_values()
+        assert tree_ids.tolist() == list(range(1, n + 1))
 
 
 class TestTreeIdValidation:
@@ -510,9 +530,7 @@ class TestTreeIdValidation:
         assert list(df["tree_id"]) == [40, 10, 30]
 
     def test_tree_id_summary_skips_distinct_count(self):
-        summary = _column_summary(
-            pd.Series([3, 1, 2], name="tree_id", dtype="int32"), "categorical"
-        )
+        summary = _summary([3, 1, 2], "categorical", key="tree_id", type=pa.int32())
         assert summary["unique_count"] == summary["count"] == 3
 
 
@@ -522,7 +540,8 @@ class TestHandleInventoryTreeIds:
     def _run(self, tmp_path, monkeypatch, data: dict, col_map: dict | None = None):
         csv_path = tmp_path / "upload.csv"
         pd.DataFrame(data).to_csv(csv_path, index=False)
-        out = str(tmp_path / "inv")
+        out = tmp_path / "inv"
+        out.mkdir()
         updates = {}
 
         class _Snap:
@@ -534,13 +553,16 @@ class TestHandleInventoryTreeIds:
             geometry=[box(499_950.0, 4_199_950.0, 500_150.0, 4_200_150.0)],
             crs=DOMAIN_CRS,
         )
+        read_table = inventory._read_table
         monkeypatch.setattr(
-            inventory, "download_file", lambda src, dst: shutil.copy(csv_path, dst)
+            inventory,
+            "_read_table",
+            lambda fmt, src, *args: read_table(fmt, str(csv_path), *args),
         )
         monkeypatch.setattr(inventory, "get_document", lambda c, i: (None, _Snap()))
         monkeypatch.setattr(inventory, "parse_domain_gdf", lambda d: domain_gdf)
         monkeypatch.setattr(
-            inventory, "_write_parquet", lambda df, p: _write_parquet(df, out)
+            inventory, "_write_parquet", lambda t, b, p: _write_parquet(t, b, out)
         )
         monkeypatch.setattr(inventory, "storage_size", lambda p: 0)
         monkeypatch.setattr(inventory, "delete_file", lambda p: None)
@@ -552,7 +574,9 @@ class TestHandleInventoryTreeIds:
         inventory.handle_inventory(
             f"inv-{tmp_path.name}", "bucket", f"inventories/{tmp_path.name}.csv", doc
         )
-        return pd.read_parquet(out), updates
+        # Rows are stored in spatial order; the sample trees' file order is by x.
+        df = pd.read_parquet(out).sort_values("x").reset_index(drop=True)
+        return df, updates
 
     def test_unmapped_upload_generates_contiguous_ids(self, tmp_path, monkeypatch):
         """IDs are 1 … N over the trees kept in the domain, in file order."""
@@ -736,7 +760,6 @@ def test_staged_upload_kept_only_for_retry(monkeypatch, error, deleted):
     def fail(*args):
         raise error
 
-    monkeypatch.setattr(inventory, "download_file", lambda src, dst: None)
     monkeypatch.setattr(inventory, "get_document", fail)
     monkeypatch.setattr(inventory, "delete_file", deletes.append)
     doc = {"domain_id": "d", "source": {"format": "csv"}}

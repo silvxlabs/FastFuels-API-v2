@@ -6,15 +6,16 @@ against the inventory schema, and writes Parquet to INVENTORIES_BUCKET.
 """
 
 import math
-import os
 from contextlib import suppress
 from datetime import UTC, datetime
 
-import dask.dataframe as dd
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.fs as pafs
+import pyarrow.parquet as pq
 from pandera.errors import SchemaErrors
 from pandera.pandas import DataFrameModel, Field, dataframe_check
 from pandera.typing import Series
@@ -23,7 +24,7 @@ from lib.config import DOMAINS_COLLECTION, INVENTORIES_BUCKET, INVENTORIES_COLLE
 from lib.domain_utils import parse_domain_gdf
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import get_document
-from lib.gcs import delete_file, download_file, storage_size
+from lib.gcs import delete_file, storage_size
 from uploader.handlers.inventory_failures import FailureCases
 from uploader.handlers.inventory_reader import check_exists, csv_batches, geo_batches
 from uploader.main import update_resource
@@ -72,6 +73,9 @@ MAX_CROWN_RADIUS_M = 20.0
 
 # The API serves one Parquet row group per inventory data partition (#763).
 ROW_GROUP_SIZE = 50_000
+
+# Rows are written in Hilbert order of square tiles this wide.
+TILE_SIZE_M = 1000.0
 
 
 class _InventorySchema(DataFrameModel):
@@ -137,30 +141,18 @@ def handle_inventory(
     col_map = source.get("columns", {})
     domain_id = doc["domain_id"]
 
-    local_filename = object_name.rsplit("/", 1)[-1]
-    local_path = f"/tmp/{local_filename}"
-    download_file(f"gs://{bucket}/{object_name}", local_path)
-
     try:
         _, domain_snap = get_document(DOMAINS_COLLECTION, domain_id)
         domain_data = domain_snap.to_dict()
         domain_gdf = parse_domain_gdf(domain_data)
         domain_crs_str = _extract_crs_string(domain_data)
+        bounds = tuple(float(v) for v in domain_gdf.total_bounds)
 
-        df = _parse(fmt, local_path, col_map, domain_crs_str)
-        # Record which columns the file actually provided before _validate pads
-        # the missing optional ones with all-null placeholders.
-        provided_columns = [c for c in _COLUMN_METADATA if c in df.columns]
-        df = _validate(df)
-
-        xmin, ymin, xmax, ymax = domain_gdf.total_bounds
-        df = df[
-            (df["x"] >= xmin)
-            & (df["x"] <= xmax)
-            & (df["y"] >= ymin)
-            & (df["y"] <= ymax)
-        ]
-        if df.empty:
+        table = _read_table(
+            fmt, f"gs://{bucket}/{object_name}", col_map, domain_crs_str, bounds
+        )
+        if table.num_rows == 0:
+            xmin, ymin, xmax, ymax = bounds
             raise ProcessingError(
                 code="EMPTY_AFTER_FILTER",
                 message="No trees remain after filtering to domain bounds.",
@@ -172,39 +164,34 @@ def handle_inventory(
                 ),
             )
 
-        # Without a user-supplied tree_id, number the trees kept in the domain
-        # 1 … N in file row order.
-        if "tree_id" not in df.columns:
-            df = df.reset_index(drop=True)
-            df.insert(0, "tree_id", np.arange(1, len(df) + 1, dtype="int32"))
-            provided_columns.append("tree_id")
-
         path = f"gs://{INVENTORIES_BUCKET}/{resource_id}"
-        _write_parquet(df, path)
+        _write_parquet(table, bounds, path)
 
+        x, y = table.column("x"), table.column("y")
         georeference = {
             "crs": domain_crs_str,
             "bounds": [
-                float(df["x"].min()),
-                float(df["y"].min()),
-                float(df["x"].max()),
-                float(df["y"].max()),
+                pc.min(x).as_py(),
+                pc.min(y).as_py(),
+                pc.max(x).as_py(),
+                pc.max(y).as_py(),
             ],
         }
-        # Record the columns the file actually provided, each with a summary
-        # over the persisted (domain-filtered) data. The create endpoint wrote a
-        # provisional full column list, and _validate pads the Parquet with
-        # all-null optional columns for schema compatibility — but an all-null
-        # dbh is not a column treatments can thin against.
+        # Record the columns the file actually provided (the table holds only
+        # those, plus tree_id), each with a summary over the persisted
+        # (domain-filtered) data. The create endpoint wrote a provisional full
+        # column list, and the Parquet pads the missing optional columns with
+        # nulls for schema compatibility — but an all-null dbh is not a column
+        # treatments can thin against.
         columns = [
             {
                 "key": key,
                 "type": col_type,
                 "unit": unit,
-                "summary": _column_summary(df[key], col_type),
+                "summary": _column_summary(table.column(key), key, col_type),
             }
             for key, (col_type, unit) in _COLUMN_METADATA.items()
-            if key in provided_columns
+            if key in table.column_names
         ]
         update_resource(
             INVENTORIES_COLLECTION,
@@ -228,67 +215,134 @@ def handle_inventory(
     else:
         with suppress(Exception):
             delete_file(f"gs://{bucket}/{object_name}")
-    finally:
-        if os.path.exists(local_path):
-            os.remove(local_path)
 
 
 def _finite_or_none(value) -> float | None:
-    """Coerce a reduction result to float, mapping NaN/inf to None.
+    """Coerce a reduction result to float, mapping null/NaN/inf to None.
 
-    A single-value continuous column yields NaN sample std (ddof=1) and an
-    all-null column yields NaN min/max/mean/std. NaN/inf are not
+    A single-value continuous column yields a null sample std (ddof=1) and an
+    all-null column yields null min/max/mean/std. NaN/inf are not
     JSON-serializable — the API serves inventories with a JSONResponse that
     uses ``allow_nan=False`` — so they must not reach Firestore.
     """
+    if value is None:
+        return None
     value = float(value)
     return value if math.isfinite(value) else None
 
 
-def _column_summary(series: pd.Series, col_type: str) -> dict:
+def _column_summary(column: pa.ChunkedArray, key: str, col_type: str) -> dict:
     """Per-column summary matching the API's ColumnSummary schema.
 
     Statistics are over non-null values; non-finite continuous stats are
     sanitized to None. Mirrors the summary standgen writes for generated
-    inventories so both sources present an identical shape.
+    inventories so both sources present an identical shape. Computed with
+    Arrow kernels, so float statistics match pandas to rounding, not bit for
+    bit.
     """
-    count = int(series.count())
-    null_count = int(series.isna().sum())
+    count = pc.count(column).as_py()
+    null_count = column.null_count
     if col_type == "continuous":
+        min_max = pc.min_max(column)
         return {
             "type": "continuous",
             "count": count,
             "null_count": null_count,
-            "min": _finite_or_none(series.min()),
-            "max": _finite_or_none(series.max()),
-            "mean": _finite_or_none(series.mean()),
-            "std": _finite_or_none(series.std()),
+            "min": _finite_or_none(min_max["min"].as_py()),
+            "max": _finite_or_none(min_max["max"].as_py()),
+            "mean": _finite_or_none(pc.mean(column).as_py()),
+            "std": _finite_or_none(pc.stddev(column, ddof=1).as_py()),
         }
     return {
         "type": "categorical",
         "count": count,
         "null_count": null_count,
         # tree_id is unique by construction; skip the distinct count.
-        "unique_count": count if series.name == "tree_id" else int(series.nunique()),
+        "unique_count": count
+        if key == "tree_id"
+        else pc.count_distinct(column, mode="only_valid").as_py(),
     }
 
 
-def _write_parquet(df: pd.DataFrame, path: str) -> None:
-    """Write ``df`` as partitioned Parquet with an aggregated ``_metadata`` file.
+def _write_parquet(table: pa.Table, bounds: tuple, path: str) -> None:
+    """Write ``table`` as one Parquet file with an aggregated ``_metadata`` file.
 
-    ``write_index=False`` keeps dask from materializing the meaningless
-    RangeIndex as a synthetic ``__null_dask_index__`` column in the file
-    schema, which leaked into the API's data/metadata ``columns`` (#335).
-
-    Row groups are capped at ``ROW_GROUP_SIZE`` rows; each is an API data
-    partition (#763).
+    Rows are sorted by their 1 km tile's position on a Hilbert curve over the
+    domain ``bounds``, then by y, then x, so each row group covers a compact
+    area. Row groups are capped at ``ROW_GROUP_SIZE`` rows; each is an API data
+    partition (#763). Columns the upload did not provide are written as nulls.
     """
-    dd.from_pandas(df.reset_index(drop=True), npartitions=1).to_parquet(
-        path,
-        write_metadata_file=True,
-        write_index=False,
-        row_group_size=ROW_GROUP_SIZE,
+    tiles = np.concatenate(
+        [
+            _tile_index(b.column(0).to_numpy(), b.column(1).to_numpy(), bounds)
+            for b in table.select(["x", "y"]).to_batches()
+        ]
     )
+    order = pc.sort_indices(
+        pa.table({"tile": tiles, "y": table.column("y"), "x": table.column("x")}),
+        sort_keys=[("tile", "ascending"), ("y", "ascending"), ("x", "ascending")],
+    )
+
+    fs, root = pafs.FileSystem.from_uri(path)
+    collector: list[pq.FileMetaData] = []
+    with pq.ParquetWriter(
+        f"{root}/part.0.parquet",
+        _PARQUET_SCHEMA,
+        filesystem=fs,
+        metadata_collector=collector,
+    ) as writer:
+        for start in range(0, len(order), ROW_GROUP_SIZE):
+            rows = table.take(order[start : start + ROW_GROUP_SIZE])
+            arrays = [
+                rows.column(f.name)
+                if f.name in rows.column_names
+                else pa.nulls(rows.num_rows, f.type)
+                for f in _PARQUET_SCHEMA
+            ]
+            writer.write_table(
+                pa.Table.from_arrays(arrays, schema=_PARQUET_SCHEMA),
+                row_group_size=ROW_GROUP_SIZE,
+            )
+    collector[0].set_file_path("part.0.parquet")
+    pq.write_metadata(_PARQUET_SCHEMA, f"{root}/_common_metadata", filesystem=fs)
+    pq.write_metadata(
+        _PARQUET_SCHEMA,
+        f"{root}/_metadata",
+        metadata_collector=collector,
+        filesystem=fs,
+    )
+
+
+def _tile_index(x: np.ndarray, y: np.ndarray, bounds: tuple) -> np.ndarray:
+    """Position of each point's 1 km tile on a Hilbert curve covering ``bounds``."""
+    tx0 = math.floor(bounds[0] / TILE_SIZE_M)
+    ty0 = math.floor(bounds[1] / TILE_SIZE_M)
+    extent = 1 + max(
+        math.floor(bounds[2] / TILE_SIZE_M) - tx0,
+        math.floor(bounds[3] / TILE_SIZE_M) - ty0,
+    )
+    tx = np.floor(x / TILE_SIZE_M).astype(np.int64) - tx0
+    ty = np.floor(y / TILE_SIZE_M).astype(np.int64) - ty0
+    return _hilbert(tx, ty, extent)
+
+
+def _hilbert(x: np.ndarray, y: np.ndarray, extent: int) -> np.ndarray:
+    """Hilbert-curve index of non-negative integer cells in an ``extent``-wide grid."""
+    n = 1
+    while n < extent:
+        n *= 2
+    d = np.zeros(len(x), np.int64)
+    s = n // 2
+    while s > 0:
+        rx = (x & s) > 0
+        ry = (y & s) > 0
+        d += s * s * ((3 * rx) ^ ry)
+        flip = rx & ~ry
+        x = np.where(flip, n - 1 - x, x)
+        y = np.where(flip, n - 1 - y, y)
+        x, y = np.where(ry, x, y), np.where(ry, y, x)
+        s //= 2
+    return d
 
 
 def _parse(

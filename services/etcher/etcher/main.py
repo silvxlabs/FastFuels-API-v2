@@ -93,12 +93,14 @@ def update_status(
 
     ``size_bytes`` is the GCS artifact footprint recorded on completion for
     per-owner storage quota accounting (#342). On completion ``attributions``
-    is always written, as ``[]`` when none are given.
+    is written only when the handler returns some (road, water); otherwise the
+    document keeps the attributions the API set at create (crown).
     """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
         data["progress"] = {"message": "Complete", "percent": 100}
-        data["attributions"] = attributions or []
+        if attributions:
+            data["attributions"] = attributions
     elif status == "failed":
         data["progress"] = {"message": "Failed", "percent": 100}
     if georeference is not None:
@@ -208,7 +210,7 @@ def process_feature_request(request: Request):
             "completed",
             georeference=result.get("georeference"),
             size_bytes=feature_size(domain_id, feature_id),
-            attributions=result.get("attributions", []),
+            attributions=result.get("attributions"),
         )
         logger.info("Processing complete", extra=ids)
         return "OK", 200

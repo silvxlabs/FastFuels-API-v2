@@ -205,12 +205,46 @@ def test_update_status_completed_writes_attributions(mock_update):
 
 
 @patch("etcher.main.update_document")
-def test_update_status_completed_defaults_attributions_empty(mock_update):
+def test_update_status_completed_without_attributions_leaves_them(mock_update):
     from etcher.main import update_status
 
     update_status("f-1", "completed")
+    assert "attributions" not in mock_update.call_args.args[2]
 
-    assert mock_update.call_args.args[2]["attributions"] == []
+    update_status("f-1", "completed", attributions=[])
+    assert "attributions" not in mock_update.call_args.args[2]
+
+
+@patch("etcher.main.feature_size")
+@patch("etcher.main._load_domain")
+@patch("etcher.main.dispatch_handler")
+@patch("etcher.main.update_document")
+@patch("etcher.main.load_feature")
+def test_crown_completion_does_not_overwrite_attributions(
+    mock_load,
+    mock_update,
+    mock_dispatch,
+    mock_load_domain,
+    mock_feature_size,
+    mock_feature,
+):
+    """A crown handler returns no attributions; the ones the API inherited at
+    create must survive completion."""
+    from etcher.main import process_feature_request
+
+    mock_load.return_value = {**mock_feature, "type": "crown"}
+    mock_load_domain.return_value = MagicMock()
+    mock_dispatch.return_value = {"georeference": {"crs": "EPSG:32610"}}
+    mock_feature_size.return_value = 4096
+
+    response, status_code = process_feature_request(
+        MockRequest({"id": "test-feature-123"})
+    )
+
+    assert status_code == 200
+    completed = mock_update.call_args_list[-1].args[2]
+    assert completed["status"] == "completed"
+    assert "attributions" not in completed
 
 
 @patch("etcher.main.update_document")

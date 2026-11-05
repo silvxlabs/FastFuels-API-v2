@@ -82,6 +82,10 @@ ROW_GROUP_SIZE = 50_000
 # Rows are written in Hilbert order of square tiles this wide.
 TILE_SIZE_M = 1000.0
 
+# The native GCS output stream sends each of the Parquet writer's many small
+# writes on its own; buffering them is about 5x faster on Cloud Run.
+WRITE_BUFFER_BYTES = 8 << 20
+
 
 class _InventorySchema(DataFrameModel):
     # int64 so out-of-range IDs reach the `le` check before the int32 cast.
@@ -452,12 +456,12 @@ def _write_parquet(
 
     fs, root = pafs.FileSystem.from_uri(path)
     collector: list[pq.FileMetaData] = []
-    with pq.ParquetWriter(
-        f"{root}/part.0.parquet",
-        _PARQUET_SCHEMA,
-        filesystem=fs,
-        metadata_collector=collector,
-    ) as writer:
+    with (
+        fs.open_output_stream(
+            f"{root}/part.0.parquet", buffer_size=WRITE_BUFFER_BYTES
+        ) as sink,
+        pq.ParquetWriter(sink, _PARQUET_SCHEMA, metadata_collector=collector) as writer,
+    ):
         for start in range(0, len(order), ROW_GROUP_SIZE):
             with stages("take"):
                 rows = table.take(order[start : start + ROW_GROUP_SIZE])

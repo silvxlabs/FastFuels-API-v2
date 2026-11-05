@@ -97,15 +97,18 @@ def resolve_alignment_destination(
     ``destination_transform``, ``destination_shape``. An empty dict means
     "no override; let the caller use its default reprojection path."
 
+    ``target='grid'`` without ``resolution`` returns the target grid's own
+    CRS, transform and 2D shape verbatim.
+
     ``extent_buffer_cells`` extends the destination lattice by N output
     cells on every side for ``target='domain'`` and ``target='grid'`` —
     the destination-override branch in ``extract_window`` skips the
     trailing ROI-clip step, so the buffer must be baked into the
-    destination spec itself. Origin shifts by exactly
-    ``extent_buffer_cells * resolution`` meters, so buffered output cells
-    still nest cleanly with the same-anchor unbuffered lattice. For
-    ``target='native'`` the buffer is applied at the clip step inside
-    ``extract_window``, so the helper passes through unchanged.
+    destination spec itself. The origin moves out by N output cells (the
+    target's own ``a`` and ``e`` when its lattice is reused), so buffered
+    cells nest with the unbuffered lattice. For ``target='native'`` the
+    buffer is applied at the clip step inside ``extract_window``, so the
+    helper passes through unchanged.
     """
     target = alignment["target"]
 
@@ -129,16 +132,14 @@ def resolve_alignment_destination(
         georef = target_grid_doc["georeference"]
         resolution = alignment.get("resolution")
         if resolution is None:
-            # Cell size matches the target grid's transform.
-            cell_size = abs(Affine(*georef["transform"]).a)
-            bounds = _expand_bounds(
-                target_grid_bounds(georef), extent_buffer_cells * cell_size
-            )
-            transform, shape = lattice_from_bounds(bounds, cell_size)
+            # Reuse the target lattice verbatim; no rebuild from bounds.
+            a, b, c, d, e, f = georef["transform"]
+            h, w = georef["shape"][-2:]
+            n = extent_buffer_cells
             return {
                 "destination_crs": georef["crs"],
-                "destination_transform": transform,
-                "destination_shape": shape,
+                "destination_transform": Affine(a, b, c - n * a, d, e, f - n * e),
+                "destination_shape": (int(h) + 2 * n, int(w) + 2 * n),
             }
         bounds = _expand_bounds(
             target_grid_bounds(georef), extent_buffer_cells * resolution

@@ -14,7 +14,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 from standgen import storage
-from standgen.storage import _fused_compute, _write_parquet
+from standgen.storage import ROW_GROUP_SIZE, _fused_compute, _write_parquet
 from standgen.summarize import _build_column_stats_graph
 
 from lib.errors import ProcessingError
@@ -72,6 +72,38 @@ class TestWriteParquet:
         assert _schema_names(rewritten_path) == ["x", "y", "height"]
         result = dd.read_parquet(rewritten_path).compute().reset_index(drop=True)
         pd.testing.assert_frame_equal(result, inventory_df)
+
+    def test_caps_row_groups_and_lists_them_in_metadata(self, tmp_path):
+        """A partition over ROW_GROUP_SIZE rows splits into several row groups,
+        and ``_metadata`` lists every one with its file path (#763)."""
+        n_big = 2 * ROW_GROUP_SIZE + 1
+        big = pd.DataFrame({"x": np.arange(n_big, dtype=float)})
+        small = pd.DataFrame({"x": np.arange(10, dtype=float)})
+        ddf = dd.concat(
+            [dd.from_pandas(big, npartitions=1), dd.from_pandas(small, npartitions=1)]
+        )
+        path = tmp_path / "inv"
+        _write_parquet(ddf, str(path)).compute()
+
+        metadata = pq.read_metadata(path / "_metadata")
+        listed: dict[str, list[int]] = {}
+        for i in range(metadata.num_row_groups):
+            rg = metadata.row_group(i)
+            listed.setdefault(rg.column(0).file_path, []).append(rg.num_rows)
+
+        files = sorted(p.name for p in path.glob("*.parquet"))
+        assert sorted(listed) == files
+        for name in files:
+            file_md = pq.read_metadata(path / name)
+            assert listed[name] == [
+                file_md.row_group(j).num_rows for j in range(file_md.num_row_groups)
+            ]
+        assert max(n for counts in listed.values() for n in counts) <= ROW_GROUP_SIZE
+        assert sorted(listed.values(), key=len) == [
+            [10],
+            [ROW_GROUP_SIZE, ROW_GROUP_SIZE, 1],
+        ]
+        assert metadata.num_rows == n_big + 10
 
 
 class TestComputeWriteAndStats:

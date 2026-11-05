@@ -62,6 +62,9 @@ _COLUMN_METADATA = {
 MAX_TREE_ID = 2_147_483_647
 MAX_CROWN_RADIUS_M = 20.0
 
+# The API serves one Parquet row group per inventory data partition (#763).
+ROW_GROUP_SIZE = 50_000
+
 
 class _InventorySchema(pa.DataFrameModel):
     # int64 so out-of-range IDs reach the `le` check before the int32 cast.
@@ -242,9 +245,15 @@ def _write_parquet(df: pd.DataFrame, path: str) -> None:
     ``write_index=False`` keeps dask from materializing the meaningless
     RangeIndex as a synthetic ``__null_dask_index__`` column in the file
     schema, which leaked into the API's data/metadata ``columns`` (#335).
+
+    Row groups are capped at ``ROW_GROUP_SIZE`` rows; each is an API data
+    partition (#763).
     """
     dd.from_pandas(df.reset_index(drop=True), npartitions=1).to_parquet(
-        path, write_metadata_file=True, write_index=False
+        path,
+        write_metadata_file=True,
+        write_index=False,
+        row_group_size=ROW_GROUP_SIZE,
     )
 
 

@@ -10,9 +10,8 @@ from etcher.handlers.road import (
     compute_georeference,
     handle_osm,
 )
+from etcher.osm_source import OSM_ATTRIBUTION
 from shapely.geometry import LineString, Polygon
-
-from lib.attributions import OPENSTREETMAP, make_attribution
 
 
 @pytest.fixture
@@ -135,7 +134,7 @@ class TestHandleOsm:
 
         result = handle_osm(mock_feature, {}, sample_domain_gdf, MagicMock())
 
-        expected = [make_attribution(OPENSTREETMAP, date.today().isoformat())]
+        expected = [{**OSM_ATTRIBUTION, "accessed_on": date.today().isoformat()}]
         assert result["attributions"] == expected
 
     @patch("etcher.handlers.road.save_features")

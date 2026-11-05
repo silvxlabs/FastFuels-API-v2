@@ -21,7 +21,14 @@ from api.resources.features.schema import (
 from api.schema import JobStatus
 from pydantic import ValidationError
 
-from lib.attributions import OPENSTREETMAP, make_attribution
+OSM_ATTRIBUTION = {
+    "dataset": "OpenStreetMap",
+    "license_name": "ODbL-1.0",
+    "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+    "citation": "© OpenStreetMap contributors",
+    "access_url": "https://www.openstreetmap.org/copyright",
+    "accessed_on": "2026-11-05",
+}
 
 
 class TestFeatureType:
@@ -211,14 +218,14 @@ class TestFeature:
         assert feature.model_dump(mode="json")["attributions"] == []
 
     def test_attributions_serialize(self, minimal_feature_data):
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = dict(OSM_ATTRIBUTION)
         minimal_feature_data["attributions"] = [osm]
         feature = Feature(**minimal_feature_data)
         assert isinstance(feature.attributions[0], Attribution)
         assert feature.model_dump(mode="json")["attributions"] == [osm]
 
     def test_attribution_missing_field_raises(self, minimal_feature_data):
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = dict(OSM_ATTRIBUTION)
         del osm["citation"]
         minimal_feature_data["attributions"] = [osm]
         with pytest.raises(ValidationError):
@@ -255,31 +262,3 @@ class TestListFeaturesResponse:
     def test_features_is_required(self):
         with pytest.raises(ValidationError):
             ListFeaturesResponse(current_page=0, page_size=100, total_items=0)
-
-
-class TestMakeAttribution:
-    """Tests for lib.attributions.make_attribution."""
-
-    def test_openstreetmap(self):
-        assert make_attribution(OPENSTREETMAP, "2026-11-05") == {
-            "dataset": "OpenStreetMap",
-            "license_name": "ODbL-1.0",
-            "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
-            "citation": "© OpenStreetMap contributors",
-            "access_url": "https://www.openstreetmap.org/copyright",
-            "accessed_on": "2026-11-05",
-        }
-
-    def test_does_not_mutate_table(self):
-        first = make_attribution(OPENSTREETMAP, "2026-01-01")
-        second = make_attribution(OPENSTREETMAP, "2026-11-05")
-        assert first["accessed_on"] == "2026-01-01"
-        assert second["accessed_on"] == "2026-11-05"
-
-    def test_unknown_dataset_raises(self):
-        with pytest.raises(KeyError):
-            make_attribution("Not A Dataset", "2026-11-05")
-
-    def test_matches_api_model_fields(self):
-        attribution = make_attribution(OPENSTREETMAP, "2026-11-05")
-        assert set(attribution) == set(Attribution.model_fields)

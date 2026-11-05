@@ -56,6 +56,28 @@ class TestLatticeFromBounds:
         transform, (h, w) = lattice_from_bounds((0, 0, 0.1, 0.1), 1.0)
         assert (h, w) == (1, 1)
 
+    def test_float_noise_does_not_add_cells(self):
+        # Prod 3DEP 10 m target from #772: extent / a lands just above
+        # 169 and 115, which a bare ceil turns into 170 and 116.
+        a = 7.7301175133338464
+        minx, maxy = 720227.9398802927, 5190652.2875135
+        maxx = minx + 169 * a
+        miny = maxy - 115 * 7.730117513336364
+        assert (maxx - minx) / a > 169
+        assert (maxy - miny) / a > 115
+        transform, (h, w) = lattice_from_bounds((minx, miny, maxx, maxy), a)
+        assert (h, w) == (115, 169)
+        assert transform.c == minx
+        assert transform.f == pytest.approx(miny + 115 * a)
+
+    def test_exact_multiple_unchanged(self):
+        _, (h, w) = lattice_from_bounds((0, 0, 1690, 1150), 10.0)
+        assert (h, w) == (115, 169)
+
+    def test_partial_cell_still_rounds_up(self):
+        _, (h, w) = lattice_from_bounds((0, 0, 1694, 1154), 10.0)
+        assert (h, w) == (116, 170)
+
 
 class TestTargetGridBounds:
     def test_round_trip_with_lattice_from_bounds(self):

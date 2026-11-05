@@ -29,16 +29,30 @@ RESAMPLING_METHOD_MAP: dict[str, Resampling] = {
 }
 
 
+# Relative tolerance for snapping a cell count to the nearest integer.
+_CELL_COUNT_RTOL = 1e-9
+
+
+def _cell_count(extent: float, resolution: float) -> int:
+    """Cells needed to cover `extent`: ceil, but a count within
+    _CELL_COUNT_RTOL of an integer is that integer (float noise)."""
+    n = extent / resolution
+    nearest = round(n)
+    if abs(n - nearest) <= _CELL_COUNT_RTOL * max(1, nearest):
+        return max(1, int(nearest))
+    return max(1, int(np.ceil(n)))
+
+
 def lattice_from_bounds(
     bounds: tuple[float, float, float, float],
     resolution: float,
 ) -> tuple[Affine, tuple[int, int]]:
     """Return (transform, (height, width)) for a north-up grid anchored at
     the lower-left of `bounds`, cell size `resolution`, covering `bounds`
-    via ceil()."""
+    via ceil() (counts within float noise of an integer snap to it)."""
     minx, miny, maxx, maxy = bounds
-    width = max(1, int(np.ceil((maxx - minx) / resolution)))
-    height = max(1, int(np.ceil((maxy - miny) / resolution)))
+    width = _cell_count(maxx - minx, resolution)
+    height = _cell_count(maxy - miny, resolution)
     transform = from_bounds(
         minx,
         miny,

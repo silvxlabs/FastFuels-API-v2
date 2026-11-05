@@ -249,8 +249,13 @@ async def validate_quicfire_request(
     request: QuicfireExportRequest,
     owner_id: str,
     domain: dict,
-) -> QuicfireExportSource:
-    """Validate a QUIC-Fire export request; return the persisted source."""
+) -> tuple[QuicfireExportSource, list[dict]]:
+    """Validate a QUIC-Fire export request.
+
+    Returns the persisted source and the documents of the grids whose bands
+    the export reads (role grids; the alignment target only supplies the
+    lattice).
+    """
     domain_id = domain["id"]
     grid_cache = await _load_all_grids(request, owner_id, domain_id)
     roles = _iter_roles(request)
@@ -272,4 +277,5 @@ async def validate_quicfire_request(
         _check_3d_role_vertical(grid_data, src, role_name, fire_grid)
 
     _check_cell_count_cap(fire_grid)
-    return _make_source(request, domain_id, fire_grid)
+    role_grids = [grid_cache[grid_id] for grid_id in {src.grid_id for _, src in roles}]
+    return _make_source(request, domain_id, fire_grid), role_grids

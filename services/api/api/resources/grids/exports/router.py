@@ -17,6 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.exports.schema import (
     Export,
     ExportGridRequest,
@@ -122,6 +123,7 @@ async def create_grid_export(
         "error": None,
         "tags": body.tags,
         "owner_id": owner_id,
+        "attributions": inherit_attributions(grid_data),
     }
 
     await set_document_async(EXPORTS_COLLECTION, export_id, export_data)

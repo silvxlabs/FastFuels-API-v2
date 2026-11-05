@@ -216,8 +216,13 @@ async def validate_landscape_request(
     request: LandscapeExportRequest,
     owner_id: str,
     domain: dict,
-) -> LandscapeExportSource:
-    """Validate a landscape export request; return the persisted source."""
+) -> tuple[LandscapeExportSource, list[dict]]:
+    """Validate a landscape export request.
+
+    Returns the persisted source and the documents of the grids whose bands
+    the export reads (role grids; the alignment target only supplies the
+    lattice).
+    """
     domain_id = domain["id"]
     grid_cache = await _load_all_grids(request, owner_id, domain_id)
     roles = _iter_roles(request)
@@ -242,4 +247,5 @@ async def validate_landscape_request(
         _check_role_alignment(grid_cache[src.grid_id], src, role_name, landscape_grid)
 
     _check_cell_count_cap(landscape_grid)
-    return _make_source(request, domain_id, landscape_grid)
+    role_grids = [grid_cache[grid_id] for grid_id in {src.grid_id for _, src in roles}]
+    return _make_source(request, domain_id, landscape_grid), role_grids

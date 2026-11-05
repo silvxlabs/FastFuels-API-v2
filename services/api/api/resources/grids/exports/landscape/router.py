@@ -17,6 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.exports.schema import Export
 from api.resources.grids.exports.landscape.examples import (
     CREATE_LANDSCAPE_EXPORT_OPENAPI_EXAMPLES,
@@ -68,7 +69,7 @@ async def create_landscape_export(
 
     await enforce_create_quotas(EXPORTS_COLLECTION, request)
 
-    source = await validate_landscape_request(body, owner_id, domain)
+    source, role_grids = await validate_landscape_request(body, owner_id, domain)
 
     export_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -88,6 +89,7 @@ async def create_landscape_export(
         "error": None,
         "tags": body.tags,
         "owner_id": owner_id,
+        "attributions": inherit_attributions(*role_grids),
     }
 
     await set_document_async(EXPORTS_COLLECTION, export_id, export_data)

@@ -10,7 +10,9 @@ covers a compact area.
 """
 
 import math
-from contextlib import suppress
+import resource
+import time
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 
 import numpy as np
@@ -30,7 +32,7 @@ from lib.firestore import get_document
 from lib.gcs import delete_file, storage_size
 from uploader.handlers.inventory_failures import FailureCases
 from uploader.handlers.inventory_reader import check_exists, csv_batches, geo_batches
-from uploader.main import update_resource
+from uploader.main import logger, update_resource
 
 _V2_COLUMNS = {
     "tree_id",
@@ -136,6 +138,33 @@ _PARQUET_SCHEMA = pa.Schema.from_pandas(
 )
 
 
+class _Stages:
+    """Seconds and process peak RSS per handler stage, logged once per upload."""
+
+    def __init__(self):
+        self.seconds: dict[str, float] = {}
+        self.peak_mib: dict[str, int] = {}
+
+    @contextmanager
+    def __call__(self, name: str):
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - start
+            self.seconds[name] = self.seconds.get(name, 0.0) + elapsed
+            # ru_maxrss is KiB on Linux.
+            self.peak_mib[name] = (
+                resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >> 10
+            )
+
+    def __str__(self) -> str:
+        return " ".join(
+            f"{name}={seconds:.1f}s/{self.peak_mib[name]}MiB"
+            for name, seconds in self.seconds.items()
+        )
+
+
 def handle_inventory(
     resource_id: str, bucket: str, object_name: str, doc: dict
 ) -> None:
@@ -143,6 +172,7 @@ def handle_inventory(
     fmt = source["format"]
     col_map = source.get("columns", {})
     domain_id = doc["domain_id"]
+    stages = _Stages()
 
     try:
         _, domain_snap = get_document(DOMAINS_COLLECTION, domain_id)
@@ -152,7 +182,7 @@ def handle_inventory(
         bounds = tuple(float(v) for v in domain_gdf.total_bounds)
 
         table = _read_table(
-            fmt, f"gs://{bucket}/{object_name}", col_map, domain_crs_str, bounds
+            fmt, f"gs://{bucket}/{object_name}", col_map, domain_crs_str, bounds, stages
         )
         if table.num_rows == 0:
             xmin, ymin, xmax, ymax = bounds
@@ -168,46 +198,48 @@ def handle_inventory(
             )
 
         path = f"gs://{INVENTORIES_BUCKET}/{resource_id}"
-        _write_parquet(table, bounds, path)
+        _write_parquet(table, bounds, path, stages)
 
-        x, y = table.column("x"), table.column("y")
-        georeference = {
-            "crs": domain_crs_str,
-            "bounds": [
-                pc.min(x).as_py(),
-                pc.min(y).as_py(),
-                pc.max(x).as_py(),
-                pc.max(y).as_py(),
-            ],
-        }
-        # Record the columns the file actually provided (the table holds only
-        # those, plus tree_id), each with a summary over the persisted
-        # (domain-filtered) data. The create endpoint wrote a provisional full
-        # column list, and the Parquet pads the missing optional columns with
-        # nulls for schema compatibility — but an all-null dbh is not a column
-        # treatments can thin against.
-        columns = [
-            {
-                "key": key,
-                "type": col_type,
-                "unit": unit,
-                "summary": _column_summary(table.column(key), key, col_type),
+        with stages("summaries"):
+            x, y = table.column("x"), table.column("y")
+            georeference = {
+                "crs": domain_crs_str,
+                "bounds": [
+                    pc.min(x).as_py(),
+                    pc.min(y).as_py(),
+                    pc.max(x).as_py(),
+                    pc.max(y).as_py(),
+                ],
             }
-            for key, (col_type, unit) in _COLUMN_METADATA.items()
-            if key in table.column_names
-        ]
-        update_resource(
-            INVENTORIES_COLLECTION,
-            resource_id,
-            {
-                "status": "completed",
-                "modified_on": datetime.now(UTC),
-                "georeference": georeference,
-                "columns": columns,
-                "size_bytes": storage_size(path),
-                "progress": {"message": "Complete", "percent": 100},
-            },
-        )
+            # Record the columns the file actually provided (the table holds only
+            # those, plus tree_id), each with a summary over the persisted
+            # (domain-filtered) data. The create endpoint wrote a provisional full
+            # column list, and the Parquet pads the missing optional columns with
+            # nulls for schema compatibility — but an all-null dbh is not a column
+            # treatments can thin against.
+            columns = [
+                {
+                    "key": key,
+                    "type": col_type,
+                    "unit": unit,
+                    "summary": _column_summary(table.column(key), key, col_type),
+                }
+                for key, (col_type, unit) in _COLUMN_METADATA.items()
+                if key in table.column_names
+            ]
+        with stages("update"):
+            update_resource(
+                INVENTORIES_COLLECTION,
+                resource_id,
+                {
+                    "status": "completed",
+                    "modified_on": datetime.now(UTC),
+                    "georeference": georeference,
+                    "columns": columns,
+                    "size_bytes": storage_size(path),
+                    "progress": {"message": "Complete", "percent": 100},
+                },
+            )
 
     except (ProcessingError, CancelledException, FileNotFoundError):
         # Terminal in main.py. Any other error is retried by Eventarc and the
@@ -218,10 +250,20 @@ def handle_inventory(
     else:
         with suppress(Exception):
             delete_file(f"gs://{bucket}/{object_name}")
+    finally:
+        logger.info(
+            f"Inventory upload stages: {stages}",
+            extra={"resource_type": "inventories", "resource_id": resource_id},
+        )
 
 
 def _read_table(
-    fmt: str, src: str, col_map: dict, domain_crs_str: str, bounds: tuple
+    fmt: str,
+    src: str,
+    col_map: dict,
+    domain_crs_str: str,
+    bounds: tuple,
+    stages: _Stages | None = None,
 ) -> pa.Table:
     """Stream the upload into a validated, domain-filtered Arrow table.
 
@@ -234,28 +276,32 @@ def _read_table(
     Raises:
         FileNotFoundError: If the upload no longer exists.
         ProcessingError: ``SCHEMA_VALIDATION_ERROR``, or a reader error.
+
+    ``stages`` accumulates per-stage timings across both CSV passes.
     """
+    stages = stages or _Stages()
     check_exists(src)
     rename = {user_col: v2_name for v2_name, user_col in col_map.items()}
     if fmt != "csv":
         batches = geo_batches(fmt, src, rename, _V2_COLUMNS, domain_crs_str)
-        return _collect(batches, bounds)
+        return _collect(batches, bounds, stages)
     try:
-        return _collect(csv_batches(src, rename, _V2_COLUMNS), bounds)
+        return _collect(csv_batches(src, rename, _V2_COLUMNS), bounds, stages)
     except pa.ArrowInvalid:
         pass
     # A cell is not a number: re-read as strings so pandera reports it. Outside
     # the except block, so the first pass's batches are freed.
-    return _collect(csv_batches(src, rename, _V2_COLUMNS, as_strings=True), bounds)
+    batches = csv_batches(src, rename, _V2_COLUMNS, as_strings=True)
+    return _collect(batches, bounds, stages)
 
 
-def _collect(batches, bounds: tuple) -> pa.Table:
+def _collect(batches, bounds: tuple, stages: _Stages) -> pa.Table:
     """Validate, domain-filter and number each batch, keeping only its
     compact typed columns.
 
     Generated tree IDs are 1 … N over the trees kept in the domain, in file
     order. Once any batch fails validation the rest are still validated, for
-    the report, but no data is kept.
+    the report, but no data is kept. The result has one chunk per column.
     """
     xmin, ymin, xmax, ymax = bounds
     failures = FailureCases(list(_BATCH_SCHEMA.columns))
@@ -263,7 +309,12 @@ def _collect(batches, bounds: tuple) -> pa.Table:
     tree_ids: list[tuple[int, np.ndarray]] = []
     provided: list[str] | None = None
     next_id = 1
-    for df in batches:
+    batches = iter(batches)
+    while True:
+        with stages("read"):
+            df = next(batches, None)
+        if df is None:
+            break
         if provided is None:
             provided = [c for c in _COLUMN_METADATA if c in df.columns]
             data_schema = pa.schema(
@@ -277,7 +328,8 @@ def _collect(batches, bounds: tuple) -> pa.Table:
             if col not in df.columns:
                 df[col] = None
         try:
-            df = _BATCH_SCHEMA.validate(df, lazy=True)
+            with stages("validate"):
+                df = _BATCH_SCHEMA.validate(df, lazy=True)
         except SchemaErrors as e:
             failures.add(e.failure_cases, list(e.data.columns))
             tables.clear()
@@ -289,19 +341,20 @@ def _collect(batches, bounds: tuple) -> pa.Table:
         if failures:
             continue
 
-        x, y = df["x"].to_numpy(), df["y"].to_numpy()
-        inside = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
-        # Filter in Arrow, so each kept column is its own allocation rather
-        # than a view of a pandas block.
-        table = pa.Table.from_pandas(
-            df[data_schema.names], schema=data_schema, preserve_index=False
-        ).filter(pa.array(inside))
-        if has_ids:
-            ids = df["tree_id"].to_numpy("int64")[inside].astype("int32")
-        else:
-            ids = np.arange(next_id, next_id + table.num_rows, dtype="int32")
-            next_id += table.num_rows
-        tables.append(table.add_column(0, "tree_id", pa.array(ids)))
+        with stages("collect"):
+            x, y = df["x"].to_numpy(), df["y"].to_numpy()
+            inside = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
+            # Filter in Arrow, so each kept column is its own allocation rather
+            # than a view of a pandas block.
+            table = pa.Table.from_pandas(
+                df[data_schema.names], schema=data_schema, preserve_index=False
+            ).filter(pa.array(inside))
+            if has_ids:
+                ids = df["tree_id"].to_numpy("int64")[inside].astype("int32")
+            else:
+                ids = np.arange(next_id, next_id + table.num_rows, dtype="int32")
+                next_id += table.num_rows
+            tables.append(table.add_column(0, "tree_id", pa.array(ids)))
 
     if "tree_id" in (provided or []):
         failures.add_duplicate_tree_ids(tree_ids)
@@ -312,7 +365,18 @@ def _collect(batches, bounds: tuple) -> pa.Table:
             message=f"Schema validation failed with {total} error(s).",
             suggestion=str(cases),
         )
-    return pa.concat_tables(tables)
+    with stages("combine"):
+        table = pa.concat_tables(tables)
+        tables.clear()
+        # One chunk per column, since take on a many-chunk table is superlinear.
+        # Column by column, so each column's batch chunks are freed as it goes.
+        for i in range(table.num_columns):
+            table = table.set_column(
+                i, table.field(i), table.column(i).combine_chunks()
+            )
+        # Hand the freed chunks back to the OS; the sort allocates outside Arrow.
+        pa.default_memory_pool().release_unused()
+    return table
 
 
 def _finite_or_none(value) -> float | None:
@@ -362,24 +426,29 @@ def _column_summary(column: pa.ChunkedArray, key: str, col_type: str) -> dict:
     }
 
 
-def _write_parquet(table: pa.Table, bounds: tuple, path: str) -> None:
+def _write_parquet(
+    table: pa.Table, bounds: tuple, path: str, stages: _Stages | None = None
+) -> None:
     """Write ``table`` as one Parquet file with an aggregated ``_metadata`` file.
 
     Rows are sorted by their 1 km tile's position on a Hilbert curve over the
     domain ``bounds``, then by y, then x, so each row group covers a compact
     area. Row groups are capped at ``ROW_GROUP_SIZE`` rows; each is an API data
     partition (#763). Columns the upload did not provide are written as nulls.
+    ``stages`` records the sort, row-group assembly and write times.
     """
-    tiles = np.concatenate(
-        [
-            _tile_index(b.column(0).to_numpy(), b.column(1).to_numpy(), bounds)
-            for b in table.select(["x", "y"]).to_batches()
-        ]
-    )
-    order = pc.sort_indices(
-        pa.table({"tile": tiles, "y": table.column("y"), "x": table.column("x")}),
-        sort_keys=[("tile", "ascending"), ("y", "ascending"), ("x", "ascending")],
-    )
+    stages = stages or _Stages()
+    with stages("sort"):
+        tiles = np.concatenate(
+            [
+                _tile_index(b.column(0).to_numpy(), b.column(1).to_numpy(), bounds)
+                for b in table.select(["x", "y"]).to_batches()
+            ]
+        )
+        order = pc.sort_indices(
+            pa.table({"tile": tiles, "y": table.column("y"), "x": table.column("x")}),
+            sort_keys=[("tile", "ascending"), ("y", "ascending"), ("x", "ascending")],
+        )
 
     fs, root = pafs.FileSystem.from_uri(path)
     collector: list[pq.FileMetaData] = []
@@ -390,25 +459,28 @@ def _write_parquet(table: pa.Table, bounds: tuple, path: str) -> None:
         metadata_collector=collector,
     ) as writer:
         for start in range(0, len(order), ROW_GROUP_SIZE):
-            rows = table.take(order[start : start + ROW_GROUP_SIZE])
-            arrays = [
-                rows.column(f.name)
-                if f.name in rows.column_names
-                else pa.nulls(rows.num_rows, f.type)
-                for f in _PARQUET_SCHEMA
-            ]
-            writer.write_table(
-                pa.Table.from_arrays(arrays, schema=_PARQUET_SCHEMA),
-                row_group_size=ROW_GROUP_SIZE,
-            )
-    collector[0].set_file_path("part.0.parquet")
-    pq.write_metadata(_PARQUET_SCHEMA, f"{root}/_common_metadata", filesystem=fs)
-    pq.write_metadata(
-        _PARQUET_SCHEMA,
-        f"{root}/_metadata",
-        metadata_collector=collector,
-        filesystem=fs,
-    )
+            with stages("take"):
+                rows = table.take(order[start : start + ROW_GROUP_SIZE])
+                arrays = [
+                    rows.column(f.name)
+                    if f.name in rows.column_names
+                    else pa.nulls(rows.num_rows, f.type)
+                    for f in _PARQUET_SCHEMA
+                ]
+                rows = pa.Table.from_arrays(arrays, schema=_PARQUET_SCHEMA)
+            with stages("write"):
+                writer.write_table(rows, row_group_size=ROW_GROUP_SIZE)
+        with stages("write"):
+            writer.close()
+    with stages("write"):
+        collector[0].set_file_path("part.0.parquet")
+        pq.write_metadata(_PARQUET_SCHEMA, f"{root}/_common_metadata", filesystem=fs)
+        pq.write_metadata(
+            _PARQUET_SCHEMA,
+            f"{root}/_metadata",
+            metadata_collector=collector,
+            filesystem=fs,
+        )
 
 
 def _tile_index(x: np.ndarray, y: np.ndarray, bounds: tuple) -> np.ndarray:

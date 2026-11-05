@@ -578,7 +578,9 @@ class TestHandleInventoryTreeIds:
         monkeypatch.setattr(inventory, "get_document", lambda c, i: (None, _Snap()))
         monkeypatch.setattr(inventory, "parse_domain_gdf", lambda d: domain_gdf)
         monkeypatch.setattr(
-            inventory, "_write_parquet", lambda t, b, p: _write_parquet(t, b, out)
+            inventory,
+            "_write_parquet",
+            lambda t, b, p, *a: _write_parquet(t, b, out, *a),
         )
         monkeypatch.setattr(inventory, "storage_size", lambda p: 0)
         monkeypatch.setattr(inventory, "delete_file", lambda p: None)

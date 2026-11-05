@@ -56,6 +56,10 @@ def csv_batches(
         columns: v2 column names to keep.
         as_strings: Read the kept columns as strings.
         batch_size: Approximate rows per batch.
+
+    Raises:
+        ProcessingError: ``SCHEMA_VALIDATION_ERROR`` with ``as_strings`` for a
+            malformed row, such as one with too few or too many fields.
     """
     fs, path = pafs.FileSystem.from_uri(src)
     with fs.open_input_stream(path) as f:
@@ -76,15 +80,26 @@ def csv_batches(
     # Without a line break the file is its header alone, which open_csv rejects.
     if b"\n" in head or b"\r" in head:
         with fs.open_input_stream(path) as f:
-            reader = pacsv.open_csv(
-                f, read_options=read_options, convert_options=convert_options
-            )
-            for batch in reader:
-                df = _strings_to_numbers(batch) if as_strings else batch.to_pandas()
-                df.columns = [rename.get(c, c) for c in df.columns]
-                df.index = pd.RangeIndex(offset, offset + len(df))
-                offset += len(df)
-                yield df
+            try:
+                reader = pacsv.open_csv(
+                    f, read_options=read_options, convert_options=convert_options
+                )
+                for batch in reader:
+                    df = _strings_to_numbers(batch) if as_strings else batch.to_pandas()
+                    df.columns = [rename.get(c, c) for c in df.columns]
+                    df.index = pd.RangeIndex(offset, offset + len(df))
+                    offset += len(df)
+                    yield df
+            except pa.ArrowInvalid as e:
+                # Reading strings cannot fail on a cell, so this is a malformed
+                # row, such as one with too few or too many fields.
+                if not as_strings:
+                    raise
+                raise ProcessingError(
+                    code="SCHEMA_VALIDATION_ERROR",
+                    message=f"The CSV file could not be parsed: {e}",
+                    suggestion="Give every row one value per header column.",
+                )
     if offset == 0:
         yield pd.DataFrame(
             {rename.get(c, c): pd.Series([], dtype="float64") for c in keep}

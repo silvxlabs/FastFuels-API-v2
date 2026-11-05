@@ -237,7 +237,9 @@ def _stream(tmp_path: Path, monkeypatch, fmt: str, path: Path, col_map: dict) ->
         lambda d: gpd.GeoDataFrame(geometry=[box(*BOUNDS)], crs=DOMAIN_CRS),
     )
     monkeypatch.setattr(
-        inventory, "_write_parquet", lambda t, b, p: write_parquet(t, b, str(out))
+        inventory,
+        "_write_parquet",
+        lambda t, b, p, *a: write_parquet(t, b, str(out), *a),
     )
     monkeypatch.setattr(inventory, "storage_size", lambda p: 0)
     monkeypatch.setattr(inventory, "delete_file", lambda p: None)
@@ -478,6 +480,40 @@ class TestReadErrors:
             inventory._read_table(
                 "geojson", str(tmp_path / "gone.geojson"), {}, DOMAIN_CRS, BOUNDS
             )
+
+    @pytest.mark.parametrize(
+        "bad_row, detail",
+        [("500300,4200300", "got 2"), ("500300,4200300,12,4", "got 4")],
+        ids=["short_row", "long_row"],
+    )
+    def test_malformed_row_is_terminal(self, tmp_path, bad_row, detail):
+        """A row with too few or too many fields fails the upload instead of
+        being retried."""
+        rows = [f"{500_000 + i},{4_200_000 + i},10" for i in range(3000)]
+        rows[2500] = bad_row
+        path = tmp_path / "trees.csv"
+        path.write_text("x,y,height\n" + "\n".join(rows) + "\n")
+        with pytest.raises(ProcessingError) as exc_info:
+            inventory._read_table("csv", str(path), {}, DOMAIN_CRS, BOUNDS)
+        assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
+        assert "Expected 3 columns" in exc_info.value.message
+        assert detail in exc_info.value.message
+        assert bad_row in exc_info.value.message
+
+    def test_empty_csv_is_retried(self, tmp_path):
+        """A zero-byte CSV raises a non-terminal error, as before #764."""
+        path = tmp_path / "trees.csv"
+        path.write_bytes(b"")
+        with pytest.raises(pa.ArrowInvalid):
+            inventory._read_table("csv", str(path), {}, DOMAIN_CRS, BOUNDS)
+
+
+def test_read_table_has_one_chunk_per_column(tmp_path):
+    """take on a many-chunk table is superlinear, so batches are combined."""
+    path = tmp_path / "trees.csv"
+    _trees(6000, 15).to_csv(path, index=False)
+    table = inventory._read_table("csv", str(path), {}, DOMAIN_CRS, BOUNDS)
+    assert {table.column(c).num_chunks for c in table.column_names} == {1}
 
 
 def _rows_table(x, y) -> pa.Table:

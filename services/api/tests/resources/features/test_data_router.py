@@ -311,7 +311,6 @@ class TestGetFeatureDataPartition:
 
         body = response.json()
         assert body["type"] == "FeatureCollection"
-        assert body["attributions"] == static_roads_in_firestore.get("attributions", [])
 
         # Writers pin row_group_size=1000, so partition 0 holds up to that
         # many features (or `n` if the entire blob fits in one row group).
@@ -359,24 +358,20 @@ class TestGetFeatureDataPartition:
                 want, sort_keys=True
             ), f"feature {i} mismatch:\n got={got}\nwant={want}"
 
-    def test_partition_includes_attributions_from_document(
+    def test_attributions_on_resource_not_partition(
         self, client, domain_for_testing, attributed_roads_in_firestore
     ):
         feature_id = attributed_roads_in_firestore["id"]
-        expected = [OSM_ATTRIBUTION]
-
-        response = client.get(partition_route(domain_for_testing["id"], feature_id, 0))
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["type"] == "FeatureCollection"
-        assert len(body["features"]) > 0
-        assert body["attributions"] == expected
 
         response = client.get(
             f"/domains/{domain_for_testing['id']}/features/{feature_id}"
         )
         assert response.status_code == 200, response.text
-        assert response.json()["attributions"] == expected
+        assert response.json()["attributions"] == [OSM_ATTRIBUTION]
+
+        response = client.get(partition_route(domain_for_testing["id"], feature_id, 0))
+        assert response.status_code == 200, response.text
+        assert "attributions" not in response.json()
 
     def test_water_endpoint_returns_geojson(
         self, client, domain_for_testing, static_water_in_firestore
@@ -466,7 +461,7 @@ class TestGetFeatureDataPartition:
                 }
             )
 
-        async def _broken(domain_id, feature_id, partition_index, attributions):
+        async def _broken(domain_id, feature_id, partition_index):
             raise InvalidFeatureParquet("simulated malformed parquet")
 
         monkeypatch.setattr(features_router, "get_document_async", _ok_doc)
@@ -495,7 +490,7 @@ class TestGetFeatureDataPartition:
                 }
             )
 
-        async def _too_large(domain_id, feature_id, partition_index, attributions):
+        async def _too_large(domain_id, feature_id, partition_index):
             raise PartitionTooLarge(50_000_000, features_cache.MAX_RESPONSE_BYTES)
 
         monkeypatch.setattr(features_router, "get_document_async", _ok_doc)

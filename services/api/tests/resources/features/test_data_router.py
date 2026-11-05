@@ -32,13 +32,20 @@ from api.resources.features.cache import (
 )
 from fastapi import HTTPException
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.testing import SHARED_TEST_FEATURES_DIR
 from tests.fixtures import make_feature_data
 
 STATIC_ROADS = "static-test-blue-mtn-osm-roads"
 STATIC_WATER = "static-test-blue-mtn-osm-water"
+OSM_ATTRIBUTION = {
+    "dataset": "OpenStreetMap",
+    "license_name": "ODbL-1.0",
+    "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+    "citation": "© OpenStreetMap contributors",
+    "access_url": "https://www.openstreetmap.org/copyright",
+    "accessed_on": "2026-11-05",
+}
 
 
 # Helpers
@@ -143,7 +150,7 @@ def attributed_roads_in_firestore(firestore_client, test_owner_id, domain_for_te
         domain_for_testing["id"],
         STATIC_ROADS,
         feature_id=f"test-{uuid4().hex}",
-        attributions=[make_attribution(OPENSTREETMAP, "2026-11-05")],
+        attributions=[OSM_ATTRIBUTION],
     )
     yield template
     _uninstall_static_feature(doc_ref, blob)
@@ -356,7 +363,7 @@ class TestGetFeatureDataPartition:
         self, client, domain_for_testing, attributed_roads_in_firestore
     ):
         feature_id = attributed_roads_in_firestore["id"]
-        expected = [make_attribution(OPENSTREETMAP, "2026-11-05")]
+        expected = [OSM_ATTRIBUTION]
 
         response = client.get(partition_route(domain_for_testing["id"], feature_id, 0))
         assert response.status_code == 200, response.text

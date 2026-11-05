@@ -18,7 +18,6 @@ from uuid import uuid4
 import geopandas as gpd
 import pytest
 
-from lib.attributions import OPENSTREETMAP
 from lib.config import (
     DEPLOYMENT_ENV,
     DOMAINS_COLLECTION,
@@ -240,7 +239,7 @@ def test_water_coordinates_within_domain(shared_water_feature, shared_water_gdf)
 def _assert_osm_attributions(feature):
     """The completed document carries the OSM attribution."""
     (attribution,) = feature["attributions"]
-    assert attribution["dataset"] == OPENSTREETMAP
+    assert attribution["dataset"] == "OpenStreetMap"
     assert attribution["license_name"] == "ODbL-1.0"
     assert attribution["accessed_on"]
 

@@ -27,7 +27,6 @@ import pyogrio
 from shapely.geometry import box
 
 from etcher.errors import ProcessingError
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import OSM_BUCKET
 from lib.gcs.blobs import exists
 
@@ -49,6 +48,14 @@ FGB_GDAL_CONFIG = {
 pyogrio.set_gdal_config_options(FGB_GDAL_CONFIG)
 
 STATES_INDEX = f"gs://{OSM_BUCKET}/index/states.fgb"
+
+OSM_ATTRIBUTION = {
+    "dataset": "OpenStreetMap",
+    "license_name": "ODbL-1.0",
+    "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+    "citation": "© OpenStreetMap contributors",
+    "access_url": "https://www.openstreetmap.org/copyright",
+}
 
 
 @lru_cache(maxsize=1)
@@ -80,7 +87,7 @@ def osm_attribution() -> dict:
     ``accessed_on`` is the processing date: the bucket's ``manifest.json``
     does not record when the snapshot was built.
     """
-    return make_attribution(OPENSTREETMAP, date.today().isoformat())
+    return {**OSM_ATTRIBUTION, "accessed_on": date.today().isoformat()}
 
 
 def read_osm_features(bbox_4326: tuple, feature_type: str) -> gpd.GeoDataFrame:

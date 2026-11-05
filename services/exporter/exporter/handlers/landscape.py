@@ -41,6 +41,7 @@ import xarray as xr
 from google.cloud import storage as gcs_storage
 from rasterio.transform import Affine
 
+from exporter.attribution import attribution_metadata
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
 from exporter.storage import load_grid_zarr
@@ -157,7 +158,10 @@ def export_landscape(
         tif_path = Path(tmp) / "landscape.tif"
         try:
             with rasterio.open(tif_path, "w", **profile) as dst:
-                dst.update_tags(Creator="FastFuels API")
+                dst.update_tags(
+                    Creator="FastFuels API",
+                    **attribution_metadata(export.get("attributions") or []),
+                )
                 for index, (encoded, layer_name, units) in enumerate(bands, start=1):
                     dst.write(encoded, index)
                     dst.set_band_description(index, layer_name)

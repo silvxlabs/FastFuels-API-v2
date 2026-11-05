@@ -18,6 +18,7 @@ import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 
+from exporter.attribution import attribution_metadata
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
 from exporter.storage import load_grid_zarr
@@ -166,15 +167,18 @@ def export_geotiff(
     progress("Writing GeoTIFF...", 70)
     filename = sanitize_filename(export.get("name", ""), ".tif")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
+    tags = attribution_metadata(export.get("attributions") or [])
     try:
         with rasterio.Env(CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE="YES"):
             if _nodata_is_uniform(ds):
-                ds.rio.to_raster(gcs_path, driver="GTiff")
+                ds.rio.to_raster(gcs_path, driver="GTiff", tags=tags)
             else:
                 # Bands carry distinct nodata (e.g. LANDFIRE aspect -1 next to
                 # elevation 32767). A GeoTIFF has one dtype and one file-level
                 # nodata, so map every band's nodata onto a shared value.
-                _stack_with_shared_nodata(ds).rio.to_raster(gcs_path, driver="GTiff")
+                _stack_with_shared_nodata(ds).rio.to_raster(
+                    gcs_path, driver="GTiff", tags=tags
+                )
     except Exception as e:
         raise ProcessingError(
             code="GEOTIFF_WRITE_ERROR",
@@ -215,6 +219,7 @@ def export_zarr(
         # store with their own tooling, and zarr-python 2.x cannot read v3.
         # Pinned rather than left to the library default so a future default
         # flip can't silently change what users receive.
+        ds = ds.assign_attrs(attribution_metadata(export.get("attributions") or []))
         ds.to_zarr(zarr_dir, zarr_format=3)
 
         progress("Zipping Zarr...", 85)

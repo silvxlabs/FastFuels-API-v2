@@ -21,6 +21,7 @@ from collections.abc import Callable
 
 from google.cloud import storage as gcs_storage
 
+from exporter.attribution import attribution_metadata
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
 from exporter.handlers.grid import _load_and_select_bands
@@ -71,6 +72,7 @@ def export_netcdf(
     for k in _INTERNAL_ATTRS_TO_STRIP:
         ds.attrs.pop(k, None)
     stamp_cf(ds, bands=bands, vertical=("z" in ds.dims))
+    ds.attrs.update(attribution_metadata(export.get("attributions") or []))
 
     progress("Writing netCDF...", 70)
     filename = sanitize_filename(export.get("name", ""), ".nc")

@@ -8,7 +8,7 @@ feature type and source product.
 import geopandas as gpd
 
 from etcher.errors import ProcessingError
-from etcher.handlers import crown, road, water
+from etcher.handlers import building, crown, road, water
 
 
 def dispatch_handler(
@@ -16,7 +16,8 @@ def dispatch_handler(
 ) -> dict:
     """Route to appropriate handler based on feature type and source product.
 
-    Returns dict with 'georeference' key.
+    Returns dict with 'georeference' key, and optionally 'attributions' and
+    'release'.
     """
     feature_type = feature.get("type")
     source = feature.get("source", {})
@@ -49,6 +50,19 @@ def dispatch_handler(
                         suggestion="Currently only 'osm' is supported for water.",
                     )
 
+        case "building":
+            match product:
+                case "overture":
+                    return building.handle_overture(
+                        feature, source, domain_gdf, progress_callback
+                    )
+                case _:
+                    raise ProcessingError(
+                        code="UNKNOWN_PRODUCT",
+                        message=f"Unknown product '{product}' for building features.",
+                        suggestion="Currently only 'overture' is supported for buildings.",
+                    )
+
         case "crown":
             match product:
                 case "chm":
@@ -66,5 +80,5 @@ def dispatch_handler(
             raise ProcessingError(
                 code="UNKNOWN_FEATURE_TYPE",
                 message=f"Unknown feature type: {feature_type}",
-                suggestion="Supported feature types are 'road', 'water' and 'crown'.",
+                suggestion="Supported feature types are 'road', 'water', 'building' and 'crown'.",
             )

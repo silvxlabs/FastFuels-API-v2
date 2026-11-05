@@ -109,7 +109,7 @@ async def apply_modifications(
     - `source: "geometry"` — supply GeoJSON directly via `geometry` (plus
       optional `crs`; defaults to the domain CRS).
     - `source: "feature"` — reference a persisted Feature resource by
-      `feature_id` (road, water, layerset). The Feature must belong to the
+      `feature_id` (road, water, building, layerset). The Feature must belong to the
       same domain as this inventory and be in `completed` status;
       cross-domain, missing, or unfinished references are rejected with 422.
 

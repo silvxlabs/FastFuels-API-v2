@@ -20,6 +20,7 @@ class FeatureType(StrEnum):
     water = "water"
     layerset = "layerset"
     crown = "crown"
+    building = "building"
 
 
 class FeatureSortField(StrEnum):

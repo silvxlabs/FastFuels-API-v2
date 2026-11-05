@@ -88,13 +88,16 @@ def update_status(
     size_bytes=None,
     error=None,
     attributions=None,
+    release=None,
 ):
     """Update feature status.
 
     ``size_bytes`` is the GCS artifact footprint recorded on completion for
     per-owner storage quota accounting (#342). On completion ``attributions``
-    is written only when the handler returns some (road, water); otherwise the
-    document keeps the attributions the API set at create (crown).
+    is written only when the handler returns some (road, water, building);
+    otherwise the document keeps the attributions the API set at create
+    (crown). ``release`` is the source data release that was read, written to
+    ``source.release`` without touching the other ``source`` fields.
     """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
@@ -109,6 +112,8 @@ def update_status(
         data["size_bytes"] = size_bytes
     if error is not None:
         data["error"] = error
+    if release is not None:
+        data["source.release"] = release
     try:
         update_document(FEATURES_COLLECTION, feature_id, data)
     except DocumentNotFoundError:
@@ -211,6 +216,7 @@ def process_feature_request(request: Request):
             georeference=result.get("georeference"),
             size_bytes=feature_size(domain_id, feature_id),
             attributions=result.get("attributions"),
+            release=result.get("release"),
         )
         logger.info("Processing complete", extra=ids)
         return "OK", 200

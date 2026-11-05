@@ -441,3 +441,61 @@ class TestFeatureModificationAttributions:
             assert response.json()["attributions"] == []
         finally:
             _delete(firestore_client, GRIDS_COLLECTION, response.json()["id"])
+
+
+UNIFORM = next(spec for spec in ENDPOINTS if spec.name == "uniform")
+
+
+@pytest.fixture(scope="session")
+def completed_building_feature(firestore_client, domain_for_testing):
+    data = make_feature_data(
+        domain_id=domain_for_testing["id"],
+        type="building",
+        product="overture",
+        status="completed",
+    )
+    _seed(firestore_client, FEATURES_COLLECTION, data)
+    yield data
+    _delete(firestore_client, FEATURES_COLLECTION, data["id"])
+
+
+@pytest.fixture(scope="session")
+def pending_building_feature(firestore_client, domain_for_testing):
+    data = make_feature_data(
+        domain_id=domain_for_testing["id"],
+        type="building",
+        product="overture",
+        status="pending",
+    )
+    _seed(firestore_client, FEATURES_COLLECTION, data)
+    yield data
+    _delete(firestore_client, FEATURES_COLLECTION, data["id"])
+
+
+class TestBuildingFeatureModification:
+    """Building features (#768) are referenced like any other feature: a
+    completed one is accepted and a pending one is rejected. One endpoint is
+    enough — every router shares the validator swept above."""
+
+    def test_completed_building_feature_succeeds(
+        self, client, firestore_client, domain_for_testing, completed_building_feature
+    ):
+        feature_id = completed_building_feature["id"]
+        response = client.post(
+            UNIFORM.url(domain_for_testing["id"]), json=_body(UNIFORM, feature_id, {})
+        )
+        assert response.status_code == 201, response.json()
+        grid = response.json()
+        _delete(firestore_client, GRIDS_COLLECTION, grid["id"])
+        condition = grid["modifications"][0]["conditions"][0]
+        assert condition["feature_id"] == feature_id
+
+    def test_pending_building_feature_returns_422(
+        self, client, domain_for_testing, pending_building_feature
+    ):
+        feature_id = pending_building_feature["id"]
+        response = client.post(
+            UNIFORM.url(domain_for_testing["id"]), json=_body(UNIFORM, feature_id, {})
+        )
+        assert response.status_code == 422
+        assert feature_id in response.json()["detail"]

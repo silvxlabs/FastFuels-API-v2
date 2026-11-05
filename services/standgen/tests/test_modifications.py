@@ -11,7 +11,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
-from shapely.geometry import box, mapping
+from shapely.geometry import MultiPolygon, box, mapping
 from standgen.modifications import (
     _resolve_feature_geometry,
     _resolve_inline_geometry,
@@ -661,3 +661,45 @@ class TestResolveSpatialConditions:
         with pytest.raises(ProcessingError) as exc:
             _resolve_feature_geometry("domain-1", "feat-1", 0.0, {}, UTM_CRS)
         assert exc.value.code == "FEATURE_EMPTY"
+
+    def test_building_feature_removes_trees_inside_footprints(
+        self, sample_df, monkeypatch, tmp_path
+    ):
+        """A building Feature (Polygon and MultiPolygon footprints carrying
+        etcher's height columns) removes exactly the trees inside a footprint."""
+        doc = {"domain_id": "domain-1", "status": "completed", "type": "building"}
+        monkeypatch.setattr(
+            "standgen.modifications.get_document",
+            lambda collection, fid: (None, _FakeSnapshot(doc)),
+        )
+        buildings = gpd.GeoDataFrame(
+            {
+                "height": [6.5, None],
+                "height_source": ["OpenStreetMap", None],
+                "source_dataset": ["OpenStreetMap", "Microsoft ML Buildings"],
+            },
+            geometry=[
+                box(0.5, 0.5, 1.5, 1.5),
+                MultiPolygon([box(2.5, 2.5, 3.5, 3.5), box(4.5, 4.5, 5.5, 5.5)]),
+            ],
+            crs=UTM_CRS,
+        )
+        parquet_path = tmp_path / "building.parquet"
+        buildings.to_parquet(parquet_path)
+        stored = gpd.read_parquet(parquet_path)
+        monkeypatch.setattr(
+            "standgen.modifications.gpd.read_parquet", lambda path: stored
+        )
+
+        mods = [
+            {
+                "conditions": [
+                    {"source": "feature", "operator": "within", "feature_id": "b1"}
+                ],
+                "actions": [{"modifier": "remove"}],
+            }
+        ]
+        resolved = resolve_spatial_conditions(mods, "domain-1", UTM_CRS)
+        result = apply_modifications(sample_df.copy(), resolved)
+
+        assert result["x"].tolist() == [2.0, 4.0]

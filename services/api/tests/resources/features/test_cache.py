@@ -10,8 +10,11 @@ RPC.
 """
 
 import inspect
+import json
 
+import geopandas as gpd
 from api.resources.features import cache as features_cache
+from shapely.geometry import Point
 
 
 def test_open_parquet_file_uses_native_gcs_uri_without_fsspec(monkeypatch):
@@ -49,3 +52,27 @@ def test_cache_module_does_not_reference_sync_fsspec_client():
     source = inspect.getsource(features_cache)
     assert "get_gcsfs_client" not in source
     assert "GCSFileSystem" not in source
+
+
+def test_add_attributions_appends_top_level_member():
+    gdf = gpd.GeoDataFrame({"name": ["a", "b"]}, geometry=[Point(0, 0), Point(1, 1)])
+    attributions = [
+        {"dataset": "OpenStreetMap", "citation": "© OpenStreetMap contributors"}
+    ]
+
+    out = json.loads(features_cache._add_attributions(gdf.to_json(), attributions))
+
+    assert out["type"] == "FeatureCollection"
+    assert len(out["features"]) == 2
+    assert out["attributions"] == attributions
+    assert out["features"] == json.loads(gdf.to_json())["features"]
+
+
+def test_add_attributions_empty_list():
+    gdf = gpd.GeoDataFrame({"name": []}, geometry=[])
+
+    out = json.loads(features_cache._add_attributions(gdf.to_json(), []))
+
+    assert out["type"] == "FeatureCollection"
+    assert out["features"] == []
+    assert out["attributions"] == []

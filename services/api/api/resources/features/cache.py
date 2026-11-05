@@ -19,6 +19,7 @@ unnecessary.
 
 import asyncio
 import functools
+import json
 
 import geopandas as gpd
 import pyarrow as pa
@@ -128,8 +129,17 @@ async def get_feature_metadata(domain_id: str, feature_id: str) -> FeatureDataMe
     return await asyncio.to_thread(_read_metadata_sync, domain_id, feature_id)
 
 
+def _add_attributions(geojson: str, attributions: list[dict]) -> str:
+    """Append a top-level ``attributions`` member to a FeatureCollection string.
+
+    Splices into the closing brace instead of re-parsing the (possibly large)
+    payload. RFC 7946 §6.1 allows extra top-level members.
+    """
+    return f'{geojson[:-1]}, "attributions": {json.dumps(attributions)}}}'
+
+
 def _read_partition_sync(
-    domain_id: str, feature_id: str, partition_index: int
+    domain_id: str, feature_id: str, partition_index: int, attributions: list[dict]
 ) -> tuple[bytes, int, int]:
     pf = _open_parquet_file(domain_id, feature_id)
     partition_count = pf.num_row_groups
@@ -149,19 +159,20 @@ def _read_partition_sync(
         pf.metadata.row_group(j).num_rows for j in range(partition_index)
     )
     gdf.index = range(start_offset, start_offset + len(gdf))
-    payload = gdf.to_json().encode("utf-8")
+    payload = _add_attributions(gdf.to_json(), attributions).encode("utf-8")
     if len(payload) > MAX_RESPONSE_BYTES:
         raise PartitionTooLarge(len(payload), MAX_RESPONSE_BYTES)
     return payload, len(gdf), total
 
 
 async def fetch_partition_geojson(
-    domain_id: str, feature_id: str, partition_index: int
+    domain_id: str, feature_id: str, partition_index: int, attributions: list[dict]
 ) -> tuple[bytes, int, int]:
     """Return ``(payload_bytes, num_features_in_partition, total_features)``.
 
     ``payload_bytes`` is a self-contained GeoJSON FeatureCollection for the
-    requested row group, range-read from GCS.
+    requested row group, range-read from GCS, with ``attributions`` as a
+    top-level member.
 
     Raises:
         FileNotFoundError: blob is missing on GCS.
@@ -170,5 +181,5 @@ async def fetch_partition_geojson(
         PartitionTooLarge: serialized payload exceeds ``MAX_RESPONSE_BYTES``.
     """
     return await asyncio.to_thread(
-        _read_partition_sync, domain_id, feature_id, partition_index
+        _read_partition_sync, domain_id, feature_id, partition_index, attributions
     )

@@ -32,6 +32,7 @@ from api.resources.features.cache import (
 )
 from fastapi import HTTPException
 
+from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.testing import SHARED_TEST_FEATURES_DIR
 from tests.fixtures import make_feature_data
@@ -72,11 +73,19 @@ def partition_route(domain_id: str, feature_id: str, partition_index: int):
     return f"/domains/{domain_id}/features/{feature_id}/data/{partition_index}"
 
 
-def _install_static_feature(firestore_client, test_owner_id, domain_id, static_name):
+def _install_static_feature(
+    firestore_client,
+    test_owner_id,
+    domain_id,
+    static_name,
+    feature_id=None,
+    attributions=None,
+):
     """Copy the bucket-root static blob into the test domain + register Firestore doc."""
+    feature_id = feature_id or static_name
     fs = gcsfs.GCSFileSystem()
     src = f"{FEATURES_BUCKET}/{static_name}.parquet"
-    dst = f"{FEATURES_BUCKET}/{domain_id}/{static_name}.parquet"
+    dst = f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
     if not fs.exists(src):
         pytest.skip(
             f"gs://{src} not found. Run the e2e fixture generator for {static_name}."
@@ -86,10 +95,12 @@ def _install_static_feature(firestore_client, test_owner_id, domain_id, static_n
     fs.cp(src, dst)
 
     template = _load_static_template(static_name)
-    template["id"] = static_name
+    template["id"] = feature_id
     template["owner_id"] = test_owner_id
     template["domain_id"] = domain_id
-    doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(static_name)
+    if attributions is not None:
+        template["attributions"] = attributions
+    doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(feature_id)
     doc_ref.set(template)
     return template, doc_ref, dst
 
@@ -117,6 +128,22 @@ def static_roads_in_firestore(firestore_client, test_owner_id, domain_for_testin
 def static_water_in_firestore(firestore_client, test_owner_id, domain_for_testing):
     template, doc_ref, blob = _install_static_feature(
         firestore_client, test_owner_id, domain_for_testing["id"], STATIC_WATER
+    )
+    yield template
+    _uninstall_static_feature(doc_ref, blob)
+
+
+@pytest.fixture
+def attributed_roads_in_firestore(firestore_client, test_owner_id, domain_for_testing):
+    """A copy of the static roads feature, under its own id, carrying the OSM
+    attribution. Separate id so the shared static doc is never mutated."""
+    template, doc_ref, blob = _install_static_feature(
+        firestore_client,
+        test_owner_id,
+        domain_for_testing["id"],
+        STATIC_ROADS,
+        feature_id=f"test-{uuid4().hex}",
+        attributions=[make_attribution(OPENSTREETMAP, "2026-11-05")],
     )
     yield template
     _uninstall_static_feature(doc_ref, blob)
@@ -277,6 +304,7 @@ class TestGetFeatureDataPartition:
 
         body = response.json()
         assert body["type"] == "FeatureCollection"
+        assert body["attributions"] == static_roads_in_firestore.get("attributions", [])
 
         # Writers pin row_group_size=1000, so partition 0 holds up to that
         # many features (or `n` if the entire blob fits in one row group).
@@ -323,6 +351,25 @@ class TestGetFeatureDataPartition:
             assert json.dumps(got, sort_keys=True) == json.dumps(
                 want, sort_keys=True
             ), f"feature {i} mismatch:\n got={got}\nwant={want}"
+
+    def test_partition_includes_attributions_from_document(
+        self, client, domain_for_testing, attributed_roads_in_firestore
+    ):
+        feature_id = attributed_roads_in_firestore["id"]
+        expected = [make_attribution(OPENSTREETMAP, "2026-11-05")]
+
+        response = client.get(partition_route(domain_for_testing["id"], feature_id, 0))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["type"] == "FeatureCollection"
+        assert len(body["features"]) > 0
+        assert body["attributions"] == expected
+
+        response = client.get(
+            f"/domains/{domain_for_testing['id']}/features/{feature_id}"
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["attributions"] == expected
 
     def test_water_endpoint_returns_geojson(
         self, client, domain_for_testing, static_water_in_firestore
@@ -412,7 +459,7 @@ class TestGetFeatureDataPartition:
                 }
             )
 
-        async def _broken(domain_id, feature_id, partition_index):
+        async def _broken(domain_id, feature_id, partition_index, attributions):
             raise InvalidFeatureParquet("simulated malformed parquet")
 
         monkeypatch.setattr(features_router, "get_document_async", _ok_doc)
@@ -441,7 +488,7 @@ class TestGetFeatureDataPartition:
                 }
             )
 
-        async def _too_large(domain_id, feature_id, partition_index):
+        async def _too_large(domain_id, feature_id, partition_index, attributions):
             raise PartitionTooLarge(50_000_000, features_cache.MAX_RESPONSE_BYTES)
 
         monkeypatch.setattr(features_router, "get_document_async", _ok_doc)

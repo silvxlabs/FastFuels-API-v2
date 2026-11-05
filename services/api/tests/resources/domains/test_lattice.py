@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from api.resources.domains.router import get_domain_lattice
+from api.resources.grids.exports.alignment import build_domain_lattice
 
 # #772: a 3DEP target grid's non-round cell size on the Blue Mountain domain.
 RES = 7.7301175133338464
@@ -66,3 +67,16 @@ def test_partial_cell_still_rounds_up():
     result = lattice(make_domain(MINX, miny, maxx, MAXY), RES)
 
     assert result.shape == (115, 170)
+
+
+def test_export_domain_lattice_matches_endpoint():
+    maxx = MINX + 169 * RES
+    miny = MAXY - 115 * RES
+    domain = make_domain(MINX, miny, maxx, MAXY)
+    domain["bbox"] = [MINX, miny, maxx, MAXY]
+
+    export = build_domain_lattice(domain, RES)
+    endpoint = lattice(domain, RES)
+
+    assert (export["ny"], export["nx"]) == endpoint.shape == (115, 169)
+    assert tuple(export["transform"]) == endpoint.transform

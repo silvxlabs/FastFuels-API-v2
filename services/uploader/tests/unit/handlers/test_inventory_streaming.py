@@ -390,6 +390,27 @@ class TestMatchesEager:
         streamed = _compare(tmp_path, monkeypatch, "csv", path, CSV_COLUMNS)
         assert "field_uniqueness" in streamed.suggestion
 
+    @pytest.mark.parametrize("fmt", ["csv", "geojson"])
+    def test_padded_columns_in_crown_base_height_failures(
+        self, tmp_path, monkeypatch, fmt
+    ):
+        """Frames that fail the crown-base-height check, with the other
+        optional columns missing and padded with typed nulls (#778)."""
+        df = _trees(6000, 16, with_id=False)[["x", "y", "height", "crown_base_height"]]
+        rows = [5, 2500, 5900]
+        df.loc[rows, "crown_base_height"] = df.loc[rows, "height"] + 1
+        if fmt == "csv":
+            path = tmp_path / "trees.csv"
+            df.to_csv(path, index=False)
+        else:
+            path = _write_geo(_geo(df, "EPSG:4326"), tmp_path / "trees.geojson")
+        streamed = _compare(tmp_path, monkeypatch, fmt, path)
+        assert streamed.code == "SCHEMA_VALIDATION_ERROR"
+        assert {c["check"] for c in _cases(streamed)} == {
+            "crown_base_height must not exceed height"
+        }
+        assert {c["index"] for c in _cases(streamed)} == set(rows)
+
     def test_more_than_100_failures(self, tmp_path, monkeypatch):
         """Several failing checks, so the order of the first 100 cases matters."""
         df = _trees(6000, 9, with_id=False)

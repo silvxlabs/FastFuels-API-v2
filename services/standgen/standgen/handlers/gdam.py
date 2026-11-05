@@ -220,9 +220,12 @@ _RETRYABLE_TRANSPORT_ERRORS = (
 )
 # Statuses worth retrying: 429 (GDAM's rate limit at the load balancer) and the
 # gateway errors a scaling or redeploying Cloud Run service returns. A 500 is
-# terminal: GDAM returns it for failures a retry won't fix. A 400 is terminal
-# too: GDAM returns it for a tree outside its coverage.
+# terminal: GDAM returns it for failures a retry won't fix. The exception is
+# Cloud Run's own 500, sent when a request waits too long for an instance during
+# scale-out: an HTML page, not GDAM's JSON, carrying ``_CLOUD_RUN_500_MARKER``.
+# A 400 is terminal too: GDAM returns it for a tree outside its coverage.
 _RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
+_CLOUD_RUN_500_MARKER = "please try again in 30 seconds"
 _RETRY_BACKOFF_BASE_S = 0.5
 # Longest Retry-After honored; standgen's whole request has a deadline.
 _MAX_RETRY_AFTER_S = 30.0
@@ -239,6 +242,20 @@ def _retry_delay(attempt: int, response=None) -> float:
     return _RETRY_BACKOFF_BASE_S * (2**attempt)
 
 
+def _is_retryable_status(response) -> bool:
+    """Whether a non-2xx response is transient: a retryable status, or Cloud
+    Run's own 500 (non-JSON, with ``_CLOUD_RUN_500_MARKER``)."""
+    if response.status_code in _RETRYABLE_STATUSES:
+        return True
+    if response.status_code != 500:
+        return False
+    try:
+        response.json()
+        return False
+    except ValueError:
+        return _CLOUD_RUN_500_MARKER in response.text.lower()
+
+
 def _error_detail(response) -> str:
     """GDAM's error ``detail``, else the response body."""
     try:
@@ -250,12 +267,13 @@ def _error_detail(response) -> str:
 def _post_batch(payload: dict) -> dict:
     """POST one partition's trees to GDAM and return the parsed JSON.
 
-    A transient error — a dropped/reset connection, a 429 or a 502/503/504 — is
-    retried up to ``GDAM_MAX_ATTEMPTS`` times, waiting for the response's
-    Retry-After or with exponential backoff, so one blip doesn't fail the whole
-    inventory. A 400 is terminal (`GDAM_REQUEST_REJECTED`, with GDAM's detail):
-    GDAM returns it for a tree outside its coverage. Any other non-2xx status or
-    a timeout is terminal (`GDAM_REQUEST_FAILED`): a bad request or a
+    A transient error — a dropped/reset connection, a 429, a 502/503/504 or
+    Cloud Run's own 500 when no instance became available — is retried up to
+    ``GDAM_MAX_ATTEMPTS`` times, waiting for the response's Retry-After or with
+    exponential backoff, so one blip doesn't fail the whole inventory. A 400 is
+    terminal (`GDAM_REQUEST_REJECTED`, with GDAM's detail): GDAM returns it for a
+    tree outside its coverage. Any other non-2xx status (GDAM's own 500 included)
+    or a timeout is terminal (`GDAM_REQUEST_FAILED`): a bad request or a
     sustained-unhealthy GDAM won't be fixed by re-running the task, and the 120s
     timeout already absorbs cold starts.
     """
@@ -285,7 +303,7 @@ def _post_batch(payload: dict) -> dict:
                         "every tree of the inventory lies inside it."
                     ),
                 ) from e
-            if e.response.status_code not in _RETRYABLE_STATUSES:
+            if not _is_retryable_status(e.response):
                 raise ProcessingError(
                     code="GDAM_REQUEST_FAILED",
                     message=f"GDAM prediction request failed: {e} {e.response.text}",

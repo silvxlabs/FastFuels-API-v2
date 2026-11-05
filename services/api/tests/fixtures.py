@@ -256,6 +256,18 @@ def make_point_cloud_data(
     }
 
 
+def make_osm_attribution(accessed_on: str = "2026-11-05") -> dict:
+    """The OpenStreetMap attribution as etcher writes it to a feature document."""
+    return {
+        "dataset": "OpenStreetMap",
+        "license_name": "ODbL-1.0",
+        "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+        "citation": "© OpenStreetMap contributors",
+        "access_url": "https://www.openstreetmap.org/copyright",
+        "accessed_on": accessed_on,
+    }
+
+
 def make_feature_data(
     domain_id: str,
     owner_id: str | None = None,

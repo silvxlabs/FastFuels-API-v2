@@ -18,10 +18,9 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.gcs import delete_directory, exists
-from tests.fixtures import make_grid_data
+from tests.fixtures import make_grid_data, make_osm_attribution
 
 # A completed source grid carrying every field a duplicate should clone. The
 # inline-geometry modification is stored with stringified coordinates, exactly
@@ -139,7 +138,7 @@ class TestDuplicateGrid:
         self, client, firestore_client, domain_for_testing, cleanup_grids
     ):
         """The copy carries the source grid's attributions (#775)."""
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = make_osm_attribution("2026-11-05")
         source = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
         source["attributions"] = [osm]
         doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(source["id"])

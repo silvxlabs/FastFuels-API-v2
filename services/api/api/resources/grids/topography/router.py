@@ -22,6 +22,7 @@ from fastapi import (
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.topography.examples import (
     CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES,
@@ -43,7 +44,6 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
-from lib.attributions import inherit_attributions
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second

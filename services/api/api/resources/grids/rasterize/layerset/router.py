@@ -21,6 +21,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.features.schema import FeatureType
 from api.resources.grids.rasterize.layerset.examples import (
     CREATE_LAYERSET_RASTERIZE_OPENAPI_EXAMPLES,
@@ -38,7 +39,6 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
-from lib.attributions import inherit_attributions
 from lib.config import (
     FEATURES_COLLECTION,
     GRIDDLE_QUEUE,

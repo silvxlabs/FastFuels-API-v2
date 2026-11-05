@@ -14,9 +14,8 @@ The resample endpoint requires a source grid that:
 import pytest
 from api.resources.grids.resample.examples import ALL_RESAMPLE_EXAMPLE_VALUES
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
-from tests.fixtures import make_feature_data, make_grid_data
+from tests.fixtures import make_feature_data, make_grid_data, make_osm_attribution
 
 META_ATTRIBUTION = {
     "dataset": "Meta CHM",
@@ -422,7 +421,7 @@ class TestResampleAttributions:
         source = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
         source["attributions"] = [META_ATTRIBUTION]
         feature = make_feature_data(domain_id=domain_for_testing["id"])
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = make_osm_attribution("2026-11-05")
         feature["attributions"] = [osm]
         source_ref = firestore_client.collection(GRIDS_COLLECTION).document(
             source["id"]

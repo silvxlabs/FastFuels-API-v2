@@ -2,9 +2,8 @@
 
 import pytest
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
-from tests.fixtures import make_feature_data, make_grid_data
+from tests.fixtures import make_feature_data, make_grid_data, make_osm_attribution
 
 META_ATTRIBUTION = {
     "dataset": "Meta CHM",
@@ -522,8 +521,8 @@ class TestComposeAttributions:
     def test_merges_all_input_grid_and_feature_attributions(
         self, client, firestore_client, domain_for_testing
     ):
-        osm_early = make_attribution(OPENSTREETMAP, "2026-10-15")
-        osm_late = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm_early = make_osm_attribution("2026-10-15")
+        osm_late = make_osm_attribution("2026-11-05")
         grid_a = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
         grid_a["attributions"] = [META_ATTRIBUTION]
         grid_b = make_grid_data(domain_id=domain_for_testing["id"], status="completed")

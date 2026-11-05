@@ -18,6 +18,7 @@ from fastapi import (
 from api.db.documents import firestore_client, get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.grids.compose.examples import CREATE_COMPOSE_OPENAPI_EXAMPLES
 from api.resources.grids.compose.schema import (
     CATEGORICAL_CONDITION_OPERATORS,
@@ -49,7 +50,6 @@ from api.resources.grids.utils import (
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
-from lib.attributions import inherit_attributions
 from lib.band_quantities import band_mismatch
 from lib.config import (
     FEATURES_COLLECTION,

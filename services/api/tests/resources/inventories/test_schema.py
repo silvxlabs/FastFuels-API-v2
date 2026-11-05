@@ -33,8 +33,8 @@ from api.resources.inventories.tree.pim.schema import (
 )
 from pydantic import ValidationError
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.units import validate_unit
+from tests.fixtures import make_osm_attribution
 
 
 class TestInventoryType:
@@ -187,7 +187,7 @@ class TestInventory:
         assert inv.model_dump(mode="json")["attributions"] == []
 
     def test_attributions_round_trip(self):
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = make_osm_attribution("2026-11-05")
         inv = self._make_inventory(attributions=[osm])
         assert inv.model_dump(mode="json")["attributions"] == [osm]
 

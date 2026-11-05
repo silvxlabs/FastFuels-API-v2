@@ -10,9 +10,8 @@ from api.resources.grids.fuel_moisture.dead.fosberg.examples import (
     ALL_FOSBERG_EXAMPLE_VALUES,
 )
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import GRIDS_COLLECTION
-from tests.fixtures import make_grid_data
+from tests.fixtures import make_grid_data, make_osm_attribution
 
 META_ATTRIBUTION = {
     "dataset": "Meta CHM",
@@ -399,7 +398,7 @@ class TestFosbergAttributions:
     def test_merges_both_source_grid_attributions(
         self, client, firestore_client, domain_for_testing, grid_factory
     ):
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = make_osm_attribution("2026-11-05")
         topo = grid_factory(domain_for_testing["id"], bands=("slope", "aspect"))
         irr = grid_factory(domain_for_testing["id"], bands=(SURFACE,))
         grids = firestore_client.collection(GRIDS_COLLECTION)

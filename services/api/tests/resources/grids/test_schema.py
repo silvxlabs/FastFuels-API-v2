@@ -27,7 +27,7 @@ from api.resources.grids.schema import (
 from api.schema import JobStatus
 from pydantic import ValidationError
 
-from lib.attributions import OPENSTREETMAP, make_attribution
+from tests.fixtures import make_osm_attribution
 
 
 class TestChunkShape:
@@ -751,7 +751,7 @@ class TestGrid:
         assert grid.model_dump(mode="json")["attributions"] == []
 
     def test_attributions_round_trip(self, minimal_grid_data):
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = make_osm_attribution("2026-11-05")
         minimal_grid_data["attributions"] = [osm]
         grid = Grid(**minimal_grid_data)
         assert grid.model_dump(mode="json")["attributions"] == [osm]

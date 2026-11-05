@@ -24,6 +24,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.features.schema import FeatureType
 from api.resources.grids.schema import Grid
 from api.resources.grids.utils import incomplete_inventory_columns
@@ -42,7 +43,6 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
 from api.resources.inventories.schema import TREE_ID_COLUMN
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
-from lib.attributions import inherit_attributions
 from lib.config import (
     FEATURES_COLLECTION,
     GRIDS_COLLECTION,

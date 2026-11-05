@@ -32,12 +32,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 from tests.fixtures import (
     make_feature_data,
     make_grid_data,
     make_layerset_feature_data,
+    make_osm_attribution,
 )
 
 # Endpoint registry
@@ -127,7 +127,7 @@ def completed_feature(firestore_client, domain_for_testing):
 def attributed_feature(firestore_client, domain_for_testing):
     """Completed OSM road feature carrying an OpenStreetMap attribution."""
     data = make_feature_data(domain_id=domain_for_testing["id"], status="completed")
-    data["attributions"] = [make_attribution(OPENSTREETMAP, "2026-11-05")]
+    data["attributions"] = [make_osm_attribution("2026-11-05")]
     _seed(firestore_client, FEATURES_COLLECTION, data)
     yield data
     _delete(firestore_client, FEATURES_COLLECTION, data["id"])

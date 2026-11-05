@@ -26,12 +26,12 @@ from api.resources.grids.modifications.examples import (
     EXAMPLE_ZERO_HEAVY_FUEL_NEAR_ROAD,
 )
 
-from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 from tests.fixtures import (
     make_feature_data,
     make_grid_data,
     make_layerset_feature_data,
+    make_osm_attribution,
 )
 
 
@@ -217,14 +217,14 @@ class TestApplyGridModifications:
             "access_url": "https://registry.opendata.aws/dataforgood-fb-forests/",
             "accessed_on": "2026-10-01",
         }
-        earlier_osm = make_attribution(OPENSTREETMAP, "2026-10-15")
+        earlier_osm = make_osm_attribution("2026-10-15")
         grid_ref = firestore_client.collection(GRIDS_COLLECTION).document(
             completed_grid["id"]
         )
         grid_ref.update({"attributions": [existing, earlier_osm]})
 
         feature = make_feature_data(domain_id=domain_for_testing["id"])
-        feature["attributions"] = [make_attribution(OPENSTREETMAP, "2026-11-05")]
+        feature["attributions"] = [make_osm_attribution("2026-11-05")]
         feature_ref = firestore_client.collection(FEATURES_COLLECTION).document(
             feature["id"]
         )
@@ -265,7 +265,7 @@ class TestApplyGridModifications:
         self, client, firestore_client, domain_for_testing, completed_grid
     ):
         feature = make_feature_data(domain_id=domain_for_testing["id"])
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = make_osm_attribution("2026-11-05")
         feature["attributions"] = [osm]
         feature_ref = firestore_client.collection(FEATURES_COLLECTION).document(
             feature["id"]

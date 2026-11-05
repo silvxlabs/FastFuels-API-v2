@@ -20,7 +20,7 @@ from api.resources.exports.schema import (
 from api.schema import JobStatus
 from pydantic import ValidationError
 
-from lib.attributions import OPENSTREETMAP, make_attribution
+from tests.fixtures import make_osm_attribution
 
 
 class TestExport:
@@ -164,7 +164,7 @@ class TestExport:
         assert export.model_dump(mode="json")["attributions"] == []
 
     def test_attributions_round_trip(self):
-        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        osm = make_osm_attribution("2026-11-05")
         export = Export(**self._make_export(attributions=[osm]))
         assert export.model_dump(mode="json")["attributions"] == [osm]
 

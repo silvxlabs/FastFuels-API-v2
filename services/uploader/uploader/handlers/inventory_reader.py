@@ -145,7 +145,12 @@ def geo_batches(
             Point or MultiPoint, reported from the first batch that has one;
             ``EMPTY_FILE`` for a file without features.
     """
-    path = "/vsigs/" + src.removeprefix("gs://") if src.startswith("gs://") else src
+    path = src
+    if src.startswith("gs://"):
+        # The GeoJSON driver reads the file front to back, twice; streaming
+        # overlaps the download with parsing. GeoPackage needs random access.
+        prefix = "/vsigs_streaming/" if fmt == "geojson" else "/vsigs/"
+        path = prefix + src.removeprefix("gs://")
     with pyogrio.open_arrow(path, batch_size=batch_size, use_pyarrow=True) as (
         meta,
         reader,

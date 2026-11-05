@@ -11,8 +11,10 @@ Batches are kept small so every case spans several of them.
 import ast
 import importlib.util
 import math
+import subprocess
 import sys
 import types
+import uuid
 from functools import partial
 from pathlib import Path
 
@@ -39,6 +41,7 @@ BATCH_SIZE = 1000
 CSV_COLUMNS = {"height": "HT", "dbh": "DIA", "fia_species_code": "SPCD"}
 SPECIES = np.array([122, 202, 108, 15, 19, 93, 81, 116, 746, 65])
 
+_BREAKING_SERVER = Path(__file__).with_name("breaking_http_server.py")
 _CACHE_PY = (
     Path(__file__).parents[4] / "api/api/resources/inventories/cache.py"
 ).resolve()
@@ -213,11 +216,20 @@ def _eager(fmt: str, path: Path, col_map: dict) -> dict:
     }
 
 
-def _stream(tmp_path: Path, monkeypatch, fmt: str, path: Path, col_map: dict) -> dict:
-    """Run handle_inventory on ``path`` with Firestore and GCS stubbed."""
+def _stream(
+    tmp_path: Path,
+    monkeypatch,
+    fmt: str,
+    path: Path | str,
+    col_map: dict,
+    deleted: list | None = None,
+) -> dict:
+    """Run handle_inventory on ``path`` with Firestore and GCS stubbed;
+    ``deleted`` collects the paths the handler deletes."""
     out = tmp_path / "out"
     out.mkdir()
     updates = {}
+    deleted = [] if deleted is None else deleted
 
     class _Snap:
         def to_dict(self):
@@ -242,7 +254,7 @@ def _stream(tmp_path: Path, monkeypatch, fmt: str, path: Path, col_map: dict) ->
         lambda t, b, p, *a: write_parquet(t, b, str(out), *a),
     )
     monkeypatch.setattr(inventory, "storage_size", lambda p: 0)
-    monkeypatch.setattr(inventory, "delete_file", lambda p: None)
+    monkeypatch.setattr(inventory, "delete_file", deleted.append)
     monkeypatch.setattr(inventory, "update_resource", lambda c, i, u: updates.update(u))
     doc = {"domain_id": "d", "source": {"format": fmt, "columns": col_map}}
     inventory.handle_inventory("inv", "bucket", "inventories/inv/upload", doc)
@@ -527,6 +539,53 @@ class TestReadErrors:
         path.write_bytes(b"")
         with pytest.raises(pa.ArrowInvalid):
             inventory._read_table("csv", str(path), {}, DOMAIN_CRS, BOUNDS)
+
+
+class TestCutShortGeoJsonRead:
+    """GDAL's GeoJSON driver reads a file of more than about 1 MB twice: a
+    schema pass at open, then the feature read. When the feature read's
+    connection drops or its request fails, GDAL ends the read early without
+    an error (#778)."""
+
+    @pytest.fixture
+    def served(self, request, tmp_path, monkeypatch):
+        """The upload, and its GDAL streaming URL on a server in the
+        parametrized mode."""
+        path = _write_geo(
+            _geo(_trees(30_000, 17, with_id=False), "EPSG:4326"),
+            tmp_path / "trees.geojson",
+        )
+        server = subprocess.Popen(
+            [sys.executable, str(_BREAKING_SERVER), str(path), request.param],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        port = server.stdout.readline().strip()
+        monkeypatch.setattr(inventory, "check_exists", lambda src: None)
+        # A fresh URL per test, so GDAL's per-URL cache starts empty.
+        url = f"/vsicurl_streaming/http://127.0.0.1:{port}/{uuid.uuid4().hex}.geojson"
+        yield path, url
+        server.kill()
+        server.wait()
+
+    @pytest.mark.parametrize("served", ["ok"], indirect=True)
+    def test_complete_read(self, tmp_path, monkeypatch, served):
+        path, url = served
+        streamed = _stream(tmp_path, monkeypatch, "geojson", url, {})
+        assert streamed["status"] == "completed"
+        rows = pd.read_parquet(streamed["out"])
+        assert len(rows) == len(_eager("geojson", path, {})["rows"])
+
+    @pytest.mark.parametrize("served", ["drop", "unavailable"], indirect=True)
+    def test_cut_short_read_is_retried(self, tmp_path, monkeypatch, served):
+        """An OSError, which main.py retries; nothing is written and the
+        upload is kept for the retry."""
+        _, url = served
+        deleted = []
+        with pytest.raises(OSError, match=r"Read \d+ of 30000 features"):
+            _stream(tmp_path, monkeypatch, "geojson", url, {}, deleted)
+        assert not any((tmp_path / "out").iterdir())
+        assert deleted == []
 
 
 def test_read_table_has_one_chunk_per_column(tmp_path):

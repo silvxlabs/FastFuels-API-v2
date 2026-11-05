@@ -130,14 +130,13 @@ class TestHandleOsm:
     def test_attributions(
         self, mock_read, mock_save, mock_feature, sample_domain_gdf, sample_osm_roads
     ):
-        """Returns the OSM attribution and writes it into the GeoParquet."""
+        """Returns the OSM attribution."""
         mock_read.return_value = sample_osm_roads
 
         result = handle_osm(mock_feature, {}, sample_domain_gdf, MagicMock())
 
         expected = [make_attribution(OPENSTREETMAP, date.today().isoformat())]
         assert result["attributions"] == expected
-        assert mock_save.call_args.kwargs["attributions"] == expected
 
     @patch("etcher.handlers.road.save_features")
     @patch("etcher.handlers.road.read_osm_features")

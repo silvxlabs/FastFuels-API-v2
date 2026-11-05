@@ -1,11 +1,8 @@
 """Storage utilities for Features."""
 
-import json
 import logging
 
 import geopandas as gpd
-import pyarrow.parquet as pq
-from geopandas.io.arrow import _geopandas_to_arrow
 
 from lib.config import FEATURES_BUCKET
 from lib.gcs import delete_file, storage_size
@@ -13,12 +10,7 @@ from lib.gcs import delete_file, storage_size
 logger = logging.getLogger(__name__)
 
 
-def save_features(
-    domain_id: str,
-    feature_id: str,
-    gdf: gpd.GeoDataFrame,
-    attributions: list[dict] | None = None,
-) -> str:
+def save_features(domain_id: str, feature_id: str, gdf: gpd.GeoDataFrame) -> str:
     """Write a GeoDataFrame to GCS as a GeoParquet file.
 
     Using the gs:// prefix allows GeoPandas (via fsspec/gcsfs) to stream
@@ -27,21 +19,10 @@ def save_features(
     Format choices: zstd compression (pyarrow default level) and row
     groups of 1000 (each row group becomes one ``partition_index`` for
     the streaming endpoint).
-
-    ``attributions`` is stored JSON-encoded in the file's key-value metadata
-    under ``attributions``, next to the GeoParquet ``geo`` key.
     """
     path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
 
-    # Same table GeoDataFrame.to_parquet builds; it exposes no hook for
-    # extra file metadata.
-    table = _geopandas_to_arrow(gdf)
-    metadata = {
-        **(table.schema.metadata or {}),
-        b"attributions": json.dumps(attributions or []).encode(),
-    }
-    pq.write_table(
-        table.replace_schema_metadata(metadata),
+    gdf.to_parquet(
         path,
         compression="zstd",
         row_group_size=1000,

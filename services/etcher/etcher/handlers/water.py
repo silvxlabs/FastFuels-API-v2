@@ -94,8 +94,7 @@ def handle_osm(
 
     # Write GeoParquet directly to GCS
     progress("Saving features to storage...", 90)
-    attributions = [osm_attribution()]
-    save_features(domain_id, feature_id, final_gdf, attributions=attributions)
+    save_features(domain_id, feature_id, final_gdf)
 
     # Compute georeference from domain
     progress("Computing georeference...", 95)
@@ -103,7 +102,7 @@ def handle_osm(
 
     progress("Complete", 100)
 
-    return {"georeference": georeference, "attributions": attributions}
+    return {"georeference": georeference, "attributions": [osm_attribution()]}
 
 
 def buffer_water_features(water_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:

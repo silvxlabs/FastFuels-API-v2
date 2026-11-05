@@ -66,7 +66,6 @@ class TestLoadParents:
         assert parents.features == {"f1": feature, "missing-feature": None}
         assert parents.inventories == {"missing-inventory": None}
         assert parents.point_clouds == {}
-        assert list(parents) == [grid, feature]
         # One batch; the duplicate and None IDs are not read.
         assert fake.batches == [
             [
@@ -77,6 +76,19 @@ class TestLoadParents:
                 (INVENTORIES_COLLECTION, "missing-inventory"),
             ]
         ]
+
+    def test_iterating_yields_every_document(self):
+        grid = {"id": "g1"}
+        feature = {"id": "f1"}
+        parents = Parents(grids={"g1": grid}, features={"f1": feature})
+        assert list(parents) == [grid, feature]
+
+    def test_iterating_with_an_unvalidated_missing_parent_raises(self):
+        """A missing parent left in place means validate_parent was skipped;
+        it must fail loudly, not be dropped from the attributions."""
+        parents = Parents(grids={"g1": {"id": "g1"}, "missing-grid": None})
+        with pytest.raises(RuntimeError, match="missing-grid"):
+            list(parents)
 
     @pytest.mark.asyncio
     async def test_no_ids_reads_nothing(self):

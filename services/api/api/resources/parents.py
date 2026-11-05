@@ -25,7 +25,9 @@ class Parents:
     """A request's parent documents by collection, keyed by document ID.
 
     Every requested ID has an entry; a document that does not exist is
-    ``None``. Iterating yields every document that exists.
+    ``None``. Iterating yields every document, and raises if one is ``None``:
+    a missing parent must be rejected by ``validate_parent`` before the
+    documents are used, so reaching one here means validation was skipped.
     """
 
     grids: dict[str, dict | None] = field(default_factory=dict)
@@ -44,12 +46,18 @@ class Parents:
 
     def __iter__(self) -> Iterator[dict]:
         for collection in (
-            self.grids,
-            self.features,
-            self.inventories,
-            self.point_clouds,
+            GRIDS_COLLECTION,
+            FEATURES_COLLECTION,
+            INVENTORIES_COLLECTION,
+            POINT_CLOUDS_COLLECTION,
         ):
-            yield from (doc for doc in collection.values() if doc is not None)
+            for document_id, doc in self.documents(collection).items():
+                if doc is None:
+                    raise RuntimeError(
+                        f"{collection}/{document_id} does not exist but was not "
+                        "rejected by validate_parent"
+                    )
+                yield doc
 
 
 async def load_parents(

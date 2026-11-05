@@ -1,5 +1,6 @@
 """Tests for road feature handler."""
 
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
@@ -10,6 +11,8 @@ from etcher.handlers.road import (
     handle_osm,
 )
 from shapely.geometry import LineString, Polygon
+
+from lib.attributions import OPENSTREETMAP, make_attribution
 
 
 @pytest.fixture
@@ -121,6 +124,20 @@ class TestHandleOsm:
         # Ensure georeference is returned
         assert "georeference" in result
         assert result["georeference"]["crs"] == "EPSG:32610"
+
+    @patch("etcher.handlers.road.save_features")
+    @patch("etcher.handlers.road.read_osm_features")
+    def test_attributions(
+        self, mock_read, mock_save, mock_feature, sample_domain_gdf, sample_osm_roads
+    ):
+        """Returns the OSM attribution and writes it into the GeoParquet."""
+        mock_read.return_value = sample_osm_roads
+
+        result = handle_osm(mock_feature, {}, sample_domain_gdf, MagicMock())
+
+        expected = [make_attribution(OPENSTREETMAP, date.today().isoformat())]
+        assert result["attributions"] == expected
+        assert mock_save.call_args.kwargs["attributions"] == expected
 
     @patch("etcher.handlers.road.save_features")
     @patch("etcher.handlers.road.read_osm_features")

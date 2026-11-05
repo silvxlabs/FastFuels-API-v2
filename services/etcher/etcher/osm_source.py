@@ -18,6 +18,7 @@ and never hardcoded — this repo is public.
 """
 
 import logging
+from datetime import date
 from functools import lru_cache
 
 import geopandas as gpd
@@ -26,6 +27,7 @@ import pyogrio
 from shapely.geometry import box
 
 from etcher.errors import ProcessingError
+from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import OSM_BUCKET
 from lib.gcs.blobs import exists
 
@@ -70,6 +72,15 @@ def _layer_exists(path: str) -> bool:
     failure (corrupt file, transient GCS error, auth) that must not be swallowed.
     """
     return exists(path)
+
+
+def osm_attribution() -> dict:
+    """The OpenStreetMap attribution for a feature built now.
+
+    ``accessed_on`` is the processing date: the bucket's ``manifest.json``
+    does not record when the snapshot was built.
+    """
+    return make_attribution(OPENSTREETMAP, date.today().isoformat())
 
 
 def read_osm_features(bbox_4326: tuple, feature_type: str) -> gpd.GeoDataFrame:

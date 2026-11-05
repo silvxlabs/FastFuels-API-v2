@@ -13,11 +13,14 @@ Most tests share a single pipeline run per feature type via module-scoped
 fixtures to avoid redundant processing.
 """
 
+import json
 from uuid import uuid4
 
 import geopandas as gpd
+import pyarrow.parquet as pq
 import pytest
 
+from lib.attributions import OPENSTREETMAP
 from lib.config import (
     DEPLOYMENT_ENV,
     DOMAINS_COLLECTION,
@@ -234,3 +237,26 @@ def test_water_coordinates_within_domain(shared_water_feature, shared_water_gdf)
     assert gdf_bounds[1] >= bounds[1] - buffer
     assert gdf_bounds[2] <= bounds[2] + buffer
     assert gdf_bounds[3] <= bounds[3] + buffer
+
+
+def _assert_osm_attributions(feature):
+    """The completed document and its GeoParquet both carry the OSM attribution."""
+    (attribution,) = feature["attributions"]
+    assert attribution["dataset"] == OPENSTREETMAP
+    assert attribution["license_name"] == "ODbL-1.0"
+    assert attribution["accessed_on"]
+
+    path = f"gs://{FEATURES_BUCKET}/{feature['domain_id']}/{feature['id']}.parquet"
+    metadata = pq.read_schema(path).metadata
+    assert json.loads(metadata[b"attributions"]) == feature["attributions"]
+    assert b"geo" in metadata
+
+
+def test_road_attributions(shared_road_feature):
+    """A completed road feature records the OSM attribution."""
+    _assert_osm_attributions(shared_road_feature)
+
+
+def test_water_attributions(shared_water_feature):
+    """A completed water feature records the OSM attribution."""
+    _assert_osm_attributions(shared_water_feature)

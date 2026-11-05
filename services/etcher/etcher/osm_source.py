@@ -18,6 +18,7 @@ and never hardcoded — this repo is public.
 """
 
 import logging
+from datetime import date
 from functools import lru_cache
 
 import geopandas as gpd
@@ -48,6 +49,14 @@ pyogrio.set_gdal_config_options(FGB_GDAL_CONFIG)
 
 STATES_INDEX = f"gs://{OSM_BUCKET}/index/states.fgb"
 
+OSM_ATTRIBUTION = {
+    "dataset": "OpenStreetMap",
+    "license_name": "ODbL-1.0",
+    "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+    "citation": "© OpenStreetMap contributors",
+    "access_url": "https://www.openstreetmap.org/copyright",
+}
+
 
 @lru_cache(maxsize=1)
 def _states() -> gpd.GeoDataFrame:
@@ -70,6 +79,15 @@ def _layer_exists(path: str) -> bool:
     failure (corrupt file, transient GCS error, auth) that must not be swallowed.
     """
     return exists(path)
+
+
+def osm_attribution() -> dict:
+    """The OpenStreetMap attribution for a feature built now.
+
+    ``accessed_on`` is the processing date: the bucket's ``manifest.json``
+    does not record when the snapshot was built.
+    """
+    return {**OSM_ATTRIBUTION, "accessed_on": date.today().isoformat()}
 
 
 def read_osm_features(bbox_4326: tuple, feature_type: str) -> gpd.GeoDataFrame:

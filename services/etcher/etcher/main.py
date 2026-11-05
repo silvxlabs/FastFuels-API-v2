@@ -81,15 +81,24 @@ def update_progress(feature_id, message, percent=None):
         raise CancelledException(f"Feature {feature_id} was cancelled")
 
 
-def update_status(feature_id, status, georeference=None, size_bytes=None, error=None):
+def update_status(
+    feature_id,
+    status,
+    georeference=None,
+    size_bytes=None,
+    error=None,
+    attributions=None,
+):
     """Update feature status.
 
     ``size_bytes`` is the GCS artifact footprint recorded on completion for
-    per-owner storage quota accounting (#342).
+    per-owner storage quota accounting (#342). On completion ``attributions``
+    is always written, as ``[]`` when none are given.
     """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
         data["progress"] = {"message": "Complete", "percent": 100}
+        data["attributions"] = attributions or []
     elif status == "failed":
         data["progress"] = {"message": "Failed", "percent": 100}
     if georeference is not None:
@@ -199,6 +208,7 @@ def process_feature_request(request: Request):
             "completed",
             georeference=result.get("georeference"),
             size_bytes=feature_size(domain_id, feature_id),
+            attributions=result.get("attributions", []),
         )
         logger.info("Processing complete", extra=ids)
         return "OK", 200

@@ -245,6 +245,75 @@ class TestProcessGridRequest:
     @patch("griddle.main.update_status")
     @patch("griddle.main.update_progress")
     @patch("griddle.main.load_grid")
+    def test_handler_attributions_written_with_source(
+        self,
+        mock_load_grid,
+        mock_update_progress,
+        mock_update_status,
+        mock_load_domain,
+        mock_dispatch,
+        mock_save_zarr,
+        mock_update_grid_metadata,
+        mock_summarize,
+        mock_storage_size,
+    ):
+        """Attributions a handler adds go out in the same write as the source;
+        a grid with no attributions field gets none written."""
+        meta_entry = {"dataset": "Meta", "license_name": "CC-BY-4.0"}
+
+        def add_attribution(grid, domain_gdf, progress):
+            grid["attributions"] = grid["attributions"] + [meta_entry]
+            return mock_result
+
+        mock_result = MagicMock()
+        mock_result.rio.crs = "EPSG:32610"
+        mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
+        mock_result.rio.height = 100
+        mock_result.rio.width = 100
+        mock_dispatch.side_effect = add_attribution
+        mock_summarize.return_value = {}
+        mock_load_domain.return_value = MagicMock()
+        source = {"name": "canopy", "product": "meta", "version": "1"}
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": source,
+            "domain_id": "test-domain-id",
+            "bands": [{"key": "chm", "type": "continuous"}],
+            "attributions": [],
+        }
+
+        process_grid_request(MockRequest(json_data={"id": "test-grid-id"}))
+
+        first_write = mock_update_grid_metadata.call_args_list[0]
+        assert first_write.args == (
+            "test-grid-id",
+            {"source": source, "attributions": [meta_entry]},
+        )
+
+        mock_update_grid_metadata.reset_mock()
+        mock_dispatch.side_effect = None
+        mock_dispatch.return_value = mock_result
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": source,
+            "domain_id": "test-domain-id",
+            "bands": [{"key": "chm", "type": "continuous"}],
+        }
+
+        process_grid_request(MockRequest(json_data={"id": "test-grid-id"}))
+
+        first_write = mock_update_grid_metadata.call_args_list[0]
+        assert first_write.args == ("test-grid-id", {"source": source})
+
+    @patch("griddle.main.storage_size")
+    @patch("griddle.main.summarize_dataset")
+    @patch("griddle.main.update_grid_metadata")
+    @patch("griddle.main.save_zarr")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main._load_domain")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.update_progress")
+    @patch("griddle.main.load_grid")
     def test_chunk_shape_defaults_when_missing(
         self,
         mock_load_grid,

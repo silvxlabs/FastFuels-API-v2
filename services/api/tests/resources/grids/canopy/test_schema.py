@@ -8,7 +8,6 @@ These are pure unit tests with no external dependencies.
 
 import pytest
 from api.resources.grids.canopy.schema import (
-    Attribution,
     ChmMaxAggregation,
     ChmMeanAggregation,
     ChmMedianAggregation,
@@ -103,36 +102,20 @@ class TestMetaChmSource:
         assert data["product"] == "meta"
         assert "description" in data
 
-    def test_attribution_defaults_to_none(self):
-        """Attribution is None by default."""
-        source = MetaChmSource(version="2")
-        assert source.attribution is None
-
-    def test_attribution_accepted(self):
-        """MetaChmSource accepts an Attribution object."""
-        attr = Attribution(
-            license_name="CC-BY-4.0",
-            license_url="https://creativecommons.org/licenses/by/4.0/",
-            citation="Test citation",
-            access_url="https://example.com",
-            accessed_on="2026-02-27",
+    def test_legacy_attribution_dropped(self):
+        """A stored source.attribution (pre-#775) is not served; attributions
+        live on the grid's top-level field."""
+        source = MetaChmSource(
+            version="2",
+            attribution={
+                "license_name": "DINOv3",
+                "license_url": "https://example.com",
+                "citation": "Test citation",
+                "access_url": "https://example.com",
+                "accessed_on": "2026-02-27",
+            },
         )
-        source = MetaChmSource(version="2", attribution=attr)
-        assert source.attribution.license_name == "CC-BY-4.0"
-
-    def test_attribution_serialized_in_model_dump(self):
-        """Attribution is included in model_dump output."""
-        attr = Attribution(
-            license_name="CC-BY-4.0",
-            license_url="https://creativecommons.org/licenses/by/4.0/",
-            citation="Test citation",
-            access_url="https://example.com",
-            accessed_on="2026-02-27",
-        )
-        source = MetaChmSource(version="2", attribution=attr)
-        data = source.model_dump()
-        assert data["attribution"]["license_name"] == "CC-BY-4.0"
-        assert data["attribution"]["accessed_on"] == "2026-02-27"
+        assert "attribution" not in source.model_dump()
 
 
 class TestCreateMetaChmRequest:
@@ -184,31 +167,6 @@ class TestCreateMetaChmRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateMetaChmRequest(extent_buffer_cells=11)
-
-
-class TestAttribution:
-    """Tests for Attribution model."""
-
-    def test_valid_attribution(self):
-        """All fields accepted."""
-        attr = Attribution(
-            license_name="CC-BY-4.0",
-            license_url="https://creativecommons.org/licenses/by/4.0/",
-            citation="Some citation text",
-            access_url="https://example.com",
-            accessed_on="2026-02-27",
-        )
-        assert attr.license_name == "CC-BY-4.0"
-        assert attr.access_url == "https://example.com"
-
-    def test_missing_field_rejected(self):
-        """Missing required field raises ValidationError."""
-        with pytest.raises(ValidationError):
-            Attribution(
-                license_name="CC-BY-4.0",
-                license_url="https://creativecommons.org/licenses/by/4.0/",
-                # missing citation, access_url, accessed_on
-            )
 
 
 class TestChmBands:

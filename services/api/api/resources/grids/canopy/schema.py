@@ -110,16 +110,6 @@ class MetaCHMVersion(StrEnum):
     v2 = "2"
 
 
-class Attribution(BaseModel):
-    """License and citation metadata for data compliance."""
-
-    license_name: str
-    license_url: str
-    citation: str
-    access_url: str
-    accessed_on: str
-
-
 class MetaChmSource(CanopySource):
     """Source for Meta global canopy height data.
 
@@ -135,7 +125,6 @@ class MetaChmSource(CanopySource):
 
     # Post-processing metadata populated by Griddle after processing
     tile_metadata: TileMetadata | None = None
-    attribution: Attribution | None = None
 
 
 class CreateMetaChmRequest(CreateSourceGridRequestBase):

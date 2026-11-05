@@ -13,6 +13,7 @@ import tempfile
 
 import numpy as np
 import pytest
+from griddle.dispatch import META_CHM_ATTRIBUTION
 
 from lib.config import GRIDS_COLLECTION
 from lib.firestore.documents import get_document
@@ -67,6 +68,14 @@ def test_meta_chm_versions(griddle_runner, version):
     )
     _assert_valid_chm(result.ds, "32611")
     _assert_tile_metadata(result.grid_id, expected_tile_count=1)
+
+    # The license and citation go to the grid's top-level attributions (#775).
+    _, snapshot = get_document(GRIDS_COLLECTION, result.grid_id)
+    grid = snapshot.to_dict()
+    assert "attribution" not in grid["source"]
+    [entry] = grid["attributions"]
+    assert entry["dataset"] == META_CHM_ATTRIBUTION[version]["dataset"]
+    assert entry["license_name"] == META_CHM_ATTRIBUTION[version]["license_name"]
 
 
 def test_meta_chm_2_tiles(griddle_runner):

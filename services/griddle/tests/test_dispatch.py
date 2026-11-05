@@ -2,11 +2,13 @@
 Tests for dispatch module.
 """
 
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import pytest
 from griddle.dispatch import (
+    META_CHM_ATTRIBUTION,
     dispatch_handler,
     handle_3dep,
     handle_canopy,
@@ -23,6 +25,20 @@ from griddle.dispatch import (
 from lib.config import GRIDS_COLLECTION
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import DocumentNotFoundError
+
+OSM_ATTRIBUTION = {
+    "dataset": "OpenStreetMap",
+    "license_name": "ODbL-1.0",
+    "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+    "citation": "© OpenStreetMap contributors",
+    "access_url": "https://www.openstreetmap.org/copyright",
+    "accessed_on": "2026-11-05",
+}
+
+
+def _canopy_grid(**fields) -> dict:
+    """A minimal grid document for handle_canopy."""
+    return {"domain_id": "test-domain-id", **fields}
 
 
 class TestUpdateGridMetadata:
@@ -1090,7 +1106,7 @@ class TestDispatchHandlerCanopy:
         result = dispatch_handler(grid, mock_gdf, progress)
 
         mock_handle_canopy.assert_called_once_with(
-            mock_gdf, grid["source"], progress, domain_id="test-domain-id"
+            grid, mock_gdf, grid["source"], progress
         )
         assert result == mock_result
 
@@ -1118,7 +1134,7 @@ class TestHandleCanopy:
             "version": "2",
         }
 
-        result = handle_canopy(mock_gdf, source, progress)
+        result = handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
@@ -1140,7 +1156,7 @@ class TestHandleCanopy:
 
         source = {"product": "meta"}  # No version specified
 
-        handle_canopy(mock_gdf, source, progress)
+        handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         call_args = mock_fetch.call_args[0]
         assert call_args[1] == "2"
@@ -1153,7 +1169,7 @@ class TestHandleCanopy:
         source = {"product": "unknown_product"}
 
         with pytest.raises(ProcessingError) as exc_info:
-            handle_canopy(mock_gdf, source, progress)
+            handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         assert exc_info.value.code == "UNKNOWN_PRODUCT"
         assert "unknown_product" in exc_info.value.message
@@ -1178,7 +1194,7 @@ class TestHandleCanopy:
             "version": "2020",
         }
 
-        result = handle_canopy(mock_gdf, source, progress)
+        result = handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
@@ -1199,7 +1215,7 @@ class TestHandleCanopy:
 
         source = {"product": "meta", "version": "2"}
 
-        handle_canopy(mock_gdf, source, progress)
+        handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         progress.assert_called()
         call_args = progress.call_args_list[0][0]
@@ -1208,52 +1224,107 @@ class TestHandleCanopy:
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     @pytest.mark.parametrize(
-        "version,expected_license,expected_license_url",
+        "version,expected_dataset,expected_license,expected_license_url",
         [
-            ("1", "CC-BY-4.0", "https://creativecommons.org/licenses/by/4.0/"),
+            (
+                "1",
+                "High Resolution Canopy Height Maps by WRI and Meta",
+                "CC-BY-4.0",
+                "https://creativecommons.org/licenses/by/4.0/",
+            ),
             (
                 "2",
-                "DINOv3",
+                "Meta CHMv2 Global Canopy Height Maps",
+                "LicenseRef-DINOv3",
                 "https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md",
             ),
         ],
     )
-    def test_meta_populates_attribution(
-        self, mock_fetch, version, expected_license, expected_license_url
+    def test_meta_adds_top_level_attribution(
+        self,
+        mock_fetch,
+        version,
+        expected_dataset,
+        expected_license,
+        expected_license_url,
     ):
-        """handle_canopy populates attribution for each meta version."""
-        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+        """Each Meta version adds its entry to the grid's top-level
+        attributions, not to the source."""
         mock_fetch.return_value = (MagicMock(), {})
-        progress = MagicMock()
-
         source = {"product": "meta", "version": version}
+        grid = _canopy_grid(source=source, attributions=[])
 
-        handle_canopy(mock_gdf, source, progress)
+        handle_canopy(grid, MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
 
-        assert "attribution" in source
-        attr = source["attribution"]
+        assert "attribution" not in source
+        [attr] = grid["attributions"]
+        assert attr["dataset"] == expected_dataset
         assert attr["license_name"] == expected_license
         assert attr["license_url"] == expected_license_url
         assert "registry.opendata.aws" in attr["access_url"]
-        assert attr["accessed_on"]  # ISO date string
+        assert attr["accessed_on"] == date.today().isoformat()
+        assert attr["accessed_on"] in attr["citation"]
+        assert "{accessed_on}" not in attr["citation"]
         assert (
             "arXiv:2603.06382" in attr["citation"]
             if version == "2"
             else "High Resolution Canopy Height Maps" in attr["citation"]
         )
 
-    @patch("griddle.dispatch.chm.fetch_naip_chm")
-    def test_naip_does_not_populate_attribution(self, mock_fetch):
-        """handle_canopy does not populate attribution for naip product."""
-        mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+    @patch("griddle.dispatch.chm.fetch_meta_chm")
+    def test_meta_keeps_existing_attributions(self, mock_fetch):
+        """Entries the API already wrote (e.g., from feature modifications)
+        are kept alongside the Meta entry."""
         mock_fetch.return_value = (MagicMock(), {})
-        progress = MagicMock()
+        source = {"product": "meta", "version": "2"}
+        grid = _canopy_grid(source=source, attributions=[OSM_ATTRIBUTION])
 
+        handle_canopy(grid, MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+
+        assert [a["dataset"] for a in grid["attributions"]] == [
+            "Meta CHMv2 Global Canopy Height Maps",
+            "OpenStreetMap",
+        ]
+        assert grid["attributions"][1] == OSM_ATTRIBUTION
+
+    @patch("griddle.dispatch.chm.fetch_meta_chm")
+    def test_meta_does_not_duplicate_existing_entry(self, mock_fetch):
+        """An entry for the same dataset and license is not added twice."""
+        mock_fetch.return_value = (MagicMock(), {})
+        existing = {
+            **META_CHM_ATTRIBUTION["1"],
+            "accessed_on": "2026-01-01",
+            "citation": "earlier citation",
+        }
+        source = {"product": "meta", "version": "1"}
+        grid = _canopy_grid(source=source, attributions=[existing])
+
+        handle_canopy(grid, MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+
+        assert grid["attributions"] == [existing]
+
+    @patch("griddle.dispatch.chm.fetch_meta_chm")
+    def test_meta_grid_without_attributions_field(self, mock_fetch):
+        """A grid document with no attributions field gets one."""
+        mock_fetch.return_value = (MagicMock(), {})
+        source = {"product": "meta", "version": "2"}
+        grid = _canopy_grid(source=source)
+
+        handle_canopy(grid, MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+
+        assert len(grid["attributions"]) == 1
+
+    @patch("griddle.dispatch.chm.fetch_naip_chm")
+    def test_naip_does_not_add_attribution(self, mock_fetch):
+        """handle_canopy adds no attribution for the naip product."""
+        mock_fetch.return_value = (MagicMock(), {})
         source = {"product": "naip", "version": "2020"}
+        grid = _canopy_grid(source=source, attributions=[])
 
-        handle_canopy(mock_gdf, source, progress)
+        handle_canopy(grid, MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
 
         assert "attribution" not in source
+        assert grid["attributions"] == []
 
     @patch("griddle.dispatch.landfire.fetch_canopy_landfire")
     def test_routes_landfire_to_handler(self, mock_fetch):
@@ -1269,7 +1340,7 @@ class TestHandleCanopy:
             "bands": ["cbd", "cbh"],
         }
 
-        result = handle_canopy(mock_gdf, source, progress)
+        result = handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
@@ -1291,7 +1362,7 @@ class TestHandleCanopy:
 
         source = {"product": "landfire", "bands": ["chm"]}
 
-        handle_canopy(mock_gdf, source, progress)
+        handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         assert mock_fetch.call_args[0][1] == "2024"
 
@@ -1303,9 +1374,11 @@ class TestHandleCanopy:
         progress = MagicMock()
 
         source = {"product": "landfire", "version": "2024", "bands": ["chm"]}
+        grid = _canopy_grid(source=source)
 
-        handle_canopy(mock_gdf, source, progress)
+        handle_canopy(grid, mock_gdf, source, progress)
 
+        assert "attributions" not in grid
         assert "attribution" not in source
         assert "tile_metadata" not in source
 
@@ -1324,7 +1397,7 @@ class TestHandleCanopy:
             "alignment": {"target": "native"},
         }
 
-        handle_canopy(mock_gdf, source, progress)
+        handle_canopy(_canopy_grid(), mock_gdf, source, progress)
 
         kwargs = mock_fetch.call_args.kwargs
         assert kwargs["extent_buffer_cells"] == 5
@@ -1492,7 +1565,7 @@ class TestHandleCanopyPointCloud:
         mock_fetch.return_value = (MagicMock(), {"ground_source": "classification"})
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
 
-        handle_canopy(mock_gdf, self._source(), MagicMock())
+        handle_canopy(_canopy_grid(), mock_gdf, self._source(), MagicMock())
 
         assert mock_fetch.call_args.kwargs["point_classes"] == [1, 2, 7]
         assert mock_fetch.call_args.kwargs["point_cloud_id"] == "pc-1"
@@ -1506,7 +1579,9 @@ class TestHandleCanopyPointCloud:
         mock_fetch.return_value = (MagicMock(), ground)
         source = self._source()
 
-        handle_canopy(MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+        handle_canopy(
+            _canopy_grid(), MagicMock(spec=gpd.GeoDataFrame), source, MagicMock()
+        )
 
         assert source["ground"] == ground
 
@@ -1518,6 +1593,7 @@ class TestHandleCanopyPointCloud:
         alignment = {"target": "domain", "resolution": 5.0}
 
         handle_canopy(
+            _canopy_grid(),
             MagicMock(spec=gpd.GeoDataFrame),
             self._source(alignment=alignment),
             MagicMock(),
@@ -1540,6 +1616,7 @@ class TestHandleCanopyPointCloud:
         alignment = {"target": "grid", "grid_id": "g-1", "resolution": None}
 
         handle_canopy(
+            _canopy_grid(),
             MagicMock(spec=gpd.GeoDataFrame),
             self._source(alignment=alignment),
             MagicMock(),
@@ -1554,6 +1631,7 @@ class TestHandleCanopyPointCloud:
         mock_fetch.return_value = (MagicMock(), {})
 
         handle_canopy(
+            _canopy_grid(),
             MagicMock(spec=gpd.GeoDataFrame),
             self._source(extent_buffer_cells=3),
             MagicMock(),
@@ -1570,7 +1648,12 @@ class TestHandleCanopyPointCloud:
         mock_load.return_value = {}
         mock_fetch.return_value = (MagicMock(), {})
 
-        handle_canopy(MagicMock(spec=gpd.GeoDataFrame), self._source(), MagicMock())
+        handle_canopy(
+            _canopy_grid(),
+            MagicMock(spec=gpd.GeoDataFrame),
+            self._source(),
+            MagicMock(),
+        )
 
         assert mock_fetch.call_args.kwargs["point_classes"] == []
 
@@ -1581,7 +1664,10 @@ class TestHandleCanopyPointCloud:
 
             with pytest.raises(ProcessingError) as excinfo:
                 handle_canopy(
-                    MagicMock(spec=gpd.GeoDataFrame), self._source(), MagicMock()
+                    _canopy_grid(),
+                    MagicMock(spec=gpd.GeoDataFrame),
+                    self._source(),
+                    MagicMock(),
                 )
 
         assert excinfo.value.code == "SOURCE_NOT_FOUND"

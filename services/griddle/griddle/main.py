@@ -345,7 +345,11 @@ def process_grid_request(request: Request):
             result = dispatch_handler(grid, domain_gdf, progress_callback)
 
             # Write back enriched source metadata (e.g., 3DEP tile provenance)
-            update_grid_metadata(grid_id, {"source": grid["source"]})
+            # and any attributions the handler added (e.g., Meta CHM).
+            metadata = {"source": grid["source"]}
+            if "attributions" in grid:
+                metadata["attributions"] = grid["attributions"]
+            update_grid_metadata(grid_id, metadata)
 
             # Apply modifications if present
             if grid.get("modifications"):

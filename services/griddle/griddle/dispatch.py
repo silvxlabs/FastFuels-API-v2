@@ -35,6 +35,7 @@ from lib.landfire import LANDFIRE_VERSIONS
 
 META_CHM_ATTRIBUTION = {
     "1": {
+        "dataset": "High Resolution Canopy Height Maps by WRI and Meta",
         "license_name": "CC-BY-4.0",
         "license_url": "https://creativecommons.org/licenses/by/4.0/",
         "citation": (
@@ -48,7 +49,8 @@ META_CHM_ATTRIBUTION = {
         "access_url": "https://registry.opendata.aws/dataforgood-fb-forests",
     },
     "2": {
-        "license_name": "DINOv3",
+        "dataset": "Meta CHMv2 Global Canopy Height Maps",
+        "license_name": "LicenseRef-DINOv3",
         "license_url": "https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md",
         "citation": (
             "Brandt et al. CHMv2: Improvements in Global Canopy Height Mapping using DINOv3. "
@@ -59,6 +61,29 @@ META_CHM_ATTRIBUTION = {
         "access_url": "https://registry.opendata.aws/dataforgood-fb-forests",
     },
 }
+
+
+def meta_chm_attribution(version: str) -> dict:
+    """The attribution entry for Meta CHM data of ``version``, accessed today."""
+    accessed_on = date.today().isoformat()
+    entry = dict(META_CHM_ATTRIBUTION[version])
+    entry["accessed_on"] = accessed_on
+    entry["citation"] = entry["citation"].format(accessed_on=accessed_on)
+    return entry
+
+
+def add_attribution(attributions: list[dict] | None, entry: dict) -> list[dict]:
+    """Add ``entry`` to a grid's ``attributions``, keeping what is already there.
+
+    An entry for the same ``(dataset, license_name)`` already in the list wins.
+    The result is sorted by dataset, then license name, the same order the API
+    writes.
+    """
+    merged = list(attributions or [])
+    key = (entry["dataset"], entry["license_name"])
+    if all((e["dataset"], e["license_name"]) != key for e in merged):
+        merged.append(entry)
+    return sorted(merged, key=lambda e: (e["dataset"], e["license_name"]))
 
 
 def update_grid_metadata(grid_id: str, data: dict) -> None:
@@ -128,9 +153,7 @@ def dispatch_handler(
         case "uniform":
             return handle_uniform(domain_gdf, source, progress_callback)
         case "canopy":
-            return handle_canopy(
-                domain_gdf, source, progress_callback, domain_id=grid["domain_id"]
-            )
+            return handle_canopy(grid, domain_gdf, source, progress_callback)
         case "3dep":
             return handle_3dep(domain_gdf, source, progress_callback)
         case "compose":
@@ -484,12 +507,16 @@ def _load_point_cloud_doc(point_cloud_id: str) -> dict:
 
 
 def handle_canopy(
+    grid: dict,
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
-    domain_id: str | None = None,
 ) -> xr.Dataset:
-    """Handle canopy source grids."""
+    """Handle canopy source grids.
+
+    Meta CHM adds its dataset's entry to ``grid["attributions"]``, which
+    main.py writes back with the source.
+    """
     product = source["product"]
     version = source.get("version", "2")
     extent_buffer_cells = source.get("extent_buffer_cells", 0)
@@ -509,12 +536,9 @@ def handle_canopy(
                 target_grid_doc=target_grid_doc,
             )
             source["tile_metadata"] = tile_metadata
-            attribution = META_CHM_ATTRIBUTION[version].copy()
-            attribution["accessed_on"] = date.today().isoformat()
-            attribution["citation"] = attribution["citation"].format(
-                accessed_on=date.today()
+            grid["attributions"] = add_attribution(
+                grid.get("attributions"), meta_chm_attribution(version)
             )
-            source["attribution"] = attribution
 
             return dataset
         case "naip":
@@ -574,7 +598,7 @@ def handle_canopy(
                 target_grid_doc=target_grid_doc,
                 progress=progress,
                 extent_buffer_cells=extent_buffer_cells,
-                domain_id=domain_id,
+                domain_id=grid["domain_id"],
             )
         case _:
             raise ProcessingError(

@@ -417,6 +417,32 @@ def _status_then_ok(status, fail_times, retry_after=None):
     return side_effect
 
 
+# Cloud Run's 500 when a request waits too long for an instance, as returned
+# by a cold scale-out of gdam-api-v2 on 2026-11-05.
+_CLOUD_RUN_500_BODY = (
+    "\n<html><head>\n"
+    '<meta http-equiv="content-type" content="text/html;charset=utf-8">\n'
+    "<title>500 Server Error</title>\n</head>\n"
+    "<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Server Error</h1>\n"
+    "<h2>The server encountered an error and could not complete your request."
+    "<p>Please try again in 30 seconds.</h2>\n<h2></h2>\n</body></html>\n"
+)
+
+
+def _500_then_ok(fail_times, **body):
+    """A post side_effect whose first ``fail_times`` responses are a 500 with
+    ``body`` (``text=`` or ``json=``), then ``_ok_post``."""
+    calls = {"n": 0}
+
+    def side_effect(url, json=None, timeout=None):
+        if calls["n"] < fail_times:
+            calls["n"] += 1
+            return httpx.Response(500, **body, request=httpx.Request("POST", url))
+        return _ok_post(url, json=json, timeout=timeout)
+
+    return side_effect
+
+
 @contextmanager
 def _patched(source_frame, post_side_effect):
     """Patch the handler's parquet I/O and GDAM client for one call.
@@ -624,6 +650,59 @@ class TestHandleGdam:
     def test_other_status_is_terminal_without_retry(self, mock_domain_gdf, status):
         frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
         with _patched(frame, _status_then_ok(status, fail_times=99)) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "GDAM_REQUEST_FAILED"
+        assert mock_post.call_count == 1
+
+    def test_retries_cloud_run_500_then_succeeds(self, mock_domain_gdf, monkeypatch):
+        sleeps = []
+        monkeypatch.setattr(gdam.time, "sleep", sleeps.append)
+        frame = pd.DataFrame(
+            {"x": [500000.0], "y": [4500000.0], "height": [10.0], "dbh": [np.nan]}
+        )
+        side_effect = _500_then_ok(fail_times=2, text=_CLOUD_RUN_500_BODY)
+        with _patched(frame, side_effect) as (saved, mock_post):
+            gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        assert mock_post.call_count == 3
+        assert sleeps == [0.5, 1.0]
+        assert saved["df"].loc[0, "dbh"] == pytest.approx(30.0, abs=1e-2)
+
+    def test_terminal_after_exhausting_cloud_run_500_retries(
+        self, mock_domain_gdf, monkeypatch
+    ):
+        monkeypatch.setattr(gdam.time, "sleep", lambda *_: None)
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        side_effect = _500_then_ok(fail_times=99, text=_CLOUD_RUN_500_BODY)
+        with _patched(frame, side_effect) as (_, mock_post):
+            with pytest.raises(ProcessingError) as exc:
+                gdam.handle_gdam(
+                    dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+                )
+        assert exc.value.code == "GDAM_REQUEST_FAILED"
+        assert mock_post.call_count == gdam.config.GDAM_MAX_ATTEMPTS
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"json": {"detail": "Inference failed: out of memory"}},
+            # GDAM's JSON detail can echo an upstream error page.
+            {
+                "json": {
+                    "detail": "Raster input unavailable: Please try again in 30 seconds."
+                }
+            },
+            # A non-JSON 500 without the marker, e.g. an unhandled exception.
+            {"text": "Internal Server Error"},
+        ],
+    )
+    def test_gdam_500_is_terminal_without_retry(self, mock_domain_gdf, body):
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        with _patched(frame, _500_then_ok(fail_times=99, **body)) as (_, mock_post):
             with pytest.raises(ProcessingError) as exc:
                 gdam.handle_gdam(
                     dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress

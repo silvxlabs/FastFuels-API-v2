@@ -281,6 +281,31 @@ class TestCreateLayersetRasterize:
                 feature["id"]
             ).delete()
 
+    @pytest.mark.parametrize("feature_status", ["pending", "running", "failed"])
+    def test_non_completed_layerset_returns_422(
+        self, client, firestore_client, domain_for_testing, feature_status
+    ):
+        feature = _seed_feature(
+            firestore_client,
+            {
+                **make_layerset_feature_data(domain_id=domain_for_testing["id"]),
+                "status": feature_status,
+            },
+        )
+        try:
+            response = client.post(
+                self.route(domain_for_testing["id"]),
+                json={"layerset_id": feature["id"]},
+            )
+            assert response.status_code == 422
+            assert response.json()["detail"].endswith(
+                f"/{feature['id']} status is '{feature_status}', expected 'completed'."
+            )
+        finally:
+            firestore_client.collection(FEATURES_COLLECTION).document(
+                feature["id"]
+            ).delete()
+
     # --- Ownership / domain mismatches (all 404, never 403) --------------
 
     def test_unknown_layerset_id_returns_404(self, client, domain_for_testing):

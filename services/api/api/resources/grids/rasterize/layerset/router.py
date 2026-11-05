@@ -75,7 +75,8 @@ async def create_layerset_rasterize(
     to the domain (default) or to a target grid.
 
     The `layerset_id` must reference a Feature uploaded for this domain via
-    `POST /domains/{domain_id}/features/layerset` and owned by the caller.
+    `POST /domains/{domain_id}/features/layerset`, owned by the caller, and in
+    `completed` status.
 
     ## Request Body
 
@@ -124,14 +125,14 @@ async def create_layerset_rasterize(
         body.modifications, owner_id, domain_id
     )
 
-    # Validate the referenced layerset exists, is owned by the caller, and
-    # belongs to this domain. get_document_async raises 404 on any mismatch
-    # (existence, owner, domain).
+    # Validate the referenced layerset exists, is owned by the caller, belongs
+    # to this domain (404 on any mismatch), and is completed (422).
     _, feature_snapshot = await get_document_async(
         FEATURES_COLLECTION,
         body.layerset_id,
         owner_id=owner_id,
         domain_id=domain_id,
+        document_status="completed",
     )
     layerset = feature_snapshot.to_dict()
     feature_type = layerset.get("type")

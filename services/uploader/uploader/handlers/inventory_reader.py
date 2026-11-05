@@ -46,8 +46,8 @@ def csv_batches(
     By default every kept column is read as float64; a cell that is not a
     number raises ``pyarrow.ArrowInvalid``. With ``as_strings`` the columns
     are read as strings and converted the way ``pd.read_csv`` would: numeric
-    columns to float64, a column with unparseable cells to object, so pandera
-    reports those cells. A header-only file yields one empty frame.
+    columns to float64, a column with an unparseable cell left as strings, so
+    pandera reports that cell. A header-only file yields one empty frame.
 
     Args:
         src: ``gs://`` URI or local path of the upload.
@@ -59,7 +59,8 @@ def csv_batches(
     fs, path = pafs.FileSystem.from_uri(src)
     with fs.open_input_stream(path) as f:
         head = f.read(1 << 20)
-    names = pacsv.read_csv(pa.BufferReader(head.split(b"\n", 1)[0])).column_names
+    header = head[: head.find(b"\n") + 1] or head
+    names = pacsv.read_csv(pa.BufferReader(header)).column_names
     keep = [c for c in names if rename.get(c, c) in columns]
     row_bytes = max(1, len(head) // max(1, head.count(b"\n")))
     read_options = pacsv.ReadOptions(block_size=max(batch_size * row_bytes, 1 << 16))
@@ -88,24 +89,15 @@ def csv_batches(
 
 
 def _strings_to_numbers(batch: pa.RecordBatch) -> pd.DataFrame:
-    """Convert a string batch to float64 columns, keeping unparseable cells as
-    strings in an object column."""
+    """Convert a string batch to float64 columns; a column with an unparseable
+    cell keeps its strings, as ``pd.read_csv`` does."""
     out = {}
     for name, arr in zip(batch.schema.names, batch.columns):
         try:
             out[name] = pc.cast(arr, pa.float64()).to_numpy(zero_copy_only=False)
         except pa.ArrowInvalid:
-            out[name] = np.array([_to_float(v) for v in arr.to_pylist()], dtype=object)
+            out[name] = arr.to_pandas()
     return pd.DataFrame(out)
-
-
-def _to_float(value: str | None) -> float | str:
-    if value is None:
-        return np.nan
-    try:
-        return float(value)
-    except ValueError:
-        return value
 
 
 def geo_batches(

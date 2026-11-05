@@ -14,7 +14,9 @@ import dask.dataframe as dd
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import pandera.pandas as pa
+import pyarrow as pa
+from pandera.errors import SchemaErrors
+from pandera.pandas import DataFrameModel, Field, dataframe_check
 from pandera.typing import Series
 
 from lib.config import DOMAINS_COLLECTION, INVENTORIES_BUCKET, INVENTORIES_COLLECTION
@@ -22,6 +24,8 @@ from lib.domain_utils import parse_domain_gdf
 from lib.errors import CancelledException, ProcessingError
 from lib.firestore import get_document
 from lib.gcs import delete_file, download_file, storage_size
+from uploader.handlers.inventory_failures import FailureCases
+from uploader.handlers.inventory_reader import check_exists, csv_batches, geo_batches
 from uploader.main import update_resource
 
 _V2_COLUMNS = {
@@ -57,6 +61,10 @@ _COLUMN_METADATA = {
     "crown_radius": ("continuous", "m"),
 }
 
+_OPTIONAL_COLUMNS = [
+    c for c in _COLUMN_METADATA if c not in ("tree_id", "x", "y", "height")
+]
+
 
 # tree_id range: 1 … the int32 maximum (the voxel `tree_id` band uses 0 as nodata).
 MAX_TREE_ID = 2_147_483_647
@@ -66,25 +74,25 @@ MAX_CROWN_RADIUS_M = 20.0
 ROW_GROUP_SIZE = 50_000
 
 
-class _InventorySchema(pa.DataFrameModel):
+class _InventorySchema(DataFrameModel):
     # int64 so out-of-range IDs reach the `le` check before the int32 cast.
-    tree_id: Series[np.int64] | None = pa.Field(ge=1, le=MAX_TREE_ID, unique=True)
+    tree_id: Series[np.int64] | None = Field(ge=1, le=MAX_TREE_ID, unique=True)
     x: Series[float]
     y: Series[float]
-    height: Series[float] = pa.Field(ge=0, le=116)
-    fia_species_code: Series[int] | None = pa.Field(nullable=True)
-    fia_status_code: Series[int] | None = pa.Field(isin=[0, 1, 2, 3], nullable=True)
-    fia_crown_class_code: Series[int] | None = pa.Field(
+    height: Series[float] = Field(ge=0, le=116)
+    fia_species_code: Series[int] | None = Field(nullable=True)
+    fia_status_code: Series[int] | None = Field(isin=[0, 1, 2, 3], nullable=True)
+    fia_crown_class_code: Series[int] | None = Field(
         isin=[1, 2, 3, 4, 5], nullable=True
     )
-    dbh: Series[float] | None = pa.Field(ge=0, nullable=True)
-    crown_ratio: Series[float] | None = pa.Field(ge=0, le=1, nullable=True)
-    crown_base_height: Series[float] | None = pa.Field(ge=0, nullable=True)
-    crown_radius: Series[float] | None = pa.Field(
+    dbh: Series[float] | None = Field(ge=0, nullable=True)
+    crown_ratio: Series[float] | None = Field(ge=0, le=1, nullable=True)
+    crown_base_height: Series[float] | None = Field(ge=0, nullable=True)
+    crown_radius: Series[float] | None = Field(
         gt=0, le=MAX_CROWN_RADIUS_M, nullable=True
     )
 
-    @pa.dataframe_check(error="crown_base_height must not exceed height")
+    @dataframe_check(error="crown_base_height must not exceed height")
     def crown_base_height_at_most_height(cls, df: pd.DataFrame) -> pd.Series:
         if "crown_base_height" not in df.columns:
             return pd.Series(True, index=df.index)
@@ -93,6 +101,32 @@ class _InventorySchema(pa.DataFrameModel):
 
     class Config:
         coerce = True
+
+
+# Batches are validated one at a time; tree_id uniqueness is checked across
+# the whole file instead.
+_BATCH_SCHEMA = _InventorySchema.to_schema().update_column("tree_id", unique=False)
+
+# Persisted columns in canonical order. The pandas metadata makes readers
+# restore the Int64 (not float64) codes.
+_PARQUET_SCHEMA = pa.Schema.from_pandas(
+    pd.DataFrame(
+        {
+            "tree_id": pd.Series(dtype="int32"),
+            "x": pd.Series(dtype="float64"),
+            "y": pd.Series(dtype="float64"),
+            "fia_species_code": pd.Series(dtype="Int64"),
+            "fia_status_code": pd.Series(dtype="Int64"),
+            "fia_crown_class_code": pd.Series(dtype="Int64"),
+            "dbh": pd.Series(dtype="float64"),
+            "height": pd.Series(dtype="float64"),
+            "crown_ratio": pd.Series(dtype="float64"),
+            "crown_base_height": pd.Series(dtype="float64"),
+            "crown_radius": pd.Series(dtype="float64"),
+        }
+    ),
+    preserve_index=False,
+)
 
 
 def handle_inventory(
@@ -321,7 +355,7 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
 
     try:
         df = _InventorySchema.validate(df, lazy=True)
-    except pa.errors.SchemaErrors as e:
+    except SchemaErrors as e:
         cases = e.failure_cases.head(100).to_dict("records")
         raise ProcessingError(
             code="SCHEMA_VALIDATION_ERROR",
@@ -331,6 +365,101 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
     if "tree_id" in df.columns:
         df["tree_id"] = df["tree_id"].astype("int32")
     return df
+
+
+def _read_table(
+    fmt: str, src: str, col_map: dict, domain_crs_str: str, bounds: tuple
+) -> pa.Table:
+    """Stream the upload into a validated, domain-filtered Arrow table.
+
+    col_map maps v2 column names → user column names in the file.
+
+    Returns:
+        The trees inside ``bounds``, one chunk per batch: ``tree_id`` plus
+        the v2 columns the file provided, in canonical order.
+
+    Raises:
+        FileNotFoundError: If the upload no longer exists.
+        ProcessingError: ``SCHEMA_VALIDATION_ERROR``, or a reader error.
+    """
+    check_exists(src)
+    rename = {user_col: v2_name for v2_name, user_col in col_map.items()}
+    if fmt != "csv":
+        batches = geo_batches(fmt, src, rename, _V2_COLUMNS, domain_crs_str)
+        return _collect(batches, bounds)
+    try:
+        return _collect(csv_batches(src, rename, _V2_COLUMNS), bounds)
+    except pa.ArrowInvalid:
+        pass
+    # A cell is not a number: re-read as strings so pandera reports it. Outside
+    # the except block, so the first pass's batches are freed.
+    return _collect(csv_batches(src, rename, _V2_COLUMNS, as_strings=True), bounds)
+
+
+def _collect(batches, bounds: tuple) -> pa.Table:
+    """Validate, domain-filter and number each batch, keeping only its
+    compact typed columns.
+
+    Generated tree IDs are 1 … N over the trees kept in the domain, in file
+    order. Once any batch fails validation the rest are still validated, for
+    the report, but no data is kept.
+    """
+    xmin, ymin, xmax, ymax = bounds
+    failures = FailureCases(list(_BATCH_SCHEMA.columns))
+    tables: list[pa.Table] = []
+    tree_ids: list[tuple[int, np.ndarray]] = []
+    provided: list[str] | None = None
+    next_id = 1
+    for df in batches:
+        if provided is None:
+            provided = [c for c in _COLUMN_METADATA if c in df.columns]
+            data_schema = pa.schema(
+                [
+                    f
+                    for f in _PARQUET_SCHEMA
+                    if f.name in provided and f.name != "tree_id"
+                ]
+            )
+        for col in _OPTIONAL_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+        try:
+            df = _BATCH_SCHEMA.validate(df, lazy=True)
+        except SchemaErrors as e:
+            failures.add(e.failure_cases, list(e.data.columns))
+            tables.clear()
+            df = e.data
+        has_ids = "tree_id" in df.columns
+        if has_ids and pd.api.types.is_integer_dtype(df["tree_id"]):
+            first = int(df.index[0]) if len(df) else 0
+            tree_ids.append((first, df["tree_id"].to_numpy("int64")))
+        if failures:
+            continue
+
+        x, y = df["x"].to_numpy(), df["y"].to_numpy()
+        inside = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
+        # Filter in Arrow, so each kept column is its own allocation rather
+        # than a view of a pandas block.
+        table = pa.Table.from_pandas(
+            df[data_schema.names], schema=data_schema, preserve_index=False
+        ).filter(pa.array(inside))
+        if has_ids:
+            ids = df["tree_id"].to_numpy("int64")[inside].astype("int32")
+        else:
+            ids = np.arange(next_id, next_id + table.num_rows, dtype="int32")
+            next_id += table.num_rows
+        tables.append(table.add_column(0, "tree_id", pa.array(ids)))
+
+    if "tree_id" in (provided or []):
+        failures.add_duplicate_tree_ids(tree_ids)
+    if failures:
+        total, cases = failures.report()
+        raise ProcessingError(
+            code="SCHEMA_VALIDATION_ERROR",
+            message=f"Schema validation failed with {total} error(s).",
+            suggestion=str(cases),
+        )
+    return pa.concat_tables(tables)
 
 
 def _extract_crs_string(domain_data: dict) -> str:

@@ -1,9 +1,9 @@
 """
 Integration tests for grid modifications.
 
-Exercise the full pipeline: domain + uniform grid + road Feature → griddle
-applies the modification → zarr write → re-open and assert that masked cells
-are zero and unmasked cells retain their uniform value.
+Exercise the full pipeline: domain + uniform grid + road or building Feature →
+griddle applies the modification → zarr write → re-open and assert that masked
+cells are zero and unmasked cells retain their uniform value.
 
 Also covers the in-place pending-modifications path (#277): a completed grid
 re-processed with ``pending_modifications`` loads its own zarr, applies only
@@ -16,8 +16,11 @@ including the Feature document required for the worker's domain/status check.
 
 from uuid import uuid4
 
+import geopandas as gpd
 import numpy as np
+import shapely
 from griddle.main import process_grid_request
+from shapely.geometry import MultiPolygon, box
 
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.firestore.documents import get_document, update_document
@@ -154,6 +157,73 @@ def test_feature_road_buffer_widens_mask(griddle_runner):
         f"buffered mask ({masked_buffered}) should be strictly larger than "
         f"unbuffered mask ({masked_no_buffer})"
     )
+
+
+def test_feature_building_within_zeros_exactly_footprint_cells(griddle_runner):
+    """A building Feature masks exactly the cells whose centers fall inside a
+    footprint, and leaves every other cell at its uniform value.
+
+    The footprints are synthetic Polygon and MultiPolygon rows with the columns
+    etcher writes for buildings (height, height_source, source_dataset). Their
+    edges are offset 0.3 m from the 2 m cell lattice so no cell center lies on
+    a footprint boundary.
+    """
+    feature_id = f"test-{uuid4().hex}"
+    x0, y0 = 294300.3, 5199300.3
+    buildings = gpd.GeoDataFrame(
+        {
+            "height": [7.5, None],
+            "height_source": ["OpenStreetMap", None],
+            "source_dataset": ["OpenStreetMap", "Microsoft ML Buildings"],
+        },
+        geometry=[
+            box(x0, y0, x0 + 20, y0 + 14),
+            MultiPolygon(
+                [
+                    box(x0 + 100, y0 - 80, x0 + 112, y0 - 70),
+                    box(x0 + 200, y0 + 150, x0 + 216, y0 + 166),
+                ]
+            ),
+        ],
+        crs="EPSG:32612",
+    )
+    result = griddle_runner(
+        "blackfoot.json",
+        "uniform.json",
+        feature_gdf=buildings,
+        feature_id=feature_id,
+        feature_doc=True,
+        feature_type="building",
+        modifications=[
+            {
+                "conditions": [
+                    {
+                        "source": "feature",
+                        "operator": "within",
+                        "feature_id": feature_id,
+                    }
+                ],
+                "actions": [
+                    {
+                        "band": "fuel_moisture.1hr",
+                        "modifier": "replace",
+                        "value": 0.0,
+                    }
+                ],
+            }
+        ],
+        timeout=180,
+    )
+    ds = result.ds
+    arr = ds["fuel_moisture.1hr"].values
+
+    xx, yy = np.meshgrid(ds["x"].values, ds["y"].values)
+    expected = shapely.contains_xy(buildings.geometry.union_all(), xx, yy)
+    # 10×7 + 6×5 + 8×8 cells.
+    assert expected.sum() == 164
+    np.testing.assert_array_equal(arr == 0.0, expected)
+    assert (arr[~expected] == 6.0).all()
+    assert (ds["fuel_moisture.10hr"].values == 8.0).all()
 
 
 def test_pending_modifications_replace_gr1_with_gr2_in_place(griddle_runner):

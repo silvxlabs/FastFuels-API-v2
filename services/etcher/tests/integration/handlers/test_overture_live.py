@@ -14,6 +14,7 @@ from datetime import date
 
 import pytest
 from etcher.overture_source import (
+    building_files,
     latest_release,
     parse_release,
     read_overture_buildings,
@@ -45,3 +46,11 @@ def test_read_bigfork_buildings():
     assert set(gdf.geom_type) <= {"Polygon", "MultiPolygon"}
     assert gdf["height"].notna().mean() > 0.5
     assert all(len(s) > 0 and "dataset" in s[0] for s in gdf["sources"])
+
+
+def test_bigfork_reads_few_files():
+    # The STAC index narrows a release's ~500 building files to the one or two
+    # whose bbox covers the ROI; scanning all of them exhausts etcher's memory.
+    paths = building_files(BIGFORK_BBOX, latest_release())
+    assert 1 <= len(paths) <= 2
+    assert all("/theme=buildings/type=building/" in p for p in paths)

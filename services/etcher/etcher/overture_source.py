@@ -4,41 +4,43 @@ Overture publishes each release as GeoParquet on anonymous S3:
 
     s3://overturemaps-us-west-2/release/<YYYY-MM-DD.N>/theme=buildings/type=building/*.parquet
 
-Only about the last two months of releases stay online, so features always read
-the latest release (found by listing ``release/``) and record it; reproducibility
-comes from the stored feature, not from re-reading a pinned release.
+and indexes it with a STAC catalog at https://stac.overturemaps.org. The catalog
+names the latest release, and each release's ``collections.parquet`` lists every
+data file with its bbox. Only about the last two months of releases stay online,
+so features always read the latest release and record it; reproducibility comes
+from the stored feature, not from re-reading a pinned release.
 
-Each row carries a ``bbox`` struct (``xmin``/``xmax``/``ymin``/``ymax``, EPSG:4326).
-Filtering the dataset on it lets pyarrow skip row groups whose statistics fall
-outside the ROI, so a domain-sized read fetches only a few row groups out of a
-release that is hundreds of GB.
+A read first picks the files whose bbox overlaps the ROI from the index (one or
+two of the ~500 building files), then scans only those, filtering on each row's
+``bbox`` struct (``xmin``/``xmax``/``ymin``/``ymax``, EPSG:4326) so pyarrow skips
+row groups whose statistics fall outside the ROI. Scanning the whole release
+instead holds every file's parsed footer for the length of the scan, several
+GiB outside Arrow's memory pool.
 """
 
+import json
 import logging
 import re
+import urllib.request
 from datetime import date
 
 import geopandas as gpd
+import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.fs as pafs
+import pyarrow.parquet as pq
 from shapely.geometry import box
 
 from etcher.errors import ProcessingError
 
 logger = logging.getLogger(__name__)
 
-OVERTURE_BUCKET = "overturemaps-us-west-2"
 OVERTURE_REGION = "us-west-2"
-RELEASE_PREFIX = f"{OVERTURE_BUCKET}/release"
-BUILDINGS_PATH = "theme=buildings/type=building"
+STAC_URL = "https://stac.overturemaps.org"
+STAC_TIMEOUT_S = 60
+BUILDING_COLLECTION = "building"
 BUILDING_COLUMNS = ["id", "geometry", "height", "sources"]
-
-# Files whose row-group statistics are checked concurrently. Every scan opens all
-# ~500 files of a release to test their bbox statistics, so latency, not bytes,
-# dominates. Measured locally on the Bigfork domain: ~25-50 s at pyarrow's
-# default of 4, ~13-15 s at 16-64.
-FRAGMENT_READAHEAD = 32
 
 RELEASE_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2})\.(\d+)$")
 
@@ -66,6 +68,12 @@ def s3_filesystem() -> pafs.S3FileSystem:
     return pafs.S3FileSystem(anonymous=True, region=OVERTURE_REGION)
 
 
+def fetch(url: str) -> bytes:
+    """GET a file from Overture's STAC catalog."""
+    with urllib.request.urlopen(url, timeout=STAC_TIMEOUT_S) as response:
+        return response.read()
+
+
 def parse_release(name: str) -> tuple[date, int] | None:
     """Sort key for a release name like ``2026-10-21.0``; None if it isn't one."""
     match = RELEASE_PATTERN.match(name)
@@ -77,34 +85,23 @@ def parse_release(name: str) -> tuple[date, int] | None:
         return None
 
 
-def newest_release(names: list[str]) -> str | None:
-    """The newest valid release name, ordered by (date, N); None if none are valid."""
-    keyed = [(key, name) for name in names if (key := parse_release(name))]
-    if not keyed:
-        return None
-    return max(keyed)[1]
-
-
 def latest_release() -> str:
-    """The newest Overture release currently published on S3.
+    """The newest Overture release, as named by the STAC catalog root.
 
     Raises:
-        ProcessingError: if the bucket listing fails or holds no releases.
+        ProcessingError: if the catalog cannot be read or names no valid release.
     """
     try:
-        infos = s3_filesystem().get_file_info(
-            pafs.FileSelector(RELEASE_PREFIX, recursive=False)
-        )
+        catalog = json.loads(fetch(f"{STAC_URL}/catalog.json"))
     except Exception as e:
         raise ProcessingError(
             code="OVERTURE_SOURCE_READ_FAILED",
-            message="Failed to list Overture Maps releases.",
+            message="Failed to read the Overture Maps release catalog.",
             suggestion=READ_FAILED_SUGGESTION,
         ) from e
 
-    names = [info.base_name for info in infos if info.type == pafs.FileType.Directory]
-    release = newest_release(names)
-    if release is None:
+    release = catalog.get("latest") if isinstance(catalog, dict) else None
+    if not isinstance(release, str) or parse_release(release) is None:
         raise ProcessingError(
             code="OVERTURE_RELEASE_NOT_FOUND",
             message="No Overture Maps release is currently published.",
@@ -114,7 +111,7 @@ def latest_release() -> str:
 
 
 def bbox_filter(bbox_4326: tuple) -> pc.Expression:
-    """Row filter keeping features whose ``bbox`` struct overlaps the ROI."""
+    """Row filter keeping rows whose ``bbox`` struct overlaps the ROI."""
     west, south, east, north = bbox_4326
     return (
         (pc.field("bbox", "xmin") <= east)
@@ -122,6 +119,25 @@ def bbox_filter(bbox_4326: tuple) -> pc.Expression:
         & (pc.field("bbox", "ymin") <= north)
         & (pc.field("bbox", "ymax") >= south)
     )
+
+
+def building_files(bbox_4326: tuple, release: str) -> list[str]:
+    """S3 paths (``bucket/key``) of the release's building files overlapping a bbox.
+
+    Read from the release's ``collections.parquet`` STAC index, which has one row
+    per data file with the file's bbox.
+    """
+    index = pq.read_table(
+        pa.BufferReader(fetch(f"{STAC_URL}/{release}/collections.parquet")),
+        columns=["assets"],
+        filters=(pc.field("collection") == BUILDING_COLLECTION)
+        & bbox_filter(bbox_4326),
+    )
+    hrefs = [
+        assets["aws"]["alternate"]["s3"]["href"]
+        for assets in index["assets"].to_pylist()
+    ]
+    return sorted(href.removeprefix("s3://") for href in hrefs)
 
 
 def read_overture_buildings(bbox_4326: tuple, release: str) -> gpd.GeoDataFrame:
@@ -140,14 +156,11 @@ def read_overture_buildings(bbox_4326: tuple, release: str) -> gpd.GeoDataFrame:
         ProcessingError: if the release cannot be read.
     """
     bbox = tuple(bbox_4326)
-    path = f"{RELEASE_PREFIX}/{release}/{BUILDINGS_PATH}/"
     try:
-        dataset = ds.dataset(path, filesystem=s3_filesystem(), format="parquet")
-        table = dataset.scanner(
-            columns=BUILDING_COLUMNS,
-            filter=bbox_filter(bbox),
-            fragment_readahead=FRAGMENT_READAHEAD,
-        ).to_table()
+        paths = building_files(bbox, release)
+        if paths:
+            dataset = ds.dataset(paths, filesystem=s3_filesystem(), format="parquet")
+            table = dataset.to_table(columns=BUILDING_COLUMNS, filter=bbox_filter(bbox))
     except Exception as e:
         raise ProcessingError(
             code="OVERTURE_SOURCE_READ_FAILED",
@@ -155,11 +168,24 @@ def read_overture_buildings(bbox_4326: tuple, release: str) -> gpd.GeoDataFrame:
             suggestion=READ_FAILED_SUGGESTION,
         ) from e
 
+    if not paths:
+        logger.info(
+            "No Overture building files overlap the bbox in release %s", release
+        )
+        return gpd.GeoDataFrame(
+            {"id": [], "height": [], "sources": []}, geometry=[], crs="EPSG:4326"
+        )
+
     df = table.drop_columns(["geometry"]).to_pandas()
     geometry = gpd.GeoSeries.from_wkb(
         table.column("geometry").to_numpy(zero_copy_only=False), crs="EPSG:4326"
     )
     gdf = gpd.GeoDataFrame(df, geometry=geometry.values, crs="EPSG:4326")
     gdf = gdf[gdf.intersects(box(*bbox))].reset_index(drop=True)
-    logger.info("Read %d Overture buildings from release %s", len(gdf), release)
+    logger.info(
+        "Read %d Overture buildings from %d file(s) of release %s",
+        len(gdf),
+        len(paths),
+        release,
+    )
     return gdf

@@ -42,6 +42,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
 from api.resources.inventories.schema import TREE_ID_COLUMN
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import inherit_attributions
 from lib.config import (
     FEATURES_COLLECTION,
     GRIDS_COLLECTION,
@@ -256,6 +257,7 @@ async def create_tree_inventory_grid(
     # A crown_feature source needs a completed crown Feature in this domain and
     # the CHM grid it was built from, whose tops treevox reads.
     source_chm_grid_id = source_chm_grid_checksum = None
+    feature = chm_grid_data = None
     if isinstance(body.crown_geometry_source, CrownFeatureCrownGeometrySource):
         feature_id = body.crown_geometry_source.feature_id
         _, feature_snapshot = await get_document_async(
@@ -296,7 +298,8 @@ async def create_tree_inventory_grid(
                     f"crown Feature again from a current CHM grid."
                 ),
             ) from e
-        source_chm_grid_checksum = chm_snapshot.to_dict().get("checksum")
+        chm_grid_data = chm_snapshot.to_dict()
+        source_chm_grid_checksum = chm_grid_data.get("checksum")
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -333,6 +336,7 @@ async def create_tree_inventory_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(inventory_data, feature, chm_grid_data),
         # chunks is computed by Treevox once the 3D grid dimensions
         # are known from the domain bbox + resolution.
         "chunks": None,

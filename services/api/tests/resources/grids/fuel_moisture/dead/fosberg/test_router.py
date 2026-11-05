@@ -10,8 +10,18 @@ from api.resources.grids.fuel_moisture.dead.fosberg.examples import (
     ALL_FOSBERG_EXAMPLE_VALUES,
 )
 
+from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import GRIDS_COLLECTION
 from tests.fixtures import make_grid_data
+
+META_ATTRIBUTION = {
+    "dataset": "Meta CHM",
+    "license_name": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "citation": "Meta and World Resources Institute",
+    "access_url": "https://registry.opendata.aws/dataforgood-fb-forests/",
+    "accessed_on": "2026-10-01",
+}
 
 SURFACE = "irradiance.surface.relative"
 TRANSFORM = (2.0, 0.0, 500000.0, 0.0, -2.0, 5201000.0)
@@ -380,3 +390,38 @@ class TestCreateFosbergFuelMoistureGrid:
             f"{response.status_code}: {response.json()}"
         )
         assert response.json()["source"]["name"] == "fosberg"
+
+
+class TestFosbergAttributions:
+    """A Fosberg grid merges the attributions of its topography and irradiance
+    grids (#775)."""
+
+    def test_merges_both_source_grid_attributions(
+        self, client, firestore_client, domain_for_testing, grid_factory
+    ):
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        topo = grid_factory(domain_for_testing["id"], bands=("slope", "aspect"))
+        irr = grid_factory(domain_for_testing["id"], bands=(SURFACE,))
+        grids = firestore_client.collection(GRIDS_COLLECTION)
+        grids.document(topo["id"]).update({"attributions": [osm]})
+        grids.document(irr["id"]).update({"attributions": [META_ATTRIBUTION]})
+
+        response = client.post(
+            f"/domains/{domain_for_testing['id']}/grids/fuel-moisture/dead/fosberg",
+            json={
+                "source_topography_grid_id": topo["id"],
+                "source_irradiance_grid_id": irr["id"],
+                "dry_bulb_temp": 75,
+                "relative_humidity": 30,
+                "time": 1200,
+                "month": "June",
+            },
+        )
+        assert response.status_code == 201, response.text
+        grid_id = response.json()["id"]
+        try:
+            expected = [META_ATTRIBUTION, osm]
+            assert response.json()["attributions"] == expected
+            assert grids.document(grid_id).get().to_dict()["attributions"] == expected
+        finally:
+            grids.document(grid_id).delete()

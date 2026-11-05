@@ -30,6 +30,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import inherit_attributions
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 
 router = APIRouter()
@@ -144,6 +145,7 @@ async def create_fosberg_fuel_moisture_grid(
         "bands": [DEAD_1HR_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(topo_grid, irr_grid),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

@@ -67,6 +67,10 @@ class TestInheritAttributions:
     def test_missing_and_none_attributions(self):
         assert inherit_attributions({}, {"attributions": None}) == []
 
+    def test_none_parent_skipped(self):
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        assert inherit_attributions({"attributions": [osm]}, None) == [osm]
+
     def test_merges_parent_lists(self):
         osm = make_attribution(OPENSTREETMAP, "2026-11-05")
         meta = _entry("Meta CHM", "CC-BY-4.0", "2026-11-05")

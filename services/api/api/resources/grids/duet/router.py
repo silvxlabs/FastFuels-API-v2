@@ -33,6 +33,7 @@ from api.resources.grids.schema import Grid
 from api.resources.grids.utils import validate_grid_input
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import inherit_attributions
 from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
 
 router = APIRouter()
@@ -170,6 +171,7 @@ async def create_duet_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(source_grid_data),
         # chunks is computed by Treevox once the 2D surface dimensions are
         # known from the source grid.
         "chunks": None,

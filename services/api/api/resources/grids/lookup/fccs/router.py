@@ -164,7 +164,7 @@ async def create_fccs_lookup(
         "bands": [b.model_dump() for b in bands],
         "georeference": source_grid_data.get("georeference"),
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(source_grid_data, *referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

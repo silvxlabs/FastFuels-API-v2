@@ -30,6 +30,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import inherit_attributions
 from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
 
 from .examples import CREATE_LEAFLUX_IRRADIANCE_GRID_EXAMPLES
@@ -78,9 +79,10 @@ async def create_leaflux_irradiance_grid(
         document_status="completed",
     )
 
-    grid_data = source_snapshot.to_dict()
-    validate_grid_input(body, "source_lad_grid_id", grid_data)
+    lad_grid_data = source_snapshot.to_dict()
+    validate_grid_input(body, "source_lad_grid_id", lad_grid_data)
 
+    terrain_grid_data = None
     if body.source_terrain_grid_id is not None:
         # Validate terrain grid exists, is owned, is completed
         _, terrain_source_snapshot = await get_document_async(
@@ -93,13 +95,13 @@ async def create_leaflux_irradiance_grid(
         terrain_grid_data = terrain_source_snapshot.to_dict()
         validate_grid_input(body, "source_terrain_grid_id", terrain_grid_data)
         validate_grids_share_horizontal_lattice(
-            reference_grid=grid_data,
+            reference_grid=lad_grid_data,
             candidate_grid=terrain_grid_data,
         )
 
     source = IrradianceLeafluxSource(
         source_lad_grid_id=body.source_lad_grid_id,
-        source_lad_grid_checksum=grid_data.get("checksum"),
+        source_lad_grid_checksum=lad_grid_data.get("checksum"),
         source_terrain_grid_id=body.source_terrain_grid_id,
         bands=body.bands,
         date_time=body.date_time,
@@ -123,6 +125,7 @@ async def create_leaflux_irradiance_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(lad_grid_data, terrain_grid_data),
         "chunks": None,
         "owner_id": owner_id,
     }

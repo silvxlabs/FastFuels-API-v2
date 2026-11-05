@@ -2,8 +2,18 @@
 
 import pytest
 
-from lib.config import GRIDS_COLLECTION
-from tests.fixtures import make_grid_data
+from lib.attributions import OPENSTREETMAP, make_attribution
+from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+from tests.fixtures import make_feature_data, make_grid_data
+
+META_ATTRIBUTION = {
+    "dataset": "Meta CHM",
+    "license_name": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "citation": "Meta and World Resources Institute",
+    "access_url": "https://registry.opendata.aws/dataforgood-fb-forests/",
+    "accessed_on": "2026-10-01",
+}
 
 
 @pytest.fixture(scope="session")
@@ -503,3 +513,81 @@ class TestCreateCompose:
 
         assert response.status_code == 422
         assert "georeference" in response.json()["detail"].lower()
+
+
+class TestComposeAttributions:
+    """A composed grid merges the attributions of every input grid and every
+    feature its modifications reference (#775)."""
+
+    def test_merges_all_input_grid_and_feature_attributions(
+        self, client, firestore_client, domain_for_testing
+    ):
+        osm_early = make_attribution(OPENSTREETMAP, "2026-10-15")
+        osm_late = make_attribution(OPENSTREETMAP, "2026-11-05")
+        grid_a = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
+        grid_a["attributions"] = [META_ATTRIBUTION]
+        grid_b = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
+        grid_b["attributions"] = [osm_late]
+        feature = make_feature_data(domain_id=domain_for_testing["id"])
+        feature["attributions"] = [osm_early]
+        refs = [
+            firestore_client.collection(GRIDS_COLLECTION).document(grid_a["id"]),
+            firestore_client.collection(GRIDS_COLLECTION).document(grid_b["id"]),
+            firestore_client.collection(FEATURES_COLLECTION).document(feature["id"]),
+        ]
+        for ref, data in zip(refs, (grid_a, grid_b, feature)):
+            ref.set(data)
+        grid_id = None
+        try:
+            response = client.post(
+                _route(domain_for_testing["id"]),
+                json={
+                    "inputs": [
+                        {"grid_id": grid_a["id"], "alias": "a"},
+                        {"grid_id": grid_b["id"], "alias": "b"},
+                    ],
+                    "operations": [
+                        {
+                            "type": "compute",
+                            "output": "fuel_load.1hr",
+                            "operator": "add",
+                            "operands": ["a.fuel_load.1hr", "b.fuel_load.1hr"],
+                        }
+                    ],
+                    "modifications": [
+                        {
+                            "conditions": [
+                                {
+                                    "source": "feature",
+                                    "operator": "intersects",
+                                    "feature_id": feature["id"],
+                                }
+                            ],
+                            "actions": [
+                                {
+                                    "band": "fuel_load.1hr",
+                                    "modifier": "replace",
+                                    "value": 0,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+            assert response.status_code == 201, response.text
+            grid_id = response.json()["id"]
+            # Deduped on (dataset, license_name); earliest accessed_on wins.
+            expected = [META_ATTRIBUTION, osm_early]
+            assert response.json()["attributions"] == expected
+            stored = (
+                firestore_client.collection(GRIDS_COLLECTION)
+                .document(grid_id)
+                .get()
+                .to_dict()
+            )
+            assert stored["attributions"] == expected
+        finally:
+            if grid_id is not None:
+                firestore_client.collection(GRIDS_COLLECTION).document(grid_id).delete()
+            for ref in refs:
+                ref.delete()

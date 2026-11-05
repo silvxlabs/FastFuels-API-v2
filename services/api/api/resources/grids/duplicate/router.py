@@ -126,8 +126,8 @@ async def duplicate_grid(
     byte-copied; no regeneration is performed and the upstream source is never
     re-fetched, so the copy is exact even if the upstream product has been
     updated since the original was built. The copy carries over the source's
-    `source`, `modifications`, `bands`, `georeference`, `chunks`, and
-    `checksum` verbatim — only its `id` and timestamps differ.
+    `source`, `modifications`, `bands`, `georeference`, `chunks`,
+    `attributions`, and `checksum` verbatim — only its `id` and timestamps differ.
 
     ## Request Body (optional)
 

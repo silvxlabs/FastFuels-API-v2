@@ -133,7 +133,8 @@ async def create_layerset_rasterize(
         owner_id=owner_id,
         domain_id=domain_id,
     )
-    feature_type = feature_snapshot.to_dict().get("type")
+    layerset = feature_snapshot.to_dict()
+    feature_type = layerset.get("type")
     if feature_type != FeatureType.layerset.value:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -167,7 +168,7 @@ async def create_layerset_rasterize(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(layerset, *referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

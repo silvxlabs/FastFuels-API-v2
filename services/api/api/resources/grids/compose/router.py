@@ -549,7 +549,9 @@ async def create_compose_grid(
         "bands": [band.model_dump() for band in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(
+            *source_grids.values(), *referenced_features
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

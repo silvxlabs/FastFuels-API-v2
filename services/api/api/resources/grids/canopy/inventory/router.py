@@ -45,6 +45,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import inherit_attributions
 from lib.config import (
     GRIDDLE_QUEUE,
     GRIDDLE_SERVICE,
@@ -286,6 +287,7 @@ async def create_inventory_canopy_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": inherit_attributions(inventory_data),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

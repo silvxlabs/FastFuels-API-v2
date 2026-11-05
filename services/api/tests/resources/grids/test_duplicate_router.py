@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 from lib.gcs import delete_directory, exists
 from tests.fixtures import make_grid_data
@@ -133,6 +134,32 @@ class TestDuplicateGrid:
         coords = data["modifications"][0]["conditions"][1]["geometry"]["coordinates"]
         assert isinstance(coords, list)
         assert coords[0][0] == [500000.0, 5200000.0]
+
+    def test_duplicate_copies_attributions(
+        self, client, firestore_client, domain_for_testing, cleanup_grids
+    ):
+        """The copy carries the source grid's attributions (#775)."""
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        source = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
+        source["attributions"] = [osm]
+        doc_ref = firestore_client.collection(GRIDS_COLLECTION).document(source["id"])
+        doc_ref.set(source)
+        try:
+            response = client.post(self.route(domain_for_testing["id"], source["id"]))
+            assert response.status_code == 201, response.text
+            new_id = response.json()["id"]
+            cleanup_grids.append(new_id)
+
+            assert response.json()["attributions"] == [osm]
+            stored = (
+                firestore_client.collection(GRIDS_COLLECTION)
+                .document(new_id)
+                .get()
+                .to_dict()
+            )
+            assert stored["attributions"] == [osm]
+        finally:
+            doc_ref.delete()
 
     def test_duplicate_clones_firestore_document(
         self,

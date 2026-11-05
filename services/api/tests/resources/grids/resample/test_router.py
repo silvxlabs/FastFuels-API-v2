@@ -14,8 +14,18 @@ The resample endpoint requires a source grid that:
 import pytest
 from api.resources.grids.resample.examples import ALL_RESAMPLE_EXAMPLE_VALUES
 
-from lib.config import GRIDS_COLLECTION
-from tests.fixtures import make_grid_data
+from lib.attributions import OPENSTREETMAP, make_attribution
+from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+from tests.fixtures import make_feature_data, make_grid_data
+
+META_ATTRIBUTION = {
+    "dataset": "Meta CHM",
+    "license_name": "CC-BY-4.0",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "citation": "Meta and World Resources Institute",
+    "access_url": "https://registry.opendata.aws/dataforgood-fb-forests/",
+    "accessed_on": "2026-10-01",
+}
 
 
 @pytest.fixture(scope="session")
@@ -400,3 +410,68 @@ class TestCreateResample:
         data = response.json()
         assert data["source"]["name"] == "resample"
         assert data["source"]["source_grid_id"] == complete_grid["id"]
+
+
+class TestResampleAttributions:
+    """A resampled grid inherits its source grid's attributions, merged with
+    those of any features its modifications reference (#775)."""
+
+    def test_inherits_source_grid_and_feature_attributions(
+        self, client, firestore_client, domain_for_testing
+    ):
+        source = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
+        source["attributions"] = [META_ATTRIBUTION]
+        feature = make_feature_data(domain_id=domain_for_testing["id"])
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        feature["attributions"] = [osm]
+        source_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+            source["id"]
+        )
+        feature_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feature["id"]
+        )
+        source_ref.set(source)
+        feature_ref.set(feature)
+        grid_id = None
+        try:
+            response = client.post(
+                f"/domains/{domain_for_testing['id']}/grids/resample",
+                json={
+                    "source_grid_id": source["id"],
+                    "alignment": {"target": "domain", "resolution": 2.0},
+                    "modifications": [
+                        {
+                            "conditions": [
+                                {
+                                    "source": "feature",
+                                    "operator": "intersects",
+                                    "feature_id": feature["id"],
+                                }
+                            ],
+                            "actions": [
+                                {
+                                    "band": "fuel_load.1hr",
+                                    "modifier": "replace",
+                                    "value": 0,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+            assert response.status_code == 201, response.text
+            grid_id = response.json()["id"]
+            expected = [META_ATTRIBUTION, osm]
+            assert response.json()["attributions"] == expected
+            stored = (
+                firestore_client.collection(GRIDS_COLLECTION)
+                .document(grid_id)
+                .get()
+                .to_dict()
+            )
+            assert stored["attributions"] == expected
+        finally:
+            if grid_id is not None:
+                firestore_client.collection(GRIDS_COLLECTION).document(grid_id).delete()
+            source_ref.delete()
+            feature_ref.delete()

@@ -159,7 +159,7 @@ async def create_resample(
         "bands": bands,
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(source_grid_data, *referenced_features),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

@@ -24,8 +24,10 @@ from api.resources.grids.exports.quicfire.examples import (
 )
 from api.resources.grids.exports.quicfire.schema import QuicfireExportRequest
 from api.resources.grids.exports.quicfire.validators import (
+    quicfire_grid_ids,
     validate_quicfire_request,
 )
+from api.resources.parents import load_parents
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import EXPORTER_QUEUE, EXPORTER_SERVICE, EXPORTS_COLLECTION
@@ -68,7 +70,8 @@ async def create_quicfire_export(
 
     await enforce_create_quotas(EXPORTS_COLLECTION, request)
 
-    source, role_grids = await validate_quicfire_request(body, owner_id, domain)
+    parents = await load_parents(grids=quicfire_grid_ids(body))
+    source = validate_quicfire_request(body, parents, owner_id, domain)
 
     export_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -88,7 +91,7 @@ async def create_quicfire_export(
         "error": None,
         "tags": body.tags,
         "owner_id": owner_id,
-        "attributions": inherit_attributions(*role_grids),
+        "attributions": inherit_attributions(parents),
     }
 
     await set_document_async(EXPORTS_COLLECTION, export_id, export_data)

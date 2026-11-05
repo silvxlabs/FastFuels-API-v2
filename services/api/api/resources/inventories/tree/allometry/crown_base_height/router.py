@@ -19,7 +19,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -38,6 +38,7 @@ from api.resources.inventories.tree.allometry.crown_base_height.schema import (
 from api.resources.inventories.tree.allometry.schema import (
     GDAM_CROWN_BASE_HEIGHT_MODEL,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -136,15 +137,13 @@ async def create_crown_base_height_inventory(
 
     await enforce_create_quotas(COLLECTION, request)
 
+    parents = await load_parents(inventories=[body.source_tree_inventory_id])
+
     # owner/domain/status filters return 404 on mismatch (no existence leak).
-    _, source_snapshot = await get_document_async(
-        COLLECTION,
-        body.source_tree_inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    validate_parent(
+        parents, COLLECTION, body.source_tree_inventory_id, owner_id, domain_id
     )
-    source_data = source_snapshot.to_dict()
+    source_data = parents.inventories[body.source_tree_inventory_id]
 
     if source_data.get("type") != "tree":
         raise HTTPException(
@@ -247,7 +246,7 @@ async def create_crown_base_height_inventory(
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(source_data),
+        "attributions": inherit_attributions(parents),
         "owner_id": owner_id,
     }
 

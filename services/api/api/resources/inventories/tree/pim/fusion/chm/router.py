@@ -18,7 +18,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -37,10 +37,12 @@ from api.resources.inventories.tree.pim.fusion.chm.schema import (
     ReimputationMethod,
 )
 from api.resources.inventories.utils import (
+    condition_feature_ids,
     validate_feature_conditions,
     validate_inventory_wide_treatment_area,
 )
 from api.resources.modifications import stringify_modification_coordinates
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -127,20 +129,20 @@ async def create_pim_chm_fusion_inventory(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    referenced_features = await validate_feature_conditions(
-        [*body.modifications, *body.treatments], owner_id, domain_id
+    parents = await load_parents(
+        grids=[body.source_pim_grid_id, body.source_chm_grid_id],
+        features=condition_feature_ids([*body.modifications, *body.treatments]),
+    )
+    validate_feature_conditions(
+        [*body.modifications, *body.treatments], parents, owner_id, domain_id
     )
     validate_inventory_wide_treatment_area(domain, body.treatments)
 
     # Validate the source PIM grid: owned, in this domain, completed.
-    _, pim_snapshot = await get_document_async(
-        GRIDS_COLLECTION,
-        body.source_pim_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    validate_parent(
+        parents, GRIDS_COLLECTION, body.source_pim_grid_id, owner_id, domain_id
     )
-    pim_grid_data = pim_snapshot.to_dict()
+    pim_grid_data = parents.grids[body.source_pim_grid_id]
 
     # Only a PIM grid records the TreeMap version its tm_id codes index;
     # standgen reads the tree table for that version.
@@ -149,14 +151,10 @@ async def create_pim_chm_fusion_inventory(
     # Validate the source CHM grid: owned, in this domain, completed, with a
     # `chm` band in meters (the reimputation cover step compares heights to a
     # meter threshold without converting units).
-    _, chm_snapshot = await get_document_async(
-        GRIDS_COLLECTION,
-        body.source_chm_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    validate_parent(
+        parents, GRIDS_COLLECTION, body.source_chm_grid_id, owner_id, domain_id
     )
-    chm_grid_data = chm_snapshot.to_dict()
+    chm_grid_data = parents.grids[body.source_chm_grid_id]
     # A CHM is a surface: the cover step reads a single height per cell, so a
     # volumetric (3-D) grid is rejected rather than silently mis-read.
     validate_grid_input(body, "source_chm_grid_id", chm_grid_data)
@@ -225,9 +223,7 @@ async def create_pim_chm_fusion_inventory(
         "georeference": None,
         "error": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(
-            pim_grid_data, chm_grid_data, *referenced_features
-        ),
+        "attributions": inherit_attributions(parents),
         "owner_id": owner_id,
     }
 

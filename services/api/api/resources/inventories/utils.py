@@ -6,11 +6,11 @@ Shared validation utilities for inventory endpoints.
 
 from fastapi import HTTPException, status
 
-from api.db.documents import firestore_client
 from api.resources.inventories.modification_models import (
     InventoryFeatureSpatialCondition,
 )
-from lib.config import FEATURES_COLLECTION, SUPPORT_EMAIL
+from api.resources.parents import Parents
+from lib.config import SUPPORT_EMAIL
 
 # Max area (km²) an inventory-wide basal-area treatment may cover. A basal-area
 # thin holds its whole treated population in memory at once; this bounds that to
@@ -54,23 +54,35 @@ def validate_inventory_wide_treatment_area(domain: dict, treatments: list) -> No
     )
 
 
-async def validate_feature_conditions(
+def condition_feature_ids(items: list) -> list[str]:
+    """Distinct ``feature_id``s the items' conditions reference, in
+    first-reference order.
+
+    ``items`` is any list of objects exposing a ``.conditions`` list — both
+    inventory modifications and treatments qualify.
+    """
+    feature_ids: dict[str, None] = {}
+    for item in items:
+        for condition in item.conditions:
+            if isinstance(condition, InventoryFeatureSpatialCondition):
+                feature_ids[condition.feature_id] = None
+    return list(feature_ids)
+
+
+def validate_feature_conditions(
     items: list,
+    parents: Parents,
     owner_id: str,
     domain_id: str,
-) -> list[dict]:
+) -> None:
     """Verify every ``InventoryFeatureSpatialCondition.feature_id`` references a
     Feature that is owned by ``owner_id``, lives in ``domain_id``, and is in
     ``completed`` status.
 
     ``items`` is any list of objects exposing a ``.conditions`` list — both
-    inventory modifications and treatments qualify. Looks up all distinct
-    feature_ids in a single Firestore ``get_all`` call. The inventory-side
-    mirror of ``grids.utils.validate_feature_modifications`` (issue #282 / #279).
-
-    Returns:
-        The referenced feature documents, one per distinct feature_id in
-        first-reference order. Empty when no condition references a feature.
+    inventory modifications and treatments qualify. The referenced features
+    must be among the loaded ``parents``. The inventory-side mirror of
+    ``grids.utils.validate_feature_modifications`` (issue #282 / #279).
 
     Raises:
         HTTPException(422): If any referenced feature is missing, owned by
@@ -79,37 +91,13 @@ async def validate_feature_conditions(
             in the request body, so a bad reference is a validation error on
             the condition, not a path-level 404.
     """
-    feature_ids: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        for condition in item.conditions:
-            if isinstance(condition, InventoryFeatureSpatialCondition):
-                if condition.feature_id not in seen:
-                    seen.add(condition.feature_id)
-                    feature_ids.append(condition.feature_id)
-
-    if not feature_ids:
-        return []
-
-    refs = [
-        firestore_client.collection(FEATURES_COLLECTION).document(fid)
-        for fid in feature_ids
-    ]
-    snapshots = {snap.id: snap async for snap in firestore_client.get_all(refs)}
-
-    features: list[dict] = []
-    for fid in feature_ids:
-        snap = snapshots.get(fid)
-        if snap is None or not snap.exists:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    f"Modification references feature_id {fid!r}, which does "
-                    f"not exist in this domain."
-                ),
-            )
-        data = snap.to_dict() or {}
-        if data.get("owner_id") != owner_id or data.get("domain_id") != domain_id:
+    for fid in condition_feature_ids(items):
+        data = parents.features.get(fid)
+        if (
+            data is None
+            or data.get("owner_id") != owner_id
+            or data.get("domain_id") != domain_id
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
@@ -127,5 +115,3 @@ async def validate_feature_conditions(
                     f"the feature to finish before referencing it."
                 ),
             )
-        features.append(data)
-    return features

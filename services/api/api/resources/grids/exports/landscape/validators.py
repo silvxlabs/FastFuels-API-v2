@@ -6,8 +6,9 @@ Validation for the landscape export endpoint.
 The orchestrator `validate_landscape_request` wires together a few pure
 helpers, each unit-testable without Firestore or the async runtime:
 
-* `_load_all_grids` — Firestore lookup for every grid the request touches
-  (roles + the alignment target when `target="grid"`).
+* `landscape_grid_ids` — every grid the request references (roles + the
+  alignment target when `target="grid"`), for the router's `load_parents`.
+* `_check_grids` — every referenced grid is owned, in-domain, and completed.
 * `_check_role_contract` — per role: band membership, unit, 2D rank.
 * `_check_fuel_model_declaration` — the declared `fire_behavior_fuel_model`
   is consistent with the fuel model grid's provenance.
@@ -24,7 +25,6 @@ Every helper raises `HTTPException(422)` on failure.
 
 from fastapi import HTTPException, status
 
-from api.db.documents import get_document_async
 from api.resources.grids.exports.alignment import (
     build_domain_lattice,
     build_grid_lattice,
@@ -42,6 +42,7 @@ from api.resources.grids.utils import (
     validate_grid_dimensionality,
     validate_grid_has_band,
 )
+from api.resources.parents import Parents, validate_parent
 from lib.config import GRIDS_COLLECTION
 
 # Per-role unit contract. All landscape roles are 2D. `None` marks the
@@ -77,32 +78,25 @@ def _iter_roles(
     ]
 
 
-async def _load_all_grids(
+def landscape_grid_ids(request: LandscapeExportRequest) -> list[str]:
+    """Every grid the request references: each role's grid plus the alignment
+    target's grid (when `target="grid"`)."""
+    grid_ids = [src.grid_id for _, src in _iter_roles(request)]
+    if not isinstance(request.alignment, LandscapeExportAlignmentDomainTarget):
+        grid_ids.append(request.alignment.grid_id)
+    return list(dict.fromkeys(grid_ids))
+
+
+def _check_grids(
     request: LandscapeExportRequest,
+    parents: Parents,
     owner_id: str,
     domain_id: str,
-) -> dict[str, dict]:
-    """Load every grid the request will touch into a dict keyed by grid_id.
-
-    Includes every role's grid plus the alignment target's grid (when
-    `target="grid"`). Delegates 404 (missing/unowned) and 422 (non-completed)
-    behavior to `get_document_async`.
-    """
-    grid_ids: set[str] = {src.grid_id for _, src in _iter_roles(request)}
-    if not isinstance(request.alignment, LandscapeExportAlignmentDomainTarget):
-        grid_ids.add(request.alignment.grid_id)
-
-    cache: dict[str, dict] = {}
-    for grid_id in grid_ids:
-        _, snapshot = await get_document_async(
-            GRIDS_COLLECTION,
-            grid_id,
-            owner_id=owner_id,
-            domain_id=domain_id,
-            document_status="completed",
-        )
-        cache[grid_id] = snapshot.to_dict()
-    return cache
+) -> None:
+    """Every referenced grid is loaded, owned, in this domain, and completed:
+    404 when missing or unowned, 422 when not completed (`validate_parent`)."""
+    for grid_id in landscape_grid_ids(request):
+        validate_parent(parents, GRIDS_COLLECTION, grid_id, owner_id, domain_id)
 
 
 def _check_role_contract(
@@ -212,19 +206,20 @@ def _make_source(
     )
 
 
-async def validate_landscape_request(
+def validate_landscape_request(
     request: LandscapeExportRequest,
+    parents: Parents,
     owner_id: str,
     domain: dict,
-) -> tuple[LandscapeExportSource, list[dict]]:
+) -> LandscapeExportSource:
     """Validate a landscape export request.
 
-    Returns the persisted source and the documents of the grids whose bands
-    the export reads (role grids; the alignment target only supplies the
-    lattice).
+    Every grid in `landscape_grid_ids(request)` must be among the loaded
+    `parents`. Returns the persisted source.
     """
     domain_id = domain["id"]
-    grid_cache = await _load_all_grids(request, owner_id, domain_id)
+    _check_grids(request, parents, owner_id, domain_id)
+    grid_cache = parents.grids
     roles = _iter_roles(request)
 
     for role_name, src in roles:
@@ -247,5 +242,4 @@ async def validate_landscape_request(
         _check_role_alignment(grid_cache[src.grid_id], src, role_name, landscape_grid)
 
     _check_cell_count_cap(landscape_grid)
-    role_grids = [grid_cache[grid_id] for grid_id in {src.grid_id for _, src in roles}]
-    return _make_source(request, domain_id, landscape_grid), role_grids
+    return _make_source(request, domain_id, landscape_grid)

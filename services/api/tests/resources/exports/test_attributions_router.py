@@ -143,7 +143,7 @@ class TestExportsInheritAttributions:
             [META_ATTRIBUTION, OSM_ATTRIBUTION],
         )
 
-    def test_quicfire_export_merges_role_grids(
+    def test_quicfire_export_merges_referenced_grids(
         self, client, firestore_client, domain_for_testing, seed
     ):
         _seed, track = seed
@@ -186,7 +186,7 @@ class TestExportsInheritAttributions:
             [META_ATTRIBUTION, OSM_ATTRIBUTION],
         )
 
-    def test_landscape_export_merges_role_grids(
+    def test_landscape_export_merges_referenced_grids(
         self, client, firestore_client, domain_for_testing, seed
     ):
         _seed, track = seed
@@ -211,4 +211,28 @@ class TestExportsInheritAttributions:
             response,
             track,
             [META_ATTRIBUTION, OSM_ATTRIBUTION],
+        )
+
+    def test_landscape_export_inherits_alignment_target_grid(
+        self, client, firestore_client, domain_for_testing, seed
+    ):
+        _seed, track = seed
+        domain_id = domain_for_testing["id"]
+        topo = _seed(GRIDS_COLLECTION, _grid(domain_id, _TOPO_BANDS, GEOREF_30M, []))
+        fbfm = _seed(GRIDS_COLLECTION, _grid(domain_id, _FBFM_BANDS, GEOREF_30M, []))
+        canopy = _seed(
+            GRIDS_COLLECTION, _grid(domain_id, _CANOPY_BANDS, GEOREF_30M, [])
+        )
+        target = _seed(
+            GRIDS_COLLECTION,
+            _grid(domain_id, _TOPO_BANDS, GEOREF_30M, [OSM_ATTRIBUTION]),
+        )
+
+        body = landscape_body(topo["id"], fbfm["id"], canopy["id"])
+        body["alignment"] = {"target": "grid", "grid_id": target["id"]}
+        response = client.post(
+            f"/domains/{domain_id}/grids/exports/landscape", json=body
+        )
+        _assert_export_attributions(
+            client, firestore_client, response, track, [OSM_ATTRIBUTION]
         )

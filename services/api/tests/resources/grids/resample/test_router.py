@@ -474,3 +474,41 @@ class TestResampleAttributions:
                 firestore_client.collection(GRIDS_COLLECTION).document(grid_id).delete()
             source_ref.delete()
             feature_ref.delete()
+
+    def test_inherits_alignment_target_grid_attributions(
+        self, client, firestore_client, domain_for_testing
+    ):
+        source = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
+        target = make_grid_data(domain_id=domain_for_testing["id"], status="completed")
+        osm = make_osm_attribution("2026-11-05")
+        target["attributions"] = [osm]
+        refs = [
+            firestore_client.collection(GRIDS_COLLECTION).document(doc["id"])
+            for doc in (source, target)
+        ]
+        refs[0].set(source)
+        refs[1].set(target)
+        grid_id = None
+        try:
+            response = client.post(
+                f"/domains/{domain_for_testing['id']}/grids/resample",
+                json={
+                    "source_grid_id": source["id"],
+                    "alignment": {"target": "grid", "grid_id": target["id"]},
+                },
+            )
+            assert response.status_code == 201, response.text
+            grid_id = response.json()["id"]
+            assert response.json()["attributions"] == [osm]
+            stored = (
+                firestore_client.collection(GRIDS_COLLECTION)
+                .document(grid_id)
+                .get()
+                .to_dict()
+            )
+            assert stored["attributions"] == [osm]
+        finally:
+            if grid_id is not None:
+                firestore_client.collection(GRIDS_COLLECTION).document(grid_id).delete()
+            for ref in refs:
+                ref.delete()

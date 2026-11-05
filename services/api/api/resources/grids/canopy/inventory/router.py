@@ -22,7 +22,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -39,11 +39,13 @@ from api.resources.grids.canopy.inventory.schema import (
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     incomplete_inventory_columns,
+    target_grid_id,
     validate_target_grid_alignment,
 )
 from api.resources.grids.voxelize.inventory.tree.schema import (
     InventoryColumnMaxCrownRadiusSource,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -168,15 +170,16 @@ async def create_inventory_canopy_grid(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    # Validate source inventory: exists, owned, in this domain, and completed.
-    _, inventory_snapshot = await get_document_async(
-        INVENTORIES_COLLECTION,
-        body.source_inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    parents = await load_parents(
+        inventories=[body.source_inventory_id],
+        grids=[target_grid_id(body.alignment)],
     )
-    inventory_data = inventory_snapshot.to_dict()
+
+    # Validate source inventory: exists, owned, in this domain, and completed.
+    validate_parent(
+        parents, INVENTORIES_COLLECTION, body.source_inventory_id, owner_id, domain_id
+    )
+    inventory_data = parents.inventories[body.source_inventory_id]
 
     # Must be a tree inventory — canopy fuel profiles are built from tree crowns.
     if inventory_data.get("type") != "tree":
@@ -232,7 +235,7 @@ async def create_inventory_canopy_grid(
             ),
         )
 
-    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
+    validate_target_grid_alignment(body.alignment, parents, owner_id, domain_id)
 
     # Against a grid, `resolution: null` already means something — match that
     # grid's lattice cell-for-cell — so it is left alone. Against the domain
@@ -287,7 +290,7 @@ async def create_inventory_canopy_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(inventory_data),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

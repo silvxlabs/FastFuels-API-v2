@@ -18,7 +18,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -46,9 +46,12 @@ from api.resources.grids.canopy.schema import (
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    modification_feature_ids,
+    target_grid_id,
     validate_feature_modifications,
     validate_target_grid_alignment,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.resources.point_clouds.schema import PointCloudType
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -113,10 +116,12 @@ async def create_meta_chm(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
+    parents = await load_parents(
+        grids=[target_grid_id(body.alignment)],
+        features=modification_feature_ids(body.modifications),
     )
+    validate_target_grid_alignment(body.alignment, parents, owner_id, domain_id)
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -141,7 +146,7 @@ async def create_meta_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -193,10 +198,12 @@ async def create_naip_chm(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
+    parents = await load_parents(
+        grids=[target_grid_id(body.alignment)],
+        features=modification_feature_ids(body.modifications),
     )
+    validate_target_grid_alignment(body.alignment, parents, owner_id, domain_id)
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -220,7 +227,7 @@ async def create_naip_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -284,10 +291,12 @@ async def create_landfire_canopy(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
+    parents = await load_parents(
+        grids=[target_grid_id(body.alignment)],
+        features=modification_feature_ids(body.modifications),
     )
+    validate_target_grid_alignment(body.alignment, parents, owner_id, domain_id)
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -313,7 +322,7 @@ async def create_landfire_canopy(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -420,15 +429,19 @@ async def create_point_cloud_chm(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    # Exists, owned, in this domain, and finished — one call covers all four.
-    _, point_cloud_snapshot = await get_document_async(
+    parents = await load_parents(
+        point_clouds=[body.source_point_cloud_id],
+        grids=[target_grid_id(body.alignment)],
+        features=modification_feature_ids(body.modifications),
+    )
+    validate_parent(
+        parents,
         POINT_CLOUDS_COLLECTION,
         body.source_point_cloud_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+        owner_id,
+        domain_id,
     )
-    point_cloud = point_cloud_snapshot.to_dict()
+    point_cloud = parents.point_clouds[body.source_point_cloud_id]
 
     # A terrestrial scan images a plot from within it, so it has no landscape
     # canopy surface to rasterize.
@@ -444,15 +457,14 @@ async def create_point_cloud_chm(
 
     # Returns are read in the domain CRS and not reprojected, so a target
     # lattice in another CRS would misplace every cell.
-    await validate_target_grid_alignment(
+    validate_target_grid_alignment(
         body.alignment,
+        parents,
         owner_id,
         domain_id,
         domain_crs=domain["crs"]["properties"]["name"],
     )
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
-    )
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
 
     # Against a grid, `resolution: null` already means something — match that
     # grid's lattice cell-for-cell — so it is left alone and the worker reads
@@ -493,7 +505,7 @@ async def create_point_cloud_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

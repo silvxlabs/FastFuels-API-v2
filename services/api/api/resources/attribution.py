@@ -5,6 +5,8 @@ Shared license and citation model for resources built from third-party data,
 and the helpers that pass parents' attributions down to derived resources.
 """
 
+from collections.abc import Iterable
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -60,13 +62,11 @@ def merge_attributions(*attribution_lists: list[dict] | None) -> list[dict]:
     return [merged[key] for key in sorted(merged)]
 
 
-def inherit_attributions(*parents: dict | None) -> list[dict]:
+def inherit_attributions(parents: Iterable[dict]) -> list[dict]:
     """Merge the ``attributions`` of parent resource documents.
 
-    ``parents`` are Firestore documents (features, grids, inventories) a child
-    resource is built from. ``None`` parents (an optional parent not given) are
-    skipped; a missing or ``None`` ``attributions`` key counts as empty.
+    ``parents`` are the Firestore documents (features, grids, inventories) a
+    child resource is built from. A missing or ``None`` ``attributions`` key
+    counts as empty.
     """
-    return merge_attributions(
-        *(parent.get("attributions") for parent in parents if parent is not None)
-    )
+    return merge_attributions(*(parent.get("attributions") for parent in parents))

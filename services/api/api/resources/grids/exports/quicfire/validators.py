@@ -6,8 +6,9 @@ Validation for the QUIC-Fire export endpoint.
 The orchestrator `validate_quicfire_request` wires together a few pure
 helpers, each unit-testable without Firestore or the async runtime:
 
-* `_load_all_grids` — Firestore lookup for every grid the request touches
-  (roles + the alignment target when `target="grid"`).
+* `quicfire_grid_ids` — every grid the request references (roles + the
+  alignment target when `target="grid"`), for the router's `load_parents`.
+* `_check_grids` — every referenced grid is owned, in-domain, and completed.
 * `_check_role_contract` — per role: band membership, unit, dimensionality.
 * `_build_fire_grid` — derives the fire grid's georeference: the horizontal
   lattice and `dz` from the alignment (domain target) or the reference grid +
@@ -27,7 +28,6 @@ from math import isclose
 
 from fastapi import HTTPException, status
 
-from api.db.documents import get_document_async
 from api.resources.grids.exports.alignment import (
     TOL as _TOL,
 )
@@ -48,6 +48,7 @@ from api.resources.grids.utils import (
     validate_grid_dimensionality,
     validate_grid_has_band,
 )
+from api.resources.parents import Parents, validate_parent
 from lib.config import GRIDS_COLLECTION
 
 # Per-role unit and dimensionality contract.
@@ -86,32 +87,25 @@ def _iter_roles(
     ]
 
 
-async def _load_all_grids(
+def quicfire_grid_ids(request: QuicfireExportRequest) -> list[str]:
+    """Every grid the request references: each role's grid plus the alignment
+    target's grid (when `target="grid"`)."""
+    grid_ids = [src.grid_id for _, src in _iter_roles(request)]
+    if not isinstance(request.alignment, QUICFireExportAlignmentDomainTarget):
+        grid_ids.append(request.alignment.grid_id)
+    return list(dict.fromkeys(grid_ids))
+
+
+def _check_grids(
     request: QuicfireExportRequest,
+    parents: Parents,
     owner_id: str,
     domain_id: str,
-) -> dict[str, dict]:
-    """Load every grid the request will touch into a dict keyed by grid_id.
-
-    Includes every role's grid plus the alignment target's grid (when
-    `target="grid"`). Delegates 404 (missing/unowned) and 422 (non-completed)
-    behavior to `get_document_async`.
-    """
-    grid_ids: set[str] = {src.grid_id for _, src in _iter_roles(request)}
-    if not isinstance(request.alignment, QUICFireExportAlignmentDomainTarget):
-        grid_ids.add(request.alignment.grid_id)
-
-    cache: dict[str, dict] = {}
-    for grid_id in grid_ids:
-        _, snapshot = await get_document_async(
-            GRIDS_COLLECTION,
-            grid_id,
-            owner_id=owner_id,
-            domain_id=domain_id,
-            document_status="completed",
-        )
-        cache[grid_id] = snapshot.to_dict()
-    return cache
+) -> None:
+    """Every referenced grid is loaded, owned, in this domain, and completed:
+    404 when missing or unowned, 422 when not completed (`validate_parent`)."""
+    for grid_id in quicfire_grid_ids(request):
+        validate_parent(parents, GRIDS_COLLECTION, grid_id, owner_id, domain_id)
 
 
 def _check_role_contract(grid_data: dict, src: FieldSource, role_name: str) -> None:
@@ -245,19 +239,20 @@ def _make_source(
     )
 
 
-async def validate_quicfire_request(
+def validate_quicfire_request(
     request: QuicfireExportRequest,
+    parents: Parents,
     owner_id: str,
     domain: dict,
-) -> tuple[QuicfireExportSource, list[dict]]:
+) -> QuicfireExportSource:
     """Validate a QUIC-Fire export request.
 
-    Returns the persisted source and the documents of the grids whose bands
-    the export reads (role grids; the alignment target only supplies the
-    lattice).
+    Every grid in `quicfire_grid_ids(request)` must be among the loaded
+    `parents`. Returns the persisted source.
     """
     domain_id = domain["id"]
-    grid_cache = await _load_all_grids(request, owner_id, domain_id)
+    _check_grids(request, parents, owner_id, domain_id)
+    grid_cache = parents.grids
     roles = _iter_roles(request)
 
     for role_name, src in roles:
@@ -277,5 +272,4 @@ async def validate_quicfire_request(
         _check_3d_role_vertical(grid_data, src, role_name, fire_grid)
 
     _check_cell_count_cap(fire_grid)
-    role_grids = [grid_cache[grid_id] for grid_id in {src.grid_id for _, src in roles}]
-    return _make_source(request, domain_id, fire_grid), role_grids
+    return _make_source(request, domain_id, fire_grid)

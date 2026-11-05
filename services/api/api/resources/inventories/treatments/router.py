@@ -33,10 +33,12 @@ from api.resources.inventories.treatments.examples import (
 )
 from api.resources.inventories.treatments.schema import ApplyTreatmentsRequest
 from api.resources.inventories.utils import (
+    condition_feature_ids,
     validate_feature_conditions,
     validate_inventory_wide_treatment_area,
 )
 from api.resources.modifications import stringify_modification_coordinates
+from api.resources.parents import load_parents
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import INVENTORIES_COLLECTION, STANDGEN_QUEUE, STANDGEN_SERVICE
@@ -149,9 +151,8 @@ async def apply_treatments(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    referenced_features = await validate_feature_conditions(
-        body.treatments, owner_id, domain_id
-    )
+    parents = await load_parents(features=condition_feature_ids(body.treatments))
+    validate_feature_conditions(body.treatments, parents, owner_id, domain_id)
     validate_inventory_wide_treatment_area(domain, body.treatments)
 
     new_treatments = stringify_modification_coordinates(
@@ -211,7 +212,7 @@ async def apply_treatments(
         # so derivatives become detectably stale (#304).
         update = {
             "pending_treatments": pending + new_treatments,
-            "attributions": inherit_attributions(inventory_data, *referenced_features),
+            "attributions": inherit_attributions([inventory_data, *parents]),
             "checksum": new_checksum,
             "status": JobStatus.pending.value,
             "progress": None,

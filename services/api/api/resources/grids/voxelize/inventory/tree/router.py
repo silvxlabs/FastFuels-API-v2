@@ -21,7 +21,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -41,6 +41,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     build_tree_bands,
 )
 from api.resources.inventories.schema import TREE_ID_COLUMN
+from api.resources.parents import Parents, load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -183,15 +184,22 @@ async def create_tree_inventory_grid(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    # Validate source inventory: exists, owned, in this domain, and completed.
-    _, inventory_snapshot = await get_document_async(
-        INVENTORIES_COLLECTION,
-        body.source_inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    crown_source = body.crown_geometry_source
+    crown_feature_id = (
+        crown_source.feature_id
+        if isinstance(crown_source, CrownFeatureCrownGeometrySource)
+        else None
     )
-    inventory_data = inventory_snapshot.to_dict()
+    parents = await load_parents(
+        inventories=[body.source_inventory_id],
+        features=[crown_feature_id],
+    )
+
+    # Validate source inventory: exists, owned, in this domain, and completed.
+    validate_parent(
+        parents, INVENTORIES_COLLECTION, body.source_inventory_id, owner_id, domain_id
+    )
+    inventory_data = parents.inventories[body.source_inventory_id]
 
     # Must be a tree inventory — other entity types can't be voxelized this way.
     if inventory_data.get("type") != "tree":
@@ -257,33 +265,28 @@ async def create_tree_inventory_grid(
     # A crown_feature source needs a completed crown Feature in this domain and
     # the CHM grid it was built from, whose tops treevox reads.
     source_chm_grid_id = source_chm_grid_checksum = None
-    feature = chm_grid_data = None
-    if isinstance(body.crown_geometry_source, CrownFeatureCrownGeometrySource):
-        feature_id = body.crown_geometry_source.feature_id
-        _, feature_snapshot = await get_document_async(
-            FEATURES_COLLECTION,
-            feature_id,
-            owner_id=owner_id,
-            domain_id=domain_id,
-            document_status="completed",
+    chm_parents = Parents()
+    if crown_feature_id is not None:
+        validate_parent(
+            parents, FEATURES_COLLECTION, crown_feature_id, owner_id, domain_id
         )
-        feature = feature_snapshot.to_dict()
+        feature = parents.features[crown_feature_id]
         if feature.get("type") != FeatureType.crown.value:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
-                    f"Feature '{feature_id}' has type '{feature.get('type')}'. "
-                    f"crown_geometry_source requires a crown Feature."
+                    f"Feature '{crown_feature_id}' has type "
+                    f"'{feature.get('type')}'. crown_geometry_source requires "
+                    f"a crown Feature."
                 ),
             )
+        # The crown Feature, not the request, names its CHM grid, so that
+        # parent can only be loaded once the Feature has been.
         source_chm_grid_id = feature["source"]["source_chm_grid_id"]
+        chm_parents = await load_parents(grids=[source_chm_grid_id])
         try:
-            _, chm_snapshot = await get_document_async(
-                GRIDS_COLLECTION,
-                source_chm_grid_id,
-                owner_id=owner_id,
-                domain_id=domain_id,
-                document_status="completed",
+            validate_parent(
+                chm_parents, GRIDS_COLLECTION, source_chm_grid_id, owner_id, domain_id
             )
         except HTTPException as e:
             # The request names the Feature, not its CHM grid, so a deleted
@@ -294,11 +297,11 @@ async def create_tree_inventory_grid(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"CHM grid '{source_chm_grid_id}', which crown Feature "
-                    f"'{feature_id}' was built from, no longer exists. Build the "
-                    f"crown Feature again from a current CHM grid."
+                    f"'{crown_feature_id}' was built from, no longer exists. Build "
+                    f"the crown Feature again from a current CHM grid."
                 ),
             ) from e
-        chm_grid_data = chm_snapshot.to_dict()
+        chm_grid_data = chm_parents.grids[source_chm_grid_id]
         source_chm_grid_checksum = chm_grid_data.get("checksum")
 
     grid_id = uuid.uuid4().hex
@@ -336,7 +339,7 @@ async def create_tree_inventory_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(inventory_data, feature, chm_grid_data),
+        "attributions": inherit_attributions([*parents, *chm_parents]),
         # chunks is computed by Treevox once the 3D grid dimensions
         # are known from the domain bbox + resolution.
         "chunks": None,

@@ -12,7 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -29,6 +29,7 @@ from api.resources.grids.utils import (
     validate_grid_input,
     validate_grids_share_horizontal_lattice,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -87,26 +88,22 @@ async def create_fosberg_fuel_moisture_grid(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    # Topography grid: owned, completed, in this domain, 2D, slope + aspect.
-    _, topo_snapshot = await get_document_async(
-        collection=COLLECTION,
-        document_id=body.source_topography_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    parents = await load_parents(
+        grids=[body.source_topography_grid_id, body.source_irradiance_grid_id],
     )
-    topo_grid = topo_snapshot.to_dict()
+
+    # Topography grid: owned, completed, in this domain, 2D, slope + aspect.
+    validate_parent(
+        parents, COLLECTION, body.source_topography_grid_id, owner_id, domain_id
+    )
+    topo_grid = parents.grids[body.source_topography_grid_id]
     validate_grid_input(body, "source_topography_grid_id", topo_grid)
 
     # Irradiance grid: owned, completed, in this domain, surface band present.
-    _, irr_snapshot = await get_document_async(
-        collection=COLLECTION,
-        document_id=body.source_irradiance_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    validate_parent(
+        parents, COLLECTION, body.source_irradiance_grid_id, owner_id, domain_id
     )
-    irr_grid = irr_snapshot.to_dict()
+    irr_grid = parents.grids[body.source_irradiance_grid_id]
     validate_grid_input(body, "source_irradiance_grid_id", irr_grid)
 
     # The moisture surface is derived cell-for-cell from both grids and inherits
@@ -145,7 +142,7 @@ async def create_fosberg_fuel_moisture_grid(
         "bands": [DEAD_1HR_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(topo_grid, irr_grid),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

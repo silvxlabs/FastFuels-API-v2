@@ -9,7 +9,6 @@ from math import ceil, hypot, isclose
 from fastapi import HTTPException, status
 from pydantic import BaseModel
 
-from api.db.documents import firestore_client, get_document_async
 from api.resources.exports.schema import GridExportFormat
 from api.resources.grids.alignment import (
     GridAlignmentGridTarget,
@@ -31,8 +30,9 @@ from api.resources.grids.providers.landfire import (
 from api.resources.grids.schema import BandType, GridDataChunkMetadata
 from api.resources.input_requirements import requirements_for
 from api.resources.modifications import stringify_modification_coordinates
+from api.resources.parents import Parents, validate_parent
 from lib.band_quantities import band_quantity
-from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+from lib.config import GRIDS_COLLECTION
 from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
@@ -478,8 +478,15 @@ def validate_format_supports_grid(
         )
 
 
-async def validate_target_grid_alignment(
+def target_grid_id(alignment) -> str | None:
+    """The ID of the grid an alignment targets, or None when it targets
+    something else (the domain, the source's native lattice)."""
+    return alignment.grid_id if alignment.target == "grid" else None
+
+
+def validate_target_grid_alignment(
     alignment: GridAlignmentSpecification | GridLatticeSpecification,
+    parents: Parents,
     owner_id: str,
     domain_id: str,
     domain_crs: str | None = None,
@@ -488,6 +495,8 @@ async def validate_target_grid_alignment(
     exists, is owned by ``owner_id``, lives in ``domain_id``, is completed,
     and has a georeference. No-op for other alignment targets. When
     ``domain_crs`` is given, the target grid must also be in that CRS.
+
+    The target grid must be among the loaded ``parents``.
 
     Owner and domain mismatches return 404 (not 403) to avoid leaking
     document existence. Status mismatches return 422.
@@ -500,14 +509,8 @@ async def validate_target_grid_alignment(
     """
     if not isinstance(alignment, GridAlignmentGridTarget | GridLatticeGridTarget):
         return
-    _, snapshot = await get_document_async(
-        GRIDS_COLLECTION,
-        alignment.grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    grid = snapshot.to_dict()
+    validate_parent(parents, GRIDS_COLLECTION, alignment.grid_id, owner_id, domain_id)
+    grid = parents.grids[alignment.grid_id]
     validate_grid_has_georeference(grid, alignment.grid_id)
     grid_crs = grid["georeference"].get("crs")
     if domain_crs is not None and not crs_equal(grid_crs, domain_crs):
@@ -522,20 +525,28 @@ async def validate_target_grid_alignment(
         )
 
 
-async def validate_feature_modifications(
+def modification_feature_ids(modifications: list[GridModification]) -> list[str]:
+    """Distinct ``feature_id``s the modifications' conditions reference, in
+    first-reference order."""
+    feature_ids: dict[str, None] = {}
+    for modification in modifications:
+        for condition in modification.conditions:
+            if isinstance(condition, GridFeatureSpatialCondition):
+                feature_ids[condition.feature_id] = None
+    return list(feature_ids)
+
+
+def validate_feature_modifications(
     modifications: list[GridModification],
+    parents: Parents,
     owner_id: str,
     domain_id: str,
-) -> list[dict]:
+) -> None:
     """Verify every ``GridFeatureSpatialCondition.feature_id`` references a
     Feature that is owned by ``owner_id``, lives in ``domain_id``, and is in
     ``completed`` status.
 
-    Looks up all distinct feature_ids in a single Firestore ``get_all`` call.
-
-    Returns:
-        The referenced feature documents, one per distinct feature_id in
-        first-reference order. Empty when no condition references a feature.
+    The referenced features must be among the loaded ``parents``.
 
     Raises:
         HTTPException(422): If any referenced feature is missing, owned by
@@ -544,37 +555,13 @@ async def validate_feature_modifications(
             client supplied in the request body, so a bad reference is a
             validation error on the modification, not a path-level 404.
     """
-    feature_ids: list[str] = []
-    seen: set[str] = set()
-    for modification in modifications:
-        for condition in modification.conditions:
-            if isinstance(condition, GridFeatureSpatialCondition):
-                if condition.feature_id not in seen:
-                    seen.add(condition.feature_id)
-                    feature_ids.append(condition.feature_id)
-
-    if not feature_ids:
-        return []
-
-    refs = [
-        firestore_client.collection(FEATURES_COLLECTION).document(fid)
-        for fid in feature_ids
-    ]
-    snapshots = {snap.id: snap async for snap in firestore_client.get_all(refs)}
-
-    features: list[dict] = []
-    for fid in feature_ids:
-        snap = snapshots.get(fid)
-        if snap is None or not snap.exists:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    f"Modification references feature_id {fid!r}, which does "
-                    f"not exist in this domain."
-                ),
-            )
-        data = snap.to_dict() or {}
-        if data.get("owner_id") != owner_id or data.get("domain_id") != domain_id:
+    for fid in modification_feature_ids(modifications):
+        data = parents.features.get(fid)
+        if (
+            data is None
+            or data.get("owner_id") != owner_id
+            or data.get("domain_id") != domain_id
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
@@ -592,8 +579,6 @@ async def validate_feature_modifications(
                     f"the feature to finish before referencing it."
                 ),
             )
-        features.append(data)
-    return features
 
 
 def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:

@@ -35,6 +35,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
 )
 from api.resources.input_requirements import X_INPUT_REQUIREMENTS, requirements_for
 from api.resources.inventories.tree.pim.schema import CreatePimInventoryRequest
+from api.resources.parents import Parents
 from fastapi import HTTPException
 
 from lib.landfire import CoverageStatus
@@ -115,26 +116,23 @@ class TestValidateTargetGridAlignmentCrs:
             ("EPSG:32611", "EPSG:5070", False),
         ],
     )
-    @pytest.mark.asyncio
-    async def test_target_grid_crs_must_match_domain_crs(
-        self, domain_crs, grid_crs, ok
-    ):
-        snapshot = type(
-            "S", (), {"to_dict": lambda self: _lattice_grid("g", crs=grid_crs)}
-        )()
+    def test_target_grid_crs_must_match_domain_crs(self, domain_crs, grid_crs, ok):
+        grid = _lattice_grid("g", crs=grid_crs) | {
+            "owner_id": "owner",
+            "domain_id": "dom",
+            "status": "completed",
+        }
+        parents = Parents(grids={"g": grid})
         alignment = GridLatticeGridTarget(target="grid", grid_id="g")
-        with patch(
-            "api.resources.grids.utils.get_document_async",
-            return_value=(None, snapshot),
-        ):
-            call = validate_target_grid_alignment(
-                alignment, "owner", "dom", domain_crs=domain_crs
+        if ok:
+            validate_target_grid_alignment(
+                alignment, parents, "owner", "dom", domain_crs=domain_crs
             )
-            if ok:
-                await call
-                return
-            with pytest.raises(HTTPException) as exc:
-                await call
+            return
+        with pytest.raises(HTTPException) as exc:
+            validate_target_grid_alignment(
+                alignment, parents, "owner", "dom", domain_crs=domain_crs
+            )
         assert exc.value.status_code == 422
         assert grid_crs in exc.value.detail
         assert domain_crs in exc.value.detail

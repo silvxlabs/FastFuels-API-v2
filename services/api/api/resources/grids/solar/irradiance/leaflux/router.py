@@ -18,9 +18,7 @@ from fastapi import (
     status,
 )
 
-# get_document_async returns (DocumentReference, DocumentSnapshot); inspect
-# snapshot.exists / snapshot.to_dict(). See tests/db/test_documents_*.
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -29,6 +27,7 @@ from api.resources.grids.utils import (
     validate_grid_input,
     validate_grids_share_horizontal_lattice,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
@@ -70,29 +69,21 @@ async def create_leaflux_irradiance_grid(
     # and treevox routers; kept so this endpoint counts against create quotas.
     await enforce_create_quotas(COLLECTION, request)
 
-    # Check that grid exists, is owned, complete, and in domain
-    _, source_snapshot = await get_document_async(
-        collection=COLLECTION,
-        document_id=body.source_lad_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    parents = await load_parents(
+        grids=[body.source_lad_grid_id, body.source_terrain_grid_id],
     )
 
-    lad_grid_data = source_snapshot.to_dict()
+    # Check that grid exists, is owned, complete, and in domain
+    validate_parent(parents, COLLECTION, body.source_lad_grid_id, owner_id, domain_id)
+    lad_grid_data = parents.grids[body.source_lad_grid_id]
     validate_grid_input(body, "source_lad_grid_id", lad_grid_data)
 
-    terrain_grid_data = None
     if body.source_terrain_grid_id is not None:
         # Validate terrain grid exists, is owned, is completed
-        _, terrain_source_snapshot = await get_document_async(
-            collection=COLLECTION,
-            document_id=body.source_terrain_grid_id,
-            owner_id=owner_id,
-            domain_id=domain_id,
-            document_status="completed",
+        validate_parent(
+            parents, COLLECTION, body.source_terrain_grid_id, owner_id, domain_id
         )
-        terrain_grid_data = terrain_source_snapshot.to_dict()
+        terrain_grid_data = parents.grids[body.source_terrain_grid_id]
         validate_grid_input(body, "source_terrain_grid_id", terrain_grid_data)
         validate_grids_share_horizontal_lattice(
             reference_grid=lad_grid_data,
@@ -125,7 +116,7 @@ async def create_leaflux_irradiance_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(lad_grid_data, terrain_grid_data),
+        "attributions": inherit_attributions(parents),
         "chunks": None,
         "owner_id": owner_id,
     }

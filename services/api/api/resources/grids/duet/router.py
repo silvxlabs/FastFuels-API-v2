@@ -20,7 +20,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -32,6 +32,7 @@ from api.resources.grids.duet.schema import (
 )
 from api.resources.grids.schema import Grid
 from api.resources.grids.utils import validate_grid_input
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
@@ -126,15 +127,9 @@ async def create_duet_grid(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    # Validate source grid: exists, owned, in this domain, and completed.
-    _, source_snapshot = await get_document_async(
-        COLLECTION,
-        body.source_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    source_grid_data = source_snapshot.to_dict()
+    parents = await load_parents(grids=[body.source_grid_id])
+    validate_parent(parents, COLLECTION, body.source_grid_id, owner_id, domain_id)
+    source_grid_data = parents.grids[body.source_grid_id]
 
     # DUET reads a 3D canopy: a 2D grid carries no crowns to drop litter from.
     # `spcd` is the band users most often lack: voxelize defaults to foliage
@@ -171,7 +166,7 @@ async def create_duet_grid(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(source_grid_data),
+        "attributions": inherit_attributions(parents),
         # chunks is computed by Treevox once the 2D surface dimensions are
         # known from the source grid.
         "chunks": None,

@@ -33,10 +33,12 @@ from api.resources.grids.modifications.schema import ApplyGridModificationsReque
 from api.resources.grids.schema import Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    modification_feature_ids,
     resolve_modification_fuel_model_labels,
     validate_feature_modifications,
     validate_grid_has_band,
 )
+from api.resources.parents import load_parents
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -184,9 +186,10 @@ async def apply_grid_modifications(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
+    parents = await load_parents(
+        features=modification_feature_ids(body.modifications),
     )
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
 
     new_checksum = uuid.uuid4().hex
     ref = firestore_client.collection(COLLECTION).document(grid_id)
@@ -245,7 +248,7 @@ async def apply_grid_modifications(
         # rotates now so derivatives become detectably stale (#304).
         update = {
             "pending_modifications": pending + new_modifications,
-            "attributions": inherit_attributions(grid_data, *referenced_features),
+            "attributions": inherit_attributions([grid_data, *parents]),
             "checksum": new_checksum,
             "status": JobStatus.pending.value,
             "progress": None,

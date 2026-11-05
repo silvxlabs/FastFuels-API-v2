@@ -22,7 +22,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -35,6 +35,7 @@ from api.resources.exports.schema import (
 from api.resources.inventories.exports.examples import (
     CREATE_INVENTORY_EXPORT_OPENAPI_EXAMPLES,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -83,15 +84,11 @@ async def create_inventory_export(
 
     await enforce_create_quotas(EXPORTS_COLLECTION, request)
 
+    parents = await load_parents(inventories=[inventory_id])
+
     # Validate inventory exists, is owned, belongs to domain, and is completed
-    _, inventory_snapshot = await get_document_async(
-        INVENTORIES_COLLECTION,
-        inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    inventory_data = inventory_snapshot.to_dict()
+    validate_parent(parents, INVENTORIES_COLLECTION, inventory_id, owner_id, domain_id)
+    inventory_data = parents.inventories[inventory_id]
 
     # Validate column subset if provided
     if body.columns is not None:
@@ -139,7 +136,7 @@ async def create_inventory_export(
         "error": None,
         "tags": body.tags,
         "owner_id": owner_id,
-        "attributions": inherit_attributions(inventory_data),
+        "attributions": inherit_attributions(parents),
     }
 
     await set_document_async(EXPORTS_COLLECTION, export_id, export_data)

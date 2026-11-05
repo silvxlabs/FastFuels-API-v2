@@ -59,17 +59,18 @@ class TestMergeAttributions:
 
 class TestInheritAttributions:
     def test_no_parents(self):
-        assert inherit_attributions() == []
+        assert inherit_attributions([]) == []
 
     def test_missing_and_none_attributions(self):
-        assert inherit_attributions({}, {"attributions": None}) == []
+        assert inherit_attributions([{}, {"attributions": None}]) == []
 
-    def test_none_parent_skipped(self):
+    def test_accepts_any_iterable(self):
         osm = make_osm_attribution("2026-11-05")
-        assert inherit_attributions({"attributions": [osm]}, None) == [osm]
+        parents = ({"attributions": [osm]} for _ in range(2))
+        assert inherit_attributions(parents) == [osm]
 
     def test_merges_parent_lists(self):
         osm = make_osm_attribution("2026-11-05")
         meta = _entry("Meta CHM", "CC-BY-4.0", "2026-11-05")
         parents = [{"attributions": [osm]}, {"attributions": [meta, dict(osm)]}]
-        assert inherit_attributions(*parents) == [meta, osm]
+        assert inherit_attributions(parents) == [meta, osm]

@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -25,9 +25,11 @@ from api.resources.grids.lookup.fbfm40.schema import (
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    modification_feature_ids,
     validate_band_of,
     validate_feature_modifications,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -143,19 +145,13 @@ async def create_fbfm40_lookup(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
+    parents = await load_parents(
+        grids=[body.source_grid_id],
+        features=modification_feature_ids(body.modifications),
     )
-
-    # Validate source grid: exists, owned, in this domain, and completed
-    _, source_snapshot = await get_document_async(
-        COLLECTION,
-        body.source_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    source_grid_data = source_snapshot.to_dict()
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
+    validate_parent(parents, COLLECTION, body.source_grid_id, owner_id, domain_id)
+    source_grid_data = parents.grids[body.source_grid_id]
 
     # Validate source grid has the required band
     validate_band_of(body, "source_band", source_grid_data)
@@ -187,7 +183,7 @@ async def create_fbfm40_lookup(
         "bands": [b.model_dump() for b in bands],
         "georeference": source_grid_data.get("georeference"),
         "tags": body.tags,
-        "attributions": inherit_attributions(source_grid_data, *referenced_features),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

@@ -19,14 +19,15 @@ from google.api_core.exceptions import NotFound
 from api.db.blobs import copy_directory_verified
 from api.db.documents import (
     firestore_client,
-    get_document_async,
     set_document_async,
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.grids.duplicate.schema import DuplicateGridRequest
 from api.resources.grids.schema import Grid
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from lib.config import GRIDS_BUCKET, GRIDS_COLLECTION
 
@@ -162,15 +163,11 @@ async def duplicate_grid(
 
     await enforce_create_quotas(COLLECTION, request)
 
+    parents = await load_parents(grids=[grid_id])
+
     # Source must exist, be owned, in this domain, and completed.
-    _, source_snapshot = await get_document_async(
-        COLLECTION,
-        grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    source_data = source_snapshot.to_dict()
+    validate_parent(parents, COLLECTION, grid_id, owner_id, domain_id)
+    source_data = parents.grids[grid_id]
 
     overrides = body or DuplicateGridRequest()
     new_grid_id = uuid.uuid4().hex
@@ -188,6 +185,7 @@ async def duplicate_grid(
         "status": JobStatus.pending.value,
         "progress": None,
         "error": None,
+        "attributions": inherit_attributions(parents),
         "name": (
             overrides.name
             if overrides.name is not None

@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -29,6 +29,7 @@ from api.resources.grids.utils import (
     validate_format_supports_grid,
     validate_grid_has_band,
 )
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -79,15 +80,11 @@ async def create_grid_export(
 
     await enforce_create_quotas(EXPORTS_COLLECTION, request)
 
+    parents = await load_parents(grids=[grid_id])
+
     # Validate grid exists, is owned, belongs to domain, and is completed
-    _, grid_snapshot = await get_document_async(
-        GRIDS_COLLECTION,
-        grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    grid_data = grid_snapshot.to_dict()
+    validate_parent(parents, GRIDS_COLLECTION, grid_id, owner_id, domain_id)
+    grid_data = parents.grids[grid_id]
 
     # GeoTIFF is 2D-only; reject 3D voxel grids up front (#243)
     validate_format_supports_grid(grid_data, grid_id, format)
@@ -123,7 +120,7 @@ async def create_grid_export(
         "error": None,
         "tags": body.tags,
         "owner_id": owner_id,
-        "attributions": inherit_attributions(grid_data),
+        "attributions": inherit_attributions(parents),
     }
 
     await set_document_async(EXPORTS_COLLECTION, export_id, export_data)

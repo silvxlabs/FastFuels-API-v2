@@ -3,8 +3,8 @@ Unit tests for the landscape export validator helpers.
 
 Every helper in `validators.py` takes plain dicts (or a Pydantic request)
 and raises `HTTPException(422)` on failure — no Firestore, no async — so
-each can be exercised with hand-built fixtures here. The Firestore loading
-layer (`_load_all_grids`) and the live-router behavior of the orchestrator
+each can be exercised with hand-built fixtures here. The parent checks
+(`_check_grids`) and the live-router behavior of the orchestrator
 live in test_router.py.
 """
 

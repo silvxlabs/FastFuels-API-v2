@@ -26,10 +26,13 @@ from api.resources.grids.disturbance.annual.schema import (
 from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    modification_feature_ids,
+    target_grid_id,
     validate_feature_modifications,
     validate_lfps_coverage,
     validate_target_grid_alignment,
 )
+from api.resources.parents import load_parents
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
@@ -95,10 +98,12 @@ async def create_landfire_disturbance(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
+    parents = await load_parents(
+        grids=[target_grid_id(body.alignment)],
+        features=modification_feature_ids(body.modifications),
     )
+    validate_target_grid_alignment(body.alignment, parents, owner_id, domain_id)
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
 
     await asyncio.to_thread(
         validate_lfps_coverage,
@@ -129,7 +134,7 @@ async def create_landfire_disturbance(
         "bands": [DISTURBANCE_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(*referenced_features),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

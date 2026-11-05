@@ -31,8 +31,12 @@ from api.resources.inventories.modifications.examples import (
 )
 from api.resources.inventories.modifications.schema import ApplyModificationsRequest
 from api.resources.inventories.schema import Inventory
-from api.resources.inventories.utils import validate_feature_conditions
+from api.resources.inventories.utils import (
+    condition_feature_ids,
+    validate_feature_conditions,
+)
 from api.resources.modifications import stringify_modification_coordinates
+from api.resources.parents import load_parents
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import INVENTORIES_COLLECTION, STANDGEN_QUEUE, STANDGEN_SERVICE
@@ -160,9 +164,8 @@ async def apply_modifications(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    referenced_features = await validate_feature_conditions(
-        body.modifications, owner_id, domain_id
-    )
+    parents = await load_parents(features=condition_feature_ids(body.modifications))
+    validate_feature_conditions(body.modifications, parents, owner_id, domain_id)
 
     new_modifications = stringify_modification_coordinates(
         [m.model_dump() for m in body.modifications]
@@ -205,7 +208,7 @@ async def apply_modifications(
         # now so derivatives become detectably stale (#304).
         update = {
             "pending_modifications": pending + new_modifications,
-            "attributions": inherit_attributions(inventory_data, *referenced_features),
+            "attributions": inherit_attributions([inventory_data, *parents]),
             "checksum": new_checksum,
             "status": JobStatus.pending.value,
             "progress": None,

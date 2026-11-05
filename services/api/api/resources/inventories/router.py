@@ -35,6 +35,7 @@ from api.db.documents import (
 )
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.attribution import inherit_attributions
 from api.resources.inventories.cache import get_inventory_metadata, read_partition
 from api.resources.inventories.exports.router import router as exports_router
 from api.resources.inventories.modifications.router import (
@@ -56,6 +57,7 @@ from api.resources.inventories.treatments.router import (
     router as treatments_router,
 )
 from api.resources.inventories.tree.router import router as tree_router
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus, SortOrder
 from lib.config import INVENTORIES_BUCKET, INVENTORIES_COLLECTION
 
@@ -534,15 +536,11 @@ async def duplicate_inventory(
 
     await enforce_create_quotas(COLLECTION, request)
 
+    parents = await load_parents(inventories=[inventory_id])
+
     # Source must exist, be owned, in this domain, and completed.
-    _, source_snapshot = await get_document_async(
-        COLLECTION,
-        inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
-    )
-    source_data = source_snapshot.to_dict()
+    validate_parent(parents, COLLECTION, inventory_id, owner_id, domain_id)
+    source_data = parents.inventories[inventory_id]
 
     overrides = body or DuplicateInventoryRequest()
     new_inventory_id = uuid.uuid4().hex
@@ -560,6 +558,7 @@ async def duplicate_inventory(
         "status": JobStatus.pending.value,
         "progress": None,
         "error": None,
+        "attributions": inherit_attributions(parents),
         "name": (
             overrides.name
             if overrides.name is not None

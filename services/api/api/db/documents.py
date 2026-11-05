@@ -24,6 +24,67 @@ logger = logging.getLogger(__name__)
 firestore_client: firestore.AsyncClient = firestore.AsyncClient()
 
 
+def validate_document(
+    document_data: dict | None,
+    collection: str,
+    document_id: str,
+    owner_id: str | None = None,
+    document_status: str | None = None,
+    domain_id: str | None = None,
+) -> None:
+    """
+    Validate an already-read Firestore document.
+
+    Applies the same checks, in the same order and with the same errors, as
+    ``get_document_async``.
+
+    Args:
+        document_data: The document's data, or None if it does not exist.
+        collection: The collection name (e.g., "domains-v2", "grids-v2").
+        document_id: The document ID.
+        owner_id: If provided, the document's owner_id must match.
+        document_status: If provided, the document's status must match.
+        domain_id: If provided, the document's domain_id must match.
+
+    Raises:
+        HTTPException(404): If the document does not exist, or its owner_id
+            or domain_id doesn't match.
+        HTTPException(422): If status is provided and doesn't match.
+    """
+    # Drop version information from collection name (e.g. "domains-v2" -> "domains")
+    collection_name = collection.split("-")[0]
+
+    if document_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document not found: {collection_name}/{document_id}",
+        )
+
+    if owner_id is not None:
+        document_owner_id = document_data.get("owner_id")
+        if document_owner_id is None or document_owner_id != owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document not found: {collection_name}/{document_id}",
+            )
+
+    if domain_id is not None:
+        document_domain_id = document_data.get("domain_id")
+        if document_domain_id is None or document_domain_id != domain_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document not found: {collection_name}/{document_id}",
+            )
+
+    if document_status is not None:
+        actual_status = document_data.get("status")
+        if actual_status != document_status:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"{collection_name}/{document_id} status is '{actual_status}', expected '{document_status}'.",
+            )
+
+
 async def get_document_async(
     collection: str,
     document_id: str,
@@ -58,40 +119,14 @@ async def get_document_async(
     document_ref = firestore_client.collection(collection).document(document_id)
     document_snapshot = await document_ref.get()
 
-    # Drop version information from collection name (e.g. "domains-v2" -> "domains")
-    collection_name = collection.split("-")[0]
-
-    if not document_snapshot.exists:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document not found: {collection_name}/{document_id}",
-        )
-
-    document_data = document_snapshot.to_dict()
-
-    if owner_id is not None:
-        document_owner_id = document_data.get("owner_id")
-        if document_owner_id is None or document_owner_id != owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Document not found: {collection_name}/{document_id}",
-            )
-
-    if domain_id is not None:
-        document_domain_id = document_data.get("domain_id")
-        if document_domain_id is None or document_domain_id != domain_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Document not found: {collection_name}/{document_id}",
-            )
-
-    if document_status is not None:
-        actual_status = document_data.get("status")
-        if actual_status != document_status:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"{collection_name}/{document_id} status is '{actual_status}', expected '{document_status}'.",
-            )
+    validate_document(
+        document_snapshot.to_dict() if document_snapshot.exists else None,
+        collection,
+        document_id,
+        owner_id=owner_id,
+        document_status=document_status,
+        domain_id=domain_id,
+    )
 
     return document_ref, document_snapshot
 

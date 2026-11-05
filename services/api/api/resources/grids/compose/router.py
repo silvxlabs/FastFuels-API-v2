@@ -15,7 +15,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import firestore_client, get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -41,6 +41,7 @@ from api.resources.grids.modification_models import (
 from api.resources.grids.schema import CHUNK_SHAPE, Band, BandType, Grid
 from api.resources.grids.utils import (
     dump_modifications_for_firestore,
+    modification_feature_ids,
     resolve_modification_fuel_model_labels,
     validate_feature_modifications,
     validate_grid_has_band,
@@ -48,15 +49,11 @@ from api.resources.grids.utils import (
     validate_grids_share_horizontal_lattice,
 )
 from api.resources.modifications import stringify_modification_coordinates
+from api.resources.parents import Parents, load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.band_quantities import band_mismatch
-from lib.config import (
-    FEATURES_COLLECTION,
-    GRIDDLE_QUEUE,
-    GRIDDLE_SERVICE,
-    GRIDS_COLLECTION,
-)
+from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 from lib.units import canonicalize_unit
 
@@ -135,53 +132,36 @@ def _validate_alignment(
         )
 
 
-async def _load_source_grids(
+def _source_grids(
     inputs: list[ComposeInput],
+    parents: Parents,
     owner_id: str,
     domain_id: str,
 ) -> dict[str, dict]:
     source_grids: dict[str, dict] = {}
     for inp in inputs:
-        _, snapshot = await get_document_async(
-            COLLECTION,
-            inp.grid_id,
-            owner_id=owner_id,
-            domain_id=domain_id,
-            document_status="completed",
-        )
-        source_grids[inp.alias] = snapshot.to_dict()
+        validate_parent(parents, COLLECTION, inp.grid_id, owner_id, domain_id)
+        source_grids[inp.alias] = parents.grids[inp.grid_id]
     return source_grids
 
 
-async def _validate_compose_feature_conditions(
-    operations: list[ComposeOperation],
-    owner_id: str,
-    domain_id: str,
-) -> list[dict]:
-    feature_ids: list[str] = []
-    seen: set[str] = set()
+def _compose_feature_ids(operations: list[ComposeOperation]) -> list[str]:
+    feature_ids: dict[str, None] = {}
     for operation in operations:
         for condition in operation.conditions or []:
-            if (
-                isinstance(condition, GridFeatureSpatialCondition)
-                and condition.feature_id not in seen
-            ):
-                seen.add(condition.feature_id)
-                feature_ids.append(condition.feature_id)
+            if isinstance(condition, GridFeatureSpatialCondition):
+                feature_ids[condition.feature_id] = None
+    return list(feature_ids)
 
-    if not feature_ids:
-        return []
 
-    refs = [
-        firestore_client.collection(FEATURES_COLLECTION).document(fid)
-        for fid in feature_ids
-    ]
-    snapshots = {snap.id: snap async for snap in firestore_client.get_all(refs)}
-
-    features: list[dict] = []
-    for fid in feature_ids:
-        snap = snapshots.get(fid)
-        data = snap.to_dict() if snap is not None and snap.exists else None
+def _validate_compose_feature_conditions(
+    operations: list[ComposeOperation],
+    parents: Parents,
+    owner_id: str,
+    domain_id: str,
+) -> None:
+    for fid in _compose_feature_ids(operations):
+        data = parents.features.get(fid)
         if (
             data is None
             or data.get("owner_id") != owner_id
@@ -196,8 +176,6 @@ async def _validate_compose_feature_conditions(
                 f"Compose condition references feature_id {fid!r} whose status is "
                 f"{feature_status!r}, expected 'completed'."
             )
-        features.append(data)
-    return features
 
 
 def _unit_object(unit: str | None):
@@ -495,14 +473,17 @@ async def create_compose_grid(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    referenced_features = await validate_feature_modifications(
-        body.modifications, owner_id, domain_id
+    parents = await load_parents(
+        grids=[inp.grid_id for inp in body.inputs],
+        features=[
+            *modification_feature_ids(body.modifications),
+            *_compose_feature_ids(body.operations),
+        ],
     )
-    referenced_features += await _validate_compose_feature_conditions(
-        body.operations, owner_id, domain_id
-    )
+    validate_feature_modifications(body.modifications, parents, owner_id, domain_id)
+    _validate_compose_feature_conditions(body.operations, parents, owner_id, domain_id)
 
-    source_grids = await _load_source_grids(body.inputs, owner_id, domain_id)
+    source_grids = _source_grids(body.inputs, parents, owner_id, domain_id)
     input_by_alias = {inp.alias: inp for inp in body.inputs}
     _validate_alignment(source_grids, input_by_alias)
 
@@ -549,9 +530,7 @@ async def create_compose_grid(
         "bands": [band.model_dump() for band in bands],
         "georeference": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(
-            *source_grids.values(), *referenced_features
-        ),
+        "attributions": inherit_attributions(parents),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

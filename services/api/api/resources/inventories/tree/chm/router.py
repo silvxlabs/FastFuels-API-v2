@@ -17,7 +17,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -37,8 +37,12 @@ from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
     CreateChmInventoryRequest,
 )
-from api.resources.inventories.utils import validate_feature_conditions
+from api.resources.inventories.utils import (
+    condition_feature_ids,
+    validate_feature_conditions,
+)
 from api.resources.modifications import stringify_modification_coordinates
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -104,19 +108,19 @@ async def create_chm_inventory(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    referenced_features = await validate_feature_conditions(
-        [*body.modifications, *body.treatments], owner_id, domain_id
+    parents = await load_parents(
+        grids=[body.source_chm_grid_id],
+        features=condition_feature_ids([*body.modifications, *body.treatments]),
+    )
+    validate_feature_conditions(
+        [*body.modifications, *body.treatments], parents, owner_id, domain_id
     )
 
     # Validate source CHM grid exists, is owned, in this domain, and completed
-    _, source_snapshot = await get_document_async(
-        GRIDS_COLLECTION,
-        body.source_chm_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    validate_parent(
+        parents, GRIDS_COLLECTION, body.source_chm_grid_id, owner_id, domain_id
     )
-    source_grid_data = source_snapshot.to_dict()
+    source_grid_data = parents.grids[body.source_chm_grid_id]
 
     # Any completed grid with a 'chm' band qualifies — a canopy-provider grid
     # (Meta/NAIP/LANDFIRE) or a user-uploaded CHM (e.g. ALS/TLS-derived). The band
@@ -168,7 +172,7 @@ async def create_chm_inventory(
         "georeference": None,  # Will be set by standgen
         "error": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(source_grid_data, *referenced_features),
+        "attributions": inherit_attributions(parents),
         "owner_id": owner_id,
     }
 

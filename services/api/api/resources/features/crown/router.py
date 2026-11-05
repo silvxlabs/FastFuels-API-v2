@@ -18,7 +18,7 @@ from fastapi import (
     status,
 )
 
-from api.db.documents import get_document_async, set_document_async
+from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.attribution import inherit_attributions
@@ -36,6 +36,7 @@ from api.resources.grids.utils import (
     validate_grid_resolution,
 )
 from api.resources.inventories.schema import TREE_ID_COLUMN
+from api.resources.parents import load_parents, validate_parent
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import (
@@ -112,14 +113,15 @@ async def create_chm_crown_feature(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    _, inventory_snapshot = await get_document_async(
-        INVENTORIES_COLLECTION,
-        body.source_inventory_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    parents = await load_parents(
+        inventories=[body.source_inventory_id],
+        grids=[body.source_chm_grid_id],
     )
-    inventory_data = inventory_snapshot.to_dict()
+
+    validate_parent(
+        parents, INVENTORIES_COLLECTION, body.source_inventory_id, owner_id, domain_id
+    )
+    inventory_data = parents.inventories[body.source_inventory_id]
     if inventory_data.get("type") != "tree":
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -137,14 +139,10 @@ async def create_chm_crown_feature(
             ),
         )
 
-    _, grid_snapshot = await get_document_async(
-        GRIDS_COLLECTION,
-        body.source_chm_grid_id,
-        owner_id=owner_id,
-        domain_id=domain_id,
-        document_status="completed",
+    validate_parent(
+        parents, GRIDS_COLLECTION, body.source_chm_grid_id, owner_id, domain_id
     )
-    grid_data = grid_snapshot.to_dict()
+    grid_data = parents.grids[body.source_chm_grid_id]
     validate_grid_input(body, "source_chm_grid_id", grid_data)
     validate_band_unit(grid_data, body.source_chm_grid_id, "chm", "m")
     validate_grid_resolution(
@@ -189,7 +187,7 @@ async def create_chm_crown_feature(
         "georeference": None,
         "error": None,
         "tags": body.tags,
-        "attributions": inherit_attributions(inventory_data, grid_data),
+        "attributions": inherit_attributions(parents),
         "owner_id": owner_id,
     }
 

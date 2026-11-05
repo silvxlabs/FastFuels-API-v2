@@ -323,7 +323,8 @@ def _trim_derivative_overhead(
     """Remove the gradient-overhead ring fetched for numpy.gradient.
 
     For ``target="domain"`` / ``target="grid"`` the destination lattice
-    was sized exactly via ``lattice_from_bounds``, so the ring is exactly
+    is exact (``lattice_from_bounds`` or the target grid's own lattice plus
+    whole buffer cells), so the ring is exactly
     ``_DERIVATIVE_GRADIENT_OVERHEAD_CELLS`` rows/columns per side — we
     index-slice. For ``target="native"`` the lattice depends on where the
     pixel anchor falls relative to the buffered bounds, so the ring count

@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 
 # Contact email logged for LANDFIRE Product Service
-LANDFIRE_USER_EMAIL = os.getenv("LANDFIRE_USER_EMAIL", "lwiard@newmexicoconsortium.org")
+LANDFIRE_USER_EMAIL = os.getenv("LANDFIRE_USER_EMAIL")
 
 LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
     "fbfm13": {

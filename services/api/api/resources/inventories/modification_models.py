@@ -380,7 +380,7 @@ class InventoryFeatureSpatialCondition(BaseModel):
     feature_id: str = Field(
         ...,
         description=(
-            "ID of a Feature resource (road, water, or layerset) hosted in "
+            "ID of a Feature resource (road, water, building, or layerset) hosted in "
             "the same domain as the inventory. Cross-domain references are "
             "rejected; the feature must be in `completed` status."
         ),

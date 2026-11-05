@@ -513,11 +513,6 @@ async def get_feature_data_partition(
     containing up to `partition_size` features. Each feature's `properties`
     and `geometry` round-trip from the source GeoParquet via geopandas.
 
-    The collection also has a top-level `attributions` array, the same list
-    as the feature resource's `attributions`: the license and citation for
-    each third-party dataset the data came from. Reproduce each `citation`
-    wherever you use or share the data. The array may be empty.
-
     ## Error Responses
 
     - **404 Not Found**: Feature does not exist or is not accessible to the
@@ -531,18 +526,17 @@ async def get_feature_data_partition(
       partition, the feature is not in `completed` status, or the
       underlying GeoParquet blob is missing / malformed.
     """
-    _, snapshot = await get_document_async(
+    await get_document_async(
         FEATURES_COLLECTION,
         feature_id,
         owner_id=request.state.id,
         domain_id=domain["id"],
         document_status="completed",
     )
-    attributions = snapshot.to_dict().get("attributions") or []
 
     try:
         payload, _num_features, _total = await fetch_partition_geojson(
-            domain["id"], feature_id, partition_index, attributions
+            domain["id"], feature_id, partition_index
         )
     except FileNotFoundError as exc:
         raise HTTPException(

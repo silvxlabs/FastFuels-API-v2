@@ -56,6 +56,28 @@ class TestLatticeFromBounds:
         transform, (h, w) = lattice_from_bounds((0, 0, 0.1, 0.1), 1.0)
         assert (h, w) == (1, 1)
 
+    def test_float_noise_does_not_add_cells(self):
+        # Prod 3DEP 10 m target from #772: extent / a lands just above
+        # 169 and 115, which a bare ceil turns into 170 and 116.
+        a = 7.7301175133338464
+        minx, maxy = 720227.9398802927, 5190652.2875135
+        maxx = minx + 169 * a
+        miny = maxy - 115 * 7.730117513336364
+        assert (maxx - minx) / a > 169
+        assert (maxy - miny) / a > 115
+        transform, (h, w) = lattice_from_bounds((minx, miny, maxx, maxy), a)
+        assert (h, w) == (115, 169)
+        assert transform.c == minx
+        assert transform.f == pytest.approx(miny + 115 * a)
+
+    def test_exact_multiple_unchanged(self):
+        _, (h, w) = lattice_from_bounds((0, 0, 1690, 1150), 10.0)
+        assert (h, w) == (115, 169)
+
+    def test_partial_cell_still_rounds_up(self):
+        _, (h, w) = lattice_from_bounds((0, 0, 1694, 1154), 10.0)
+        assert (h, w) == (116, 170)
+
 
 class TestTargetGridBounds:
     def test_round_trip_with_lattice_from_bounds(self):
@@ -160,6 +182,33 @@ class TestResolveAlignmentGrid:
         assert dest["destination_crs"] == "EPSG:32610"
         assert dest["destination_transform"] == Affine(10.0, 0.0, 0.0, 0.0, -10.0, 20.0)
         assert dest["destination_shape"] == (2, 3)
+
+    def test_noisy_target_lattice_returned_verbatim(self):
+        # Prod 3DEP 10 m target from #772; Firestore returns lists.
+        transform = [
+            7.7301175133338464,
+            0,
+            720227.9398802927,
+            0,
+            -7.730117513336364,
+            5190652.2875135,
+        ]
+        target_doc = {
+            "georeference": {
+                "crs": "EPSG:32611",
+                "transform": transform,
+                "shape": [115, 169],
+            }
+        }
+        dest = resolve_alignment_destination(
+            {"target": "grid", "grid_id": "x"},
+            _make_domain(crs="EPSG:32611"),
+            target_doc,
+            30.0,
+        )
+        assert dest["destination_crs"] == "EPSG:32611"
+        assert dest["destination_transform"] == Affine(*transform)
+        assert dest["destination_shape"] == (115, 169)
 
     def test_same_anchor_new_resolution(self):
         domain = _make_domain()
@@ -293,6 +342,49 @@ class TestResolveAlignmentExtentBuffer:
         # Cells stay 30 m and origin shift is exactly an integer multiple, so
         # buffered cells nest with the unbuffered target lattice.
         assert dest["destination_transform"].a == pytest.approx(30.0)
+
+    def test_grid_target_noisy_lattice_expands_by_exact_cells(self):
+        a, e = 7.7301175133338464, -7.730117513336364
+        c, f = 720227.9398802927, 5190652.2875135
+        target_doc = {
+            "georeference": {
+                "crs": "EPSG:32611",
+                "transform": [a, 0, c, 0, e, f],
+                "shape": [115, 169],
+            }
+        }
+        dest = resolve_alignment_destination(
+            {"target": "grid", "grid_id": "x"},
+            _make_domain(crs="EPSG:32611"),
+            target_doc,
+            30.0,
+            extent_buffer_cells=2,
+        )
+        t = dest["destination_transform"]
+        assert dest["destination_shape"] == (119, 173)
+        assert t == Affine(a, 0, c - 2 * a, 0, e, f - 2 * e)
+        assert t.a == a
+        assert t.e == e
+
+    def test_3d_grid_target_no_resolution_expands_xy_only(self):
+        target_doc = {
+            "georeference": {
+                "crs": "EPSG:32610",
+                "transform": (10.0, 0.0, 0.0, 0.0, -10.0, 20.0),
+                "shape": (50, 2, 3),
+            }
+        }
+        dest = resolve_alignment_destination(
+            {"target": "grid", "grid_id": "x"},
+            _make_domain(),
+            target_doc,
+            30.0,
+            extent_buffer_cells=1,
+        )
+        assert dest["destination_shape"] == (4, 5)
+        assert dest["destination_transform"] == Affine(
+            10.0, 0.0, -10.0, 0.0, -10.0, 30.0
+        )
 
     def test_grid_target_with_resolution_expands_in_new_cells(self):
         target_doc = {

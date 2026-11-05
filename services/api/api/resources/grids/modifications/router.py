@@ -38,6 +38,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import merge_attributions
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 
 router = APIRouter()
@@ -183,7 +184,9 @@ async def apply_grid_modifications(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     new_checksum = uuid.uuid4().hex
     ref = firestore_client.collection(COLLECTION).document(grid_id)
@@ -242,6 +245,10 @@ async def apply_grid_modifications(
         # rotates now so derivatives become detectably stale (#304).
         update = {
             "pending_modifications": pending + new_modifications,
+            "attributions": merge_attributions(
+                grid_data.get("attributions"),
+                *(f.get("attributions") for f in referenced_features),
+            ),
             "checksum": new_checksum,
             "status": JobStatus.pending.value,
             "progress": None,

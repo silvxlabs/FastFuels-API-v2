@@ -36,6 +36,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import merge_attributions
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.landfire import (
@@ -104,7 +105,9 @@ async def create_landfire_fbfm40(
     await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
     use_lfps = (
         body.season is not None
         or body.version in LANDFIRE_VERSIONS["fbfm40"]["lfps_available"]
@@ -163,6 +166,9 @@ async def create_landfire_fbfm40(
         "bands": [FBFM40_BAND.model_dump()],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

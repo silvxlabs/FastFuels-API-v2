@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from api.resources.attribution import Attribution
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.treatment_models import InventoryTreatment
 from api.resources.modifications import parse_modification_coordinates
@@ -260,6 +261,14 @@ class Inventory(BaseModel):
         description="Error details if status is 'failed'.",
     )
     tags: list[str] = Field(default_factory=list)
+    attributions: list[Attribution] = Field(
+        default_factory=list,
+        description=(
+            "Licenses and citations for the third-party data this inventory "
+            "was built from. Reproduce each `citation` wherever you use or "
+            "share the data. Empty if none are recorded."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

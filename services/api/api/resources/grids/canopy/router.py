@@ -51,6 +51,7 @@ from api.resources.grids.utils import (
 from api.resources.point_clouds.schema import PointCloudType
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import merge_attributions
 from lib.config import (
     GRIDDLE_QUEUE,
     GRIDDLE_SERVICE,
@@ -113,7 +114,9 @@ async def create_meta_chm(
     await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -138,6 +141,9 @@ async def create_meta_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -190,7 +196,9 @@ async def create_naip_chm(
     await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -214,6 +222,9 @@ async def create_naip_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -278,7 +289,9 @@ async def create_landfire_canopy(
     await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -304,6 +317,9 @@ async def create_landfire_canopy(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -440,7 +456,9 @@ async def create_point_cloud_chm(
         domain_id,
         domain_crs=domain["crs"]["properties"]["name"],
     )
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     # Against a grid, `resolution: null` already means something — match that
     # grid's lattice cell-for-cell — so it is left alone and the worker reads
@@ -481,6 +499,9 @@ async def create_point_cloud_chm(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

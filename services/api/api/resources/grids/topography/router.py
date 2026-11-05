@@ -43,6 +43,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import merge_attributions
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
@@ -101,7 +102,9 @@ async def create_landfire_topography(
     await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -127,6 +130,9 @@ async def create_landfire_topography(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }
@@ -197,7 +203,9 @@ async def create_3dep_topography(
     await enforce_create_quotas(COLLECTION, request)
 
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
@@ -223,6 +231,9 @@ async def create_3dep_topography(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

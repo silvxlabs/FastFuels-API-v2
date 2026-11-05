@@ -20,6 +20,8 @@ from api.resources.exports.schema import (
 from api.schema import JobStatus
 from pydantic import ValidationError
 
+from lib.attributions import OPENSTREETMAP, make_attribution
+
 
 class TestExport:
     """Tests for Export model."""
@@ -154,6 +156,17 @@ class TestExport:
     def test_invalid_status_rejected(self):
         with pytest.raises(ValidationError):
             Export(**self._make_export(status="invalid"))
+
+    def test_attributions_default_to_empty_list(self):
+        """Firestore docs written before attributions existed have no field."""
+        export = Export(**self._make_export())
+        assert export.attributions == []
+        assert export.model_dump(mode="json")["attributions"] == []
+
+    def test_attributions_round_trip(self):
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        export = Export(**self._make_export(attributions=[osm]))
+        assert export.model_dump(mode="json")["attributions"] == [osm]
 
 
 class TestExportSortField:

@@ -9,6 +9,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from api.resources.attribution import Attribution
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
 
@@ -68,6 +69,14 @@ class Export(BaseModel):
     )
 
     tags: list[str] = Field(default_factory=list)
+    attributions: list[Attribution] = Field(
+        default_factory=list,
+        description=(
+            "Licenses and citations for the third-party data in this export. "
+            "Reproduce each `citation` wherever you use or share the data. "
+            "Empty if none are recorded."
+        ),
+    )
 
 
 class UpdateExportRequestBody(BaseModel):

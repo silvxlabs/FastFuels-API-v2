@@ -32,7 +32,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from lib.config import FEATURES_COLLECTION
+from lib.attributions import OPENSTREETMAP, make_attribution
+from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
 from tests.fixtures import (
     make_feature_data,
     make_grid_data,
@@ -117,6 +118,16 @@ def _delete(firestore_client, collection: str, doc_id: str) -> None:
 def completed_feature(firestore_client, domain_for_testing):
     """Feature in the caller's domain, owned by the caller, status=completed."""
     data = make_feature_data(domain_id=domain_for_testing["id"], status="completed")
+    _seed(firestore_client, FEATURES_COLLECTION, data)
+    yield data
+    _delete(firestore_client, FEATURES_COLLECTION, data["id"])
+
+
+@pytest.fixture(scope="session")
+def attributed_feature(firestore_client, domain_for_testing):
+    """Completed OSM road feature carrying an OpenStreetMap attribution."""
+    data = make_feature_data(domain_id=domain_for_testing["id"], status="completed")
+    data["attributions"] = [make_attribution(OPENSTREETMAP, "2026-11-05")]
     _seed(firestore_client, FEATURES_COLLECTION, data)
     yield data
     _delete(firestore_client, FEATURES_COLLECTION, data["id"])
@@ -380,3 +391,53 @@ class TestInlineGeometryModification:
         )
         assert get_response.status_code == 200, get_response.json()
         assert _first_geometry_coords(get_response.json()) == INLINE_POLYGON_COORDS
+
+
+@pytest.mark.parametrize("spec", ENDPOINTS, ids=lambda s: s.name)
+class TestFeatureModificationAttributions:
+    """A grid created with a feature modification carries the referenced
+    feature's attributions (#775)."""
+
+    def test_grid_inherits_feature_attributions(
+        self,
+        client,
+        firestore_client,
+        domain_for_testing,
+        endpoint_helpers,
+        attributed_feature,
+        spec,
+    ):
+        body = _body(spec, attributed_feature["id"], endpoint_helpers)
+        response = client.post(spec.url(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201, response.json()
+        grid_id = response.json()["id"]
+        try:
+            expected = attributed_feature["attributions"]
+            assert response.json()["attributions"] == expected
+
+            doc = (
+                firestore_client.collection(GRIDS_COLLECTION)
+                .document(grid_id)
+                .get()
+                .to_dict()
+            )
+            assert doc["attributions"] == expected
+
+            get_response = client.get(
+                f"/domains/{domain_for_testing['id']}/grids/{grid_id}"
+            )
+            assert get_response.status_code == 200, get_response.json()
+            assert get_response.json()["attributions"] == expected
+        finally:
+            _delete(firestore_client, GRIDS_COLLECTION, grid_id)
+
+    def test_grid_without_feature_has_no_attributions(
+        self, client, firestore_client, domain_for_testing, endpoint_helpers, spec
+    ):
+        body = _geometry_body(spec, endpoint_helpers)
+        response = client.post(spec.url(domain_for_testing["id"]), json=body)
+        assert response.status_code == 201, response.json()
+        try:
+            assert response.json()["attributions"] == []
+        finally:
+            _delete(firestore_client, GRIDS_COLLECTION, response.json()["id"])

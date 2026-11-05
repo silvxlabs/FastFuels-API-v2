@@ -526,12 +526,16 @@ async def validate_feature_modifications(
     modifications: list[GridModification],
     owner_id: str,
     domain_id: str,
-) -> None:
+) -> list[dict]:
     """Verify every ``GridFeatureSpatialCondition.feature_id`` references a
     Feature that is owned by ``owner_id``, lives in ``domain_id``, and is in
     ``completed`` status.
 
     Looks up all distinct feature_ids in a single Firestore ``get_all`` call.
+
+    Returns:
+        The referenced feature documents, one per distinct feature_id in
+        first-reference order. Empty when no condition references a feature.
 
     Raises:
         HTTPException(422): If any referenced feature is missing, owned by
@@ -550,7 +554,7 @@ async def validate_feature_modifications(
                     feature_ids.append(condition.feature_id)
 
     if not feature_ids:
-        return
+        return []
 
     refs = [
         firestore_client.collection(FEATURES_COLLECTION).document(fid)
@@ -558,6 +562,7 @@ async def validate_feature_modifications(
     ]
     snapshots = {snap.id: snap async for snap in firestore_client.get_all(refs)}
 
+    features: list[dict] = []
     for fid in feature_ids:
         snap = snapshots.get(fid)
         if snap is None or not snap.exists:
@@ -587,6 +592,8 @@ async def validate_feature_modifications(
                     f"the feature to finish before referencing it."
                 ),
             )
+        features.append(data)
+    return features
 
 
 def validate_grid_has_georeference(grid_data: dict, grid_id: str) -> None:

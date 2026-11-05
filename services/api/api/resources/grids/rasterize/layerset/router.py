@@ -38,6 +38,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import merge_attributions
 from lib.config import (
     FEATURES_COLLECTION,
     GRIDDLE_QUEUE,
@@ -119,7 +120,9 @@ async def create_layerset_rasterize(
 
     # Validate alignment target grid (if any) — raises 404/422 inline.
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     # Validate the referenced layerset exists, is owned by the caller, and
     # belongs to this domain. get_document_async raises 404 on any mismatch
@@ -164,6 +167,9 @@ async def create_layerset_rasterize(
         "bands": [b.model_dump() for b in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

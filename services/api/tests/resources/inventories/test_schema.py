@@ -33,6 +33,7 @@ from api.resources.inventories.tree.pim.schema import (
 )
 from pydantic import ValidationError
 
+from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.units import validate_unit
 
 
@@ -178,6 +179,17 @@ class TestInventory:
     def test_required_fields(self):
         with pytest.raises(ValidationError):
             Inventory(id="abc", domain_id="def")
+
+    def test_attributions_default_to_empty_list(self):
+        """Firestore docs written before attributions existed have no field."""
+        inv = self._make_inventory()
+        assert inv.attributions == []
+        assert inv.model_dump(mode="json")["attributions"] == []
+
+    def test_attributions_round_trip(self):
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        inv = self._make_inventory(attributions=[osm])
+        assert inv.model_dump(mode="json")["attributions"] == [osm]
 
 
 class TestListInventoriesResponse:

@@ -26,8 +26,13 @@ from api.resources.grids.modifications.examples import (
     EXAMPLE_ZERO_HEAVY_FUEL_NEAR_ROAD,
 )
 
+from lib.attributions import OPENSTREETMAP, make_attribution
 from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
-from tests.fixtures import make_grid_data, make_layerset_feature_data
+from tests.fixtures import (
+    make_feature_data,
+    make_grid_data,
+    make_layerset_feature_data,
+)
 
 
 @pytest.fixture(scope="function")
@@ -196,6 +201,102 @@ class TestApplyGridModifications:
                 },
             )
             assert response.status_code == 200, response.text
+        finally:
+            feature_ref.delete()
+
+    def test_feature_attributions_merged_into_existing(
+        self, client, firestore_client, domain_for_testing, completed_grid
+    ):
+        """The referenced feature's attributions are merged into the grid's
+        existing attributions, not substituted for them (#775)."""
+        existing = {
+            "dataset": "Meta CHM",
+            "license_name": "CC-BY-4.0",
+            "license_url": "https://creativecommons.org/licenses/by/4.0/",
+            "citation": "Meta and World Resources Institute",
+            "access_url": "https://registry.opendata.aws/dataforgood-fb-forests/",
+            "accessed_on": "2026-10-01",
+        }
+        earlier_osm = make_attribution(OPENSTREETMAP, "2026-10-15")
+        grid_ref = firestore_client.collection(GRIDS_COLLECTION).document(
+            completed_grid["id"]
+        )
+        grid_ref.update({"attributions": [existing, earlier_osm]})
+
+        feature = make_feature_data(domain_id=domain_for_testing["id"])
+        feature["attributions"] = [make_attribution(OPENSTREETMAP, "2026-11-05")]
+        feature_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feature["id"]
+        )
+        feature_ref.set(feature)
+        try:
+            response = client.post(
+                route(domain_for_testing["id"], completed_grid["id"]),
+                json={
+                    "modifications": [
+                        {
+                            "conditions": [
+                                {
+                                    "source": "feature",
+                                    "operator": "intersects",
+                                    "feature_id": feature["id"],
+                                }
+                            ],
+                            "actions": [
+                                {
+                                    "band": "fuel_load.1hr",
+                                    "modifier": "replace",
+                                    "value": 0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+            assert response.status_code == 200, response.text
+            # Deduped on (dataset, license_name); earliest accessed_on wins.
+            expected = [existing, earlier_osm]
+            assert response.json()["attributions"] == expected
+            assert grid_ref.get().to_dict()["attributions"] == expected
+        finally:
+            feature_ref.delete()
+
+    def test_feature_attributions_added_to_grid_without_any(
+        self, client, firestore_client, domain_for_testing, completed_grid
+    ):
+        feature = make_feature_data(domain_id=domain_for_testing["id"])
+        osm = make_attribution(OPENSTREETMAP, "2026-11-05")
+        feature["attributions"] = [osm]
+        feature_ref = firestore_client.collection(FEATURES_COLLECTION).document(
+            feature["id"]
+        )
+        feature_ref.set(feature)
+        try:
+            response = client.post(
+                route(domain_for_testing["id"], completed_grid["id"]),
+                json={
+                    "modifications": [
+                        {
+                            "conditions": [
+                                {
+                                    "source": "feature",
+                                    "operator": "intersects",
+                                    "feature_id": feature["id"],
+                                }
+                            ],
+                            "actions": [
+                                {
+                                    "band": "fuel_load.1hr",
+                                    "modifier": "replace",
+                                    "value": 0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["attributions"] == [osm]
         finally:
             feature_ref.delete()
 

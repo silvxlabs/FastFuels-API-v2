@@ -29,6 +29,7 @@ from api.resources.grids.utils import (
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import merge_attributions
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 
 router = APIRouter()
@@ -112,7 +113,9 @@ async def create_fbfm13_lookup(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
 
     _, source_snapshot = await get_document_async(
         COLLECTION,
@@ -151,6 +154,9 @@ async def create_fbfm13_lookup(
         "bands": [b.model_dump() for b in bands],
         "georeference": source_grid_data.get("georeference"),
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

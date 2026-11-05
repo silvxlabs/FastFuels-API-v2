@@ -49,6 +49,7 @@ from api.resources.grids.utils import (
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
+from lib.attributions import merge_attributions
 from lib.band_quantities import band_mismatch
 from lib.config import (
     FEATURES_COLLECTION,
@@ -156,7 +157,7 @@ async def _validate_compose_feature_conditions(
     operations: list[ComposeOperation],
     owner_id: str,
     domain_id: str,
-) -> None:
+) -> list[dict]:
     feature_ids: list[str] = []
     seen: set[str] = set()
     for operation in operations:
@@ -169,7 +170,7 @@ async def _validate_compose_feature_conditions(
                 feature_ids.append(condition.feature_id)
 
     if not feature_ids:
-        return
+        return []
 
     refs = [
         firestore_client.collection(FEATURES_COLLECTION).document(fid)
@@ -177,6 +178,7 @@ async def _validate_compose_feature_conditions(
     ]
     snapshots = {snap.id: snap async for snap in firestore_client.get_all(refs)}
 
+    features: list[dict] = []
     for fid in feature_ids:
         snap = snapshots.get(fid)
         data = snap.to_dict() if snap is not None and snap.exists else None
@@ -194,6 +196,8 @@ async def _validate_compose_feature_conditions(
                 f"Compose condition references feature_id {fid!r} whose status is "
                 f"{feature_status!r}, expected 'completed'."
             )
+        features.append(data)
+    return features
 
 
 def _unit_object(unit: str | None):
@@ -491,8 +495,12 @@ async def create_compose_grid(
 
     await enforce_create_quotas(COLLECTION, request)
 
-    await validate_feature_modifications(body.modifications, owner_id, domain_id)
-    await _validate_compose_feature_conditions(body.operations, owner_id, domain_id)
+    referenced_features = await validate_feature_modifications(
+        body.modifications, owner_id, domain_id
+    )
+    referenced_features += await _validate_compose_feature_conditions(
+        body.operations, owner_id, domain_id
+    )
 
     source_grids = await _load_source_grids(body.inputs, owner_id, domain_id)
     input_by_alias = {inp.alias: inp for inp in body.inputs}
@@ -541,6 +549,9 @@ async def create_compose_grid(
         "bands": [band.model_dump() for band in bands],
         "georeference": None,
         "tags": body.tags,
+        "attributions": merge_attributions(
+            *(f.get("attributions") for f in referenced_features)
+        ),
         "chunks": {"shape": CHUNK_SHAPE, "count": None, "count_by_axis": None},
         "owner_id": owner_id,
     }

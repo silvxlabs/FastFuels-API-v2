@@ -128,6 +128,12 @@ def _upload_geojson(inventory_id: str, lon_lat_points: list, attrs: dict) -> str
     return object_name
 
 
+def _read_inventory(inventory_id: str) -> pd.DataFrame:
+    """Read the written Parquet back in tree_id (here, file row) order."""
+    df = pd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
+    return df.sort_values("tree_id").reset_index(drop=True)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _cleanup_gcsfs_sessions():
     yield
@@ -187,11 +193,7 @@ class TestCsvUpload:
             assert exists(f"gs://{INVENTORIES_BUCKET}/{inventory_id}")
             assert not exists(f"gs://{UPLOADS_BUCKET}/{object_name}")
 
-            import dask.dataframe as dd
-
-            parquet_df = dd.read_parquet(
-                f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-            ).compute()
+            parquet_df = _read_inventory(inventory_id)
             assert len(parquet_df) == len(SAMPLE_X)
             assert list(parquet_df["x"]) == SAMPLE_X
             assert list(parquet_df["y"]) == SAMPLE_Y
@@ -277,11 +279,7 @@ class TestCsvUpload:
                 "crown_radius",
             ]
 
-            import dask.dataframe as dd
-
-            parquet_df = dd.read_parquet(
-                f"gs://{INVENTORIES_BUCKET}/{inventory_id}"
-            ).compute()
+            parquet_df = _read_inventory(inventory_id)
             stored = parquet_df["crown_radius"].tolist()
             assert stored[0] == pytest.approx(radii[0], rel=1e-12)
             assert pd.isna(stored[1])

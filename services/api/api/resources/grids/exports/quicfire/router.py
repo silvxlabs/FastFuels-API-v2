@@ -58,8 +58,7 @@ async def create_quicfire_export(
     The output zip contains `treesrhof.dat`, `treesmoist.dat`,
     `treesfueldepth.dat`, `metadata.json`, and `domain.geojson` always; plus
     `topo.dat` when a topography role is provided, plus `treesss.dat` when
-    both canopy and surface SAVR roles are provided, plus `ATTRIBUTION.txt`
-    when the export has `attributions`.
+    both canopy and surface SAVR roles are provided.
 
     Returns an Export resource with status `pending`. Poll
     `GET /exports/{export_id}` until status is `completed` to retrieve the

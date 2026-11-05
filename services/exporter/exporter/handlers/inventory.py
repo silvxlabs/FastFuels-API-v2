@@ -7,7 +7,6 @@ GeoPackage).
 """
 
 import io
-import json
 import logging
 import os
 import tempfile
@@ -17,11 +16,8 @@ from collections.abc import Callable
 
 import geopandas as gpd
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 from shapely.geometry import Point
 
-from exporter.attribution import attribution_metadata
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
 from exporter.storage import load_inventory_parquet
@@ -136,14 +132,8 @@ def export_parquet(
     export_id = export["id"]
 
     progress("Writing Parquet...", 60)
-    table = pa.Table.from_pandas(df, preserve_index=False)
-    metadata = attribution_metadata(export.get("attributions") or [])
-    if metadata:
-        table = table.replace_schema_metadata(
-            {**(table.schema.metadata or {}), **metadata}
-        )
     parquet_buffer = io.BytesIO()
-    pq.write_table(table, parquet_buffer)
+    df.to_parquet(parquet_buffer, index=False)
     parquet_bytes = parquet_buffer.getvalue()
 
     progress("Creating ZIP archive...", 80)
@@ -211,14 +201,7 @@ def export_geojson(
     gdf = _to_geodataframe(df, crs)
 
     progress("Writing GeoJSON...", 80)
-    geojson = gdf.to_json()
-    attributions = export.get("attributions") or []
-    if attributions:
-        # RFC 7946 foreign member on the FeatureCollection.
-        collection = json.loads(geojson)
-        collection["attributions"] = attributions
-        geojson = json.dumps(collection)
-    geojson_bytes = geojson.encode("utf-8")
+    geojson_bytes = gdf.to_json().encode("utf-8")
 
     filename = sanitize_filename(export.get("name", ""), ".geojson")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
@@ -252,11 +235,7 @@ def export_geopackage(
     progress("Writing GeoPackage...", 80)
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = os.path.join(tmpdir, "export.gpkg")
-        gdf.to_file(
-            tmp_path,
-            driver="GPKG",
-            metadata=attribution_metadata(export.get("attributions") or []) or None,
-        )
+        gdf.to_file(tmp_path, driver="GPKG")
         with open(tmp_path, "rb") as f:
             gpkg_bytes = f.read()
 

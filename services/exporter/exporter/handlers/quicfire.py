@@ -30,7 +30,6 @@ Output zip layout (flat):
     domain.geojson
     topo.dat       (only when topography role provided)
     treesss.dat    (only when both SAVR roles provided)
-    ATTRIBUTION.txt (only when the export carries attributions)
 """
 
 import json
@@ -49,7 +48,6 @@ import xarray as xr
 from google.cloud import storage as gcs_storage
 from scipy.io import FortranFile
 
-from exporter.attribution import ATTRIBUTION_FILENAME, attribution_notice
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
 from exporter.storage import load_grid_zarr
@@ -181,11 +179,6 @@ def export_quicfire(
                 _write_fortran_3d(out_dir / "treesss.dat", treesss)
             _write_metadata(out_dir / "metadata.json", export, source, georeference)
             _write_domain_geojson(out_dir / "domain.geojson", source["domain_id"])
-            attributions = export.get("attributions") or []
-            if attributions:
-                (out_dir / ATTRIBUTION_FILENAME).write_text(
-                    attribution_notice(attributions) + "\n"
-                )
         except ProcessingError:
             raise
         except Exception as e:

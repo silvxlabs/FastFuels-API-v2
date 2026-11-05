@@ -3,13 +3,16 @@ Inventory upload handler for the Uploader service.
 
 Processes uploaded inventory files (CSV, GeoJSON, GeoPackage), validates
 against the inventory schema, and writes Parquet to INVENTORIES_BUCKET.
+
+The upload is streamed from GCS in batches, so memory holds only the compact
+typed columns of the trees kept in the domain. They are sorted once, by 1 km
+tile along a Hilbert curve, so each Parquet row group covers a compact area.
 """
 
 import math
 from contextlib import suppress
 from datetime import UTC, datetime
 
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -45,8 +48,8 @@ _V2_COLUMNS = {
 
 # Doc metadata (type, unit) per v2 column, in canonical order. Only x, y, and
 # height are required in an upload, so the inventory document's `columns` field
-# is written from the columns the file actually provided (before _validate pads
-# the optional ones with nulls) — the API's treatments endpoint relies on it to
+# is written from the columns the file actually provided (the Parquet pads the
+# optional ones with nulls) — the API's treatments endpoint relies on it to
 # tell whether an inventory has a `dbh` column to thin against.
 _COLUMN_METADATA = {
     "tree_id": ("categorical", None),
@@ -217,6 +220,101 @@ def handle_inventory(
             delete_file(f"gs://{bucket}/{object_name}")
 
 
+def _read_table(
+    fmt: str, src: str, col_map: dict, domain_crs_str: str, bounds: tuple
+) -> pa.Table:
+    """Stream the upload into a validated, domain-filtered Arrow table.
+
+    col_map maps v2 column names → user column names in the file.
+
+    Returns:
+        The trees inside ``bounds``, one chunk per batch: ``tree_id`` plus
+        the v2 columns the file provided, in canonical order.
+
+    Raises:
+        FileNotFoundError: If the upload no longer exists.
+        ProcessingError: ``SCHEMA_VALIDATION_ERROR``, or a reader error.
+    """
+    check_exists(src)
+    rename = {user_col: v2_name for v2_name, user_col in col_map.items()}
+    if fmt != "csv":
+        batches = geo_batches(fmt, src, rename, _V2_COLUMNS, domain_crs_str)
+        return _collect(batches, bounds)
+    try:
+        return _collect(csv_batches(src, rename, _V2_COLUMNS), bounds)
+    except pa.ArrowInvalid:
+        pass
+    # A cell is not a number: re-read as strings so pandera reports it. Outside
+    # the except block, so the first pass's batches are freed.
+    return _collect(csv_batches(src, rename, _V2_COLUMNS, as_strings=True), bounds)
+
+
+def _collect(batches, bounds: tuple) -> pa.Table:
+    """Validate, domain-filter and number each batch, keeping only its
+    compact typed columns.
+
+    Generated tree IDs are 1 … N over the trees kept in the domain, in file
+    order. Once any batch fails validation the rest are still validated, for
+    the report, but no data is kept.
+    """
+    xmin, ymin, xmax, ymax = bounds
+    failures = FailureCases(list(_BATCH_SCHEMA.columns))
+    tables: list[pa.Table] = []
+    tree_ids: list[tuple[int, np.ndarray]] = []
+    provided: list[str] | None = None
+    next_id = 1
+    for df in batches:
+        if provided is None:
+            provided = [c for c in _COLUMN_METADATA if c in df.columns]
+            data_schema = pa.schema(
+                [
+                    f
+                    for f in _PARQUET_SCHEMA
+                    if f.name in provided and f.name != "tree_id"
+                ]
+            )
+        for col in _OPTIONAL_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+        try:
+            df = _BATCH_SCHEMA.validate(df, lazy=True)
+        except SchemaErrors as e:
+            failures.add(e.failure_cases, list(e.data.columns))
+            tables.clear()
+            df = e.data
+        has_ids = "tree_id" in df.columns
+        if has_ids and pd.api.types.is_integer_dtype(df["tree_id"]):
+            first = int(df.index[0]) if len(df) else 0
+            tree_ids.append((first, df["tree_id"].to_numpy("int64")))
+        if failures:
+            continue
+
+        x, y = df["x"].to_numpy(), df["y"].to_numpy()
+        inside = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
+        # Filter in Arrow, so each kept column is its own allocation rather
+        # than a view of a pandas block.
+        table = pa.Table.from_pandas(
+            df[data_schema.names], schema=data_schema, preserve_index=False
+        ).filter(pa.array(inside))
+        if has_ids:
+            ids = df["tree_id"].to_numpy("int64")[inside].astype("int32")
+        else:
+            ids = np.arange(next_id, next_id + table.num_rows, dtype="int32")
+            next_id += table.num_rows
+        tables.append(table.add_column(0, "tree_id", pa.array(ids)))
+
+    if "tree_id" in (provided or []):
+        failures.add_duplicate_tree_ids(tree_ids)
+    if failures:
+        total, cases = failures.report()
+        raise ProcessingError(
+            code="SCHEMA_VALIDATION_ERROR",
+            message=f"Schema validation failed with {total} error(s).",
+            suggestion=str(cases),
+        )
+    return pa.concat_tables(tables)
+
+
 def _finite_or_none(value) -> float | None:
     """Coerce a reduction result to float, mapping null/NaN/inf to None.
 
@@ -343,177 +441,6 @@ def _hilbert(x: np.ndarray, y: np.ndarray, extent: int) -> np.ndarray:
         x, y = np.where(ry, x, y), np.where(ry, y, x)
         s //= 2
     return d
-
-
-def _parse(
-    fmt: str, local_path: str, col_map: dict, domain_crs_str: str
-) -> pd.DataFrame:
-    """Parse an uploaded file into a normalized pandas DataFrame.
-
-    col_map maps v2 column names → user column names in the file.
-    Builds an inverse rename dict {user_col: v2_name} and applies it.
-    """
-    rename = {user_col: v2_name for v2_name, user_col in col_map.items()}
-
-    if fmt == "csv":
-        df = pd.read_csv(local_path)
-        df = df.rename(columns=rename)
-        return df[[col for col in df.columns if col in _V2_COLUMNS]]
-
-    # GeoJSON or GeoPackage
-    gdf = gpd.read_file(local_path)
-    if gdf.empty:
-        raise ProcessingError(
-            code="EMPTY_FILE",
-            message="The uploaded file contains no features.",
-        )
-
-    geom_types = set(gdf.geometry.geom_type.unique())
-    unsupported = geom_types - {"Point", "MultiPoint"}
-    if unsupported:
-        raise ProcessingError(
-            code="INVALID_GEOMETRY_TYPE",
-            message=f"Expected Point or MultiPoint geometries, found: {unsupported}.",
-        )
-
-    if "MultiPoint" in geom_types:
-        gdf = gdf.explode(index_parts=False).reset_index(drop=True)
-
-    # GeoJSON is always EPSG:4326 per spec; set CRS if missing
-    if gdf.crs is None and fmt == "geojson":
-        gdf = gdf.set_crs("EPSG:4326")
-
-    if gdf.crs is not None:
-        gdf = gdf.to_crs(domain_crs_str)
-
-    df = pd.DataFrame({"x": gdf.geometry.x.values, "y": gdf.geometry.y.values})
-    for col in gdf.columns:
-        if col == "geometry":
-            continue
-        v2_col = rename.get(col, col)
-        if v2_col in _V2_COLUMNS and v2_col not in ("x", "y"):
-            df[v2_col] = gdf[col].values
-
-    return df
-
-
-def _validate(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate the parsed DataFrame against the inventory schema.
-
-    A ``tree_id`` column, when absent, is left out (not padded): the caller
-    generates IDs after filtering to the domain.
-    """
-    for col in _V2_COLUMNS - {"tree_id", "x", "y", "height"}:
-        if col not in df.columns:
-            df[col] = None
-
-    try:
-        df = _InventorySchema.validate(df, lazy=True)
-    except SchemaErrors as e:
-        cases = e.failure_cases.head(100).to_dict("records")
-        raise ProcessingError(
-            code="SCHEMA_VALIDATION_ERROR",
-            message=f"Schema validation failed with {len(e.failure_cases)} error(s).",
-            suggestion=str(cases),
-        )
-    if "tree_id" in df.columns:
-        df["tree_id"] = df["tree_id"].astype("int32")
-    return df
-
-
-def _read_table(
-    fmt: str, src: str, col_map: dict, domain_crs_str: str, bounds: tuple
-) -> pa.Table:
-    """Stream the upload into a validated, domain-filtered Arrow table.
-
-    col_map maps v2 column names → user column names in the file.
-
-    Returns:
-        The trees inside ``bounds``, one chunk per batch: ``tree_id`` plus
-        the v2 columns the file provided, in canonical order.
-
-    Raises:
-        FileNotFoundError: If the upload no longer exists.
-        ProcessingError: ``SCHEMA_VALIDATION_ERROR``, or a reader error.
-    """
-    check_exists(src)
-    rename = {user_col: v2_name for v2_name, user_col in col_map.items()}
-    if fmt != "csv":
-        batches = geo_batches(fmt, src, rename, _V2_COLUMNS, domain_crs_str)
-        return _collect(batches, bounds)
-    try:
-        return _collect(csv_batches(src, rename, _V2_COLUMNS), bounds)
-    except pa.ArrowInvalid:
-        pass
-    # A cell is not a number: re-read as strings so pandera reports it. Outside
-    # the except block, so the first pass's batches are freed.
-    return _collect(csv_batches(src, rename, _V2_COLUMNS, as_strings=True), bounds)
-
-
-def _collect(batches, bounds: tuple) -> pa.Table:
-    """Validate, domain-filter and number each batch, keeping only its
-    compact typed columns.
-
-    Generated tree IDs are 1 … N over the trees kept in the domain, in file
-    order. Once any batch fails validation the rest are still validated, for
-    the report, but no data is kept.
-    """
-    xmin, ymin, xmax, ymax = bounds
-    failures = FailureCases(list(_BATCH_SCHEMA.columns))
-    tables: list[pa.Table] = []
-    tree_ids: list[tuple[int, np.ndarray]] = []
-    provided: list[str] | None = None
-    next_id = 1
-    for df in batches:
-        if provided is None:
-            provided = [c for c in _COLUMN_METADATA if c in df.columns]
-            data_schema = pa.schema(
-                [
-                    f
-                    for f in _PARQUET_SCHEMA
-                    if f.name in provided and f.name != "tree_id"
-                ]
-            )
-        for col in _OPTIONAL_COLUMNS:
-            if col not in df.columns:
-                df[col] = None
-        try:
-            df = _BATCH_SCHEMA.validate(df, lazy=True)
-        except SchemaErrors as e:
-            failures.add(e.failure_cases, list(e.data.columns))
-            tables.clear()
-            df = e.data
-        has_ids = "tree_id" in df.columns
-        if has_ids and pd.api.types.is_integer_dtype(df["tree_id"]):
-            first = int(df.index[0]) if len(df) else 0
-            tree_ids.append((first, df["tree_id"].to_numpy("int64")))
-        if failures:
-            continue
-
-        x, y = df["x"].to_numpy(), df["y"].to_numpy()
-        inside = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
-        # Filter in Arrow, so each kept column is its own allocation rather
-        # than a view of a pandas block.
-        table = pa.Table.from_pandas(
-            df[data_schema.names], schema=data_schema, preserve_index=False
-        ).filter(pa.array(inside))
-        if has_ids:
-            ids = df["tree_id"].to_numpy("int64")[inside].astype("int32")
-        else:
-            ids = np.arange(next_id, next_id + table.num_rows, dtype="int32")
-            next_id += table.num_rows
-        tables.append(table.add_column(0, "tree_id", pa.array(ids)))
-
-    if "tree_id" in (provided or []):
-        failures.add_duplicate_tree_ids(tree_ids)
-    if failures:
-        total, cases = failures.report()
-        raise ProcessingError(
-            code="SCHEMA_VALIDATION_ERROR",
-            message=f"Schema validation failed with {total} error(s).",
-            suggestion=str(cases),
-        )
-    return pa.concat_tables(tables)
 
 
 def _extract_crs_string(domain_data: dict) -> str:

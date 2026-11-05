@@ -2,10 +2,11 @@
 Unit tests for uploader/handlers/inventory.py
 
 Tests parsing and validation logic in isolation using temporary files.
-No GCP I/O — all file operations use local /tmp paths.
+No GCP I/O — all file operations use local paths.
 """
 
 import math
+import tempfile
 
 import geopandas as gpd
 import numpy as np
@@ -18,8 +19,6 @@ from uploader.handlers import inventory
 from uploader.handlers.inventory import (
     ROW_GROUP_SIZE,
     _column_summary,
-    _parse,
-    _validate,
     _write_parquet,
 )
 
@@ -27,6 +26,23 @@ from lib.errors import CancelledException, ProcessingError
 
 # Domain CRS used across tests (UTM zone 10N — matches typical California domains)
 DOMAIN_CRS = "EPSG:32610"
+
+# Bounds that keep every tree, for tests of reading and validation alone.
+WORLD = (-1e12, -1e12, 1e12, 1e12)
+
+
+def _read(fmt: str, path, col_map: dict | None = None, bounds=WORLD) -> pd.DataFrame:
+    """The upload's validated, domain-filtered trees, in file order."""
+    table = inventory._read_table(fmt, str(path), col_map or {}, DOMAIN_CRS, bounds)
+    return table.to_pandas()
+
+
+def _validate(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate ``df`` by reading it back as an uploaded CSV."""
+    with tempfile.TemporaryDirectory() as d:
+        path = f"{d}/trees.csv"
+        df.to_csv(path, index=False)
+        return _read("csv", path)
 
 
 def _write_csv(data: dict, path: str) -> None:
@@ -70,7 +86,7 @@ class TestParseCsv:
         path = str(tmp_path / "trees.csv")
         _write_csv({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT}, path)
 
-        df = _parse("csv", path, {}, DOMAIN_CRS)
+        df = _read("csv", path)
         assert list(df["x"]) == SAMPLE_X
         assert list(df["height"]) == SAMPLE_HEIGHT
 
@@ -82,7 +98,7 @@ class TestParseCsv:
         )
 
         col_map = {"x": "easting", "y": "northing", "height": "HT"}
-        df = _parse("csv", path, col_map, DOMAIN_CRS)
+        df = _read("csv", path, col_map)
         assert "x" in df.columns
         assert "y" in df.columns
         assert "height" in df.columns
@@ -102,7 +118,7 @@ class TestParseCsv:
             path,
         )
 
-        df = _parse("csv", path, {}, DOMAIN_CRS)
+        df = _read("csv", path)
         assert "plot_id" not in df.columns
         assert "surveyor" not in df.columns
 
@@ -120,7 +136,7 @@ class TestParseCsv:
             path,
         )
 
-        df = _parse("csv", path, {}, DOMAIN_CRS)
+        df = _read("csv", path)
         assert "fia_species_code" in df.columns
         assert "dbh" in df.columns
 
@@ -138,7 +154,7 @@ class TestParseCsv:
         )
 
         col_map = {"fia_species_code": "SPCD"}
-        df = _parse("csv", path, col_map, DOMAIN_CRS)
+        df = _read("csv", path, col_map)
         assert "fia_species_code" in df.columns
         assert list(df["fia_species_code"]) == [122, 202, 15]
 
@@ -152,7 +168,7 @@ class TestParseGeoJson:
         path = str(tmp_path / "trees.geojson")
         _write_geojson(lon_lat_points, {"height": [10.0, 15.0]}, path)
 
-        df = _parse("geojson", path, {}, DOMAIN_CRS)
+        df = _read("geojson", path)
         assert "x" in df.columns
         assert "y" in df.columns
         assert "height" in df.columns
@@ -168,7 +184,7 @@ class TestParseGeoJson:
         path = str(tmp_path / "trees.geojson")
         gdf.to_file(path, driver="GeoJSON")
 
-        df = _parse("geojson", path, {}, DOMAIN_CRS)
+        df = _read("geojson", path)
         assert len(df) == 2
 
     def test_column_mapping_applied_to_attributes(self, tmp_path):
@@ -178,7 +194,7 @@ class TestParseGeoJson:
         _write_geojson(lon_lat_points, {"HT": [10.0, 15.0]}, path)
 
         col_map = {"height": "HT"}
-        df = _parse("geojson", path, col_map, DOMAIN_CRS)
+        df = _read("geojson", path, col_map)
         assert "height" in df.columns
         assert "HT" not in df.columns
 
@@ -188,7 +204,7 @@ class TestParseGeoJson:
         path = str(tmp_path / "trees.geojson")
         _write_geojson(lon_lat_points, {"height": [10.0]}, path)
 
-        df = _parse("geojson", path, {}, DOMAIN_CRS)
+        df = _read("geojson", path)
         # After reprojection to UTM zone 10N, x should be ~500k meters
         assert df["x"].iloc[0] > 100_000
 
@@ -199,7 +215,7 @@ class TestParseGeoJson:
         gdf.to_file(path, driver="GeoJSON")
 
         with pytest.raises(ProcessingError) as exc_info:
-            _parse("geojson", path, {}, DOMAIN_CRS)
+            _read("geojson", path)
         assert exc_info.value.code == "EMPTY_FILE"
 
     def test_polygon_geometry_raises(self, tmp_path):
@@ -215,7 +231,7 @@ class TestParseGeoJson:
         gdf.to_file(path, driver="GeoJSON")
 
         with pytest.raises(ProcessingError) as exc_info:
-            _parse("geojson", path, {}, DOMAIN_CRS)
+            _read("geojson", path)
         assert exc_info.value.code == "INVALID_GEOMETRY_TYPE"
 
 
@@ -227,7 +243,7 @@ class TestParseGeoPackage:
             SAMPLE_POINTS, {"height": SAMPLE_HEIGHT}, path, crs=DOMAIN_CRS
         )
 
-        df = _parse("geopackage", path, {}, DOMAIN_CRS)
+        df = _read("geopackage", path)
         assert "x" in df.columns
         assert len(df) == len(SAMPLE_POINTS)
 
@@ -240,7 +256,7 @@ class TestParseGeoPackage:
             lon_lat_points, {"height": [10.0, 15.0]}, path, crs="EPSG:4326"
         )
 
-        df = _parse("geopackage", path, {}, DOMAIN_CRS)
+        df = _read("geopackage", path)
         # After reprojection to UTM zone 10N, x should be in meters
         assert df["x"].iloc[0] > 100_000
 
@@ -275,12 +291,12 @@ class TestValidate:
             _validate(df)
         assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
 
-    def test_missing_optional_columns_added_as_null(self):
-        """Missing optional columns are added as NaN and do not cause errors."""
+    def test_missing_optional_columns_left_out(self):
+        """Missing optional columns pass validation and are not kept; the
+        Parquet write pads them with nulls."""
         df = self._make_df()
         result = _validate(df)
-        assert "fia_species_code" in result.columns
-        assert result["fia_species_code"].isna().all()
+        assert "fia_species_code" not in result.columns
 
     def test_optional_columns_preserved_when_present(self):
         """Optional columns with valid values pass validation."""
@@ -507,13 +523,13 @@ class TestTreeIdValidation:
         assert err.code == "SCHEMA_VALIDATION_ERROR"
         assert "field_uniqueness" in err.suggestion
 
-    def test_absent_tree_id_not_padded(self):
-        """Without a tree_id column _validate leaves it out; handle_inventory
-        generates IDs after the domain filter."""
+    def test_absent_tree_id_generated(self):
+        """Without a tree_id column, IDs 1 … N are generated in file order."""
         result = _validate(
             pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
         )
-        assert "tree_id" not in result.columns
+        assert list(result["tree_id"]) == [1, 2, 3]
+        assert result["tree_id"].dtype == np.int32
 
     def test_tree_id_mapping_from_csv(self, tmp_path):
         path = str(tmp_path / "trees.csv")
@@ -526,7 +542,7 @@ class TestTreeIdValidation:
             },
             path,
         )
-        df = _validate(_parse("csv", path, {"tree_id": "TreeNum"}, DOMAIN_CRS))
+        df = _validate(_read("csv", path, {"tree_id": "TreeNum"}))
         assert list(df["tree_id"]) == [40, 10, 30]
 
     def test_tree_id_summary_skips_distinct_count(self):
@@ -650,7 +666,7 @@ class TestCrownRadius:
         pd.DataFrame(
             {"x": 0.0, "y": 0.0, "height": 10.0, "crown_radius": radii}
         ).to_csv(path, index=False)
-        df = _parse("csv", str(path), {}, DOMAIN_CRS)
+        df = _read("csv", str(path))
         np.testing.assert_allclose(df["crown_radius"].to_numpy(), radii, rtol=1e-12)
 
     def test_nulls_allowed(self, tmp_path, monkeypatch):

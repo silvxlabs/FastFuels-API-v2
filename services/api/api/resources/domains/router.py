@@ -578,6 +578,16 @@ async def get_domain(
     return domain
 
 
+# Mirrors lib.alignment._cell_count (not importable: rasterio); keep in sync.
+def _cell_count(extent: float, resolution: float) -> int:
+    """Ceil of extent / resolution, snapping float noise within 1e-9 to the integer."""
+    n = extent / resolution
+    nearest = round(n)
+    if abs(n - nearest) <= 1e-9 * max(1, nearest):
+        return max(1, int(nearest))
+    return max(1, math.ceil(n))
+
+
 @router.get(
     "/{domain_id}/lattice",
     response_model=DomainLattice,
@@ -642,8 +652,8 @@ async def get_domain_lattice(
     maxx += pad
     maxy += pad
     # North-up lattice anchored at (minx, miny), ceil-covering the padded bounds.
-    width = max(1, math.ceil((maxx - minx) / resolution))
-    height = max(1, math.ceil((maxy - miny) / resolution))
+    width = _cell_count(maxx - minx, resolution)
+    height = _cell_count(maxy - miny, resolution)
     return DomainLattice(
         crs=domain["crs"]["properties"]["name"],
         resolution=resolution,

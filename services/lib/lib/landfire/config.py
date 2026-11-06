@@ -117,3 +117,12 @@ NB_CODE_MAP: dict[str, int] = {
     "NB8": 98,  # Water
     "NB9": 99,  # Bare ground
 }
+
+
+# FDist codes are 100 * D_TYPE + 10 * D_SEVERITY + D_TIME.
+VALID_FDIST_CODES: frozenset[int] = frozenset(
+    100 * d_type + 10 * severity + d_time
+    for d_type in range(1, 8)
+    for severity in range(1, 4)
+    for d_time in range(1, 4)
+)

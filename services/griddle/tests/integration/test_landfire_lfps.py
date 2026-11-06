@@ -7,12 +7,14 @@ LFPS's real request/response shape still hold.
 """
 
 import json
+from unittest.mock import patch
 
 import geopandas as gpd
 import numpy as np
 import pytest
 import rasterio
 import rioxarray  # noqa: F401
+import xarray as xr
 from griddle.handlers import landfire, landfire_lfps
 
 from lib.landfire import LANDFIRE_VERSIONS, list_products
@@ -200,3 +202,59 @@ def test_fccs_disturbed_fdist_mode(disturbance_roi):
     assert ds["fccs"].shape == plain["fccs"].shape
     assert np.array_equal(ds.x, plain.x) and np.array_equal(ds.y, plain.y)
     assert (ds["fccs"].values != plain["fccs"].values).any()
+
+
+def _user_fdist_grid(plain: xr.Dataset, code: int) -> xr.DataArray:
+    """A user FDist grid with `code` everywhere, on the plain fetch's lattice."""
+    return xr.full_like(plain["fbfm"], code, dtype=np.int16)
+
+
+def test_fbfm40_disturbed_user_fdist_grid(disturbance_roi):
+    """A user's FDist grid alone updates the 2024 FBFM40 on LANDFIRE's real grid."""
+    plain = landfire.fetch_fbfm40(disturbance_roi, lambda *a, **k: None, version="2024")
+    plan = {
+        "source": "grid",
+        "grid_id": "g1",
+        "checksum": "abc",
+        "band": "fdist",
+        "include_landfire": False,
+    }
+
+    # 131 is a high-severity fire in the mapping year, which LANDFIRE's rules map to
+    # a different fuel model for most vegetation.
+    with patch.object(landfire, "load_band", return_value=_user_fdist_grid(plain, 131)):
+        ds = landfire.fetch_disturbed_fuel(
+            disturbance_roi, "fbfm40", "2024", plan, lambda *a, **k: None
+        )
+
+    assert list(ds.data_vars) == ["fbfm"]
+    assert ds["fbfm"].dims == ("y", "x")
+    assert ds["fbfm"].dtype == plain["fbfm"].dtype
+    assert ds["fbfm"].shape == plain["fbfm"].shape
+    assert np.array_equal(ds.x, plain.x) and np.array_equal(ds.y, plain.y)
+    assert (ds["fbfm"].values != plain["fbfm"].values).any()
+
+
+def test_fbfm40_disturbed_user_polygons(disturbance_roi):
+    """A user's disturbance polygons, given in lat/lon, update the 2024 FBFM40."""
+    plain = landfire.fetch_fbfm40(disturbance_roi, lambda *a, **k: None, version="2024")
+    plan = {"source": "feature", "feature_id": "f1", "include_landfire": False}
+
+    # The whole domain in one polygon, reprojected to lat/lon so the burn also
+    # has to reproject onto the real grid.
+    polygons = gpd.GeoDataFrame(
+        {"fdist": [131]},
+        geometry=disturbance_roi.geometry.values[:1],
+        crs=disturbance_roi.crs,
+    ).to_crs("EPSG:4326")
+
+    with patch.object(landfire, "_load_disturbance_polygons", return_value=polygons):
+        ds = landfire.fetch_disturbed_fuel(
+            disturbance_roi, "fbfm40", "2024", plan, lambda *a, **k: None
+        )
+
+    assert list(ds.data_vars) == ["fbfm"]
+    assert ds["fbfm"].dims == ("y", "x")
+    assert ds["fbfm"].shape == plain["fbfm"].shape
+    assert np.array_equal(ds.x, plain.x) and np.array_equal(ds.y, plain.y)
+    assert (ds["fbfm"].values != plain["fbfm"].values).any()

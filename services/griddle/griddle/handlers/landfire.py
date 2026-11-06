@@ -27,10 +27,22 @@ from shapely.geometry import box
 from xarray import DataArray
 
 from griddle.handlers import landfire_lfps
+from griddle.storage import load_band
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
-from lib.config import RASTERS_BUCKET, TABLES_BUCKET
+from lib.config import (
+    FEATURES_BUCKET,
+    FEATURES_COLLECTION,
+    RASTERS_BUCKET,
+    TABLES_BUCKET,
+)
 from lib.errors import ProcessingError
-from lib.landfire import LANDFIRE_VERSIONS, NB_CODE_MAP, validate_landfire_version
+from lib.firestore import DocumentNotFoundError, get_document
+from lib.landfire import (
+    LANDFIRE_VERSIONS,
+    NB_CODE_MAP,
+    VALID_FDIST_CODES,
+    validate_landfire_version,
+)
 from lib.raster import RasterConnection, cog_env
 
 logger = logging.getLogger(__name__)
@@ -67,6 +79,7 @@ _DISTURBED_FUEL_MODELS = {
     "fbfm40": ("FBFM40_code", "fbfm"),
     "fccs": ("FCCS", "fccs"),
 }
+
 # LANDFIRE aspect marks flat cells (slope 0-2 deg) with -1. Topography grids
 # store flat as 0, matching 3DEP.
 LANDFIRE_FLAT_ASPECT: int = -1
@@ -187,6 +200,103 @@ def _ldist_attributes(version: str) -> pd.DataFrame:
             message=f"No LDist attribute table for version {version} is available.",
             suggestion=f"Upload LF{version}_LDist_attributes.csv to the tables bucket.",
         )
+
+
+def _check_fdist_codes(fdist: np.ndarray, nodata: float | None = None) -> None:
+    """Fail unless every value of a user's FDist codes is valid.
+
+    The codes come from a user's FDist grid (one per cell) or from their
+    disturbance polygons (one per polygon).
+
+    Zero, NaN and ``nodata`` mean undisturbed. Any other value must be
+    ``100 * D_TYPE + 10 * D_SEVERITY + D_TIME`` with D_TYPE 1-7, D_SEVERITY 1-3
+    and D_TIME 1-3, so a negative value other than ``nodata`` is invalid. Core
+    silently ignores a positive value that matches no rule, so an invalid code
+    would otherwise do nothing.
+
+    Args:
+        fdist: The FDist codes: a raster, or the codes of the polygons.
+        nodata: The band's declared nodata value, if any. Polygons have none.
+
+    Raises:
+        ProcessingError: ``INVALID_FDIST_CODES``, listing the offending codes.
+    """
+    checked = np.isfinite(fdist) & (fdist != 0)
+    if nodata is not None:
+        checked &= fdist != nodata
+
+    codes = np.unique(fdist[checked])
+    invalid = codes[~np.isin(codes, list(VALID_FDIST_CODES))]
+    if invalid.size == 0:
+        return
+
+    listed = ", ".join(f"{code:g}" for code in invalid)
+    raise ProcessingError(
+        code="INVALID_FDIST_CODES",
+        message=f"The disturbance data has values that aren't valid FDist codes: {listed}.",
+        suggestion=(
+            "FDist codes are 100 * D_TYPE + 10 * D_SEVERITY + D_TIME, with "
+            "D_TYPE 1-7, D_SEVERITY 1-3 and D_TIME 1-3. Use 0 for undisturbed cells."
+        ),
+    )
+
+
+def _load_disturbance_polygons(feature_id: str) -> gpd.GeoDataFrame:
+    """A user's disturbance polygons, one row per polygon with its code in ``fdist``.
+
+    The feature's record gives the domain its Parquet is stored under.
+
+    Raises:
+        ProcessingError: ``DISTURBANCE_FEATURE_NOT_FOUND`` when the feature or
+            its Parquet is missing;  ``INVALID_FDIST_CODES`` when a polygon has
+            no code.
+    """
+    try:
+        _, snapshot = get_document(FEATURES_COLLECTION, feature_id)
+        domain_id = snapshot.to_dict()["domain_id"]
+        polygons = gpd.read_parquet(
+            f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
+        )
+    except (DocumentNotFoundError, FileNotFoundError) as e:
+        raise ProcessingError(
+            code="DISTURBANCE_FEATURE_NOT_FOUND",
+            message=f"Disturbance feature {feature_id} not found.",
+            suggestion="Confirm the feature_id refers to an uploaded disturbance feature.",
+        ) from e
+
+    if "fdist" not in polygons or polygons["fdist"].isna().any():
+        raise ProcessingError(
+            code="INVALID_FDIST_CODES",
+            message=f"Disturbance feature {feature_id} has polygons with no fdist code.",
+            suggestion="Give every polygon an integer fdist property.",
+        )
+    return polygons
+
+
+def _rasterize_fdist(polygons: gpd.GeoDataFrame, like: DataArray) -> np.ndarray:
+    """FDist codes of ``polygons`` burned onto ``like``'s grid.
+
+    A cell takes the code of the polygon that covers its center. Where polygons
+    overlap, the more recent disturbance wins (the lower last digit, D_TIME);
+    if they are equally recent, the later row wins. Every other cell is 0.
+    """
+    polygons = polygons.to_crs(like.rio.crs)
+    polygons = polygons[~(polygons.geometry.isna() | polygons.geometry.is_empty)]
+    if polygons.empty:
+        return np.zeros(like.shape, dtype=np.int32)
+
+    # Burn the oldest first so the most recent ends up on top. The sort is
+    # stable, so equally recent polygons keep their order in the file.
+    d_time = polygons["fdist"].astype(int).to_numpy() % 10
+    polygons = polygons.iloc[np.argsort(-d_time, kind="stable")]
+
+    return rasterize(
+        zip(polygons.geometry, polygons["fdist"].astype(int)),
+        out_shape=like.shape,
+        transform=like.rio.transform(),
+        fill=0,
+        dtype="int32",
+    )
 
 
 def _fetch_landfire_raster(
@@ -721,10 +831,11 @@ def fetch_disturbed_fuel(
         fuel_model: "fbfm13", "fbfm40", or "fccs" -- the output product.
         version: LANDFIRE version of `fuel_model` whose values undisturbed
             pixels keep.
-        disturbance: The plan the API stored on the grid's source, e.g.
-            ``{"source": "landfire", "mode": "ldist_and_last_year_fdist",
-            "ldist_version": "2025", "fdist_version": "2024"}`` or
-            ``{"source": "landfire", "mode": "fdist", "fdist_version": "2026"}``.
+        disturbance: The plan the API stored on the grid's source. Its
+            ``source`` is "landfire" (LANDFIRE's own disturbance) or "grid"
+            (a user's grid, with ``grid_id``, ``band`` and, for an FDist band,
+            ``include_landfire``) or "feature" (a user's disturbance polygons,
+            with ``feature_id`` and ``include_landfire``).
         progress: Progress callback.
         remove_non_burnable: fbfm13/fbfm40 only -- as in fetch_fbfm13/40,
             applied to the updated grid.
@@ -743,12 +854,28 @@ def fetch_disturbed_fuel(
     """
     alignment = alignment or {"target": "domain"}
     rules_column, band_key = _DISTURBED_FUEL_MODELS[fuel_model]
-    combined = disturbance["mode"] != "fdist"
+    from_grid = disturbance["source"] == "grid"
+    from_feature = disturbance["source"] == "feature"
+    user_ldist = from_grid and disturbance["band"] == "annual_disturbance"
+    user_fdist = from_feature or (from_grid and disturbance["band"] == "fdist")
+    user_only = user_fdist and not disturbance["include_landfire"]
+    combined = not user_only and disturbance["mode"] != "fdist"
+
+    # The user's disturbance is checked now, before the slow LFPS job.
+    if from_grid:
+        user_disturbance = load_band(disturbance["grid_id"], disturbance["band"])
+        if user_fdist:
+            _check_fdist_codes(user_disturbance.values, user_disturbance.rio.nodata)
+    elif from_feature:
+        polygons = _load_disturbance_polygons(disturbance["feature_id"])
+        _check_fdist_codes(polygons["fdist"].to_numpy())
 
     # One LFPS job for every layer it serves. `previous` joins it only when
     # its version is LFPS-only; a staged one is fetched on its own below.
-    layers = {"fdist": disturbance["fdist_version"]}
-    if combined:
+    layers = {}
+    if not user_only:
+        layers["fdist"] = disturbance["fdist_version"]
+    if combined and not user_ldist:
         layers["annual_disturbance"] = disturbance["ldist_version"]
     for product in ("fvt", "fvc", "fvh", "bps"):
         layers[product] = LANDFIRE_VERSIONS[product]["default"]
@@ -786,14 +913,34 @@ def fetch_disturbed_fuel(
             target_grid_doc,
         )
 
-    progress("Matching disturbance rulesets...", 85)
-    fdist_inputs = {"fdist": bands["fdist"].values}
-    if combined:
-        fdist_inputs["ldist"] = bands["annual_disturbance"].values
-        fdist_inputs["ldist_attribute_table"] = _ldist_attributes(
-            disturbance["ldist_version"]
+    if from_grid:
+        # Nearest-neighbor whatever alignment.method says: codes must never blend.
+        user_disturbance = user_disturbance.rio.reproject_match(
+            previous, resampling=RESAMPLING_METHOD_MAP["nearest"]
         )
-    dist, unconverted = build_fdist_raster(disturbance["mode"], **fdist_inputs)
+        user_codes = user_disturbance.values
+        if user_disturbance.rio.nodata is not None:
+            user_codes = np.where(
+                user_codes == user_disturbance.rio.nodata, 0, user_codes
+            )
+    elif from_feature:
+        user_codes = _rasterize_fdist(polygons, previous)
+
+    progress("Matching disturbance rulesets...", 85)
+    if user_only:
+        dist, unconverted = build_fdist_raster("fdist", fdist=user_codes)
+    else:
+        fdist_inputs = {"fdist": bands["fdist"].values}
+        if combined:
+            fdist_inputs["ldist"] = (
+                user_codes if user_ldist else bands["annual_disturbance"].values
+            )
+            fdist_inputs["ldist_attribute_table"] = _ldist_attributes(
+                disturbance["ldist_version"]
+            )
+        dist, unconverted = build_fdist_raster(disturbance["mode"], **fdist_inputs)
+        if user_fdist:
+            dist = np.where(user_codes > 0, user_codes, dist)
 
     zone = _lookup_lf_zones(
         _lf_map_zones(), previous.rio.transform(), previous.shape, previous.rio.crs

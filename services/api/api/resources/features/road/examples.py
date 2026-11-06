@@ -60,3 +60,82 @@ ROAD_EXAMPLE_VALUES = [
     ("with_metadata", EXAMPLE_ROAD_WITH_METADATA),
     ("with_buffer", EXAMPLE_ROAD_WITH_BUFFER),
 ]
+
+# Two hand-drawn driveways in the Blackfoot example domain, in WGS84 lon/lat.
+# OpenStreetMap maps neither.
+EXAMPLE_ROAD_GEOJSON = {
+    "type": "FeatureCollection",
+    "name": "Driveways",
+    "description": "Hand-drawn driveways that OpenStreetMap is missing.",
+    "tags": ["roads", "driveways"],
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {"type": "driveway"},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-113.7011095, 46.9162721],
+                        [-113.7004257, 46.9158347],
+                        [-113.7004615, 46.9158084],
+                        [-113.7011347, 46.916239],
+                        [-113.7021861, 46.9163929],
+                        [-113.7021751, 46.9164281],
+                        [-113.7011095, 46.9162721],
+                    ]
+                ],
+            },
+        },
+        {
+            "type": "Feature",
+            "properties": {"type": "driveway"},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-113.6980575, 46.9149857],
+                        [-113.6980168, 46.9149711],
+                        [-113.6985099, 46.9143295],
+                        [-113.6985506, 46.9143441],
+                        [-113.6980575, 46.9149857],
+                    ]
+                ],
+            },
+        },
+    ],
+}
+
+CREATE_ROAD_GEOJSON_OPENAPI_EXAMPLES = {
+    "driveways": {
+        "value": EXAMPLE_ROAD_GEOJSON,
+        "summary": "Hand-drawn driveways",
+        "description": (
+            "Uploads two driveway polygons in WGS84 (no `crs` block). They are "
+            "reprojected to the domain CRS and clipped to the domain."
+        ),
+    },
+}
+
+ROAD_GEOJSON_EXAMPLE_VALUES = [("driveways", EXAMPLE_ROAD_GEOJSON)]
+
+EXAMPLE_ROAD_CONCATENATE = {
+    "source_feature_ids": [
+        "4f6c1b2e9a7d4c3b8e5f0a1d2c3b4a59",
+        "b81e7d6c5a4f4e3d9c2b1a0f9e8d7c6b",
+    ],
+    "name": "Roads and driveways",
+    "description": "OpenStreetMap roads plus hand-drawn driveways.",
+    "tags": ["roads"],
+}
+
+CONCATENATE_ROAD_OPENAPI_EXAMPLES = {
+    "roads_and_driveways": {
+        "value": EXAMPLE_ROAD_CONCATENATE,
+        "summary": "OSM roads plus uploaded driveways",
+        "description": (
+            "Appends the rows of an OpenStreetMap road feature and an uploaded "
+            "driveway feature into one road feature."
+        ),
+    },
+}

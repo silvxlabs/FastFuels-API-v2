@@ -30,6 +30,12 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
         "lfps_available": ["2025"],
         "default": "2023",
     },
+    "canopy": {
+        "available": ["2024"],
+        "lfps_available": ["2025"],
+        "default": "2024",
+        "layers": ["chm", "cbd", "cbh", "cc"],
+    },
     "annual_disturbance": {
         "lfps_available": ["2025"],
         "default": "2025",
@@ -62,15 +68,20 @@ LANDFIRE_VERSIONS: dict[str, dict[str, list[str] | str]] = {
 LFPS_ACRONYM_OVERRIDES: dict[str, str] = {
     "annual_disturbance": "LDist",
     "fdist": "FDist",
+    "chm": "CH",
 }
 
 
 def lfps_acronym(product: str) -> str:
     """The acronym LFPS's live catalog uses for `product`.
 
-    Returns the override from LFPS_ACRONYM_OVERRIDES if `product`
-    is listed there; otherwise returns `product.upper()`.
+    A grouped product (one with `layers`) is represented by its first layer.
+    Returns the override from LFPS_ACRONYM_OVERRIDES if the product is
+    listed there; otherwise returns `product.upper()`.
     """
+    layers = LANDFIRE_VERSIONS.get(product, {}).get("layers")
+    if layers:
+        product = layers[0]
     return LFPS_ACRONYM_OVERRIDES.get(product, product.upper())
 
 

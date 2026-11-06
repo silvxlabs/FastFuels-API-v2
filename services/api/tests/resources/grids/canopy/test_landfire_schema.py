@@ -18,6 +18,7 @@ from api.resources.grids.canopy.schema import (
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
 
+from lib.landfire import LANDFIRE_VERSIONS
 from lib.units import validate_unit
 
 
@@ -126,8 +127,14 @@ class TestLandfireCanopyVersion:
     def test_has_2024(self):
         assert LandfireCanopyVersion.v2024 == "2024"
 
-    def test_has_exactly_one_member(self):
-        assert len(LandfireCanopyVersion) == 1
+    def test_has_2025(self):
+        assert LandfireCanopyVersion.v2025 == "2025"
+
+    def test_members_match_registry(self):
+        versions = LANDFIRE_VERSIONS["canopy"]
+        assert {v.value for v in LandfireCanopyVersion} == set(
+            versions["available"]
+        ) | set(versions["lfps_available"])
 
 
 class TestLandfireCanopySource:

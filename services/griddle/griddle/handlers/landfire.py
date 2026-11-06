@@ -921,21 +921,57 @@ def fetch_canopy_landfire(
         kg/m**3 for cbd, % for cc) with NaN at both LANDFIRE nodata sentinels.
     """
     alignment = alignment or {"target": "domain"}
-    variables: dict[str, DataArray] = {}
-    for i, band in enumerate(bands):
-        pct = 10 + int(70 * i / len(bands))
-        progress(f"Fetching LANDFIRE canopy {band}...", pct)
-        product_code = LANDFIRE_CANOPY_PRODUCT_MAP[band]
-        url = _landfire_cog_url(product_code, version)
-        raw = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=False,
-        )
-        variables[band] = _scale_canopy_band(raw, LANDFIRE_CANOPY_SCALE_FACTORS[band])
+    raw: dict[str, DataArray] = {}
+    if _needs_lfps("canopy", version):
+        if len(bands) == 1:
+            source = landfire_lfps.fetch_lfps(
+                roi,
+                bands[0],
+                version,
+                alignment,
+                target_grid_doc,
+                extent_buffer_cells,
+                progress,
+            )
+        else:
+            source = landfire_lfps.fetch_lfps_multi(
+                roi,
+                {band: version for band in bands},
+                alignment,
+                target_grid_doc,
+                extent_buffer_cells,
+                progress,
+            )
+        with source as path:
+            for i, band in enumerate(bands):
+                raw[band] = _fetch_landfire_raster(
+                    roi,
+                    path,
+                    extent_buffer_cells,
+                    alignment,
+                    target_grid_doc,
+                    is_categorical=False,
+                    band=i + 1,
+                )
+    else:
+        validate_landfire_version("canopy", version)
+        for i, band in enumerate(bands):
+            pct = 10 + int(70 * i / len(bands))
+            progress(f"Fetching LANDFIRE canopy {band}...", pct)
+            url = _landfire_cog_url(LANDFIRE_CANOPY_PRODUCT_MAP[band], version)
+            raw[band] = _fetch_landfire_raster(
+                roi,
+                url,
+                extent_buffer_cells,
+                alignment,
+                target_grid_doc,
+                is_categorical=False,
+            )
+
+    variables = {
+        band: _scale_canopy_band(data, LANDFIRE_CANOPY_SCALE_FACTORS[band])
+        for band, data in raw.items()
+    }
 
     return _to_dataset(variables)
 

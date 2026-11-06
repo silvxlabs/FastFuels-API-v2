@@ -9,7 +9,8 @@ import pytest
 from api.resources.grids.canopy.examples import (
     ALL_LANDFIRE_CANOPY_EXAMPLE_VALUES,
 )
-from api.resources.grids.canopy.schema import LandfireCanopyVersion
+
+from lib.landfire import LANDFIRE_VERSIONS
 
 
 class TestCreateLandfireCanopy:
@@ -166,7 +167,7 @@ class TestCreateLandfireCanopy:
         assert data["source"]["name"] == "canopy"
         assert data["source"]["product"] == "landfire"
 
-    @pytest.mark.parametrize("version", [v.value for v in LandfireCanopyVersion])
+    @pytest.mark.parametrize("version", LANDFIRE_VERSIONS["canopy"]["available"])
     def test_version_can_be_set(self, client, domain_for_testing, version):
         """Each valid version creates a grid with the correct version set."""
         response = client.post(
@@ -235,3 +236,73 @@ class TestCreateLandfireCanopy:
             json={"extent_buffer_cells": 11},
         )
         assert response.status_code == 422
+
+
+class TestLfpsVersion:
+    """Versions served on demand go through the LFPS coverage check."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/canopy/landfire"
+
+    @pytest.mark.parametrize(
+        "bands", [["chm"], ["chm", "cc"], ["chm", "cbd", "cbh", "cc"]]
+    )
+    def test_lfps_version_creates_grid_where_covered(
+        self, client, lfps_covered_domain, bands
+    ):
+        """Real LFPS coverage check against a domain with known coverage."""
+        version = LANDFIRE_VERSIONS["canopy"]["lfps_available"][0]
+        response = client.post(
+            self.route(lfps_covered_domain["id"]),
+            json={"version": version, "bands": bands},
+        )
+        assert response.status_code == 201, response.json()
+        assert response.json()["source"]["version"] == version
+
+
+class TestLandfireCanopyCoverage:
+    """Live coverage pre-flight against a domain with known LFPS coverage."""
+
+    def route(self, domain_id):
+        return f"/domains/{domain_id}/grids/canopy/landfire/coverage"
+
+    def test_reports_latest_release_with_create_link(self, client, lfps_covered_domain):
+        response = client.get(self.route(lfps_covered_domain["id"]))
+        assert response.status_code == 200, response.json()
+        body = response.json()
+
+        assert body["product"] == "canopy"
+        latest = body["latest"]
+        assert latest["coverage"] == "full"
+        create = latest["links"]["create"]
+        assert create["method"] == "POST"
+        assert (
+            create["href"]
+            == f"/domains/{lfps_covered_domain['id']}/grids/canopy/landfire"
+        )
+        assert create["body"]["version"] == latest["version"]
+
+    def test_lists_every_registry_version_with_staged_ones_full(
+        self, client, lfps_covered_domain
+    ):
+        body = client.get(self.route(lfps_covered_domain["id"])).json()
+        releases = {r["version"]: r for r in body["releases"]}
+
+        versions = LANDFIRE_VERSIONS["canopy"]
+        assert set(releases) == set(versions["available"]) | set(
+            versions["lfps_available"]
+        )
+        for version in versions["available"]:
+            if version in versions["lfps_available"]:
+                continue
+            assert releases[version]["coverage"] == "full"
+            assert releases[version]["links"]["create"]["body"] == {"version": version}
+
+    def test_releases_are_newest_first(self, client, lfps_covered_domain):
+        body = client.get(self.route(lfps_covered_domain["id"])).json()
+        years = [r["year"] for r in body["releases"]]
+        assert years == sorted(years, reverse=True)
+
+    def test_invalid_domain_returns_404(self, client):
+        response = client.get(self.route("00000000000000000000000000000000"))
+        assert response.status_code == 404

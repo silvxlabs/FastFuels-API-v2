@@ -5,6 +5,11 @@ Pure schema tests with no external dependencies.
 """
 
 import pytest
+from api.resources.crown_radius import (
+    AllometryMaxCrownRadiusSource,
+    InventoryColumnMaxCrownRadiusSource,
+    MaxCrownRadiusUnit,
+)
 from api.resources.grids.schema import BandType
 from api.resources.grids.voxelize.inventory.tree.examples import (
     ALL_TREE_INVENTORY_EXAMPLE_VALUES,
@@ -12,7 +17,6 @@ from api.resources.grids.voxelize.inventory.tree.examples import (
 from api.resources.grids.voxelize.inventory.tree.schema import (
     TREE_BAND_DEFS,
     AllometryBiomassSource,
-    AllometryMaxCrownRadiusSource,
     BiomassComponent,
     BiomassComponentState,
     BiomassEquations,
@@ -21,9 +25,7 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     CrownGeometryCounts,
     CrownProfileModel,
     FineBiomassConfig,
-    InventoryColumnMaxCrownRadiusSource,
     InventoryColumnsBiomassSource,
-    MaxCrownRadiusUnit,
     MoistureModel,
     ParametricCrownGeometrySource,
     TreeBand,

@@ -24,6 +24,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.crown_radius import InventoryColumnMaxCrownRadiusSource
 from api.resources.features.schema import FeatureType
 from api.resources.grids.schema import Grid
 from api.resources.grids.utils import incomplete_inventory_columns
@@ -35,7 +36,6 @@ from api.resources.grids.voxelize.inventory.tree.schema import (
     BiomassComponent,
     CreateTreeInventoryRequest,
     CrownFeatureCrownGeometrySource,
-    InventoryColumnMaxCrownRadiusSource,
     TreeInventoryVoxelizationSource,
     build_tree_bands,
 )

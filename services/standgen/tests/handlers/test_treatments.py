@@ -217,5 +217,43 @@ class TestApplyInPlaceTreatments:
         with pytest.raises(ProcessingError) as exc_info:
             apply_in_place_treatments(base_inventory, domain_gdf, progress)
 
-        assert exc_info.value.code == "TREATMENTS_REQUIRE_DBH"
+        assert exc_info.value.code == "TREATMENT_COLUMNS_MISSING"
+        assert "dbh" in exc_info.value.message
         mock_save.assert_not_called()
+
+    @patch("standgen.handlers.treatments.save_parquet_replace_with_summary")
+    @patch("standgen.handlers.treatments.load_inventory_parquet")
+    def test_crown_spacing_on_data_without_dbh(
+        self, mock_load, mock_save, base_inventory, domain_gdf
+    ):
+        """A crown-spacing treatment ranked by height on a measured radius
+        column applies to data with no dbh, such as a CHM-derived inventory."""
+        df = pd.DataFrame(
+            {
+                "tree_id": [1, 2, 3],
+                "x": [500100.0, 500102.0, 500300.0],
+                "y": [5200100.0, 5200100.0, 5200100.0],
+                "height": [20.0, 15.0, 10.0],
+                "crown_radius": [1.0, 1.0, 1.0],
+            }
+        )
+        mock_load.return_value = dd.from_pandas(df, npartitions=2)
+        mock_save.return_value = ("gs://test-bucket/inventory-id", {}, None)
+        base_inventory["pending_treatments"] = [
+            {
+                "metric": "crown_spacing",
+                "value": 1.0,
+                "rank_by": "height",
+                "max_crown_radius_source": {
+                    "type": "inventory_column",
+                    "column": "crown_radius",
+                    "unit": "m",
+                },
+                "conditions": [],
+            }
+        ]
+
+        apply_in_place_treatments(base_inventory, domain_gdf, MagicMock())
+
+        result_df = mock_save.call_args[0][1].compute()
+        assert sorted(result_df["tree_id"]) == [1, 3]

@@ -70,6 +70,46 @@ EXAMPLE_DIAMETER_INCHES = {
     ],
 }
 
+# Crown spacing in a ring 5–30 ft from a building Feature
+EXAMPLE_CROWN_SPACING_RING = {
+    "treatments": [
+        {
+            "metric": "crown_spacing",
+            "value": 10.0,
+            "unit": "ft",
+            "conditions": [
+                {
+                    "source": "feature",
+                    "operator": "within",
+                    "feature_id": "feat_building_abc",
+                    "buffer_m": 9.14,
+                },
+                {
+                    "source": "feature",
+                    "operator": "outside",
+                    "feature_id": "feat_building_abc",
+                    "buffer_m": 1.52,
+                },
+            ],
+        }
+    ],
+}
+
+# Crown spacing on a CHM-derived inventory with measured crown radii
+EXAMPLE_CROWN_SPACING_MEASURED_CROWNS = {
+    "treatments": [
+        {
+            "metric": "crown_spacing",
+            "value": 3.0,
+            "rank_by": "height",
+            "max_crown_radius_source": {
+                "type": "inventory_column",
+                "column": "crown_radius",
+            },
+        }
+    ],
+}
+
 APPLY_TREATMENTS_OPENAPI_EXAMPLES = {
     "diameter_from_below": {
         "value": EXAMPLE_DIAMETER_FROM_BELOW,
@@ -113,6 +153,26 @@ APPLY_TREATMENTS_OPENAPI_EXAMPLES = {
             "the value to the native cm before the treatment is applied."
         ),
     },
+    "crown_spacing_ring": {
+        "value": EXAMPLE_CROWN_SPACING_RING,
+        "summary": "Crown spacing 5–30 ft from a building",
+        "description": (
+            "Leave at least 10 ft between retained crowns in the ring between "
+            "5 ft and 30 ft of a building Feature. Trees closer than 5 ft or "
+            "farther than 30 ft are not removed, but trees in the ring must "
+            "clear their crowns. Crown radii come from the default `purves` "
+            "allometry, and the larger `dbh` is kept."
+        ),
+    },
+    "crown_spacing_measured_crowns": {
+        "value": EXAMPLE_CROWN_SPACING_MEASURED_CROWNS,
+        "summary": "Crown spacing with measured crown radii",
+        "description": (
+            "Leave at least 3 m between retained crowns, reading each radius "
+            "from the `crown_radius` column that CHM crown segmentation adds "
+            "and keeping the taller tree. Works on inventories with no `dbh`."
+        ),
+    },
 }
 
 ALL_TREATMENTS_EXAMPLE_VALUES = [
@@ -121,4 +181,6 @@ ALL_TREATMENTS_EXAMPLE_VALUES = [
     ("basal_area_proportional", EXAMPLE_BASAL_AREA_PROPORTIONAL),
     ("treatment_in_road_buffer", EXAMPLE_TREATMENT_IN_ROAD_BUFFER),
     ("diameter_inches", EXAMPLE_DIAMETER_INCHES),
+    ("crown_spacing_ring", EXAMPLE_CROWN_SPACING_RING),
+    ("crown_spacing_measured_crowns", EXAMPLE_CROWN_SPACING_MEASURED_CROWNS),
 ]

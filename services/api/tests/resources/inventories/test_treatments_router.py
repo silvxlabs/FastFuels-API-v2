@@ -17,7 +17,7 @@ import threading
 import uuid
 
 import pytest
-from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS
+from api.resources.inventories.schema import CHM_INVENTORY_COLUMNS, CROWN_RADIUS_COLUMN
 from api.resources.inventories.treatments.examples import (
     ALL_TREATMENTS_EXAMPLE_VALUES,
 )
@@ -123,6 +123,34 @@ def chm_inventory(firestore_client, domain_for_testing):
     doc_ref.set(inv_data)
     yield inv_data
     doc_ref.delete()
+
+
+@pytest.fixture
+def segmented_chm_inventory(firestore_client, domain_for_testing, cleanup_inventories):
+    """A fresh completed CHM inventory with crown segmentation's crown_radius.
+
+    Function-scoped: a successful POST flips it to pending."""
+    inv = make_inventory_data(
+        domain_id=domain_for_testing["id"],
+        name="CHM Inventory with crown_radius",
+        status="completed",
+        georeference={
+            "crs": "EPSG:32611",
+            "bounds": [500000.0, 5200000.0, 501000.0, 5201000.0],
+        },
+    )
+    inv["columns"] = [*CHM_COLUMNS, CROWN_RADIUS_COLUMN.model_dump()]
+    firestore_client.collection(INVENTORIES_COLLECTION).document(inv["id"]).set(inv)
+    cleanup_inventories.append(inv["id"])
+    return inv
+
+
+MEASURED_CROWN_SPACING = {
+    "metric": "crown_spacing",
+    "value": 3.0,
+    "rank_by": "height",
+    "max_crown_radius_source": {"type": "inventory_column", "column": "crown_radius"},
+}
 
 
 @pytest.fixture(scope="session")
@@ -491,13 +519,75 @@ class TestApplyTreatmentsInPlace:
     def test_chm_inventory_without_dbh_returns_422(
         self, client, domain_for_testing, chm_inventory
     ):
-        """Treatments require a dbh column; a CHM-derived inventory has none."""
+        """A diameter treatment reads dbh; a CHM-derived inventory has none."""
         response = client.post(
             self.route(domain_for_testing["id"], chm_inventory["id"]),
             json=MINIMAL_TREATMENTS_BODY,
         )
         assert response.status_code == 422
-        assert "dbh" in response.json()["detail"]
+        assert "`dbh`" in response.json()["detail"]
+
+    def test_crown_spacing_on_segmented_chm_inventory(
+        self, client, domain_for_testing, segmented_chm_inventory, firestore_client
+    ):
+        """A height-ranked crown-spacing treatment on the measured crown_radius
+        applies to an inventory with no dbh, and is queued as stored."""
+        inv_id = segmented_chm_inventory["id"]
+        response = client.post(
+            self.route(domain_for_testing["id"], inv_id),
+            json={"treatments": [MEASURED_CROWN_SPACING]},
+        )
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == "pending"
+
+        stored = (
+            firestore_client.collection(INVENTORIES_COLLECTION)
+            .document(inv_id)
+            .get()
+            .to_dict()
+        )
+        assert stored["pending_treatments"] == [
+            {
+                **MEASURED_CROWN_SPACING,
+                "max_crown_radius_source": {
+                    **MEASURED_CROWN_SPACING["max_crown_radius_source"],
+                    "unit": "m",
+                },
+                "unit": None,
+                "conditions": [],
+            }
+        ]
+
+    def test_default_crown_spacing_on_chm_inventory_returns_422(
+        self, client, domain_for_testing, segmented_chm_inventory
+    ):
+        """The default dbh ranking and Purves radius read columns CHM lacks."""
+        response = client.post(
+            self.route(domain_for_testing["id"], segmented_chm_inventory["id"]),
+            json={"treatments": [{"metric": "crown_spacing", "value": 3.0}]},
+        )
+        assert response.status_code == 422
+        assert "rank_by" in response.json()["detail"]
+
+    def test_measured_crown_spacing_without_radius_column_returns_422(
+        self, client, domain_for_testing, chm_inventory
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"], chm_inventory["id"]),
+            json={"treatments": [MEASURED_CROWN_SPACING]},
+        )
+        assert response.status_code == 422
+        assert "`crown_radius`" in response.json()["detail"]
+
+    def test_inventory_wide_crown_spacing_over_area_limit_returns_422(
+        self, client, large_domain, large_domain_inventory
+    ):
+        response = client.post(
+            self.route(large_domain["id"], large_domain_inventory["id"]),
+            json={"treatments": [{"metric": "crown_spacing", "value": 3.0}]},
+        )
+        assert response.status_code == 422
+        assert "km" in response.json()["detail"]
 
     def test_inventory_wide_basal_area_over_area_limit_returns_422(
         self, client, large_domain, large_domain_inventory

@@ -443,6 +443,74 @@ class TestCreateChmInventoryCrownSegmentation:
         ]
         assert data["columns"][-1]["unit"] == "m"
 
+    def test_crown_spacing_treatment_on_segmented_crowns(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        """A height-ranked crown-spacing treatment reading crown_radius is
+        accepted with crown segmentation and stored."""
+        treatment = {
+            "metric": "crown_spacing",
+            "value": 3.0,
+            "rank_by": "height",
+            "max_crown_radius_source": {
+                "type": "inventory_column",
+                "column": "crown_radius",
+            },
+        }
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_chm_grid_id": chm_grid_for_inventory["id"],
+                "crown_segmentation": {},
+                "treatments": [treatment],
+            },
+        )
+        assert response.status_code == 201, response.json()
+        stored = response.json()["treatments"]
+        assert len(stored) == 1
+        assert stored[0]["metric"] == "crown_spacing"
+        assert stored[0]["rank_by"] == "height"
+
+    def test_crown_spacing_without_segmentation_returns_422(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        """Without crown segmentation there is no crown_radius column to read."""
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_chm_grid_id": chm_grid_for_inventory["id"],
+                "treatments": [
+                    {
+                        "metric": "crown_spacing",
+                        "value": 3.0,
+                        "rank_by": "height",
+                        "max_crown_radius_source": {
+                            "type": "inventory_column",
+                            "column": "crown_radius",
+                        },
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 422
+        assert "`crown_radius`" in response.json()["detail"]
+
+    def test_diameter_treatment_returns_422(
+        self, client, domain_for_testing, chm_grid_for_inventory
+    ):
+        response = client.post(
+            self.route(domain_for_testing["id"]),
+            json={
+                "source_chm_grid_id": chm_grid_for_inventory["id"],
+                "crown_segmentation": {},
+                "treatments": [
+                    {"metric": "diameter", "method": "from_below", "value": 10.0}
+                ],
+            },
+        )
+        assert response.status_code == 422
+        assert "`dbh`" in response.json()["detail"]
+
     def test_omitted_records_null(
         self, client, domain_for_testing, chm_grid_for_inventory
     ):

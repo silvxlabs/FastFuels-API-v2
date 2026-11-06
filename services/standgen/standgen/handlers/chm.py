@@ -34,6 +34,7 @@ from standgen.modifications import (
     resolve_spatial_conditions,
 )
 from standgen.storage import count_inventory_rows, load_grid, save_parquet_with_summary
+from standgen.treatments import apply_treatments
 
 logger = logging.getLogger(__name__)
 
@@ -54,21 +55,6 @@ def handle_chm(
         and 'forestry_metrics' with stand-level forestry scalars or None.
     """
     inventory_id = inventory["id"]
-
-    # Treatments thin against tree diameter; CHM stem isolation produces only
-    # height and position (x, y, height). The API rejects this at create time —
-    # this is a defensive guard in case a treatment-bearing CHM document reaches
-    # standgen.
-    if inventory.get("treatments"):
-        raise ProcessingError(
-            code="TREATMENTS_NOT_SUPPORTED_FOR_CHM",
-            message=(
-                "Silvicultural treatments require a tree diameter (dbh) to thin "
-                "against, which CHM extraction does not produce (only height and "
-                "position)."
-            ),
-            suggestion="Remove 'treatments' from this CHM inventory.",
-        )
 
     source_chm_grid_id = source["source_chm_grid_id"]
     algorithm_config = source.get("algorithm", {})
@@ -213,6 +199,20 @@ def handle_chm(
             )
         ddf = ddf.map_partitions(apply_modifications, modifications)
 
+    # CHM extraction has no dbh or species, so the only treatment that applies
+    # is crown spacing ranked by height on the segmented crown_radius column;
+    # apply_treatments rejects any other before computing. Crown segmentation
+    # has already materialized the treetops, so the computes a crown-spacing
+    # thin runs read the in-memory table, not the ITD graph.
+    treatments = inventory.get("treatments", [])
+    if treatments:
+        progress("Applying treatments...", 85)
+        if _has_spatial_condition(treatments):
+            treatments = resolve_spatial_conditions(
+                treatments, inventory["domain_id"], domain_gdf.crs
+            )
+        ddf = apply_treatments(ddf, treatments, domain_gdf)
+
     # save_parquet_with_summary is the single execution of the lazy ITD graph.
     # Both the parquet write and the summary reductions are fused into one
     # dask.compute call — don't trigger any separate compute (e.g. `len(ddf)`)
@@ -224,8 +224,8 @@ def handle_chm(
     )
 
     # Read the tree count from the written Parquet footer (footer-only, no recompute).
-    # This reflects rows actually persisted (post-modification), which is the
-    # meaningful figure to report.
+    # This reflects rows actually persisted (after modifications and treatments),
+    # which is the meaningful figure to report.
     tree_count = count_inventory_rows(inventory_id)
     if tree_count is not None:
         logger.info(

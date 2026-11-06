@@ -7,8 +7,6 @@ PIM inventory is created once (module-scoped) with a fixed seed; each test
 creates its own treated PIM inventory with the SAME seed, so the pre-treatment
 population is identical and tree-count comparisons are meaningful.
 
-A defensive CHM-rejection test confirms a treatment-bearing CHM inventory fails
-fast in standgen (the API also rejects it at create time).
 
 These tests hit real GCS and Firestore and require valid credentials.
 """
@@ -19,7 +17,10 @@ from uuid import uuid4
 
 import dask.dataframe as dd
 import geopandas as gpd
+import numpy as np
 import pytest
+from fastfuels_core.canopy_fuel.crown_radius import max_crown_radius
+from scipy.spatial import cKDTree
 from shapely.geometry import box
 from standgen.columns import BASE_COLUMNS, TREE_ID_COLUMN
 
@@ -308,3 +309,78 @@ def test_forestry_metrics_updated_after_treatment(treatment_runner):
 
     assert treated_fm["tree_count"] == len(treated_df)
     assert treated_fm["tree_count"] <= base_fm["tree_count"]
+
+
+def _crown_gaps(df, radius, spacing):
+    """Edge-to-edge gap of every stem pair whose crowns could be too close."""
+    xy = df[["x", "y"]].to_numpy()
+    pairs = cKDTree(xy).query_pairs(spacing + 2 * radius.max(), output_type="ndarray")
+    i, j = pairs[:, 0], pairs[:, 1]
+    return np.hypot(*(xy[i] - xy[j]).T) - radius[i] - radius[j]
+
+
+def test_crown_spacing_clears_every_purves_crown(treatment_runner):
+    """An inventory-wide crown-spacing thin with the default Purves radius
+    leaves every retained crown at least `value` from every other."""
+    spacing = 3.0
+    treatments = [
+        {
+            "metric": "crown_spacing",
+            "value": spacing,
+            "rank_by": "dbh",
+            "max_crown_radius_source": {"type": "allometry", "equations": "purves"},
+            "conditions": [],
+        }
+    ]
+    baseline, treated = treatment_runner(treatments)
+
+    base_count = _count(baseline["id"])
+    if base_count == 0:
+        pytest.skip("Baseline PIM produced 0 trees (sparse grid)")
+
+    treated_df = _load_df(treated["id"]).reset_index(drop=True)
+    assert 0 < len(treated_df) < base_count
+    radius = max_crown_radius(treated_df, equations="purves")
+    assert (_crown_gaps(treated_df, radius, spacing) >= spacing - 1e-6).all()
+
+
+def test_scoped_crown_spacing_leaves_outside_trees_untouched(
+    treatment_runner, treatment_env
+):
+    """A crown-spacing thin within the western half removes no eastern tree."""
+    baseline, _, _ = treatment_env
+    minx, miny, maxx, maxy = baseline["georeference"]["bounds"]
+    midx = (minx + maxx) / 2.0
+    west = box(minx, miny, midx, maxy)
+
+    base_df = _load_df(baseline["id"])
+    if len(base_df) == 0:
+        pytest.skip("Baseline PIM produced 0 trees (sparse grid)")
+    base_west = gpd.GeoSeries(gpd.points_from_xy(base_df["x"], base_df["y"])).within(
+        west
+    )
+
+    treatments = [
+        {
+            "metric": "crown_spacing",
+            "value": 3.0,
+            "rank_by": "dbh",
+            "max_crown_radius_source": {"type": "allometry", "equations": "purves"},
+            "conditions": [
+                {
+                    "source": "geometry",
+                    "operator": "within",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": list(west.__geo_interface__["coordinates"]),
+                    },
+                }
+            ],
+        }
+    ]
+    _, treated = treatment_runner(treatments)
+
+    treated_df = _load_df(treated["id"])
+    treated_ids = set(treated_df[TREE_ID_COLUMN])
+    assert set(base_df.loc[~base_west.to_numpy(), TREE_ID_COLUMN]) <= treated_ids
+    assert len(treated_df) < len(base_df)

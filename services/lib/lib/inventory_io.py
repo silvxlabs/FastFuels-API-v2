@@ -356,3 +356,33 @@ def canopy_required_columns(source: dict) -> set[str]:
     if source["crown_class_adjustment"]["method"] == "fuelcalc_table":
         required.add("fia_species_code")
     return required
+
+
+# Columns each crown-width allometry reads, for a radius computed from equations.
+CROWN_RADIUS_EQUATION_COLUMNS = {
+    "purves": frozenset({"fia_species_code", "dbh", "height", "crown_base_height"}),
+    "crookston_stage": frozenset({"fia_species_code", "dbh", "height"}),
+}
+
+
+def treatment_required_columns(treatment: dict) -> set[str]:
+    """Columns an inventory treatment reads from the tree inventory.
+
+    Diameter and basal-area treatments thin against `dbh`. A crown-spacing
+    treatment reads stem position, its `rank_by` column, and either its radius
+    column or the columns of its radius allometry. A radius column's null values
+    fall back to the Purves radius, but those columns are not required here: an
+    inventory whose radius column is complete needs no allometry inputs.
+
+    This is the single authority the API (request-time column validation) and
+    standgen (the backstop before any thinning) both use.
+    """
+    if treatment["metric"] != "crown_spacing":
+        return {"dbh"}
+    required = {"x", "y", treatment["rank_by"]}
+    radius = treatment["max_crown_radius_source"]
+    if radius["type"] == "inventory_column":
+        required.add(radius["column"])
+    else:
+        required |= CROWN_RADIUS_EQUATION_COLUMNS[radius["equations"]]
+    return required

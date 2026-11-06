@@ -25,6 +25,7 @@ from fastapi import (
 from api.db.documents import get_document_async, set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
+from api.resources.crown_radius import InventoryColumnMaxCrownRadiusSource
 from api.resources.grids.canopy.inventory.examples import (
     CREATE_INVENTORY_CANOPY_OPENAPI_EXAMPLES,
 )
@@ -39,9 +40,6 @@ from api.resources.grids.schema import CHUNK_SHAPE, Grid
 from api.resources.grids.utils import (
     incomplete_inventory_columns,
     validate_target_grid_alignment,
-)
-from api.resources.grids.voxelize.inventory.tree.schema import (
-    InventoryColumnMaxCrownRadiusSource,
 )
 from api.schema import JobStatus
 from api.tasks import create_http_task_async

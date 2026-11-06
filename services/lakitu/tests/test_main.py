@@ -59,12 +59,17 @@ class TestRequestHandling:
 
     @patch("lakitu.main.delete_cloud")
     @patch("lakitu.main.update_status")
-    def test_retry_marks_failed_without_reprocessing(self, mock_status, mock_delete):
-        """A retry means the previous attempt died mid-flight.
+    @patch("lakitu.main.load_point_cloud")
+    def test_retry_of_running_cloud_marks_it_failed(
+        self, mock_load, mock_status, mock_delete
+    ):
+        """A retry against a "running" point cloud means the previous attempt
+        died mid-flight.
 
         Re-running could burn another long fetch, so the resource is failed and
         the task acknowledged.
         """
+        mock_load.return_value = {"status": "running", "domain_id": "d"}
         response, code = process_point_cloud_request(
             MockRequest({"id": "pc-1"}, {"X-CloudTasks-TaskRetryCount": "1"})
         )
@@ -72,6 +77,43 @@ class TestRequestHandling:
         assert mock_status.call_args[0][1] == "failed"
         assert mock_status.call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"
         mock_delete.assert_called_once_with("pc-1")
+
+    @patch("lakitu.main.delete_cloud")
+    @patch("lakitu.main.update_status")
+    @patch("lakitu.main.load_point_cloud")
+    def test_retry_of_pending_cloud_is_processed(
+        self, mock_load, mock_status, mock_delete
+    ):
+        """A retry against a "pending" point cloud never ran (Cloud Run rejected
+        the first dispatch before any container started, #664) and must be
+        processed, not failed."""
+        mock_load.return_value = {"status": "pending", "domain_id": "d"}
+        # Cancel at the "running" transition so the test stops before the
+        # handler pipeline, which is covered elsewhere.
+        mock_status.side_effect = CancelledException("stop here")
+        response, code = process_point_cloud_request(
+            MockRequest({"id": "pc-1"}, {"X-CloudTasks-TaskRetryCount": "1"})
+        )
+        assert code == 200
+        mock_status.assert_called_once_with("pc-1", "running")
+        mock_delete.assert_not_called()
+
+    @pytest.mark.parametrize("terminal", ["completed", "failed"])
+    @patch("lakitu.main.delete_cloud")
+    @patch("lakitu.main.update_status")
+    @patch("lakitu.main.load_point_cloud")
+    def test_retry_of_finished_cloud_is_left_alone(
+        self, mock_load, mock_status, mock_delete, terminal
+    ):
+        """A retry against a terminal point cloud means the previous attempt
+        finished but its response was lost; the data and outcome must survive."""
+        mock_load.return_value = {"status": terminal, "domain_id": "d"}
+        response, code = process_point_cloud_request(
+            MockRequest({"id": "pc-1"}, {"X-CloudTasks-TaskRetryCount": "1"})
+        )
+        assert code == 200
+        mock_status.assert_not_called()
+        mock_delete.assert_not_called()
 
     @patch("lakitu.main.load_point_cloud", side_effect=DocumentNotFoundError("gone"))
     def test_deleted_point_cloud_is_acknowledged(self, _mock_load):
@@ -222,12 +264,17 @@ class TestFailurePaths:
     @patch("lakitu.main._load_domain")
     @patch("lakitu.main.update_status")
     @patch("lakitu.main.load_point_cloud")
-    def test_unexpected_error_returns_500(
-        self, mock_load, _mock_status, _mock_domain, mock_dispatch, point_cloud
+    def test_unexpected_error_records_failure(
+        self, mock_load, mock_status, _mock_domain, mock_dispatch, point_cloud
     ):
-        """An unexpected fault is left for the retry to make terminal."""
+        """An unexpected fault is recorded as failed immediately, not left to a
+        retry that may not exist (#664)."""
         mock_load.return_value = point_cloud
         mock_dispatch.side_effect = RuntimeError("boom")
 
-        response, code = process_point_cloud_request(MockRequest({"id": "pc-1"}))
-        assert code == 500
+        with patch("lakitu.main.delete_cloud") as mock_delete:
+            response, code = process_point_cloud_request(MockRequest({"id": "pc-1"}))
+        assert code == 200
+        assert mock_status.call_args[0] == ("pc-1", "failed")
+        assert mock_status.call_args[1]["error"]["code"] == "UNEXPECTED_FAILURE"
+        mock_delete.assert_called_once_with("pc-1")

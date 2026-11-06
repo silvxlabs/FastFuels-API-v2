@@ -162,6 +162,21 @@ def second_domain(firestore_client, test_owner_id):
 
 
 @pytest.fixture(scope="session")
+def blackfoot_domain(firestore_client, test_owner_id):
+    """The Blackfoot example domain (EPSG:32612), owned by test-owner."""
+    domain_data = load_domain_from_file(
+        SHARED_TEST_DOMAINS_DIR / "blackfoot.json",
+        owner_id=test_owner_id,
+    )
+    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+        domain_data["id"]
+    )
+    doc_ref.set(domain_data)
+    yield domain_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
 def lfps_covered_domain(firestore_client, test_owner_id):
     """A domain with known LANDFIRE Product Service SW coverage (Kingman, AZ)."""
     domain_data = load_domain_from_file(

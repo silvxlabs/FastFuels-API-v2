@@ -13,7 +13,19 @@ from fastapi import APIRouter, BackgroundTasks, Body, Request, Response, status
 from api.db.documents import set_document_async
 from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
-from api.resources.features.road.examples import CREATE_ROAD_OPENAPI_EXAMPLES
+from api.resources.features.concatenate import (
+    ConcatenateFeaturesRequest,
+    create_concatenated_feature,
+)
+from api.resources.features.geojson import (
+    CreateGeojsonFeatureRequest,
+    create_geojson_feature,
+)
+from api.resources.features.road.examples import (
+    CONCATENATE_ROAD_OPENAPI_EXAMPLES,
+    CREATE_ROAD_GEOJSON_OPENAPI_EXAMPLES,
+    CREATE_ROAD_OPENAPI_EXAMPLES,
+)
 from api.resources.features.road.schema import (
     CreateOsmRoadFeatureRequest,
     OsmRoadSource,
@@ -114,3 +126,95 @@ async def create_osm_road_feature(
     register_dispatch(request, response, background_tasks)
 
     return Feature(**feature_data)
+
+
+@router.post(
+    "/geojson",
+    response_model=Feature,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a road feature as GeoJSON",
+    responses=QUOTA_429_RESPONSE,
+)
+async def create_geojson_road_feature(
+    request: Request,
+    domain: VerifiedDomain,
+    body: Annotated[
+        CreateGeojsonFeatureRequest,
+        Body(openapi_examples=CREATE_ROAD_GEOJSON_OPENAPI_EXAMPLES),
+    ],
+) -> Feature:
+    """
+    # Upload Road Feature
+
+    Creates a road feature from your own road footprint polygons, such as driveways missing from OpenStreetMap. The feature is used
+    the same way as one from `/road/osm`.
+
+    The polygons are reprojected to the domain CRS and clipped to the domain,
+    plus `extent_buffer_m`.
+
+    ## Request Body
+
+    The body **is** a GeoJSON FeatureCollection, with resource metadata as
+    top-level fields:
+
+    - **features**: (array) At least one Feature with a `Polygon` or
+      `MultiPolygon` geometry. `properties` are optional and are stored as
+      columns; each property must have one type across all features.
+    - **crs**: (object, optional) The GeoJSON `crs` block. Any CRS is
+      accepted. When omitted, coordinates are read as `EPSG:4326`.
+    - **name**: (string, optional) Name of the feature.
+    - **description**: (string, optional) Description.
+    - **tags**: (array of strings, optional) Searchable tags.
+    - **extent_buffer_m**: (number, optional) Distance in meters to expand the
+      domain extent before clipping. Range: 0–100. Default: 0.
+
+    Returns 422 if a geometry is invalid or no polygon intersects the domain.
+
+    ## Response
+
+    Returns the created Feature with status `"completed"`.
+    """
+    return await create_geojson_feature(request, domain, body, FeatureType.road)
+
+
+@router.post(
+    "/concatenate",
+    response_model=Feature,
+    status_code=status.HTTP_201_CREATED,
+    summary="Concatenate road features",
+    responses=QUOTA_429_RESPONSE,
+)
+async def concatenate_road_features(
+    request: Request,
+    domain: VerifiedDomain,
+    body: Annotated[
+        ConcatenateFeaturesRequest,
+        Body(openapi_examples=CONCATENATE_ROAD_OPENAPI_EXAMPLES),
+    ],
+) -> Feature:
+    """
+    # Concatenate Road Features
+
+    Creates a new road feature whose rows are the rows of other road features
+    in this domain, appended in order. Use it to combine OpenStreetMap roads with
+    your own uploads.
+
+    Geometries are not merged: overlapping polygons stay separate rows. The
+    columns are the union of the inputs' columns, empty where an input lacks
+    one, plus `source_feature_id`, the input each row came from.
+
+    ## Request Body
+
+    - **source_feature_ids**: (array of strings) 2–100 feature IDs, each
+      listed once. Every feature must be a completed road feature in this
+      domain.
+    - **name**: (string, optional) Name of the feature.
+    - **description**: (string, optional) Description.
+    - **tags**: (array of strings, optional) Searchable tags.
+
+    ## Response
+
+    Returns the created Feature with status `"completed"`. Its
+    `attributions` combine those of the input features.
+    """
+    return await create_concatenated_feature(request, domain, body, FeatureType.road)

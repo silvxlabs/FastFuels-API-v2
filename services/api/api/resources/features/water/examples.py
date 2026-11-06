@@ -60,3 +60,71 @@ WATER_EXAMPLE_VALUES = [
     ("with_metadata", EXAMPLE_WATER_WITH_METADATA),
     ("with_buffer", EXAMPLE_WATER_WITH_BUFFER),
 ]
+
+# A hand-drawn stock pond in the Blackfoot example domain, in WGS84 lon/lat.
+EXAMPLE_WATER_GEOJSON = {
+    "type": "FeatureCollection",
+    "name": "Stock pond",
+    "description": "A pond that OpenStreetMap is missing.",
+    "tags": ["hydrology"],
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {"name": "Stock pond"},
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [-113.6971539, 46.9177891],
+                        [-113.6971814, 46.9177074],
+                        [-113.6972649, 46.9176462],
+                        [-113.6973819, 46.9176217],
+                        [-113.697501, 46.9176406],
+                        [-113.6975904, 46.9176978],
+                        [-113.6976261, 46.9177779],
+                        [-113.6975986, 46.9178596],
+                        [-113.6975151, 46.9179209],
+                        [-113.6973981, 46.9179453],
+                        [-113.697279, 46.9179264],
+                        [-113.6971896, 46.9178692],
+                        [-113.6971539, 46.9177891],
+                    ]
+                ],
+            },
+        },
+    ],
+}
+
+CREATE_WATER_GEOJSON_OPENAPI_EXAMPLES = {
+    "pond": {
+        "value": EXAMPLE_WATER_GEOJSON,
+        "summary": "Hand-drawn pond",
+        "description": (
+            "Uploads one pond polygon in WGS84 (no `crs` block). It is "
+            "reprojected to the domain CRS and clipped to the domain."
+        ),
+    },
+}
+
+WATER_GEOJSON_EXAMPLE_VALUES = [("pond", EXAMPLE_WATER_GEOJSON)]
+
+EXAMPLE_WATER_CONCATENATE = {
+    "source_feature_ids": [
+        "4f6c1b2e9a7d4c3b8e5f0a1d2c3b4a59",
+        "b81e7d6c5a4f4e3d9c2b1a0f9e8d7c6b",
+    ],
+    "name": "Water and ponds",
+    "description": "OpenStreetMap water plus hand-drawn ponds.",
+    "tags": ["hydrology"],
+}
+
+CONCATENATE_WATER_OPENAPI_EXAMPLES = {
+    "water_and_ponds": {
+        "value": EXAMPLE_WATER_CONCATENATE,
+        "summary": "OSM water plus uploaded ponds",
+        "description": (
+            "Appends the rows of an OpenStreetMap water feature and an uploaded "
+            "pond feature into one water feature."
+        ),
+    },
+}

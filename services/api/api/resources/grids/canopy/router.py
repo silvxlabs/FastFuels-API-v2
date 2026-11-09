@@ -288,6 +288,7 @@ async def create_landfire_canopy(
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
     if body.version in LANDFIRE_VERSIONS["canopy"]["lfps_available"]:
+        # Coverage is determined from only the canopy height layer.
         await asyncio.to_thread(validate_lfps_coverage, "canopy", body.version, domain)
 
     grid_id = uuid.uuid4().hex
@@ -340,7 +341,7 @@ async def check_landfire_canopy_coverage(request: Request, domain: VerifiedDomai
     serves and how much of this domain each one covers. Staged annual releases
     are national; newer releases are served by LANDFIRE Product Service region
     by region, so coverage depends on where the domain is and on what LANDFIRE
-    has published so far.
+    has published so far. Coverage is determined from the canopy height layer.
 
     ## Response
 

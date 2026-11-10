@@ -19,6 +19,7 @@ class TestLandfireVersionsTable:
             "fbfm13",
             "fbfm40",
             "fccs",
+            "canopy",
             "annual_disturbance",
             "fdist",
             "fvt",
@@ -52,6 +53,24 @@ class TestLandfireVersionsTable:
         assert LANDFIRE_VERSIONS["fccs"]["available"] == ["2023"]
         assert LANDFIRE_VERSIONS["fccs"]["lfps_available"] == ["2025"]
         assert LANDFIRE_VERSIONS["fccs"]["default"] == "2023"
+
+    def test_canopy_versions(self):
+        assert LANDFIRE_VERSIONS["canopy"]["available"] == ["2024"]
+        assert LANDFIRE_VERSIONS["canopy"]["lfps_available"] == ["2025"]
+        assert LANDFIRE_VERSIONS["canopy"]["default"] == "2024"
+        assert LANDFIRE_VERSIONS["canopy"]["layers"] == ["chm", "cbd", "cbh", "cc"]
+
+    @pytest.mark.parametrize(
+        ("band", "acronym"),
+        [("chm", "CH"), ("cbd", "CBD"), ("cbh", "CBH"), ("cc", "CC")],
+    )
+    def test_canopy_bands(self, band, acronym):
+        """Only chm needs the override; the rest upper-case cleanly."""
+        assert lfps_acronym(band) == acronym
+
+    def test_grouped_product_uses_its_first_layer(self):
+        """canopy has no LFPS acronym of its own; it stands in as chm."""
+        assert lfps_acronym("canopy") == "CH"
 
     def test_annual_disturbance_versions(self):
         assert LANDFIRE_VERSIONS["annual_disturbance"]["lfps_available"] == ["2025"]

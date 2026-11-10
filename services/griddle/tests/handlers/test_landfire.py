@@ -4,7 +4,7 @@ Tests for LANDFIRE handler.
 
 import json
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -1945,6 +1945,67 @@ class TestFetchCanopyLandfire:
         assert progress.call_count == 3
         for call, band in zip(progress.call_args_list, ["chm", "cbd", "cbh"]):
             assert band in call.args[0]
+
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps_multi")
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_lfps_version_batches_requested_bands(self, mock_fetch, mock_multi, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_multi.return_value = nullcontext("/tmp/lfps/result.tif")
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        result = fetch_canopy_landfire(
+            roi=roi, version="2025", bands=["cc", "chm"], progress=MagicMock()
+        )
+
+        assert mock_multi.call_args.args[1] == {"cc": "2025", "chm": "2025"}
+        assert [c.kwargs["band"] for c in mock_fetch.call_args_list] == [1, 2]
+        assert list(result.data_vars) == ["cc", "chm"]
+
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_lfps_version_single_band_uses_fetch_lfps(
+        self, mock_fetch, mock_single, roi
+    ):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_single.return_value = nullcontext("/tmp/lfps/result.tif")
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        fetch_canopy_landfire(
+            roi=roi, version="2025", bands=["chm"], progress=MagicMock()
+        )
+
+        assert mock_single.call_args.args[1:3] == ("chm", "2025")
+        assert mock_fetch.call_args_list[0].kwargs["band"] == 1
+
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps_multi")
+    @patch("griddle.handlers.landfire.landfire_lfps.fetch_lfps")
+    @patch("griddle.handlers.landfire._fetch_landfire_raster")
+    def test_staged_version_does_not_call_lfps(
+        self, mock_fetch, mock_single, mock_multi, roi
+    ):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        mock_fetch.side_effect = lambda *a, **kw: _make_canopy_raster(
+            np.zeros((4, 4), dtype=np.int16)
+        )
+        fetch_canopy_landfire(
+            roi=roi, version="2024", bands=["chm", "cc"], progress=MagicMock()
+        )
+
+        mock_single.assert_not_called()
+        mock_multi.assert_not_called()
+
+    def test_unknown_version_raises(self, roi):
+        from griddle.handlers.landfire import fetch_canopy_landfire
+
+        with pytest.raises(UnknownLandfireVersionError):
+            fetch_canopy_landfire(
+                roi=roi, version="1999", bands=["chm"], progress=MagicMock()
+            )
 
 
 class TestScatterCategoricalBoundaries:

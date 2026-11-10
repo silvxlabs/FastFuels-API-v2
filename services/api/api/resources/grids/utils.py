@@ -67,6 +67,9 @@ def validate_lfps_coverage(
     coverage is allowed through same as `FULL` -- the uncovered portion
     just comes back as nodata, same as any other out-of-coverage cell.
 
+    A multi-layer product like "canopy" is checked against its first layer
+    (chm) only assuming the layers share coverage.
+
     This is a plain sync function -- `covers_annual`/`covers_seasonal`
     make a real HTTP call to LFPS, so async callers should wrap it with
     `asyncio.to_thread(...)` rather than awaiting it directly.

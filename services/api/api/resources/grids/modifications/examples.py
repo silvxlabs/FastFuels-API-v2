@@ -9,10 +9,10 @@ They mirror the worked examples on ``GridModification.model_config``
 (json_schema_extra), wrapped in the endpoint's request envelope.
 """
 
-# Simplest spatial case: wipe all surface fuel inside a single road Feature.
-# One rule, one condition. A road is a linestring, so target=cell catches
-# every cell the line crosses (the default centroid test would miss cells the
-# line only clips).
+# Simplest spatial case: wipe all surface fuel under a single road Feature.
+# One rule, one condition. Roads are narrow polygons, so intersects +
+# target=cell catches every cell the road touches (the default centroid test
+# would miss cells whose center lies off the road).
 EXAMPLE_ZERO_FUEL_ON_ROAD = {
     "modifications": [
         {
@@ -37,8 +37,8 @@ EXAMPLE_ZERO_FUEL_ON_ROAD = {
 # Conditions *within* a rule are ANDed (intersection), so both features cannot
 # share one rule: that would select cells that are simultaneously road AND
 # water (≈ none). A union is expressed as two rules, each applied
-# independently. The road rule uses target=cell for its linestring; the water
-# rule uses the default centroid test for its polygon.
+# independently. The road rule uses target=cell to catch every cell the narrow
+# road touches; the water rule uses the default centroid test.
 EXAMPLE_ZERO_FUEL_ON_ROADS_AND_WATER = {
     "modifications": [
         {
@@ -224,9 +224,10 @@ APPLY_GRID_MODIFICATIONS_OPENAPI_EXAMPLES = {
         "summary": "Zero surface fuel on a road feature",
         "description": (
             "The simplest spatial rule: one rule, one condition. Wipe the "
-            "1/10/100-hour fuel loads in every cell a road Feature crosses. "
-            "Roads are linestrings, so `target=cell` catches cells the line "
-            "merely clips (the default `centroid` test would miss them)."
+            "1/10/100-hour fuel loads in every cell a road Feature touches. "
+            "Roads are narrow polygons, so `intersects` with `target=cell` "
+            "catches cells the road merely clips (the default `centroid` "
+            "test would miss them)."
         ),
         "value": EXAMPLE_ZERO_FUEL_ON_ROAD,
     },

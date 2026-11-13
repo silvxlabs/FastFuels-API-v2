@@ -648,7 +648,21 @@ class TestResolveSpatialConditions:
             _resolve_feature_geometry("domain-1", "feat-1", 0.0, {}, UTM_CRS)
         assert exc.value.code == "FEATURE_NOT_READY"
 
-    def test_feature_empty(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "operator, expected_x",
+        [
+            ("within", [1.0, 2.0, 3.0, 4.0, 5.0]),
+            ("intersects", [1.0, 2.0, 3.0, 4.0, 5.0]),
+            ("outside", []),
+        ],
+    )
+    def test_feature_empty_is_empty_geometry(
+        self, sample_df, monkeypatch, operator, expected_x
+    ):
+        """A feature with no rows (e.g. OSM water over a domain with none)
+        removes no trees with within/intersects and every tree with outside.
+        The empty parquet carries no CRS and a buffer is requested, so the
+        reproject/buffer steps must be skipped."""
         doc = {"domain_id": "domain-1", "status": "completed"}
         monkeypatch.setattr(
             "standgen.modifications.get_document",
@@ -656,11 +670,25 @@ class TestResolveSpatialConditions:
         )
         monkeypatch.setattr(
             "standgen.modifications.gpd.read_parquet",
-            lambda path: gpd.GeoDataFrame(geometry=[], crs=UTM_CRS),
+            lambda path: gpd.GeoDataFrame(geometry=[]),
         )
-        with pytest.raises(ProcessingError) as exc:
-            _resolve_feature_geometry("domain-1", "feat-1", 0.0, {}, UTM_CRS)
-        assert exc.value.code == "FEATURE_EMPTY"
+        mods = [
+            {
+                "conditions": [
+                    {
+                        "source": "feature",
+                        "operator": operator,
+                        "feature_id": "feat-1",
+                        "buffer_m": 5,
+                    }
+                ],
+                "actions": [{"modifier": "remove"}],
+            }
+        ]
+        resolved = resolve_spatial_conditions(mods, "domain-1", UTM_CRS)
+        assert resolved[0]["conditions"][0]["_resolved_geometry"].is_empty
+        result = apply_modifications(sample_df.copy(), resolved)
+        assert result["x"].tolist() == expected_x
 
     def test_building_feature_removes_trees_inside_footprints(
         self, sample_df, monkeypatch, tmp_path

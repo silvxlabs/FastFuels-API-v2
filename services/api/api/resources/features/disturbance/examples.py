@@ -1,11 +1,10 @@
 """
 api/v2/resources/features/disturbance/examples.py
 
-Example request bodies for Disturbance endpoints.
+Example request bodies for the disturbance GeoJSON upload.
 
 These examples are used in OpenAPI/Swagger documentation and tested in
-integration tests, so the documentation stays accurate. domain_id comes from
-the URL path parameter, not the request body.
+integration tests, so the documentation stays accurate.
 """
 
 # Two overlapping polygons drawn inside the Blackfoot test domain
@@ -40,10 +39,12 @@ _THINNING_GEOMETRY = {
 _CRS = {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::32612"}}
 
 # Only the required property: the FDist code.
-EXAMPLE_DISTURBANCE_MINIMAL = {
+EXAMPLE_DISTURBANCE_GEOJSON = {
     "type": "FeatureCollection",
+    "name": "Fire and thinning history",
+    "description": "A fire and a later thinning that overlaps it.",
+    "tags": ["disturbance", "fire", "thinning"],
     "crs": _CRS,
-    "mapping_year": 2025,
     "features": [
         {"type": "Feature", "properties": {"fdist": 122}, "geometry": _FIRE_GEOMETRY},
         {
@@ -55,10 +56,8 @@ EXAMPLE_DISTURBANCE_MINIMAL = {
 }
 
 # The same polygons with the optional descriptive labels.
-EXAMPLE_DISTURBANCE_WITH_LABELS = {
-    "type": "FeatureCollection",
-    "crs": _CRS,
-    "mapping_year": 2025,
+EXAMPLE_DISTURBANCE_GEOJSON_WITH_LABELS = {
+    **EXAMPLE_DISTURBANCE_GEOJSON,
     "features": [
         {
             "type": "Feature",
@@ -85,39 +84,26 @@ EXAMPLE_DISTURBANCE_WITH_LABELS = {
     ],
 }
 
-EXAMPLE_DISTURBANCE_WITH_METADATA = {
-    **EXAMPLE_DISTURBANCE_MINIMAL,
-    "name": "Fire and thinning history",
-    "tags": ["disturbance", "fire", "thinning"],
-}
-
-CREATE_DISTURBANCE_OPENAPI_EXAMPLES = {
-    "minimal": {
-        "value": EXAMPLE_DISTURBANCE_MINIMAL,
-        "summary": "Minimal request",
+CREATE_DISTURBANCE_GEOJSON_OPENAPI_EXAMPLES = {
+    "fire_and_thinning": {
+        "value": EXAMPLE_DISTURBANCE_GEOJSON,
+        "summary": "Fire and thinning",
         "description": (
-            "Uploads two overlapping disturbance polygons with only the "
-            "required `fdist` code on each, measured from a `mapping_year` "
-            "of 2025."
+            "Uploads two overlapping disturbance polygons in UTM 12N with only "
+            "the required `fdist` code on each, mapped for 2025."
         ),
     },
     "with_labels": {
-        "value": EXAMPLE_DISTURBANCE_WITH_LABELS,
+        "value": EXAMPLE_DISTURBANCE_GEOJSON_WITH_LABELS,
         "summary": "With descriptive labels",
         "description": (
             "Adds the optional `name`, `type`, `year` and `severity` to each "
             "polygon. They are stored as given and don't affect the result."
         ),
     },
-    "with_metadata": {
-        "value": EXAMPLE_DISTURBANCE_WITH_METADATA,
-        "summary": "With name and tags",
-        "description": "Uploads named, tagged disturbance polygons.",
-    },
 }
 
-DISTURBANCE_EXAMPLE_VALUES = [
-    ("minimal", EXAMPLE_DISTURBANCE_MINIMAL),
-    ("with_labels", EXAMPLE_DISTURBANCE_WITH_LABELS),
-    ("with_metadata", EXAMPLE_DISTURBANCE_WITH_METADATA),
+DISTURBANCE_GEOJSON_EXAMPLE_VALUES = [
+    ("fire_and_thinning", EXAMPLE_DISTURBANCE_GEOJSON),
+    ("with_labels", EXAMPLE_DISTURBANCE_GEOJSON_WITH_LABELS),
 ]

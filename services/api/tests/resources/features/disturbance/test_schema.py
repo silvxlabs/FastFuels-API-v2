@@ -1,38 +1,21 @@
 """
 Unit tests for api/v2/resources/features/disturbance/schema.py
 
-Tests the Disturbance schema models, source metadata, and the flat GeoJSON
-FeatureCollection shape. Pure unit tests with no external dependencies.
+Tests the disturbance properties and the upload request. Pure unit tests with
+no external dependencies.
 """
 
 import pytest
-from api.resources.features.disturbance.examples import DISTURBANCE_EXAMPLE_VALUES
+from api.resources.features.disturbance.examples import (
+    DISTURBANCE_GEOJSON_EXAMPLE_VALUES,
+)
 from api.resources.features.disturbance.schema import (
-    CreateDisturbanceRequestBody,
+    CreateDisturbanceFeatureRequest,
     DisturbanceProperties,
-    DisturbanceSource,
 )
 from pydantic import ValidationError
 
-from lib.landfire import VALID_FDIST_CODES
-
-
-class TestDisturbanceSource:
-    def test_defaults(self):
-        source = DisturbanceSource(mapping_year=2024)
-        assert source.product == "Upload"
-        assert source.description == "User-uploaded disturbance polygons"
-
-    def test_mapping_year_is_required(self):
-        with pytest.raises(ValidationError):
-            DisturbanceSource()
-
-    def test_model_dump(self):
-        assert DisturbanceSource(mapping_year=2024).model_dump() == {
-            "product": "Upload",
-            "description": "User-uploaded disturbance polygons",
-            "mapping_year": 2024,
-        }
+from lib.landfire.config import VALID_FDIST_CODES
 
 
 class TestDisturbanceProperties:
@@ -80,9 +63,14 @@ class TestDisturbanceProperties:
         with pytest.raises(ValidationError):
             DisturbanceProperties(fdist=122, year="2022")
 
-    def test_other_properties_are_ignored(self):
+    @pytest.mark.parametrize("year", [1899, 2101, 2**63])
+    def test_year_out_of_range_is_rejected(self, year):
+        with pytest.raises(ValidationError):
+            DisturbanceProperties(fdist=122, year=year)
+
+    def test_other_properties_are_kept(self):
         properties = DisturbanceProperties(fdist=122, acres=10)
-        assert "acres" not in properties.model_dump()
+        assert properties.model_dump()["acres"] == 10
 
 
 _POLYGON = {
@@ -94,7 +82,6 @@ _POLYGON = {
 def _body(**overrides):
     body = {
         "type": "FeatureCollection",
-        "mapping_year": 2024,
         "features": [
             {"type": "Feature", "properties": {"fdist": 122}, "geometry": _POLYGON}
         ],
@@ -103,51 +90,29 @@ def _body(**overrides):
     return body
 
 
-class TestCreateDisturbanceRequestBody:
+class TestCreateDisturbanceFeatureRequest:
     def test_minimal_body_has_default_metadata(self):
-        body = CreateDisturbanceRequestBody(**_body())
+        body = CreateDisturbanceFeatureRequest(**_body())
         assert body.name == ""
         assert body.description == ""
         assert body.tags == []
 
     def test_metadata_is_accepted(self):
-        body = CreateDisturbanceRequestBody(
+        body = CreateDisturbanceFeatureRequest(
             **_body(name="History", description="Fires", tags=["a", "b"])
         )
         assert body.name == "History"
         assert body.description == "Fires"
         assert body.tags == ["a", "b"]
 
-    @pytest.mark.parametrize("name,value", DISTURBANCE_EXAMPLE_VALUES)
+    @pytest.mark.parametrize("name,value", DISTURBANCE_GEOJSON_EXAMPLE_VALUES)
     def test_documented_examples_parse(self, name, value):
-        body = CreateDisturbanceRequestBody(**value)
+        body = CreateDisturbanceFeatureRequest(**value)
         assert len(body.features) == 2
 
     def test_empty_feature_collection_is_rejected(self):
         with pytest.raises(ValidationError):
-            CreateDisturbanceRequestBody(**_body(features=[]))
-
-    def test_mapping_year_is_required(self):
-        payload = _body()
-        del payload["mapping_year"]
-        with pytest.raises(ValidationError):
-            CreateDisturbanceRequestBody(**payload)
-
-    @pytest.mark.parametrize("year", [1900, 2024, 2100])
-    def test_mapping_year_in_range_is_accepted(self, year):
-        assert (
-            CreateDisturbanceRequestBody(**_body(mapping_year=year)).mapping_year
-            == year
-        )
-
-    @pytest.mark.parametrize("year", [0, 24, 1899, 2101, 20244])
-    def test_mapping_year_out_of_range_is_rejected(self, year):
-        with pytest.raises(ValidationError):
-            CreateDisturbanceRequestBody(**_body(mapping_year=year))
-
-    def test_mapping_year_must_be_an_integer(self):
-        with pytest.raises(ValidationError):
-            CreateDisturbanceRequestBody(**_body(mapping_year="2024"))
+            CreateDisturbanceFeatureRequest(**_body(features=[]))
 
     def test_multipolygon_geometry_is_accepted(self):
         multipolygon = {
@@ -163,7 +128,7 @@ class TestCreateDisturbanceRequestBody:
                 }
             ]
         )
-        CreateDisturbanceRequestBody(**payload)
+        CreateDisturbanceFeatureRequest(**payload)
 
     def test_point_geometry_is_rejected(self):
         payload = _body(
@@ -176,7 +141,7 @@ class TestCreateDisturbanceRequestBody:
             ]
         )
         with pytest.raises(ValidationError):
-            CreateDisturbanceRequestBody(**payload)
+            CreateDisturbanceFeatureRequest(**payload)
 
     def test_invalid_code_inside_a_feature_is_rejected(self):
         payload = _body(
@@ -185,5 +150,49 @@ class TestCreateDisturbanceRequestBody:
             ]
         )
         with pytest.raises(ValidationError) as exc_info:
-            CreateDisturbanceRequestBody(**payload)
+            CreateDisturbanceFeatureRequest(**payload)
         assert any("fdist" in str(error["loc"]) for error in exc_info.value.errors())
+
+    def test_null_properties_are_rejected(self):
+        payload = _body(
+            features=[{"type": "Feature", "properties": None, "geometry": _POLYGON}]
+        )
+        with pytest.raises(ValidationError):
+            CreateDisturbanceFeatureRequest(**payload)
+
+    def test_null_geometry_is_rejected(self):
+        payload = _body(
+            features=[
+                {"type": "Feature", "properties": {"fdist": 122}, "geometry": None}
+            ]
+        )
+        with pytest.raises(ValidationError):
+            CreateDisturbanceFeatureRequest(**payload)
+
+    def test_geometry_property_is_rejected(self):
+        payload = _body(
+            features=[
+                {
+                    "type": "Feature",
+                    "properties": {"fdist": 122, "geometry": "x"},
+                    "geometry": _POLYGON,
+                }
+            ]
+        )
+        with pytest.raises(ValidationError, match="geometry"):
+            CreateDisturbanceFeatureRequest(**payload)
+
+    def test_properties_are_stored_as_given(self):
+        """Unset labels aren't written as null columns; extra properties are kept."""
+        payload = _body(
+            features=[
+                {
+                    "type": "Feature",
+                    "properties": {"fdist": 122, "acres": 10},
+                    "geometry": _POLYGON,
+                }
+            ]
+        )
+        body = CreateDisturbanceFeatureRequest(**payload)
+        dumped = body.features[0].model_dump(mode="json")
+        assert dumped["properties"] == {"fdist": 122, "acres": 10}

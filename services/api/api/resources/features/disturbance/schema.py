@@ -3,28 +3,30 @@ api/v2/resources/features/disturbance/schema.py
 
 Schemas for the Disturbance feature type.
 
-The upload payload is a flat GeoJSON FeatureCollection of disturbance polygons.
-Every Feature carries the LANDFIRE FDist code of one disturbance on
-``properties.fdist``. Where polygons overlap, the more recent disturbance (the
-lower last digit, D_TIME) wins when the feature is used; equally recent
-polygons are resolved by file order, the later one winning.
+A disturbance feature is uploaded as GeoJSON like road, water and building
+features (see ``features/geojson.py``). Every polygon carries the LANDFIRE
+FDist code of one disturbance on ``properties.fdist``. Where polygons overlap,
+the more recent disturbance (the lower last digit, D_TIME) wins when the
+feature is used; equally recent polygons are resolved by file order, the later
+one winning.
 """
 
 from typing import Any
 
-from geojson_pydantic import Feature, FeatureCollection
-from geojson_pydantic.geometries import MultiPolygon, Polygon
-from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    field_serializer,
+    field_validator,
+)
 
-from lib.landfire import VALID_FDIST_CODES
-
-
-class DisturbanceSource(BaseModel):
-    """Source tracking for user-uploaded disturbance polygons."""
-
-    product: str = "Upload"
-    description: str = "User-uploaded disturbance polygons"
-    mapping_year: int
+from api.resources.features.geojson import (
+    CreateGeojsonFeatureRequest,
+    GeojsonPolygonFeature,
+)
+from lib.landfire.config import VALID_FDIST_CODES
 
 
 class DisturbanceProperties(BaseModel):
@@ -32,9 +34,11 @@ class DisturbanceProperties(BaseModel):
     optional labels describing it.
 
     The labels are stored as given and are never checked against the code;
-    only ``fdist`` drives the fuel model update. Other properties on an
-    uploaded Feature are ignored.
+    only ``fdist`` drives the fuel model update. Other properties are stored as
+    columns, as for any GeoJSON upload.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     fdist: StrictInt = Field(
         ...,
@@ -49,7 +53,9 @@ class DisturbanceProperties(BaseModel):
     type: str | None = Field(
         None, max_length=255, description="Kind of disturbance, e.g. wildfire."
     )
-    year: StrictInt | None = Field(None, description="Year the disturbance happened.")
+    year: StrictInt | None = Field(
+        None, ge=1900, le=2100, description="Year the disturbance happened."
+    )
     severity: str | None = Field(
         None, max_length=255, description="Severity of the disturbance, e.g. high."
     )
@@ -67,57 +73,19 @@ class DisturbanceProperties(BaseModel):
         return value
 
 
-class DisturbanceFeature(Feature[Polygon | MultiPolygon, DisturbanceProperties]):
-    """One Feature in the disturbance FeatureCollection.
-
-    ``Polygon`` and ``MultiPolygon`` are both accepted, as for layerset
-    uploads. ``properties`` is non-Optional: every polygon needs a code.
-    """
+class DisturbanceFeature(GeojsonPolygonFeature):
+    """One uploaded disturbance polygon. ``properties`` is required: every
+    polygon needs a code."""
 
     properties: DisturbanceProperties
 
-
-class DisturbanceCrs(BaseModel):
-    """Optional GeoJSON crs block (deprecated by RFC 7946, but widely emitted)."""
-
-    type: str = "name"
-    properties: dict[str, Any] = Field(default_factory=dict)
+    @field_serializer("properties")
+    def properties_as_given(self, value: DisturbanceProperties) -> dict[str, Any]:
+        # Store only the properties the upload set, as for other GeoJSON uploads.
+        return value.model_dump(exclude_unset=True)
 
 
-class DisturbanceFeatureCollection(FeatureCollection[DisturbanceFeature]):
-    """GeoJSON FeatureCollection of disturbance polygons."""
+class CreateDisturbanceFeatureRequest(CreateGeojsonFeatureRequest):
+    """Request body for uploading a disturbance feature."""
 
-    name: str | None = None
-    crs: DisturbanceCrs | None = None
-
-    @model_validator(mode="after")
-    def at_least_one_feature(self) -> "DisturbanceFeatureCollection":
-        if not self.features:
-            raise ValueError(
-                "Disturbance upload must contain at least one Feature. "
-                "An empty FeatureCollection has nothing to apply."
-            )
-        return self
-
-
-class CreateDisturbanceRequestBody(DisturbanceFeatureCollection):
-    """Request body for uploading disturbance polygons.
-
-    The body **is** the GeoJSON FeatureCollection, as for layerset and
-    ``POST /domains``, extended with the resource-metadata fields. ``name``
-    overrides the optional GeoJSON ``name`` member and doubles as the
-    resource name.
-    """
-
-    mapping_year: StrictInt = Field(
-        ...,
-        ge=1900,
-        le=2100,
-        description=(
-            "The year you are mapping. The last digit of each `fdist` code is "
-            "counted back from it; see the endpoint description."
-        ),
-    )
-    name: str = Field("", max_length=255)
-    description: str = Field("", max_length=2000)
-    tags: list[str] = Field(default_factory=list, max_length=50)
+    features: list[DisturbanceFeature]

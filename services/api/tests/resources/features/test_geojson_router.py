@@ -1,5 +1,6 @@
 """
-Integration tests for POST /domains/{domain_id}/features/{road,water,building}/geojson
+Integration tests for
+POST /domains/{domain_id}/features/{road,water,building,disturbance}/geojson
 
 These tests make real HTTP requests to the API and interact with Firestore and
 GCS. The endpoint is synchronous: it writes the GeoParquet blob and the
@@ -8,6 +9,9 @@ Firestore document in-request and returns status="completed".
 
 import pytest
 from api.resources.features.building.examples import BUILDING_GEOJSON_EXAMPLE_VALUES
+from api.resources.features.disturbance.examples import (
+    DISTURBANCE_GEOJSON_EXAMPLE_VALUES,
+)
 from api.resources.features.road.examples import (
     EXAMPLE_ROAD_GEOJSON,
     ROAD_GEOJSON_EXAMPLE_VALUES,
@@ -20,6 +24,10 @@ DOCUMENTED_EXAMPLES = (
     [("road", name, value) for name, value in ROAD_GEOJSON_EXAMPLE_VALUES]
     + [("water", name, value) for name, value in WATER_GEOJSON_EXAMPLE_VALUES]
     + [("building", name, value) for name, value in BUILDING_GEOJSON_EXAMPLE_VALUES]
+    + [
+        ("disturbance", name, value)
+        for name, value in DISTURBANCE_GEOJSON_EXAMPLE_VALUES
+    ]
 )
 
 # A polygon in the Pacific, far from every test domain.

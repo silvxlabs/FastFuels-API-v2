@@ -1,7 +1,7 @@
 """
 api/v2/resources/features/geojson.py
 
-GeoJSON upload source for road, water and building features.
+GeoJSON upload source for road, water, building and disturbance features.
 
 The upload is reprojected to the domain CRS and clipped to the domain extent
 plus ``extent_buffer_m``, as the OSM and Overture sources are, then stored as
@@ -61,12 +61,12 @@ class GeojsonPolygonFeature(
 
     geometry: Polygon | MultiPolygon
 
-    @field_validator("properties")
+    # Before mode, so it also checks the raw dict when a subclass types the
+    # properties as a model.
+    @field_validator("properties", mode="before")
     @classmethod
-    def geometry_is_not_a_property(
-        cls, value: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
-        if value and "geometry" in value:
+    def geometry_is_not_a_property(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "geometry" in value:
             raise ValueError(
                 "`geometry` can't be used as a property name: it is the name of "
                 "the stored geometry column. Rename the property."
@@ -75,7 +75,7 @@ class GeojsonPolygonFeature(
 
 
 class CreateGeojsonFeatureRequest(FeatureCollection[GeojsonPolygonFeature]):
-    """Request body for uploading a road, water or building feature.
+    """Request body for uploading a road, water, building or disturbance feature.
 
     The body **is** the GeoJSON FeatureCollection, as for ``POST /domains`` and
     layerset uploads, extended with the resource-metadata fields. ``name``

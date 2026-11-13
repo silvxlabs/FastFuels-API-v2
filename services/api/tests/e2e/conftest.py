@@ -1,19 +1,22 @@
 """
-Fixtures for generating static test data via the full API pipeline.
+Fixtures for the API end-to-end suite.
 
-The ``create_static_fixture`` fixture drives the end-to-end flow:
-POST grid -> poll Firestore -> copy zarr to static path -> save JSON template.
+Each test drives the full API -> Cloud Tasks -> worker pipeline: POST a
+resource, poll until it completes, and return the completed resource. Chained
+tests (PIM grid -> PIM inventory -> voxels; FBFM40 -> lookup) build on the
+resources created earlier in the same session, so the suite never depends on
+or writes to shared state.
 
-For chained fixtures, the caller passes ``dependencies={"grids": [...],
-"inventories": [...]}`` listing every static fixture the API will look up
-during source validation; each is temporarily registered as a Firestore doc
-for the duration of the request. Use ``@pytest.mark.dependency`` to control
-test ordering so the parent fixture's GCS data + JSON template exist before
-the child runs.
+By default nothing leaves the run: every resource lives in a session-scoped
+domain that is force-deleted at session end. With ``E2E_PUBLISH_FIXTURES=1``
+the suite also publishes each output to its ``static-test-*`` path in GCS and
+writes the JSON template under ``services/lib/tests/shared_data``, which is how
+the static fixtures other services' integration tests read are regenerated.
 """
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,17 +25,12 @@ import gcsfs
 import httpx
 import pytest
 from api.resources.domains.examples import EXAMPLE_WGS84_DEFAULT
-from google.cloud import firestore
 
 from lib.config import (
     FEATURES_BUCKET,
-    FEATURES_COLLECTION,
     GRIDS_BUCKET,
-    GRIDS_COLLECTION,
     INVENTORIES_BUCKET,
-    INVENTORIES_COLLECTION,
     POINT_CLOUDS_BUCKET,
-    POINT_CLOUDS_COLLECTION,
 )
 from lib.testing import (
     SHARED_TEST_DOMAINS_DIR,
@@ -62,32 +60,35 @@ DELETE_REQUEST_TIMEOUT_SECONDS = 30.0
 DELETE_RETRY_TIMEOUT_SECONDS = 90.0
 
 
+# Publishing overwrites the shared static fixtures that other services'
+# integration tests read, so it only happens when asked for explicitly (#796).
+PUBLISH_FIXTURES = os.environ.get("E2E_PUBLISH_FIXTURES") == "1"
+
+
 @dataclass(frozen=True)
-class StaticResourceType:
-    collection: str
+class ResourceType:
+    path: str  # API path segment, e.g. /domains/{id}/{path}/{resource_id}
+    bucket: str
     template_dir: Path
+    # Features are one GeoParquet blob under {bucket}/{domain_id}/; the other
+    # types are a directory under {bucket}/{resource_id}/.
+    single_blob: bool = False
 
 
-STATIC_RESOURCE_TYPES = {
-    "grids": StaticResourceType(
-        collection=GRIDS_COLLECTION,
-        template_dir=STATIC_GRIDS_DIR,
+RESOURCE_TYPES = {
+    "grids": ResourceType("grids", GRIDS_BUCKET, STATIC_GRIDS_DIR),
+    "inventories": ResourceType(
+        "inventories", INVENTORIES_BUCKET, STATIC_INVENTORIES_DIR
     ),
-    "inventories": StaticResourceType(
-        collection=INVENTORIES_COLLECTION,
-        template_dir=STATIC_INVENTORIES_DIR,
+    "pointclouds": ResourceType(
+        "pointclouds", POINT_CLOUDS_BUCKET, STATIC_POINT_CLOUDS_DIR
     ),
-    "features": StaticResourceType(
-        collection=FEATURES_COLLECTION,
-        template_dir=STATIC_FEATURES_DIR,
-    ),
-    "pointclouds": StaticResourceType(
-        collection=POINT_CLOUDS_COLLECTION,
-        template_dir=STATIC_POINT_CLOUDS_DIR,
+    "features": ResourceType(
+        "features", FEATURES_BUCKET, STATIC_FEATURES_DIR, single_blob=True
     ),
 }
 
-# Fields to strip from grid documents when saving JSON templates.
+# Fields to strip from resource documents when saving JSON templates.
 # These are runtime-specific and get set dynamically in tests.
 STRIP_FIELDS = {"id", "domain_id", "owner_id", "created_on", "modified_on", "checksum"}
 
@@ -192,93 +193,52 @@ def _save_json_file(path: Path, template: dict) -> None:
         f.write("\n")
 
 
-def _save_json_template(grid: dict, static_name: str) -> None:
-    """Save a completed grid document as a JSON template for griddle tests.
+def _replace_ids(value, mapping: dict[str, str]):
+    """Return ``value`` with every string equal to a key of ``mapping`` replaced.
 
-    Always overwrites so the template stays consistent with the regenerated
-    zarr in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS), so
-    repeated runs against unchanged griddle output produce identical files.
+    Walks dicts and lists, so it rewrites source IDs anywhere in a request
+    body or a resource document. Matching is exact, never by substring.
     """
-    out_path = STATIC_GRIDS_DIR / f"{static_name}.json"
-    template = {k: v for k, v in grid.items() if k not in STRIP_FIELDS}
-    _save_json_file(out_path, template)
-    logger.info(f"Saved JSON template to {out_path}")
+    if isinstance(value, str):
+        return mapping.get(value, value)
+    if isinstance(value, dict):
+        return {k: _replace_ids(v, mapping) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_replace_ids(v, mapping) for v in value]
+    return value
 
 
-def _load_static_resource_template(resource_type: str, static_name: str) -> dict:
-    """Load a previously-generated static resource JSON template."""
-    config = STATIC_RESOURCE_TYPES[resource_type]
-    path = config.template_dir / f"{static_name}.json"
-    if not path.exists():
-        pytest.fail(
-            f"Static {resource_type} template {path} not found. "
-            f"Run the base fixture test first to generate it."
-        )
-    with open(path) as f:
-        return json.load(f)
-
-
-def _register_static_resource(
-    fs_client: firestore.Client,
-    resource_type: str,
-    static_name: str,
-    owner_id: str,
-    domain_id: str,
-) -> str:
-    """Temporarily register a static fixture as a Firestore resource.
-
-    Creates a Firestore document that points to existing static data in GCS,
-    with the correct owner_id and domain_id so the API's source validation
-    passes. The document ID is the static_name itself (deterministic, no
-    collision with uuid-based IDs).
-
-    Returns the resource ID (== static_name) for use in API calls.
-    """
-    config = STATIC_RESOURCE_TYPES[resource_type]
-    template = _load_static_resource_template(resource_type, static_name)
-    template["id"] = static_name
-    template["owner_id"] = owner_id
-    template["domain_id"] = domain_id
-
-    fs_client.collection(config.collection).document(static_name).set(template)
-    logger.info(
-        f"Registered static fixture {static_name} as Firestore {resource_type} doc"
-    )
-    return static_name
-
-
-def _unregister_static_resource(
-    fs_client: firestore.Client, resource_type: str, static_name: str
-) -> None:
-    """Remove a temporarily-registered static resource from Firestore."""
-    config = STATIC_RESOURCE_TYPES[resource_type]
-    fs_client.collection(config.collection).document(static_name).delete()
-    logger.info(
-        f"Unregistered static fixture {static_name} from Firestore {resource_type}"
-    )
-
-
-def _register_dependencies(
-    fs_client: firestore.Client,
+def _resolve_dependencies(
     dependencies: dict[str, list[str]] | None,
-    owner_id: str,
-    domain_id: str,
-) -> list[tuple[str, str]]:
-    """Register every dependency in Firestore. Returns (resource_type, ref) tuples for cleanup."""
-    registered: list[tuple[str, str]] = []
+    run_resources: dict[str, tuple[str, str]],
+) -> dict[str, str]:
+    """Map each dependency's static name to the resource this session created.
+
+    Chained tests name their sources by static name. The upstream test records
+    the resource it created under that name, and the downstream request uses
+    that resource instead of the shared static fixture.
+    """
+    resolved: dict[str, str] = {}
     for resource_type, refs in (dependencies or {}).items():
-        if resource_type not in STATIC_RESOURCE_TYPES:
-            supported = ", ".join(sorted(STATIC_RESOURCE_TYPES))
+        if resource_type not in RESOURCE_TYPES:
+            supported = ", ".join(sorted(RESOURCE_TYPES))
             raise ValueError(
-                f"Unsupported static resource dependency type {resource_type!r}. "
+                f"Unsupported dependency type {resource_type!r}. "
                 f"Supported types: {supported}."
             )
         for ref in refs:
-            _register_static_resource(
-                fs_client, resource_type, ref, owner_id, domain_id
-            )
-            registered.append((resource_type, ref))
-    return registered
+            created_type, resource_id = run_resources.get(ref, (None, None))
+            if created_type is None:
+                pytest.fail(
+                    f"{ref} was not created earlier in this session. Run the "
+                    f"test that creates it in the same pytest session."
+                )
+            if created_type != resource_type:
+                raise ValueError(
+                    f"{ref} is a {created_type} resource, not {resource_type}."
+                )
+            resolved[ref] = resource_id
+    return resolved
 
 
 def _overwrite_static_dir(fs: gcsfs.GCSFileSystem, src: str, dst: str) -> None:
@@ -300,6 +260,142 @@ def _overwrite_static_dir(fs: gcsfs.GCSFileSystem, src: str, dst: str) -> None:
         fs.rm(stale)
 
 
+def _publish(
+    resource_type: str,
+    domain_id: str,
+    resource: dict,
+    static_name: str,
+    run_resources: dict[str, tuple[str, str]],
+) -> None:
+    """Copy a completed resource to its static path and write its template.
+
+    Source IDs in the template that point at resources from this session are
+    mapped back to their static names, so the committed template references
+    the published fixtures rather than resources that no longer exist.
+    """
+    config = RESOURCE_TYPES[resource_type]
+    fs = gcsfs.GCSFileSystem()
+    resource_id = resource["id"]
+    if config.single_blob:
+        # Production stores features at {bucket}/{domain_id}/{feature_id}.parquet,
+        # but the run's domain is deleted at session end, so the static blob
+        # lives at the bucket root; the integration-test conftest copies it into
+        # its test domain. A GCS object copy overwrites atomically, so readers
+        # never see the blob missing (#311).
+        src = f"{config.bucket}/{domain_id}/{resource_id}.parquet"
+        dst = f"{config.bucket}/{static_name}.parquet"
+        fs.cp(src, dst)
+    else:
+        src = f"{config.bucket}/{resource_id}"
+        dst = f"{config.bucket}/{static_name}"
+        _overwrite_static_dir(fs, src, dst)
+    logger.info(f"Published gs://{src} -> gs://{dst}")
+
+    static_names = {rid: name for name, (_, rid) in run_resources.items()}
+    template = {k: v for k, v in resource.items() if k not in STRIP_FIELDS}
+    out_path = config.template_dir / f"{static_name}.json"
+    _save_json_file(out_path, _replace_ids(template, static_names))
+    logger.info(f"Saved JSON template to {out_path}")
+
+
+@pytest.fixture(scope="session")
+def run_resources() -> dict[str, tuple[str, str]]:
+    """Resources created in this session: static name -> (type, resource ID)."""
+    return {}
+
+
+def _resource_factory(
+    resource_type: str,
+    run_resources: dict[str, tuple[str, str]],
+    default_timeout: int = 300,
+):
+    """Build a factory that creates one resource through the full pipeline.
+
+    The factory POSTs ``body`` to ``endpoint``, polls until the resource
+    completes, records it under ``static_name`` for later tests in the
+    session, and returns the completed resource. It publishes the resource to
+    ``static_name`` only when ``E2E_PUBLISH_FIXTURES=1``.
+
+    ``dependencies={"grids": [...], "inventories": [...]}`` lists the static
+    names the body uses as sources. Each is replaced with the resource the
+    session created under that name, so a chained test must run after the test
+    that creates its source (see ``@pytest.mark.dependency``).
+
+    The resource is not deleted here: later tests may build on it. The
+    session's domain is force-deleted at teardown, which removes it.
+    """
+
+    def _create(
+        client,
+        domain_id,
+        endpoint,
+        body,
+        static_name,
+        dependencies: dict[str, list[str]] | None = None,
+        timeout: int = default_timeout,
+    ):
+        source_ids = _resolve_dependencies(dependencies, run_resources)
+        url = f"/domains/{domain_id}{endpoint}"
+        response = client.post(
+            url,
+            json=_replace_ids(body, source_ids),
+            timeout=E2E_CREATE_TIMEOUT_SECONDS,
+        )
+        assert response.status_code == 201, (
+            f"POST {url} returned {response.status_code}: {response.text}"
+        )
+        resource_id = response.json()["id"]
+        logger.info(f"Created {resource_type} {resource_id} via {url}")
+
+        completed = _poll_for_completion(
+            client,
+            domain_id,
+            RESOURCE_TYPES[resource_type].path,
+            resource_id,
+            timeout=timeout,
+        )
+        run_resources[static_name] = (resource_type, resource_id)
+
+        if PUBLISH_FIXTURES:
+            _publish(resource_type, domain_id, completed, static_name, run_resources)
+
+        return completed
+
+    return _create
+
+
+@pytest.fixture
+def create_static_fixture(run_resources):
+    """Factory that creates a grid through the full pipeline (see
+    ``_resource_factory``)."""
+    return _resource_factory("grids", run_resources)
+
+
+@pytest.fixture
+def create_static_inventory_fixture(run_resources):
+    """Factory that creates an inventory through the full pipeline (see
+    ``_resource_factory``)."""
+    return _resource_factory("inventories", run_resources)
+
+
+@pytest.fixture
+def create_static_point_cloud_fixture(run_resources):
+    """Factory that creates a point cloud through the full pipeline (see
+    ``_resource_factory``).
+
+    A 3DEP fetch is slower than a raster job (it streams octree nodes from the
+    USGS archive), so the completion poll gets a longer budget than the default.
+    """
+    return _resource_factory("pointclouds", run_resources, default_timeout=900)
+
+
+@pytest.fixture
+def create_static_feature_fixture(run_resources):
+    """Factory that creates a feature through the full pipeline (see
+    ``_resource_factory``)."""
+    return _resource_factory("features", run_resources)
+
+
 @pytest.fixture(scope="session")
 def client(test_owner_id):
     """Overrides the shared ``client`` without the skip-dispatch header: these
@@ -307,317 +403,6 @@ def client(test_owner_id):
     headers = {"API-KEY": TEST_API_KEY}
     with httpx.Client(base_url=TEST_URL, headers=headers, timeout=30.0) as client:
         yield client
-
-
-@pytest.fixture
-def create_static_fixture(firestore_client, test_owner_id):
-    """Factory fixture that creates a static grid fixture in GCS.
-
-    Creates a grid via the API, polls for completion, copies the zarr
-    to a static path, saves a JSON template, then cleans up the
-    temporary grid.
-
-    Pass ``dependencies={"grids": [...], "inventories": [...]}`` listing every
-    static fixture the API will look up during source validation. Each ref is
-    temporarily registered as a Firestore doc (with the test user's owner_id
-    and domain_id) and unregistered after the grid is created, regardless of
-    success or failure.
-
-    Use ``@pytest.mark.dependency`` on the test functions to control
-    execution order for chained fixtures.
-    """
-
-    def _create(
-        client,
-        domain_id,
-        endpoint,
-        body,
-        static_name,
-        dependencies: dict[str, list[str]] | None = None,
-    ):
-        registered = _register_dependencies(
-            firestore_client, dependencies, test_owner_id, domain_id
-        )
-
-        try:
-            # Create the grid via the API
-            url = f"/domains/{domain_id}{endpoint}"
-            response = client.post(url, json=body, timeout=E2E_CREATE_TIMEOUT_SECONDS)
-            assert response.status_code == 201, (
-                f"POST {url} returned {response.status_code}: {response.text}"
-            )
-            grid = response.json()
-            grid_id = grid["id"]
-            logger.info(f"Created grid {grid_id} via {url}")
-
-            # Poll until completed
-            completed_grid = _poll_for_completion(client, domain_id, "grids", grid_id)
-
-            # Copy zarr to static path
-            fs = gcsfs.GCSFileSystem()
-            src = f"{GRIDS_BUCKET}/{grid_id}"
-            dst = f"{GRIDS_BUCKET}/{static_name}"
-            _overwrite_static_dir(fs, src, dst)
-            logger.info(f"Copied zarr gs://{src} -> gs://{dst}")
-
-            # Save JSON template
-            _save_json_template(completed_grid, static_name)
-
-            # Clean up the temporary grid via the API
-            delete_url = f"/domains/{domain_id}/grids/{grid_id}"
-            del_response = _delete_with_retry(client, delete_url)
-            logger.info(f"Deleted grid {grid_id}: {del_response.status_code}")
-
-            return completed_grid
-
-        finally:
-            # Always clean up dependency registrations
-            for resource_type, ref in registered:
-                _unregister_static_resource(firestore_client, resource_type, ref)
-
-    yield _create
-
-
-def _save_inventory_json_template(inventory: dict, static_name: str) -> None:
-    """Save a completed inventory document as a JSON template.
-
-    Always overwrites so the template stays consistent with the regenerated
-    parquet in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS).
-    """
-    out_path = STATIC_INVENTORIES_DIR / f"{static_name}.json"
-    template = {k: v for k, v in inventory.items() if k not in STRIP_FIELDS}
-    _save_json_file(out_path, template)
-    logger.info(f"Saved inventory JSON template to {out_path}")
-
-
-@pytest.fixture
-def create_static_inventory_fixture(firestore_client, test_owner_id):
-    """Factory fixture that creates a static inventory fixture in GCS.
-
-    Creates an inventory via the API, polls for completion, copies the
-    parquet to a static path, saves a JSON template, then cleans up the
-    temporary inventory.
-
-    Pass ``dependencies={"grids": [...], "inventories": [...]}`` listing every
-    static fixture the API will look up during source validation. Each ref is
-    temporarily registered as a Firestore doc and unregistered after, regardless
-    of success or failure.
-    """
-
-    def _create(
-        client,
-        domain_id,
-        endpoint,
-        body,
-        static_name,
-        dependencies: dict[str, list[str]] | None = None,
-    ):
-        registered = _register_dependencies(
-            firestore_client, dependencies, test_owner_id, domain_id
-        )
-
-        try:
-            # Create the inventory via the API
-            url = f"/domains/{domain_id}{endpoint}"
-            response = client.post(url, json=body, timeout=E2E_CREATE_TIMEOUT_SECONDS)
-            assert response.status_code == 201, (
-                f"POST {url} returned {response.status_code}: {response.text}"
-            )
-            inventory = response.json()
-            inventory_id = inventory["id"]
-            logger.info(f"Created inventory {inventory_id} via {url}")
-
-            # Poll until completed
-            completed_inventory = _poll_for_completion(
-                client, domain_id, "inventories", inventory_id
-            )
-
-            # Copy parquet to static path
-            fs = gcsfs.GCSFileSystem()
-            src = f"{INVENTORIES_BUCKET}/{inventory_id}"
-            dst = f"{INVENTORIES_BUCKET}/{static_name}"
-            _overwrite_static_dir(fs, src, dst)
-            logger.info(f"Copied parquet gs://{src} -> gs://{dst}")
-
-            # Save JSON template
-            _save_inventory_json_template(completed_inventory, static_name)
-
-            # Clean up the temporary inventory via the API
-            delete_url = f"/domains/{domain_id}/inventories/{inventory_id}"
-            del_response = _delete_with_retry(client, delete_url)
-            logger.info(f"Deleted inventory {inventory_id}: {del_response.status_code}")
-
-            return completed_inventory
-
-        finally:
-            # Always clean up dependency registrations
-            for resource_type, ref in registered:
-                _unregister_static_resource(firestore_client, resource_type, ref)
-
-    yield _create
-
-
-def _save_point_cloud_json_template(point_cloud: dict, static_name: str) -> None:
-    """Save a completed point cloud document as a JSON template.
-
-    Always overwrites so the template stays consistent with the regenerated LAZ
-    in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS).
-    """
-    out_path = STATIC_POINT_CLOUDS_DIR / f"{static_name}.json"
-    template = {k: v for k, v in point_cloud.items() if k not in STRIP_FIELDS}
-    _save_json_file(out_path, template)
-    logger.info(f"Saved point cloud JSON template to {out_path}")
-
-
-@pytest.fixture
-def create_static_point_cloud_fixture(firestore_client, test_owner_id):
-    """Factory fixture that creates a static point cloud fixture in GCS.
-
-    Creates a point cloud via the API, polls for completion, copies the dataset
-    to a static path, saves a JSON template, then cleans up the temporary cloud.
-
-    A point cloud is a ``cloud.parquet`` directory under a ``{bucket}/{id}/``
-    prefix, so the same directory copy grids and inventories use applies
-    unchanged.
-
-    A 3DEP fetch is slower than a raster job (it streams octree nodes from the
-    USGS archive), so the completion poll gets a longer budget than the default.
-    """
-
-    def _create(
-        client,
-        domain_id,
-        endpoint,
-        body,
-        static_name,
-        dependencies: dict[str, list[str]] | None = None,
-        timeout: int = 900,
-    ):
-        registered = _register_dependencies(
-            firestore_client, dependencies, test_owner_id, domain_id
-        )
-
-        try:
-            url = f"/domains/{domain_id}{endpoint}"
-            response = client.post(url, json=body, timeout=E2E_CREATE_TIMEOUT_SECONDS)
-            assert response.status_code == 201, (
-                f"POST {url} returned {response.status_code}: {response.text}"
-            )
-            point_cloud = response.json()
-            point_cloud_id = point_cloud["id"]
-            logger.info(f"Created point cloud {point_cloud_id} via {url}")
-
-            completed = _poll_for_completion(
-                client, domain_id, "pointclouds", point_cloud_id, timeout=timeout
-            )
-
-            fs = gcsfs.GCSFileSystem()
-            src = f"{POINT_CLOUDS_BUCKET}/{point_cloud_id}"
-            dst = f"{POINT_CLOUDS_BUCKET}/{static_name}"
-            _overwrite_static_dir(fs, src, dst)
-            logger.info(f"Copied LAZ gs://{src} -> gs://{dst}")
-
-            _save_point_cloud_json_template(completed, static_name)
-
-            delete_url = f"/domains/{domain_id}/pointclouds/{point_cloud_id}"
-            del_response = _delete_with_retry(client, delete_url)
-            logger.info(
-                f"Deleted point cloud {point_cloud_id}: {del_response.status_code}"
-            )
-
-            return completed
-
-        finally:
-            for resource_type, ref in registered:
-                _unregister_static_resource(firestore_client, resource_type, ref)
-
-    yield _create
-
-
-def _save_feature_json_template(feature: dict, static_name: str) -> None:
-    """Save a completed feature document as a JSON template.
-
-    Always overwrites so the template stays consistent with the regenerated
-    GeoParquet in GCS. Runtime-specific fields are stripped (see STRIP_FIELDS).
-    """
-    out_path = STATIC_FEATURES_DIR / f"{static_name}.json"
-    template = {k: v for k, v in feature.items() if k not in STRIP_FIELDS}
-    _save_json_file(out_path, template)
-    logger.info(f"Saved feature JSON template to {out_path}")
-
-
-@pytest.fixture
-def create_static_feature_fixture(firestore_client, test_owner_id):
-    """Factory fixture that creates a static feature fixture in GCS.
-
-    Creates a feature via the API, polls for completion, copies the
-    single ``{domain_id}/{feature_id}.parquet`` blob to a static path under
-    the bucket root, saves a JSON template, then deletes the temporary
-    feature.
-
-    Unlike grids and inventories (which are GCS directories), features are
-    single GeoParquet files — the copy uses ``fs.cp(src, dst)`` without
-    ``recursive=True``. The static blob lives at the bucket root; the
-    integration-test conftest copies it into the test domain at session
-    start so the API's domain-prefixed blob resolver still finds it.
-    """
-
-    def _create(
-        client,
-        domain_id,
-        endpoint,
-        body,
-        static_name,
-        dependencies: dict[str, list[str]] | None = None,
-    ):
-        registered = _register_dependencies(
-            firestore_client, dependencies, test_owner_id, domain_id
-        )
-
-        try:
-            # Create the feature via the API
-            url = f"/domains/{domain_id}{endpoint}"
-            response = client.post(url, json=body, timeout=E2E_CREATE_TIMEOUT_SECONDS)
-            assert response.status_code == 201, (
-                f"POST {url} returned {response.status_code}: {response.text}"
-            )
-            feature = response.json()
-            feature_id = feature["id"]
-            logger.info(f"Created feature {feature_id} via {url}")
-
-            # Poll until completed
-            completed_feature = _poll_for_completion(
-                client, domain_id, "features", feature_id
-            )
-
-            # Copy the single GeoParquet blob to a stable bucket-root path.
-            # Production stores features at {bucket}/{domain_id}/{feature_id}.parquet,
-            # but the e2e test's Blue Mountain domain is destroyed at session end —
-            # so we keep the static fixture at the bucket root and the integration
-            # test conftest copies it into the test domain at session start.
-            fs = gcsfs.GCSFileSystem()
-            src = f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
-            dst = f"{FEATURES_BUCKET}/{static_name}.parquet"
-
-            # No up-front delete: a GCS object copy overwrites atomically, so
-            # concurrent readers never see the blob missing (#311).
-            fs.cp(src, dst)
-            logger.info(f"Copied GeoParquet gs://{src} -> gs://{dst}")
-
-            # Save JSON template
-            _save_feature_json_template(completed_feature, static_name)
-
-            # Clean up the temporary feature via the API
-            delete_url = f"/domains/{domain_id}/features/{feature_id}"
-            del_response = _delete_with_retry(client, delete_url)
-            logger.info(f"Deleted feature {feature_id}: {del_response.status_code}")
-
-        finally:
-            # Always clean up dependency registrations
-            for resource_type, ref in registered:
-                _unregister_static_resource(firestore_client, resource_type, ref)
-
-    yield _create
 
 
 @pytest.fixture(scope="session")
@@ -661,7 +446,7 @@ def blackfoot_domain(client):
     logger.info(f"Deleted Blackfoot domain {domain['id']}: {del_response.status_code}")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def blue_mountain_domain(client):
     """Create the Blue Mountain domain via the API, clean up after.
 
@@ -669,6 +454,10 @@ def blue_mountain_domain(client):
     ~1 sq km Blue Mountain Recreation Area near Missoula, MT, with the
     UTM bbox snapped to a clean 2 m lattice so every 2 m Domain-anchored
     grid created from this Domain lands on a uniform integer-2 m corner.
+
+    Session-scoped so chained tests can use resources created by earlier
+    tests (a source must be in the same domain). The force delete at teardown
+    removes every resource the session created in it.
     """
     payload = {**EXAMPLE_WGS84_DEFAULT, "pad_to_resolution": 2}
     response = client.post("/domains", json=payload, timeout=E2E_CREATE_TIMEOUT_SECONDS)

@@ -697,6 +697,19 @@ def _most_frequent(x: ndarray, non_burnable_keys: list[int]) -> float:
     return central
 
 
+def disturbance_layer_versions(disturbance: dict) -> dict[str, str]:
+    """LANDFIRE layers and versions a disturbance plan reads, besides the fuel model.
+
+    Ordered as `fetch_disturbed_fuel` requests them from LFPS.
+    """
+    layers = {"fdist": disturbance["fdist_version"]}
+    if disturbance["mode"] != "fdist":
+        layers["annual_disturbance"] = disturbance["ldist_version"]
+    for product in ("fvt", "fvc", "fvh", "bps"):
+        layers[product] = LANDFIRE_VERSIONS[product]["default"]
+    return layers
+
+
 def fetch_disturbed_fuel(
     roi: gpd.GeoDataFrame,
     fuel_model: str,
@@ -747,11 +760,7 @@ def fetch_disturbed_fuel(
 
     # One LFPS job for every layer it serves. `previous` joins it only when
     # its version is LFPS-only; a staged one is fetched on its own below.
-    layers = {"fdist": disturbance["fdist_version"]}
-    if combined:
-        layers["annual_disturbance"] = disturbance["ldist_version"]
-    for product in ("fvt", "fvc", "fvh", "bps"):
-        layers[product] = LANDFIRE_VERSIONS[product]["default"]
+    layers = disturbance_layer_versions(disturbance)
     previous_needs_lfps = _needs_lfps(fuel_model, version)
     if previous_needs_lfps:
         layers[fuel_model] = version

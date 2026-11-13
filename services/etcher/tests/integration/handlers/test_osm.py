@@ -234,3 +234,21 @@ def test_water_coordinates_within_domain(shared_water_feature, shared_water_gdf)
     assert gdf_bounds[1] >= bounds[1] - buffer
     assert gdf_bounds[2] <= bounds[2] + buffer
     assert gdf_bounds[3] <= bounds[3] + buffer
+
+
+def _assert_osm_attributions(feature):
+    """The completed document carries the OSM attribution."""
+    (attribution,) = feature["attributions"]
+    assert attribution["dataset"] == "OpenStreetMap"
+    assert attribution["license_name"] == "ODbL-1.0"
+    assert attribution["accessed_on"]
+
+
+def test_road_attributions(shared_road_feature):
+    """A completed road feature records the OSM attribution."""
+    _assert_osm_attributions(shared_road_feature)
+
+
+def test_water_attributions(shared_water_feature):
+    """A completed water feature records the OSM attribution."""
+    _assert_osm_attributions(shared_water_feature)

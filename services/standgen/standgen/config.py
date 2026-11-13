@@ -2,9 +2,8 @@
 
 GDAM service settings are read here rather than from ``lib.config``: editing
 ``services/lib`` is on every service's CI/CD ``paths:`` trigger and redeploys the
-entire pipeline, and only standgen talks to GDAM. The defaults below are the
-production values; override any of them via environment variables (wire them into
-``.github/workflows/standgen.yml`` if a non-default is needed in deployment).
+entire pipeline, and only standgen talks to GDAM. ``GDAM_API_URL`` has no default;
+the values below it can be overridden via environment variables.
 
 Handlers should reference these as ``config.GDAM_*`` (not import-bind the values) so
 tests can monkeypatch them.
@@ -12,17 +11,16 @@ tests can monkeypatch them.
 
 import os
 
-# Public GDAM allometry inference API (behind the FastFuels load balancer); the
-# handler appends /predict/batch. Override via GDAM_API_URL.
-GDAM_API_URL = os.getenv("GDAM_API_URL", "https://api.fastfuels.silvxlabs.com/gdam")
+# Public GDAM allometry inference API; the handler appends /predict/batch.
+GDAM_API_URL = os.environ["GDAM_API_URL"]
 
 # Target trees per dask partition, i.e. per /predict/batch request. The handler
 # repartitions the source inventory to this size so each GDAM call (and each
 # partition held in memory) is bounded, and stays under GDAM's 50,000-tree limit.
-# Measured against the public URL with the flow-matching model v2_west.1, a
-# 20k-tree batch takes ~10s warm (~24s cold), far under GDAM_REQUEST_TIMEOUT_S;
-# 2k trees take ~2s, so the per-tree cost falls with batch size. v2_west.2 draws
-# in one network pass instead of v2_west.1's 8-step solve, so it is faster.
+# Measured against the public URL with the earlier flow-matching model
+# v2_west.1, a 20k-tree batch takes ~10s warm (~24s cold), far under
+# GDAM_REQUEST_TIMEOUT_S; 2k trees take ~2s, so the per-tree cost falls with
+# batch size. Not yet re-measured with the pinned model (``GDAM_MODEL``).
 GDAM_BATCH_SIZE = int(os.getenv("GDAM_BATCH_SIZE", "20000"))
 
 # Per-request timeout (seconds) on outbound GDAM calls. Must stay under Cloud Run's

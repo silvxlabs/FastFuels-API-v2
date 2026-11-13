@@ -11,4 +11,4 @@ def test_rename_map_covers_base_columns():
 
 
 def test_base_columns_count():
-    assert len(BASE_COLUMNS) == 7
+    assert len(BASE_COLUMNS) == 8

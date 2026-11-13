@@ -16,6 +16,13 @@ on:
       - 'services/lib/**'
       - '.github/workflows/api.yml'
 
+# Runs on the same branch queue instead of overlapping: two overlapping runs
+# race on the deploy (Cloud Run serves whichever finishes last) and on shared
+# test data (#726). Never cancel a run in progress, so every deploy completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   determine-environment:
     name: Determine Deployment Environment
@@ -84,18 +91,6 @@ jobs:
           gcloud run deploy "$CLOUD_RUN_NAME" \
             --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ needs.determine-environment.outputs.deploy_env }} \
             --region ${{ env.REGION }} \
-            --update-env-vars="\
-              DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
-              INFRA_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
-              GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
-              GCP_REGION=${{ env.REGION }},\
-              GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
-              EXPORTS_BUCKET=${{ secrets.EXPORTS_BUCKET }},\
-              RASTERS_BUCKET=${{ secrets.RASTERS_BUCKET }},\
-              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
-              UPLOADS_BUCKET=${{ secrets.UPLOADS_BUCKET }},\
-              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
-              POINT_CLOUDS_BUCKET=${{ secrets.POINT_CLOUDS_BUCKET }}" \
             --quiet
 
       - name: Get service URL
@@ -111,7 +106,7 @@ jobs:
         run: |
           #          URL="${{ steps.get-url.outputs.service_url }}"
           #          deadline=$((SECONDS + 120))
-          #          until curl -fsS --max-time 10 "$URL/" >/dev/null 2>&1; do
+          #          until curl -fsS --max-time 10 "$URL/v2/openapi.json" >/dev/null 2>&1; do
           #            if [ $SECONDS -ge $deadline ]; then
           #              echo "Service did not respond within 120s"; exit 1
           #            fi
@@ -124,7 +119,7 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-    needs: deploy
+    needs: [ determine-environment, deploy ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -159,6 +154,7 @@ jobs:
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
-          TEST_API_URL: ${{ needs.deploy.outputs.service_url }}
+          # Prod is tested through the load balancer, as users reach it.
+          TEST_API_URL: ${{ needs.determine-environment.outputs.deploy_env == 'prod' && 'https://api.fastfuels.silvxlabs.com' || needs.deploy.outputs.service_url }}
           TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
         run: uv run pytest tests/ -v

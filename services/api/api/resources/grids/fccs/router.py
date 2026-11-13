@@ -168,8 +168,8 @@ async def check_landfire_fccs_coverage(request: Request, domain: VerifiedDomain)
     `latest` is the release representing the most recent point in time that
     fully covers the domain. `releases` lists every release, newest first.
     Each release that covers the domain carries a `links.create` request:
-    send its `body` to its `href`, a path relative to this API's base URL,
-    to create the grid.
+    send its `body` to its `href`, the endpoint's path on the API host, to
+    create the grid.
     """
     geometry = parse_domain_gdf(domain).to_crs(epsg=5070).geometry.union_all()
     releases = await asyncio.to_thread(list_releases, "fccs", geometry)

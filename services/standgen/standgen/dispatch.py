@@ -7,7 +7,7 @@ Routes inventory requests to the appropriate handler based on source type.
 import geopandas as gpd
 
 from lib.errors import ProcessingError
-from standgen.handlers import chm, gdam, pim, pim_chm_fusion
+from standgen.handlers import chm, crown_base_height, gdam, pim, pim_chm_fusion
 
 
 def dispatch_handler(
@@ -33,6 +33,10 @@ def dispatch_handler(
             return chm.handle_chm(inventory, source, domain_gdf, progress_callback)
         case "gdam":
             return gdam.handle_gdam(inventory, source, domain_gdf, progress_callback)
+        case "crown_base_height":
+            return crown_base_height.handle_crown_base_height(
+                inventory, source, domain_gdf, progress_callback
+            )
         case _:
             raise ProcessingError(
                 code="UNKNOWN_SOURCE",

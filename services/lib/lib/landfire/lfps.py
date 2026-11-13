@@ -181,6 +181,8 @@ def submit_job(layers: list[str], aoi: str) -> LfpsJob:
     Returns:
         The newly submitted job.
     """
+    if not LANDFIRE_USER_EMAIL:
+        raise RuntimeError("LANDFIRE_USER_EMAIL is not set")
     params = {
         "Email": LANDFIRE_USER_EMAIL,
         "Layer_List": ";".join(layers),

@@ -1174,6 +1174,7 @@ requires-dist = [
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
     { name = "requests", marker = "extra == 'entwine'", specifier = ">=2.32" },
     { name = "requests", marker = "extra == 'landfire'", specifier = ">=2.32" },
+    { name = "requests", marker = "extra == 'threedep'", specifier = ">=2.32" },
     { name = "rioxarray", marker = "extra == 'raster'", specifier = ">=0.21.0" },
     { name = "s3fs", marker = "extra == 'threedep'", specifier = ">=2024.2.0" },
     { name = "shapely", marker = "extra == 'entwine'", specifier = ">=2.0" },

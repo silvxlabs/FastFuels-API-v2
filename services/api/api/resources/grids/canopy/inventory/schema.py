@@ -33,6 +33,10 @@ from pydantic import (
 )
 
 from api.resources.band_metadata import BandEnum, publish_band_defs
+from api.resources.crown_radius import (
+    CanopyAllometryMaxCrownRadiusSource,
+    CanopyMaxCrownRadiusSource,
+)
 from api.resources.grids.alignment import (
     GridLatticeDomainTarget,
     GridLatticeSpecification,
@@ -43,10 +47,7 @@ from api.resources.grids.canopy.schema import (
 )
 from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
-from api.resources.grids.voxelize.inventory.tree.schema import (
-    BiomassUnit,
-    InventoryColumnMaxCrownRadiusSource,
-)
+from api.resources.grids.voxelize.inventory.tree.schema import BiomassUnit
 from api.resources.input_requirements import input_requirements, inventory
 from lib.inventory_io import CANOPY_BASE_COLUMNS
 
@@ -116,52 +117,6 @@ class CanopyBiomassEquations(StrEnum):
     nsvb = "nsvb"
     jenkins = "jenkins"
     brown_1978 = "brown_1978"
-
-
-class CanopyCrownWidthEquations(StrEnum):
-    """Allometric equation families for a tree's maximum crown radius.
-
-    ``purves`` (Purves et al. 2007) is the national default and the one
-    the tree voxelization endpoint uses; it varies with height and
-    crown ratio as well as diameter. ``crookston_stage`` (Crookston &
-    Stage 1999, RMRS-GTR-24, reached through FVS) is the crown width
-    behind FuelCalc's canopy cover — diameter alone above breast
-    height, with regionally fitted coefficients — and is offered for
-    compatibility studies.
-    """
-
-    purves = "purves"
-    crookston_stage = "crookston_stage"
-
-
-class CanopyAllometryMaxCrownRadiusSource(BaseModel):
-    """Compute each tree's maximum crown radius from allometric equations.
-
-    Supersets the voxelize allometry source with an `equations` choice,
-    because canopy cover and crown biomass are separate axes here: which
-    allometry supplies the radius is independent of how a cover method
-    treats crowns that overlap, so a run can vary either without
-    confounding the other.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["allometry"] = "allometry"
-    equations: CanopyCrownWidthEquations = Field(
-        default=CanopyCrownWidthEquations.purves,
-        description=(
-            "Allometric equation family for maximum crown radius. "
-            "`purves` is the national default, consistent with the tree "
-            "voxelization endpoint. `crookston_stage` reproduces the "
-            "crown widths FuelCalc uses for canopy cover."
-        ),
-    )
-
-
-CanopyMaxCrownRadiusSource = Annotated[
-    CanopyAllometryMaxCrownRadiusSource | InventoryColumnMaxCrownRadiusSource,
-    Field(discriminator="type"),
-]
 
 
 class AllometryCanopyBiomassSource(BaseModel):
@@ -434,7 +389,8 @@ class CanopyCbdDepth(StrEnum):
     the requested `cbh`/`chm` threshold settings — those bands must be
     requested with the `bulk_density_threshold` method so the depth's
     definition is recorded on the grid. `mean_crown_length` is the mean of
-    per-tree crown lengths (the depth Cruz et al. 2003 used).
+    per-tree crown lengths, height − crown_base_height (the depth Cruz et
+    al. 2003 used).
     `biomass_percentile` is the height span holding the central 80% of
     canopy biomass (10th to 90th percentile; Albini 1996).
     `height_percentile` is the 90th-percentile tree height minus the
@@ -570,7 +526,7 @@ class CanopyCbhMean(BaseModel):
     """CBH as the mean of the per-tree crown base heights in each cell.
 
     Van Wagner's (1977) stand-mean definition — a plain summary of the
-    per-tree crown bases (`height * (1 - crown_ratio)`), one tree one vote
+    per-tree `crown_base_height` values, one tree one vote
     unless `weight_by_available_fuel` is set. A distinct convention from
     the `bulk_density_threshold` profile method; the two diverge where tree
     height varies within a cell.

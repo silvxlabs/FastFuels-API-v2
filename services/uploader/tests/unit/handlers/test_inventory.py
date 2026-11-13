@@ -2,23 +2,23 @@
 Unit tests for uploader/handlers/inventory.py
 
 Tests parsing and validation logic in isolation using temporary files.
-No GCP I/O — all file operations use local /tmp paths.
+No GCP I/O — all file operations use local paths.
 """
 
 import math
-import shutil
+import tempfile
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from shapely.geometry import MultiPoint, Point, box
 from uploader.handlers import inventory
 from uploader.handlers.inventory import (
+    ROW_GROUP_SIZE,
     _column_summary,
-    _parse,
-    _validate,
     _write_parquet,
 )
 
@@ -26,6 +26,23 @@ from lib.errors import CancelledException, ProcessingError
 
 # Domain CRS used across tests (UTM zone 10N — matches typical California domains)
 DOMAIN_CRS = "EPSG:32610"
+
+# Bounds that keep every tree, for tests of reading and validation alone.
+WORLD = (-1e12, -1e12, 1e12, 1e12)
+
+
+def _read(fmt: str, path, col_map: dict | None = None, bounds=WORLD) -> pd.DataFrame:
+    """The upload's validated, domain-filtered trees, in file order."""
+    table = inventory._read_table(fmt, str(path), col_map or {}, DOMAIN_CRS, bounds)
+    return table.to_pandas()
+
+
+def _validate(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate ``df`` by reading it back as an uploaded CSV."""
+    with tempfile.TemporaryDirectory() as d:
+        path = f"{d}/trees.csv"
+        df.to_csv(path, index=False)
+        return _read("csv", path)
 
 
 def _write_csv(data: dict, path: str) -> None:
@@ -69,7 +86,7 @@ class TestParseCsv:
         path = str(tmp_path / "trees.csv")
         _write_csv({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT}, path)
 
-        df = _parse("csv", path, {}, DOMAIN_CRS)
+        df = _read("csv", path)
         assert list(df["x"]) == SAMPLE_X
         assert list(df["height"]) == SAMPLE_HEIGHT
 
@@ -81,7 +98,7 @@ class TestParseCsv:
         )
 
         col_map = {"x": "easting", "y": "northing", "height": "HT"}
-        df = _parse("csv", path, col_map, DOMAIN_CRS)
+        df = _read("csv", path, col_map)
         assert "x" in df.columns
         assert "y" in df.columns
         assert "height" in df.columns
@@ -101,7 +118,7 @@ class TestParseCsv:
             path,
         )
 
-        df = _parse("csv", path, {}, DOMAIN_CRS)
+        df = _read("csv", path)
         assert "plot_id" not in df.columns
         assert "surveyor" not in df.columns
 
@@ -119,7 +136,7 @@ class TestParseCsv:
             path,
         )
 
-        df = _parse("csv", path, {}, DOMAIN_CRS)
+        df = _read("csv", path)
         assert "fia_species_code" in df.columns
         assert "dbh" in df.columns
 
@@ -137,7 +154,7 @@ class TestParseCsv:
         )
 
         col_map = {"fia_species_code": "SPCD"}
-        df = _parse("csv", path, col_map, DOMAIN_CRS)
+        df = _read("csv", path, col_map)
         assert "fia_species_code" in df.columns
         assert list(df["fia_species_code"]) == [122, 202, 15]
 
@@ -151,7 +168,7 @@ class TestParseGeoJson:
         path = str(tmp_path / "trees.geojson")
         _write_geojson(lon_lat_points, {"height": [10.0, 15.0]}, path)
 
-        df = _parse("geojson", path, {}, DOMAIN_CRS)
+        df = _read("geojson", path)
         assert "x" in df.columns
         assert "y" in df.columns
         assert "height" in df.columns
@@ -167,7 +184,7 @@ class TestParseGeoJson:
         path = str(tmp_path / "trees.geojson")
         gdf.to_file(path, driver="GeoJSON")
 
-        df = _parse("geojson", path, {}, DOMAIN_CRS)
+        df = _read("geojson", path)
         assert len(df) == 2
 
     def test_column_mapping_applied_to_attributes(self, tmp_path):
@@ -177,7 +194,7 @@ class TestParseGeoJson:
         _write_geojson(lon_lat_points, {"HT": [10.0, 15.0]}, path)
 
         col_map = {"height": "HT"}
-        df = _parse("geojson", path, col_map, DOMAIN_CRS)
+        df = _read("geojson", path, col_map)
         assert "height" in df.columns
         assert "HT" not in df.columns
 
@@ -187,7 +204,7 @@ class TestParseGeoJson:
         path = str(tmp_path / "trees.geojson")
         _write_geojson(lon_lat_points, {"height": [10.0]}, path)
 
-        df = _parse("geojson", path, {}, DOMAIN_CRS)
+        df = _read("geojson", path)
         # After reprojection to UTM zone 10N, x should be ~500k meters
         assert df["x"].iloc[0] > 100_000
 
@@ -198,7 +215,7 @@ class TestParseGeoJson:
         gdf.to_file(path, driver="GeoJSON")
 
         with pytest.raises(ProcessingError) as exc_info:
-            _parse("geojson", path, {}, DOMAIN_CRS)
+            _read("geojson", path)
         assert exc_info.value.code == "EMPTY_FILE"
 
     def test_polygon_geometry_raises(self, tmp_path):
@@ -214,7 +231,7 @@ class TestParseGeoJson:
         gdf.to_file(path, driver="GeoJSON")
 
         with pytest.raises(ProcessingError) as exc_info:
-            _parse("geojson", path, {}, DOMAIN_CRS)
+            _read("geojson", path)
         assert exc_info.value.code == "INVALID_GEOMETRY_TYPE"
 
 
@@ -226,7 +243,7 @@ class TestParseGeoPackage:
             SAMPLE_POINTS, {"height": SAMPLE_HEIGHT}, path, crs=DOMAIN_CRS
         )
 
-        df = _parse("geopackage", path, {}, DOMAIN_CRS)
+        df = _read("geopackage", path)
         assert "x" in df.columns
         assert len(df) == len(SAMPLE_POINTS)
 
@@ -239,7 +256,7 @@ class TestParseGeoPackage:
             lon_lat_points, {"height": [10.0, 15.0]}, path, crs="EPSG:4326"
         )
 
-        df = _parse("geopackage", path, {}, DOMAIN_CRS)
+        df = _read("geopackage", path)
         # After reprojection to UTM zone 10N, x should be in meters
         assert df["x"].iloc[0] > 100_000
 
@@ -274,12 +291,12 @@ class TestValidate:
             _validate(df)
         assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
 
-    def test_missing_optional_columns_added_as_null(self):
-        """Missing optional columns are added as NaN and do not cause errors."""
+    def test_missing_optional_columns_left_out(self):
+        """Missing optional columns pass validation and are not kept; the
+        Parquet write pads them with nulls."""
         df = self._make_df()
         result = _validate(df)
-        assert "fia_species_code" in result.columns
-        assert result["fia_species_code"].isna().all()
+        assert "fia_species_code" not in result.columns
 
     def test_optional_columns_preserved_when_present(self):
         """Optional columns with valid values pass validation."""
@@ -334,13 +351,17 @@ class TestValidate:
         assert pd.isna(result["fia_species_code"].iloc[1])
 
 
+def _summary(values, col_type, key="v", type=None):
+    return _column_summary(pa.chunked_array([values], type=type), key, col_type)
+
+
 class TestColumnSummary:
     """Per-column summaries must match the API's ColumnSummary schema shape and
     never carry a non-finite float — the API serves inventories with a
     JSONResponse (allow_nan=False), so a NaN stat would 500 the GET."""
 
     def test_continuous_summary_fields(self):
-        summary = _column_summary(pd.Series([2.0, 4.0, 6.0, None]), "continuous")
+        summary = _summary([2.0, 4.0, 6.0, None], "continuous")
         assert summary["type"] == "continuous"
         assert summary["count"] == 3
         assert summary["null_count"] == 1
@@ -350,7 +371,7 @@ class TestColumnSummary:
         assert summary["std"] == pytest.approx(2.0)
 
     def test_continuous_summary_shape(self):
-        summary = _column_summary(pd.Series([1.0, 2.0]), "continuous")
+        summary = _summary([1.0, 2.0], "continuous")
         assert set(summary) == {
             "type",
             "count",
@@ -364,16 +385,14 @@ class TestColumnSummary:
     def test_single_value_continuous_std_is_none(self):
         """Sample std (ddof=1) of a lone value is NaN — a single-row upload.
         It must be sanitized to None while the finite stats stay."""
-        summary = _column_summary(pd.Series([5.0]), "continuous")
+        summary = _summary([5.0], "continuous")
         assert summary["count"] == 1
         assert summary["std"] is None
         assert summary["min"] == 5.0
         assert summary["mean"] == 5.0
 
     def test_all_null_continuous_stats_are_none(self):
-        summary = _column_summary(
-            pd.Series([None, None], dtype="float64"), "continuous"
-        )
+        summary = _summary([None, None], "continuous", type=pa.float64())
         assert summary["count"] == 0
         assert summary["null_count"] == 2
         assert summary["min"] is None
@@ -382,7 +401,7 @@ class TestColumnSummary:
         assert summary["std"] is None
 
     def test_categorical_summary(self):
-        summary = _column_summary(pd.Series([122, 202, 122, None]), "categorical")
+        summary = _summary([122, 202, 122, None], "categorical")
         assert summary["type"] == "categorical"
         assert summary["count"] == 3
         assert summary["null_count"] == 1
@@ -390,28 +409,67 @@ class TestColumnSummary:
         assert set(summary) == {"type", "count", "null_count", "unique_count"}
 
     def test_no_stat_is_non_finite(self):
-        summary = _column_summary(pd.Series([5.0]), "continuous")
+        summary = _summary([5.0], "continuous")
         for value in summary.values():
             assert not (isinstance(value, float) and not math.isfinite(value))
 
 
-class TestWriteParquet:
-    def test_no_null_dask_index_in_schema(self, tmp_path):
-        """dask's synthetic RangeIndex column must not be written (#335)."""
-        df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
-        path = str(tmp_path / "inv")
-        _write_parquet(df, path)
+# Domain bounds covering the sample trees, for _write_parquet's tile order.
+SAMPLE_BOUNDS = (499_950.0, 4_199_950.0, 500_250.0, 4_200_250.0)
 
-        metadata = pq.read_metadata(f"{path}/_metadata")
-        assert metadata.schema.to_arrow_schema().names == ["x", "y", "height"]
+
+class TestWriteParquet:
+    def _table(self, **columns):
+        n = len(next(iter(columns.values())))
+        tree_id = pa.array(np.arange(1, n + 1), pa.int32())
+        return pa.table({"tree_id": tree_id} | columns)
+
+    def test_schema_is_canonical_and_padded(self, tmp_path):
+        """Every v2 column is written in canonical order; absent ones are null,
+        and no synthetic index column leaks in (#335)."""
+        table = self._table(x=SAMPLE_X, y=SAMPLE_Y, height=SAMPLE_HEIGHT)
+        _write_parquet(table, SAMPLE_BOUNDS, str(tmp_path))
+
+        metadata = pq.read_metadata(tmp_path / "_metadata")
+        assert metadata.schema.to_arrow_schema().names == list(
+            inventory._COLUMN_METADATA
+        )
+        result = pd.read_parquet(tmp_path)
+        assert result["dbh"].isna().all()
+        assert result["fia_species_code"].dtype == "Int64"
 
     def test_round_trip_preserves_data(self, tmp_path):
-        df = pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
-        path = str(tmp_path / "inv")
-        _write_parquet(df, path)
+        table = self._table(x=SAMPLE_X, y=SAMPLE_Y, height=SAMPLE_HEIGHT)
+        _write_parquet(table, SAMPLE_BOUNDS, str(tmp_path))
 
-        result = pd.read_parquet(path)
-        pd.testing.assert_frame_equal(result, df)
+        result = pd.read_parquet(tmp_path).sort_values("tree_id")
+        assert list(result["tree_id"]) == [1, 2, 3]
+        assert list(result["x"]) == SAMPLE_X
+        assert list(result["height"]) == SAMPLE_HEIGHT
+
+    def test_caps_row_groups_and_lists_them_in_metadata(self, tmp_path):
+        """An upload over ROW_GROUP_SIZE rows splits into several row groups,
+        and ``_metadata`` lists every one with its file path (#763)."""
+        n = 2 * ROW_GROUP_SIZE + 1
+        x = np.linspace(SAMPLE_BOUNDS[0], SAMPLE_BOUNDS[2], n)
+        y = np.full(n, SAMPLE_BOUNDS[1])
+        _write_parquet(
+            self._table(x=x, y=y, height=np.ones(n)), SAMPLE_BOUNDS, str(tmp_path)
+        )
+
+        files = [p.name for p in tmp_path.glob("*.parquet")]
+        assert len(files) == 1
+        metadata = pq.read_metadata(tmp_path / "_metadata")
+        assert [
+            metadata.row_group(i).num_rows for i in range(metadata.num_row_groups)
+        ] == [ROW_GROUP_SIZE, ROW_GROUP_SIZE, 1]
+        assert {
+            metadata.row_group(i).column(0).file_path
+            for i in range(metadata.num_row_groups)
+        } == set(files)
+        assert pq.read_metadata(tmp_path / files[0]).num_row_groups == 3
+        tree_ids = pd.read_parquet(tmp_path)["tree_id"].sort_values()
+        assert tree_ids.tolist() == list(range(1, n + 1))
 
 
 class TestTreeIdValidation:
@@ -465,13 +523,13 @@ class TestTreeIdValidation:
         assert err.code == "SCHEMA_VALIDATION_ERROR"
         assert "field_uniqueness" in err.suggestion
 
-    def test_absent_tree_id_not_padded(self):
-        """Without a tree_id column _validate leaves it out; handle_inventory
-        generates IDs after the domain filter."""
+    def test_absent_tree_id_generated(self):
+        """Without a tree_id column, IDs 1 … N are generated in file order."""
         result = _validate(
             pd.DataFrame({"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT})
         )
-        assert "tree_id" not in result.columns
+        assert list(result["tree_id"]) == [1, 2, 3]
+        assert result["tree_id"].dtype == np.int32
 
     def test_tree_id_mapping_from_csv(self, tmp_path):
         path = str(tmp_path / "trees.csv")
@@ -484,13 +542,11 @@ class TestTreeIdValidation:
             },
             path,
         )
-        df = _validate(_parse("csv", path, {"tree_id": "TreeNum"}, DOMAIN_CRS))
+        df = _validate(_read("csv", path, {"tree_id": "TreeNum"}))
         assert list(df["tree_id"]) == [40, 10, 30]
 
     def test_tree_id_summary_skips_distinct_count(self):
-        summary = _column_summary(
-            pd.Series([3, 1, 2], name="tree_id", dtype="int32"), "categorical"
-        )
+        summary = _summary([3, 1, 2], "categorical", key="tree_id", type=pa.int32())
         assert summary["unique_count"] == summary["count"] == 3
 
 
@@ -500,7 +556,8 @@ class TestHandleInventoryTreeIds:
     def _run(self, tmp_path, monkeypatch, data: dict, col_map: dict | None = None):
         csv_path = tmp_path / "upload.csv"
         pd.DataFrame(data).to_csv(csv_path, index=False)
-        out = str(tmp_path / "inv")
+        out = tmp_path / "inv"
+        out.mkdir()
         updates = {}
 
         class _Snap:
@@ -512,13 +569,18 @@ class TestHandleInventoryTreeIds:
             geometry=[box(499_950.0, 4_199_950.0, 500_150.0, 4_200_150.0)],
             crs=DOMAIN_CRS,
         )
+        read_table = inventory._read_table
         monkeypatch.setattr(
-            inventory, "download_file", lambda src, dst: shutil.copy(csv_path, dst)
+            inventory,
+            "_read_table",
+            lambda fmt, src, *args: read_table(fmt, str(csv_path), *args),
         )
         monkeypatch.setattr(inventory, "get_document", lambda c, i: (None, _Snap()))
         monkeypatch.setattr(inventory, "parse_domain_gdf", lambda d: domain_gdf)
         monkeypatch.setattr(
-            inventory, "_write_parquet", lambda df, p: _write_parquet(df, out)
+            inventory,
+            "_write_parquet",
+            lambda t, b, p, *a: _write_parquet(t, b, out, *a),
         )
         monkeypatch.setattr(inventory, "storage_size", lambda p: 0)
         monkeypatch.setattr(inventory, "delete_file", lambda p: None)
@@ -530,7 +592,9 @@ class TestHandleInventoryTreeIds:
         inventory.handle_inventory(
             f"inv-{tmp_path.name}", "bucket", f"inventories/{tmp_path.name}.csv", doc
         )
-        return pd.read_parquet(out), updates
+        # Rows are stored in spatial order; the sample trees' file order is by x.
+        df = pd.read_parquet(out).sort_values("x").reset_index(drop=True)
+        return df, updates
 
     def test_unmapped_upload_generates_contiguous_ids(self, tmp_path, monkeypatch):
         """IDs are 1 … N over the trees kept in the domain, in file order."""
@@ -604,7 +668,7 @@ class TestCrownRadius:
         pd.DataFrame(
             {"x": 0.0, "y": 0.0, "height": 10.0, "crown_radius": radii}
         ).to_csv(path, index=False)
-        df = _parse("csv", str(path), {}, DOMAIN_CRS)
+        df = _read("csv", str(path))
         np.testing.assert_allclose(df["crown_radius"].to_numpy(), radii, rtol=1e-12)
 
     def test_nulls_allowed(self, tmp_path, monkeypatch):
@@ -631,6 +695,73 @@ class TestCrownRadius:
         assert "crown_radius" not in [c["key"] for c in updates["columns"]]
 
 
+class TestCrownBaseHeight:
+    def _df(self, cbh):
+        return pd.DataFrame(
+            {"x": SAMPLE_X, "y": SAMPLE_Y, "height": SAMPLE_HEIGHT}
+        ).assign(crown_base_height=cbh)
+
+    def _error(self, cbh) -> ProcessingError:
+        with pytest.raises(ProcessingError) as exc_info:
+            _validate(self._df(cbh))
+        assert exc_info.value.code == "SCHEMA_VALIDATION_ERROR"
+        return exc_info.value
+
+    def test_valid_values_preserved(self):
+        """0 and a value equal to height (no live crown) are both valid."""
+        result = _validate(self._df([0.0, 15.0, 8.5]))
+        assert list(result["crown_base_height"]) == [0.0, 15.0, 8.5]
+
+    def test_nulls_allowed(self):
+        result = _validate(self._df([None, 4.0, None]))
+        assert result["crown_base_height"].isna().tolist() == [True, False, True]
+
+    def test_negative_rejected(self):
+        err = self._error([2.0, -0.5, 3.0])
+        assert "'column': 'crown_base_height'" in err.suggestion
+
+    def test_above_height_rejected(self):
+        err = self._error([2.0, 15.5, 3.0])
+        assert "crown_base_height must not exceed height" in err.suggestion
+        assert "'index': 1" in err.suggestion
+
+    def test_upload_records_column_after_crown_ratio(self, tmp_path, monkeypatch):
+        data = {
+            "x": SAMPLE_X,
+            "y": SAMPLE_Y,
+            "height": SAMPLE_HEIGHT,
+            "CR": [0.5, 0.4, 0.3],
+            "CBH": [5.0, None, 12.0],
+        }
+        df, updates = TestHandleInventoryTreeIds()._run(
+            tmp_path,
+            monkeypatch,
+            data,
+            {"crown_ratio": "CR", "crown_base_height": "CBH"},
+        )
+        assert df["crown_base_height"].iloc[0] == 5.0
+        assert np.isnan(df["crown_base_height"].iloc[1])
+        keys = [c["key"] for c in updates["columns"]]
+        assert keys.index("crown_base_height") == keys.index("crown_ratio") + 1
+        [col] = [c for c in updates["columns"] if c["key"] == "crown_base_height"]
+        assert col["type"] == "continuous"
+        assert col["unit"] == "m"
+        assert col["summary"]["null_count"] == 1
+
+    def test_crown_ratio_only_stores_no_crown_base(self, tmp_path, monkeypatch):
+        data = {
+            "x": SAMPLE_X,
+            "y": SAMPLE_Y,
+            "height": SAMPLE_HEIGHT,
+            "crown_ratio": [0.5, 0.4, 0.3],
+        }
+        df, updates = TestHandleInventoryTreeIds()._run(tmp_path, monkeypatch, data)
+        assert df["crown_base_height"].isna().all()
+        keys = [c["key"] for c in updates["columns"]]
+        assert "crown_ratio" in keys
+        assert "crown_base_height" not in keys
+
+
 @pytest.mark.parametrize(
     "error, deleted",
     [
@@ -647,7 +778,6 @@ def test_staged_upload_kept_only_for_retry(monkeypatch, error, deleted):
     def fail(*args):
         raise error
 
-    monkeypatch.setattr(inventory, "download_file", lambda src, dst: None)
     monkeypatch.setattr(inventory, "get_document", fail)
     monkeypatch.setattr(inventory, "delete_file", deletes.append)
     doc = {"domain_id": "d", "source": {"format": "csv"}}

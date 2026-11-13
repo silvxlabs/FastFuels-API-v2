@@ -18,6 +18,10 @@ from api.resources.input_requirements import grid, input_requirements
 from api.resources.inventories.modification_models import InventoryModification
 from api.resources.inventories.schema import CreateInventoryRequestBase, PointProcess
 from api.resources.inventories.treatment_models import InventoryTreatment
+from api.resources.inventories.tree.allometry.schema import (
+    CrownBaseHeightModel,
+    default_crown_base_height_model,
+)
 
 
 def _generate_random_seed() -> int:
@@ -99,6 +103,10 @@ class PimChmFusionInventorySource(BaseModel):
     method: FusionMethod
     point_process: PointProcess
     seed: int
+    crown_base_height_model: CrownBaseHeightModel = Field(
+        default_factory=default_crown_base_height_model,
+        description="The model that computed `crown_base_height`.",
+    )
 
 
 class CreatePimChmFusionInventoryRequest(CreateInventoryRequestBase):

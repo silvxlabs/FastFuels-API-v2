@@ -136,11 +136,12 @@ BASE_INVENTORY_COLUMNS = [
     Column(key="dbh", type=ColumnType.continuous, unit="cm"),
     Column(key="height", type=ColumnType.continuous, unit="m"),
     Column(key="crown_ratio", type=ColumnType.continuous),
+    Column(key="crown_base_height", type=ColumnType.continuous, unit="m"),
 ]
 
 # Columns produced by CHM stem isolation: height and position only — no dbh,
-# species, or crown ratio. Treatments thin against dbh, so they cannot be
-# applied to a CHM-derived inventory.
+# species, or crown ratio, so only a crown-spacing treatment ranked by height
+# and reading a measured crown radius applies to a CHM-derived inventory.
 CHM_INVENTORY_COLUMNS = [
     TREE_ID_COLUMN,
     Column(key="x", type=ColumnType.continuous, unit="m"),

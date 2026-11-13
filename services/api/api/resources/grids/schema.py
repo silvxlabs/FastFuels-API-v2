@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from api.resources.attribution import Attribution
 from api.resources.band_metadata import BAND_QUANTITIES_SCHEMA
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
@@ -137,7 +138,7 @@ class Band(BaseModel):
         description=(
             "Physical unit of the band's pixel values, in UDUNITS-2-conformant "
             "ASCII form with `**` for exponents (e.g. `kg/m**3`, `1/m`, `%`). "
-            "`None` for categorical/identifier bands. See docs/units.md."
+            "`None` for categorical/identifier bands."
         ),
         examples=["kg/m**3", "1/m", "%", "m"],
     )
@@ -344,6 +345,16 @@ class Grid(BaseModel):
 
     # User organization
     tags: list[str] = Field(default_factory=list)
+
+    attributions: list[Attribution] = Field(
+        default_factory=list,
+        description=(
+            "Licenses and citations for the third-party data this grid was "
+            "built from, added when it finishes processing. Reproduce each "
+            "`citation` wherever you use or share the data. Empty if none are "
+            "recorded."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

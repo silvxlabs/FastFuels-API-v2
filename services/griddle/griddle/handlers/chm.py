@@ -24,6 +24,7 @@ import xarray as xr
 # and the CPLE hierarchy has no public import path, so both must be named.
 from rasterio._err import CPLE_BaseError
 from rasterio.errors import RasterioIOError
+from rioxarray.exceptions import NoDataInBounds
 from rioxarray.merge import merge_arrays
 
 from griddle.handlers.tiles import TileMetadata
@@ -127,8 +128,15 @@ def _process_intersecting_tiles(
             message="Mixed scale factors across tiles are not supported.",
         )
 
-    def read_tiles(env: dict[str, str]) -> list[xr.DataArray]:
-        """Open and window every tile under one GDAL environment."""
+    def read_tiles(env: dict[str, str]) -> tuple[list[str], list[xr.DataArray]]:
+        """Open and window every tile under one GDAL environment.
+
+        Returns the URLs of the tiles actually read alongside their arrays.
+        The index matches on EPSG:4326 bboxes, which are wider than the
+        tiles themselves, so a matched tile may not reach the ROI; those
+        are skipped.
+        """
+        used_urls = []
         arrays = []
         with cog_env(**env):
             for i, url in enumerate(fetch_urls):
@@ -145,15 +153,21 @@ def _process_intersecting_tiles(
                     raster.target_native_resolution(roi)[0],
                     extent_buffer_cells=extent_buffer_cells,
                 )
-                data = raster.extract_window(
-                    roi=roi,
-                    interpolation_padding_cells=extent_buffer_cells,
-                    resampling=RESAMPLING_METHOD_MAP[method_name],
-                    destination_resolution=alignment.get("resolution")
-                    if alignment["target"] == "native"
-                    else None,
-                    **dest,
-                )
+                try:
+                    data = raster.extract_window(
+                        roi=roi,
+                        interpolation_padding_cells=extent_buffer_cells,
+                        resampling=RESAMPLING_METHOD_MAP[method_name],
+                        destination_resolution=alignment.get("resolution")
+                        if alignment["target"] == "native"
+                        else None,
+                        **dest,
+                    )
+                except NoDataInBounds:
+                    logging.getLogger(__name__).info(
+                        "CHM tile %s does not overlap the ROI; skipping.", url
+                    )
+                    continue
 
                 # Squeeze band dimension to satisfy strict 2D requirements.
                 # Keep the tile in its native dtype so merge_arrays can compose
@@ -162,8 +176,9 @@ def _process_intersecting_tiles(
                 # float value (e.g. NAIP 65535/100 = 655.35) and merge_arrays
                 # would then overwrite valid pixels with scaled-nodata garbage
                 # across tile boundaries.
+                used_urls.append(url)
                 arrays.append(data.squeeze("band", drop=True))
-        return arrays
+        return used_urls, arrays
 
     def unavailable() -> ProcessingError:
         """Upstream tile host is unreachable — expected and retryable.
@@ -182,7 +197,7 @@ def _process_intersecting_tiles(
         )
 
     try:
-        tile_arrays = read_tiles(gdal_env)
+        tile_urls, tile_arrays = read_tiles(gdal_env)
     except TILE_READ_ERRORS as e:
         # Every tile in one fetch comes from a single index, so they share a
         # host; the first URL answers for all of them.
@@ -203,9 +218,18 @@ def _process_intersecting_tiles(
             e,
         )
         try:
-            tile_arrays = read_tiles({**gdal_env, "GDAL_HTTP_UNSAFESSL": "YES"})
+            tile_urls, tile_arrays = read_tiles(
+                {**gdal_env, "GDAL_HTTP_UNSAFESSL": "YES"}
+            )
         except TILE_READ_ERRORS as retry_error:
             raise unavailable() from retry_error
+
+    if not tile_arrays:
+        raise ProcessingError(
+            code="COVERAGE_ERROR",
+            message="No canopy height tiles cover the given domain extent.",
+            suggestion="The domain may be outside the dataset coverage area.",
+        )
 
     progress("Building dataset...", 80)
 
@@ -233,9 +257,9 @@ def _process_intersecting_tiles(
     ds = ds.rio.write_transform(chm_da.rio.transform())
 
     tile_metadata: TileMetadata = {
-        "tiles": fetch_urls,
+        "tiles": tile_urls,
         "tile_source": None,
-        "tile_count": len(fetch_urls),
+        "tile_count": len(tile_urls),
         "native_crs": str(chm_da.rio.crs) if chm_da.rio.crs else None,
         "acquisition_dates": None,
     }

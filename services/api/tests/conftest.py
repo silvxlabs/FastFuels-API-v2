@@ -24,6 +24,7 @@ from uuid import uuid4
 
 import pytest
 from api.auth import hash_api_key
+from api.dependencies import API_PREFIX
 from api.tasks import SKIP_DISPATCH_HEADER
 from google.cloud import firestore
 from httpx import Client
@@ -42,7 +43,8 @@ from tests.fixtures import (
     make_key_data,
 )
 
-TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080")
+# TEST_API_URL is the service root; every route lives under API_PREFIX.
+TEST_URL = os.getenv("TEST_API_URL", "http://127.0.0.1:8080").rstrip("/") + API_PREFIX
 TEST_API_KEY = os.environ.get("TEST_API_KEY", "")
 SKIP_DISPATCH = {SKIP_DISPATCH_HEADER: "1"}
 
@@ -75,7 +77,7 @@ def client(test_owner_id):
 def _warmup_api(client):
     """Fire a warmup request to absorb Cloud Run cold start while unit tests run."""
     thread = threading.Thread(
-        target=lambda: client.get("/", timeout=120.0),
+        target=lambda: client.get("/openapi.json", timeout=120.0),
         daemon=True,
     )
     print("Warming up API")
@@ -151,6 +153,21 @@ def domain_with_different_owner(firestore_client):
 def second_domain(firestore_client, test_owner_id):
     """An extra domain owned by test-owner, for tests that need multiple domains."""
     domain_data = make_domain_data(name="Extra Domain for Testing")
+    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+        domain_data["id"]
+    )
+    doc_ref.set(domain_data)
+    yield domain_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def blackfoot_domain(firestore_client, test_owner_id):
+    """The Blackfoot example domain (EPSG:32612), owned by test-owner."""
+    domain_data = load_domain_from_file(
+        SHARED_TEST_DOMAINS_DIR / "blackfoot.json",
+        owner_id=test_owner_id,
+    )
     doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
         domain_data["id"]
     )

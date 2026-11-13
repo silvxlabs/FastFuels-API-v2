@@ -5,6 +5,7 @@ Router for Topography grid product endpoints.
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -28,6 +29,7 @@ from api.resources.grids.topography.examples import (
     CREATE_LANDFIRE_TOPOGRAPHY_OPENAPI_EXAMPLES,
 )
 from api.resources.grids.topography.schema import (
+    THREEDEP_RESOLUTION_DESCRIPTION,
     CreateLandfireTopographyRequest,
     CreateThreeDepTopographyRequest,
     LandfireTopographySource,
@@ -45,11 +47,22 @@ from api.schema import JobStatus
 from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
-from lib.threedep import discover_s1m_tiles, discover_tiles_arc_second
+from lib.threedep import (
+    TnmSearchError,
+    discover_lidar_project_tiles,
+    discover_s1m_tiles,
+    discover_tiles_arc_second,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
+
+# Per-request timeout on the TNM Access product search behind the 1m
+# fallback and 2m coverage checks. The search has no SLA.
+TNM_TIMEOUT_SECONDS = 10.0
 
 
 @router.post(
@@ -163,10 +176,15 @@ async def create_3dep_topography(
     Creates a grid with topographic data from USGS 3DEP at selectable resolution.
 
     Available resolutions:
-    - **1m**: Seamless 1-meter (S1M). Coverage varies by region; areas without
-      S1M data will return a COVERAGE_ERROR.
+    - **1m**: Seamless 1-meter (S1M). Where S1M has no tiles, the 1 m lidar
+      project tiles. Areas with neither return a COVERAGE_ERROR.
+    - **2m**: 1 m lidar project tiles, read at their 2 m overview. Areas
+      without lidar project tiles return a COVERAGE_ERROR.
     - **10m**: 1/3 arc-second seamless (default)
     - **30m**: 1 arc-second seamless
+
+    Where lidar project tiles overlap (repeat flights, UTM zone edges), the
+    most recently published tile is used.
 
     Available bands:
     - **elevation**: meters above sea level (default)
@@ -177,8 +195,8 @@ async def create_3dep_topography(
 
     ## Request Body
 
-    - **source_resolution**: (optional) Source product family in meters:
-      1, 10, or 30. Default: 10. To change the *output* cell size, set
+    - **source_resolution**: (optional) Source product in meters:
+      1, 2, 10, or 30. Default: 10. To change the *output* cell size, set
       ``alignment.resolution``.
     - **bands**: (optional) Which bands to include. Default: elevation only.
     - **alignment**: (optional) Output alignment target. See alignment docs.
@@ -245,7 +263,7 @@ async def check_3dep_coverage(
     domain: VerifiedDomain,
     resolution: Annotated[
         ThreeDepResolution,
-        Query(description="3DEP resolution in meters: 1, 10, or 30"),
+        Query(description=THREEDEP_RESOLUTION_DESCRIPTION),
     ] = ThreeDepResolution.one_meter,
 ):
     """
@@ -254,16 +272,22 @@ async def check_3dep_coverage(
     Immediate pre-flight check that reports which 3DEP tiles are available
     for the domain at the requested resolution. Use this before creating a
     3DEP grid to avoid waiting for async processing only to discover a
-    coverage gap — especially useful for 1m (S1M) data where coverage is
+    coverage gap — especially useful for 1m and 2m data, where coverage is
     regional.
 
     ## Query Parameters
 
-    - **resolution**: Resolution in meters: 1, 10, or 30. Default: 1.
+    - **resolution**: Resolution in meters: 1, 2, 10, or 30. Default: 1.
 
     ## Response
 
-    Returns tile availability, count, URLs, and (for 1m) acquisition dates.
+    Returns tile availability, count, URLs, and (for 1m and 2m) acquisition
+    dates. For lidar project tiles these are publication dates.
+
+    1m and 2m coverage from the lidar project tiles is looked up through the
+    USGS National Map search. If that search does not respond, the response
+    is still 200, with `available` set to null and `unavailable_reason`
+    explaining why. Try again shortly.
     """
     roi = parse_domain_gdf(domain)
 
@@ -271,7 +295,29 @@ async def check_3dep_coverage(
         tile_urls = discover_tiles_arc_second(roi, resolution)
         acquisition_dates = None
     else:
-        tile_urls, acquisition_dates = await asyncio.to_thread(discover_s1m_tiles, roi)
+        tile_urls, acquisition_dates = [], []
+        if resolution == 1:
+            tile_urls, acquisition_dates = await asyncio.to_thread(
+                discover_s1m_tiles, roi
+            )
+        if not tile_urls:
+            try:
+                tile_urls, acquisition_dates = await asyncio.to_thread(
+                    discover_lidar_project_tiles, roi, timeout=TNM_TIMEOUT_SECONDS
+                )
+            except TnmSearchError as e:
+                logger.warning(f"3DEP lidar project coverage search failed: {e}")
+                return ThreeDepCoverageResponse(
+                    resolution=resolution,
+                    available=None,
+                    tile_count=0,
+                    tiles=[],
+                    acquisition_dates=None,
+                    unavailable_reason=(
+                        "The USGS National Map search did not respond, so "
+                        "coverage could not be determined. Try again shortly."
+                    ),
+                )
         acquisition_dates = acquisition_dates or None
 
     return ThreeDepCoverageResponse(

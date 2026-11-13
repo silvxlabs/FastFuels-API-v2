@@ -6,6 +6,9 @@ These tests don't hit GCS — they substitute `pd.read_parquet` (on the
 
 from __future__ import annotations
 
+import json
+import re
+
 import pandas as pd
 import pyarrow.compute as pc
 import pytest
@@ -14,6 +17,7 @@ from lib import inventory_io
 from lib.errors import ProcessingError
 from lib.inventory_io import (
     REQUIRED_COLUMNS,
+    allometry_request,
     canopy_required_columns,
     read_inventory,
     require_complete_rows,
@@ -45,7 +49,7 @@ class TestReadInventory:
                 "fia_status_code": [1],
                 "dbh": [20.0],
                 "height": [15.0],
-                "crown_ratio": [0.4],
+                "crown_base_height": [9.0],
             }
         )
 
@@ -199,17 +203,72 @@ class TestReadInventory:
             read_inventory("chm_only")
         assert exc.value.code == "INVENTORY_MISSING_MORPHOLOGY"
         assert "dbh" in exc.value.message
-        assert "allometry" in exc.value.suggestion
+        # GDAM fills the crown ratio the crown base model needs, although the
+        # read does not require it.
+        assert _body(exc.value.suggestion) == {
+            "source_tree_inventory_id": "chm_only",
+            "impute_columns": [
+                "dbh",
+                "crown_ratio",
+                "fia_species_code",
+                "crown_base_height",
+            ],
+        }
+        assert "/domains/<domain_id>/inventories/tree/allometry/gdam" in (
+            exc.value.suggestion
+        )
         # The reader is shared by the canopy handler, not just voxelization, so
         # its guidance must not be voxelization-specific.
         assert "voxeliz" not in exc.value.message.lower()
         assert "voxeliz" not in exc.value.suggestion.lower()
 
+    def test_missing_crown_base_height_names_it_in_suggestion(self, monkeypatch):
+        """An inventory with crown_ratio but no crown_base_height cannot be
+        voxelized; the error says how to impute the crown base."""
+        present = (set(REQUIRED_COLUMNS) - {"crown_base_height"}) | {"crown_ratio"}
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: present
+        )
+
+        def fail(*a, **k):
+            raise AssertionError("read_parquet must not be called")
+
+        monkeypatch.setattr(inventory_io.pd, "read_parquet", fail)
+
+        with pytest.raises(ProcessingError) as exc:
+            read_inventory("cr_only", domain_id="d1")
+        assert exc.value.code == "INVENTORY_MISSING_MORPHOLOGY"
+        assert "crown_base_height" in exc.value.message
+        assert exc.value.suggestion == (
+            "Send POST /domains/d1/inventories/tree/allometry/crown_base_height "
+            'with body {"source_tree_inventory_id": "cr_only"} to fill '
+            "crown_base_height, then use the inventory it creates."
+        )
+
+    def test_missing_position_is_not_imputable(self, monkeypatch):
+        present = set(REQUIRED_COLUMNS) - {"x"}
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: present
+        )
+        with pytest.raises(ProcessingError) as exc:
+            read_inventory("no_x")
+        assert exc.value.suggestion == (
+            "Column(s) ['x'] cannot be imputed and must be present in the "
+            "inventory's source data."
+        )
+
     def test_required_columns_trims_projection_and_morphology_check(self, monkeypatch):
         """A canopy request that reads neither dbh nor species passes a reduced
         required set: those columns are neither required-in-schema nor projected,
         while the live-status column is still handled."""
-        present = {"x", "y", "height", "crown_ratio", "acf_kg", "fia_status_code"}
+        present = {
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+            "acf_kg",
+            "fia_status_code",
+        }
         monkeypatch.setattr(
             inventory_io, "_inventory_column_names", lambda _id: present
         )
@@ -227,7 +286,7 @@ class TestReadInventory:
         read_inventory(
             "inv",
             biomass_column="acf_kg",
-            required_columns=["x", "y", "height", "crown_ratio"],
+            required_columns=["x", "y", "height", "crown_base_height"],
         )
         assert "dbh" not in captured["columns"]
         assert "fia_species_code" not in captured["columns"]
@@ -276,6 +335,70 @@ class TestReadInventory:
         assert result["fia_status_code"].dtype == "int64"
 
 
+def _body(suggestion: str) -> dict:
+    """The JSON request body a suggestion names."""
+    return json.loads(re.search(r"with body (\{.*?\}) to fill", suggestion)[1])
+
+
+class TestAllometryRequest:
+    def test_gdam_fills_crown_base_too(self):
+        text = allometry_request(
+            {"dbh", "crown_base_height"},
+            {"x", "y", "height", "crown_ratio", "fia_species_code"},
+            "d1",
+            "inv",
+        )
+        assert text == (
+            "Send POST /domains/d1/inventories/tree/allometry/gdam with body "
+            '{"source_tree_inventory_id": "inv", "impute_columns": ["dbh", '
+            '"crown_base_height"]} to fill dbh and crown_base_height, then use '
+            "the inventory it creates."
+        )
+
+    def test_gdam_without_crown_base(self):
+        text = allometry_request(
+            {"fia_species_code", "dbh"}, {"crown_base_height"}, "d1", "inv"
+        )
+        assert _body(text)["impute_columns"] == ["dbh", "fia_species_code"]
+        assert "crown_base_height" not in text
+
+    def test_chm_source_imputes_crown_ratio_for_the_crown_base(self):
+        """Voxelize does not require crown_ratio, but the crown base model does."""
+        text = allometry_request(
+            {"dbh", "fia_species_code", "crown_base_height"},
+            {"x", "y", "height"},
+            "d1",
+            "inv",
+        )
+        assert _body(text)["impute_columns"] == [
+            "dbh",
+            "crown_ratio",
+            "fia_species_code",
+            "crown_base_height",
+        ]
+        assert "fill dbh, crown_ratio, fia_species_code and crown_base_height" in (text)
+
+    def test_crown_base_only(self):
+        text = allometry_request(
+            {"crown_base_height"},
+            {"dbh", "crown_ratio", "fia_species_code", "height"},
+            "d1",
+            "inv",
+        )
+        assert "/domains/d1/inventories/tree/allometry/crown_base_height" in text
+        assert _body(text) == {"source_tree_inventory_id": "inv"}
+
+    def test_nothing_imputable(self):
+        assert allometry_request({"x", "height"}, set(), "d1", "inv") is None
+        assert allometry_request(set(), set(), "d1", "inv") is None
+
+    def test_unknown_domain_placeholder(self):
+        text = allometry_request({"dbh"}, set(), None, "inv")
+        assert text.startswith(
+            "Send POST /domains/<domain_id>/inventories/tree/allometry/gdam "
+        )
+
+
 class TestRequireCompleteRows:
     """`require_complete_rows` sees post-pushdown input, so every row is live."""
 
@@ -287,7 +410,7 @@ class TestRequireCompleteRows:
             "fia_status_code": [1, 1, 1],
             "dbh": [20.0, 20.0, 20.0],
             "height": [15.0, 15.0, 15.0],
-            "crown_ratio": [0.4, 0.4, 0.4],
+            "crown_base_height": [9.0, 9.0, 9.0],
         }
         data.update(overrides)
         return pd.DataFrame(data)
@@ -302,6 +425,42 @@ class TestRequireCompleteRows:
         assert exc.value.code == "INCOMPLETE_INVENTORY"
         assert "dbh: 2" in exc.value.message
         assert "height: 1" in exc.value.message
+
+    def test_null_crown_base_height_fails(self, monkeypatch):
+        """The schema shows the crown ratio the frame did not project, so the
+        crown base height route fills the nulls."""
+        df = self._df(crown_base_height=[9.0, None, 9.0])
+        monkeypatch.setattr(
+            inventory_io,
+            "_inventory_column_names",
+            lambda _id: set(df.columns) | {"crown_ratio"},
+        )
+        with pytest.raises(ProcessingError) as exc:
+            require_complete_rows(df, inventory_id="inv", domain_id="d1")
+        assert exc.value.code == "INCOMPLETE_INVENTORY"
+        assert "crown_base_height: 1" in exc.value.message
+        assert "allometry/crown_base_height" in exc.value.suggestion
+        assert _body(exc.value.suggestion) == {"source_tree_inventory_id": "inv"}
+
+    def test_null_crown_base_height_without_crown_ratio_names_gdam(self, monkeypatch):
+        df = self._df(crown_base_height=[9.0, None, 9.0])
+        monkeypatch.setattr(
+            inventory_io, "_inventory_column_names", lambda _id: set(df.columns)
+        )
+        with pytest.raises(ProcessingError) as exc:
+            require_complete_rows(df, inventory_id="inv", domain_id="d1")
+        assert "/domains/d1/inventories/tree/allometry/gdam" in exc.value.suggestion
+        assert _body(exc.value.suggestion)["impute_columns"] == [
+            "crown_ratio",
+            "crown_base_height",
+        ]
+
+    def test_null_height_is_not_imputable(self):
+        df = self._df(height=[15.0, None, 15.0])
+        with pytest.raises(ProcessingError) as exc:
+            require_complete_rows(df)
+        assert "cannot be imputed" in exc.value.suggestion
+        assert "allometry" not in exc.value.suggestion
 
     def test_null_biomass_column_fails(self):
         df = self._df()
@@ -319,7 +478,9 @@ class TestRequireCompleteRows:
     def test_required_columns_restricts_check(self):
         """A null in a column the request does not read is not an error."""
         df = self._df(dbh=[None, 20.0, 20.0], fia_species_code=[131, None, 131])
-        require_complete_rows(df, required_columns=["x", "y", "height", "crown_ratio"])
+        require_complete_rows(
+            df, required_columns=["x", "y", "height", "crown_base_height"]
+        )
 
 
 class TestCanopyRequiredColumns:
@@ -344,7 +505,14 @@ class TestCanopyRequiredColumns:
 
     def test_allometry_defaults_need_dbh_and_species(self):
         cols = canopy_required_columns(self._source())
-        assert {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"} <= cols
+        assert {
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+            "dbh",
+            "fia_species_code",
+        } <= cols
 
     def test_column_radius_needs_dbh_and_species_for_fallback(self):
         """A null column radius falls back to Purves, which reads dbh and species."""
@@ -365,7 +533,14 @@ class TestCanopyRequiredColumns:
                 },
             )
         )
-        assert cols == {"x", "y", "height", "crown_ratio", "dbh", "fia_species_code"}
+        assert cols == {
+            "x",
+            "y",
+            "height",
+            "crown_base_height",
+            "dbh",
+            "fia_species_code",
+        }
 
     def test_reinhardt_distribution_needs_species(self):
         cols = canopy_required_columns(
@@ -463,7 +638,7 @@ class TestCanopyRequiredColumns:
                 bands=["cbd", "cbh", "chm", "cfl"], horizontal_distribution="stem"
             )
         )
-        assert cols == {"x", "y", "height", "crown_ratio"}
+        assert cols == {"x", "y", "height", "crown_base_height"}
 
 
 class TestReadInventoryTreeId:

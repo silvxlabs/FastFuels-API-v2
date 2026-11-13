@@ -24,6 +24,7 @@ from api.db.documents import (
     update_document_async,
 )
 from api.dependencies import VerifiedDomain
+from api.resources.features.building.router import router as building_router
 from api.resources.features.cache import (
     GEOJSON_MEDIA_TYPE,
     InvalidFeatureParquet,
@@ -587,6 +588,7 @@ router.include_router(road_router, prefix="/road", tags=["Features - Road"])
 router.include_router(water_router, prefix="/water", tags=["Features - Water"])
 router.include_router(layerset_router, prefix="/layerset", tags=["Features - Layerset"])
 router.include_router(crown_router, prefix="/crown", tags=["Features - Crown"])
+router.include_router(building_router, prefix="/building", tags=["Features - Building"])
 router.include_router(
     disturbance_router, prefix="/disturbance", tags=["Features - Disturbance"]
 )

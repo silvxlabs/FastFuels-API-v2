@@ -145,6 +145,9 @@ class TestCreatePimInventory:
         assert data["source"]["source_pim_grid_id"] == pim_grid_for_inventory["id"]
         assert data["source"]["point_process"] == "inhomogeneous_poisson"
         assert data["source"]["seed"] == 42
+        assert data["source"]["crown_base_height_model"] == {
+            "name": "fia_national_logit_2026"
+        }
 
     @pytest.mark.xfail(reason="Standgen Cloud Run service not yet deployed")
     def test_full_request_creates_inventory(

@@ -697,6 +697,19 @@ def _most_frequent(x: ndarray, non_burnable_keys: list[int]) -> float:
     return central
 
 
+def disturbance_layer_versions(disturbance: dict) -> dict[str, str]:
+    """LANDFIRE layers and versions a disturbance plan reads, besides the fuel model.
+
+    Ordered as `fetch_disturbed_fuel` requests them from LFPS.
+    """
+    layers = {"fdist": disturbance["fdist_version"]}
+    if disturbance["mode"] != "fdist":
+        layers["annual_disturbance"] = disturbance["ldist_version"]
+    for product in ("fvt", "fvc", "fvh", "bps"):
+        layers[product] = LANDFIRE_VERSIONS[product]["default"]
+    return layers
+
+
 def fetch_disturbed_fuel(
     roi: gpd.GeoDataFrame,
     fuel_model: str,
@@ -747,11 +760,7 @@ def fetch_disturbed_fuel(
 
     # One LFPS job for every layer it serves. `previous` joins it only when
     # its version is LFPS-only; a staged one is fetched on its own below.
-    layers = {"fdist": disturbance["fdist_version"]}
-    if combined:
-        layers["annual_disturbance"] = disturbance["ldist_version"]
-    for product in ("fvt", "fvc", "fvh", "bps"):
-        layers[product] = LANDFIRE_VERSIONS[product]["default"]
+    layers = disturbance_layer_versions(disturbance)
     previous_needs_lfps = _needs_lfps(fuel_model, version)
     if previous_needs_lfps:
         layers[fuel_model] = version
@@ -921,21 +930,57 @@ def fetch_canopy_landfire(
         kg/m**3 for cbd, % for cc) with NaN at both LANDFIRE nodata sentinels.
     """
     alignment = alignment or {"target": "domain"}
-    variables: dict[str, DataArray] = {}
-    for i, band in enumerate(bands):
-        pct = 10 + int(70 * i / len(bands))
-        progress(f"Fetching LANDFIRE canopy {band}...", pct)
-        product_code = LANDFIRE_CANOPY_PRODUCT_MAP[band]
-        url = _landfire_cog_url(product_code, version)
-        raw = _fetch_landfire_raster(
-            roi,
-            url,
-            extent_buffer_cells,
-            alignment,
-            target_grid_doc,
-            is_categorical=False,
-        )
-        variables[band] = _scale_canopy_band(raw, LANDFIRE_CANOPY_SCALE_FACTORS[band])
+    raw: dict[str, DataArray] = {}
+    if _needs_lfps("canopy", version):
+        if len(bands) == 1:
+            source = landfire_lfps.fetch_lfps(
+                roi,
+                bands[0],
+                version,
+                alignment,
+                target_grid_doc,
+                extent_buffer_cells,
+                progress,
+            )
+        else:
+            source = landfire_lfps.fetch_lfps_multi(
+                roi,
+                {band: version for band in bands},
+                alignment,
+                target_grid_doc,
+                extent_buffer_cells,
+                progress,
+            )
+        with source as path:
+            for i, band in enumerate(bands):
+                raw[band] = _fetch_landfire_raster(
+                    roi,
+                    path,
+                    extent_buffer_cells,
+                    alignment,
+                    target_grid_doc,
+                    is_categorical=False,
+                    band=i + 1,
+                )
+    else:
+        validate_landfire_version("canopy", version)
+        for i, band in enumerate(bands):
+            pct = 10 + int(70 * i / len(bands))
+            progress(f"Fetching LANDFIRE canopy {band}...", pct)
+            url = _landfire_cog_url(LANDFIRE_CANOPY_PRODUCT_MAP[band], version)
+            raw[band] = _fetch_landfire_raster(
+                roi,
+                url,
+                extent_buffer_cells,
+                alignment,
+                target_grid_doc,
+                is_categorical=False,
+            )
+
+    variables = {
+        band: _scale_canopy_band(data, LANDFIRE_CANOPY_SCALE_FACTORS[band])
+        for band, data in raw.items()
+    }
 
     return _to_dataset(variables)
 

@@ -14,10 +14,11 @@ A lattice dict has keys: `nx`, `ny`, `dx`, `dy`, `transform` (6-element
 row-major affine), and `crs`.
 """
 
-from math import ceil, isclose
+from math import isclose
 
 from fastapi import HTTPException, status
 
+from api.resources.domains.validate import lattice_cell_count
 from api.resources.grids.utils import validate_grid_has_georeference
 from lib.crs import crs_equal
 
@@ -40,8 +41,8 @@ def build_domain_lattice(domain: dict, cell: float) -> dict:
     padding), matching the anchor that domain-target grid alignment produces.
     """
     minx, miny, maxx, maxy = domain["bbox"]
-    nx = max(1, ceil((maxx - minx) / cell))
-    ny = max(1, ceil((maxy - miny) / cell))
+    nx = lattice_cell_count(maxx - minx, cell)
+    ny = lattice_cell_count(maxy - miny, cell)
     return {
         "nx": nx,
         "ny": ny,

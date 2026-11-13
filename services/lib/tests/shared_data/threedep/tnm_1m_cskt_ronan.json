@@ -1,0 +1,79 @@
+{
+  "total": 2,
+  "items": [
+    {
+      "title": "USGS 1 Meter 11 x71y528 MT_NRCS_MT_2018_D18",
+      "moreInfo": "This is a tile of the standard one-meter resolution digital elevation model (DEM) produced through the 3D Elevation Program (3DEP) . The elevations in this DEM represent the topographic bare-earth surface. USGS standard one-meter DEMs are produced exclusively from high resolution light detection and ranging (lidar) source data of one-meter or higher resolution. One-meter DEM surfaces are seamless within collection projects, but, not necessarily seamless across projects. The spatial reference used for tiles of the one-meter DEM within the conterminous United States (CONUS) is Universal Transverse Mercator (UTM) in units of meters, and in conformance with the North American Datum of 1983 (NAD83). All bare earth elevation values are in [...]",
+      "sourceId": "60cc290ed34e86b938a54743",
+      "sourceName": "ScienceBase",
+      "sourceOriginId": null,
+      "sourceOriginName": "gda",
+      "metaUrl": "https://www.sciencebase.gov/catalog/item/60cc290ed34e86b938a54743",
+      "vendorMetaUrl": "https://prd-tnm.s3.amazonaws.com/index.html?prefix=StagedProducts/Elevation/metadata/MT_NRCS_MT_2018_D18/MT_NRCS_B2_2018",
+      "publicationDate": "2021-06-16",
+      "lastUpdated": "2021-06-19T20:00:21.117-06:00",
+      "dateCreated": "2021-06-17T23:03:10.119-06:00",
+      "sizeInBytes": 265620641,
+      "extent": "10000 x 10000 meter",
+      "format": "GeoTIFF",
+      "downloadURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/MT_NRCS_MT_2018_D18/TIFF/USGS_1M_11_x71y528_MT_NRCS_MT_2018_D18.tif",
+      "downloadURLRaster": null,
+      "previewGraphicURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/MT_NRCS_MT_2018_D18/browse/USGS_1M_11_x71y528_MT_NRCS_MT_2018_D18.jpg",
+      "downloadLazURL": null,
+      "urls": {
+        "TIFF": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/MT_NRCS_MT_2018_D18/TIFF/USGS_1M_11_x71y528_MT_NRCS_MT_2018_D18.tif"
+      },
+      "datasets": [],
+      "boundingBox": {
+        "minX": -114.20893444899997,
+        "maxX": -114.07118721399996,
+        "minY": 47.54613184900006,
+        "maxY": 47.63931266000003
+      },
+      "bestFitIndex": 0.0,
+      "body": "This is a tile of the standard one-meter resolution digital elevation model (DEM) produced through the 3D Elevation Program (3DEP) .  The elevations in this DEM represent the topographic bare-earth surface.  USGS standard one-meter DEMs are produced exclusively from high resolution light detection and ranging (lidar) source data of one-meter or higher resolution.  One-meter DEM surfaces are seamless within collection projects, but, not necessarily seamless across projects.  The spatial reference used for tiles of the one-meter DEM  within the conterminous United States (CONUS) is Universal Transverse Mercator (UTM) in units of meters, and in conformance with the North American Datum of 1983 (NAD83).  All bare earth elevation values are in meters and are referenced to the North American Vertical Datum of 1988 (NAVD88).  Each tile is distributed in the UTM Zone in which it lies.  If a tile crosses two UTM zones, it is delivered in both zones.  The one-meter DEM is the highest resolution standard DEM offered in the 3DEP product suite.  Other 3DEP products are nationally seamless DEMs in resolutions of 1/3, 1, and 2 arc seconds.  These seamless DEMs were referred to as the National Elevation Dataset (NED) from about 2000 through 2015 at which time they became the seamless DEM layers under the 3DEP program and lost the NED branding.  Other 3DEP products include five-meter DEMs in Alaska as well as various source datasets including the lidar point cloud and interferometric synthetic aperture radar (Ifsar) digital surface models and intensity images. All 3DEP products are public domain.",
+      "processingUrl": "processingUrl",
+      "modificationInfo": "2021-06-18"
+    },
+    {
+      "title": "USGS 1 Meter 12 x26y528 MT_NRCS_MT_2018_D18",
+      "moreInfo": "This is a tile of the standard one-meter resolution digital elevation model (DEM) produced through the 3D Elevation Program (3DEP) . The elevations in this DEM represent the topographic bare-earth surface. USGS standard one-meter DEMs are produced exclusively from high resolution light detection and ranging (lidar) source data of one-meter or higher resolution. One-meter DEM surfaces are seamless within collection projects, but, not necessarily seamless across projects. The spatial reference used for tiles of the one-meter DEM within the conterminous United States (CONUS) is Universal Transverse Mercator (UTM) in units of meters, and in conformance with the North American Datum of 1983 (NAD83). All bare earth elevation values are in [...]",
+      "sourceId": "60cc2b09d34e86b938a54dce",
+      "sourceName": "ScienceBase",
+      "sourceOriginId": null,
+      "sourceOriginName": "gda",
+      "metaUrl": "https://www.sciencebase.gov/catalog/item/60cc2b09d34e86b938a54dce",
+      "vendorMetaUrl": "https://prd-tnm.s3.amazonaws.com/index.html?prefix=StagedProducts/Elevation/metadata/MT_NRCS_MT_2018_D18/MT_NRCS_B2_2018",
+      "publicationDate": "2021-06-16",
+      "lastUpdated": "2021-06-19T20:16:58.823-06:00",
+      "dateCreated": "2021-06-17T23:11:37.050-06:00",
+      "sizeInBytes": 272123744,
+      "extent": "10000 x 10000 meter",
+      "format": "GeoTIFF",
+      "downloadURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/MT_NRCS_MT_2018_D18/TIFF/USGS_1M_12_x26y528_MT_NRCS_MT_2018_D18.tif",
+      "downloadURLRaster": null,
+      "previewGraphicURL": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/MT_NRCS_MT_2018_D18/browse/USGS_1M_12_x26y528_MT_NRCS_MT_2018_D18.jpg",
+      "downloadLazURL": null,
+      "urls": {
+        "TIFF": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/MT_NRCS_MT_2018_D18/TIFF/USGS_1M_12_x26y528_MT_NRCS_MT_2018_D18.tif"
+      },
+      "datasets": [],
+      "boundingBox": {
+        "minX": -114.19465939099996,
+        "maxX": -114.05650851599995,
+        "minY": 47.53905247400007,
+        "maxY": 47.632518798000035
+      },
+      "bestFitIndex": 0.0,
+      "body": "This is a tile of the standard one-meter resolution digital elevation model (DEM) produced through the 3D Elevation Program (3DEP) .  The elevations in this DEM represent the topographic bare-earth surface.  USGS standard one-meter DEMs are produced exclusively from high resolution light detection and ranging (lidar) source data of one-meter or higher resolution.  One-meter DEM surfaces are seamless within collection projects, but, not necessarily seamless across projects.  The spatial reference used for tiles of the one-meter DEM  within the conterminous United States (CONUS) is Universal Transverse Mercator (UTM) in units of meters, and in conformance with the North American Datum of 1983 (NAD83).  All bare earth elevation values are in meters and are referenced to the North American Vertical Datum of 1988 (NAVD88).  Each tile is distributed in the UTM Zone in which it lies.  If a tile crosses two UTM zones, it is delivered in both zones.  The one-meter DEM is the highest resolution standard DEM offered in the 3DEP product suite.  Other 3DEP products are nationally seamless DEMs in resolutions of 1/3, 1, and 2 arc seconds.  These seamless DEMs were referred to as the National Elevation Dataset (NED) from about 2000 through 2015 at which time they became the seamless DEM layers under the 3DEP program and lost the NED branding.  Other 3DEP products include five-meter DEMs in Alaska as well as various source datasets including the lidar point cloud and interferometric synthetic aperture radar (Ifsar) digital surface models and intensity images. All 3DEP products are public domain.",
+      "processingUrl": "processingUrl",
+      "modificationInfo": "2021-06-18"
+    }
+  ],
+  "errors": [],
+  "messages": [
+    "Retrieved 2 item(s) Retrieved (1 through 50)"
+  ],
+  "sciencebaseQuery": "https://www.sciencebase.gov/catalog/items?filter=tagslq%3Dtags.scheme%3A%22The+National+Map+Collection+Thesaurus%22+AND+%28tags.name%3A+%22Digital+Elevation+Model+%28DEM%29+1+meter%22%29&filter=tagslq%3Dtags.scheme%3A%22The+National+Map+Product+Format+Thesaurus%22+AND+%28tags.name%3A+%22GeoTIFF%22%29&filter=spatialQuery%3D%7B%22wkt%22%3A%22POLYGON%28%28-114.20+47.55%2C-114.17+47.55%2C-114.17+47.57%2C-114.20+47.57%2C-114.20+47.55%29%29%22%2C%22relation%22%3A%22intersects%22%7D&max=50&offset=0&fields=id%2Ctitle%2Csummary%2Cbody%2Ctags%2CwebLinks%2Cdates%2Cspatial%2Cidentifiers&format=json&sort=title&order=asc",
+  "filteredOut": 0
+}

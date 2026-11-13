@@ -2,13 +2,20 @@
 Unit tests for inventory silvicultural treatment schemas.
 
 Tests the InventoryTreatment discriminated union (InventoryDiameterTreatment /
-InventoryBasalAreaTreatment) and that treatments are accepted as a create-time
-field on the PIM create request.
+InventoryBasalAreaTreatment / InventoryCrownSpacingTreatment), the columns each
+variant reads, and that treatments are accepted as a create-time field on the
+PIM create request.
 """
 
 import pytest
+from api.resources.crown_radius import (
+    CanopyAllometryMaxCrownRadiusSource,
+    InventoryColumnMaxCrownRadiusSource,
+)
 from api.resources.inventories.treatment_models import (
     InventoryBasalAreaTreatment,
+    InventoryCrownSpacingRank,
+    InventoryCrownSpacingTreatment,
     InventoryDiameterTreatment,
     InventoryTreatment,
     InventoryTreatmentMethod,
@@ -178,3 +185,117 @@ class TestCreateRequestAcceptsTreatments:
     def test_openapi_example_round_trips(self):
         req = CreatePimInventoryRequest(**EXAMPLE_PIM_WITH_TREATMENT)
         assert len(req.treatments) >= 1
+
+
+class TestInventoryCrownSpacingTreatment:
+    def test_defaults(self):
+        t = TREATMENT_ADAPTER.validate_python({"metric": "crown_spacing", "value": 3.0})
+        assert isinstance(t, InventoryCrownSpacingTreatment)
+        assert t.rank_by == InventoryCrownSpacingRank.dbh
+        assert isinstance(
+            t.max_crown_radius_source, CanopyAllometryMaxCrownRadiusSource
+        )
+        assert t.max_crown_radius_source.equations == "purves"
+        assert t.conditions == []
+        assert t.native_unit == "m"
+
+    def test_measured_radius_ranked_by_height(self):
+        t = TREATMENT_ADAPTER.validate_python(
+            {
+                "metric": "crown_spacing",
+                "value": 3.0,
+                "rank_by": "height",
+                "max_crown_radius_source": {
+                    "type": "inventory_column",
+                    "column": "crown_radius",
+                },
+            }
+        )
+        assert isinstance(
+            t.max_crown_radius_source, InventoryColumnMaxCrownRadiusSource
+        )
+        assert t.max_crown_radius_source.column == "crown_radius"
+
+    def test_feet_accepted(self):
+        t = InventoryCrownSpacingTreatment(value=10.0, unit="ft")
+        assert t.unit == "ft"
+
+    @pytest.mark.parametrize("unit", ["cm**2", "kg", "m**2/ha"])
+    def test_incompatible_unit_rejected(self, unit):
+        with pytest.raises(ValidationError, match="not compatible"):
+            InventoryCrownSpacingTreatment(value=3.0, unit=unit)
+
+    @pytest.mark.parametrize("value", [0.0, -1.0])
+    def test_non_positive_value_rejected(self, value):
+        with pytest.raises(ValidationError):
+            InventoryCrownSpacingTreatment(value=value)
+
+    def test_unknown_rank_by_rejected(self):
+        with pytest.raises(ValidationError):
+            InventoryCrownSpacingTreatment(value=3.0, rank_by="crown_ratio")
+
+    def test_unknown_equations_rejected(self):
+        with pytest.raises(ValidationError):
+            InventoryCrownSpacingTreatment(
+                value=3.0,
+                max_crown_radius_source={"type": "allometry", "equations": "nope"},
+            )
+
+    def test_spatial_conditions_accepted(self):
+        t = InventoryCrownSpacingTreatment(
+            value=3.0, conditions=[FEATURE_CONDITION, FEATURE_CONDITION]
+        )
+        assert len(t.conditions) == 2
+
+    def test_on_pim_create_request(self):
+        req = CreatePimInventoryRequest(
+            source_pim_grid_id="g",
+            treatments=[{"metric": "crown_spacing", "value": 3.0}],
+        )
+        assert isinstance(req.treatments[0], InventoryCrownSpacingTreatment)
+
+
+class TestRequiredColumns:
+    """Each variant names the inventory columns it reads."""
+
+    def test_diameter_and_basal_area_read_dbh(self):
+        assert InventoryDiameterTreatment(
+            method="from_below", value=10.0
+        ).required_columns() == {"dbh"}
+        assert InventoryBasalAreaTreatment(
+            method="proportional", value=10.0
+        ).required_columns() == {"dbh"}
+
+    def test_crown_spacing_purves(self):
+        t = InventoryCrownSpacingTreatment(value=3.0)
+        assert t.required_columns() == {
+            "x",
+            "y",
+            "dbh",
+            "fia_species_code",
+            "height",
+            "crown_base_height",
+        }
+
+    def test_crown_spacing_crookston_stage(self):
+        t = InventoryCrownSpacingTreatment(
+            value=3.0,
+            max_crown_radius_source={
+                "type": "allometry",
+                "equations": "crookston_stage",
+            },
+        )
+        assert t.required_columns() == {"x", "y", "dbh", "fia_species_code", "height"}
+
+    def test_crown_spacing_measured_radius_needs_no_dbh(self):
+        """Null radius values fall back to Purves in standgen, but a complete
+        radius column needs no allometry inputs, so none are required."""
+        t = InventoryCrownSpacingTreatment(
+            value=3.0,
+            rank_by="height",
+            max_crown_radius_source={
+                "type": "inventory_column",
+                "column": "crown_radius",
+            },
+        )
+        assert t.required_columns() == {"x", "y", "height", "crown_radius"}

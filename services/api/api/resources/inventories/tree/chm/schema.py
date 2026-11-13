@@ -88,7 +88,9 @@ class StemIsolationVwf(BaseModel):
         description=(
             "Window diameter added per meter of height. The search window "
             "diameter (in meters) is crown_offset + crown_ratio × height, "
-            "converted to a whole, odd number of pixels of at least 3."
+            "converted to a whole, odd number of pixels of at least 3. "
+            "This is a slope of the search-window size, not a measurement of "
+            "any tree's crown ratio."
         ),
     )
     crown_offset: float = Field(
@@ -179,21 +181,10 @@ class CreateChmInventoryRequest(CreateInventoryRequestBase):
     treatments: list[InventoryTreatment] = Field(
         default_factory=list,
         description=(
-            "Silvicultural treatments thin against tree diameter, so they "
-            "require a diameter (`dbh`) column. CHM stem isolation produces only "
-            "height and position (`x`, `y`, `height`), so treatments are not "
-            "supported here and this must be empty."
+            "Treatments to apply after modifications. CHM stem isolation "
+            "produces only position and height, so the only treatment that "
+            "applies is a `crown_spacing` treatment with `rank_by: height` that "
+            "reads the `crown_radius` column, which requires "
+            "`crown_segmentation`."
         ),
     )
-
-    @model_validator(mode="after")
-    def reject_treatments(self):
-        """Treatments thin against diameter; CHM extraction produces none."""
-        if self.treatments:
-            raise ValueError(
-                "Silvicultural treatments require a tree diameter (`dbh`) to thin "
-                "against. CHM stem isolation produces only height and position "
-                "(`x`, `y`, `height`), so treatments cannot be applied to a "
-                "CHM-derived inventory."
-            )
-        return self

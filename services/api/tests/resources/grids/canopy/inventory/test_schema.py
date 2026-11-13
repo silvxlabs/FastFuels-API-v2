@@ -7,6 +7,11 @@ source round trip, and the documented OpenAPI examples.
 """
 
 import pytest
+from api.resources.crown_radius import (
+    CanopyAllometryMaxCrownRadiusSource,
+    CanopyCrownWidthEquations,
+    InventoryColumnMaxCrownRadiusSource,
+)
 from api.resources.grids.canopy.inventory.examples import (
     CREATE_INVENTORY_CANOPY_OPENAPI_EXAMPLES,
     INVENTORY_CANOPY_EXAMPLE_VALUES,
@@ -14,14 +19,12 @@ from api.resources.grids.canopy.inventory.examples import (
 from api.resources.grids.canopy.inventory.schema import (
     CFL_BAND_DEF,
     AllometryCanopyBiomassSource,
-    CanopyAllometryMaxCrownRadiusSource,
     CanopyAvailableFuel,
     CanopyBiomassEquations,
     CanopyBranchwoodSizePartition,
     CanopyCbdLoadOverDepth,
     CanopyCbdRunningMean,
     CanopyCcCrownUnion,
-    CanopyCrownWidthEquations,
     CanopyFuelcalcCrownClassAdjustment,
     CanopyHorizontalDistribution,
     CanopyNoCrownClassAdjustment,
@@ -37,9 +40,6 @@ from api.resources.grids.canopy.inventory.schema import (
 )
 from api.resources.grids.canopy.schema import LANDFIRE_CANOPY_BAND_DEFS
 from api.resources.grids.schema import BandType
-from api.resources.grids.voxelize.inventory.tree.schema import (
-    InventoryColumnMaxCrownRadiusSource,
-)
 from pydantic import ValidationError
 
 INVENTORY_ID = "9c1f2ab4708d4290a8ab6ecf35f21ab4"

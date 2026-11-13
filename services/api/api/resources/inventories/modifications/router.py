@@ -80,8 +80,8 @@ async def apply_modifications(
     clears the inventory of all trees; use it deliberately.
 
     **Attribute conditions** compare a single tree attribute against a value:
-    - `attribute`: one of `dbh`, `height`, `crown_ratio`, `fia_species_code`,
-      `tree_id`
+    - `attribute`: one of `dbh` (cm), `height` (m), `crown_base_height` (m),
+      `fia_species_code`, `tree_id`
     - `operator`: `eq`, `ne`, `gt`, `lt`, `ge`, `le`
       (`fia_species_code` and `tree_id` only support `eq`/`ne`)
     - `value`: number, string, or list for `eq`/`ne`
@@ -94,8 +94,9 @@ async def apply_modifications(
 
     **Expression conditions** use a boolean expression:
     - `expression`: e.g., `"dbh < 5 and height < 2"`
-    - Only `dbh`, `height`, `crown_ratio` are allowed in expressions
-    - Expressions always use native units (cm, m, 0-1 fraction)
+    - Only `dbh`, `height`, `crown_base_height` are allowed in expressions
+    - Expressions always use native units (`dbh` in cm, `height` and
+      `crown_base_height` in m)
 
     **Spatial conditions** test each tree's location (a point) against a
     geometry. Two variants discriminated by the required `source` field:
@@ -103,16 +104,18 @@ async def apply_modifications(
     - `source: "geometry"` — supply GeoJSON directly via `geometry` (plus
       optional `crs`; defaults to the domain CRS).
     - `source: "feature"` — reference a persisted Feature resource by
-      `feature_id` (road, water, layerset). The Feature must belong to the
+      `feature_id` (road, water, building, layerset). The Feature must belong to the
       same domain as this inventory and be in `completed` status;
       cross-domain, missing, or unfinished references are rejected with 422.
+      A Feature with no geometry (e.g. OSM water over a domain with none)
+      matches no trees with `within` or `intersects` and every tree with
+      `outside`.
 
     Both spatial variants accept:
     - `operator`: `within`, `outside`, or `intersects`
     - `buffer_m`: (optional, meters) expands the geometry outward in the
-      domain's projected CRS before testing. Effectively required for
-      linestring features (e.g. roads) because a tree point almost never
-      intersects a bare linestring.
+      domain's projected CRS before testing, e.g. to select a corridor
+      around road polygons.
 
     Spatial conditions have **no `target` field** — trees are points, so
     the test is always point-in-(optionally-buffered)-geometry.

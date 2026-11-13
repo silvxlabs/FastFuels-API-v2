@@ -10,7 +10,7 @@ import logging
 
 import geopandas as gpd
 
-from etcher.osm_source import read_osm_features
+from etcher.osm_source import osm_attribution, read_osm_features
 from etcher.storage import save_features
 from lib.domain_utils import buffer_domain
 
@@ -48,7 +48,7 @@ def handle_osm(
         progress: Callback for progress reporting
 
     Returns:
-        Dict with 'georeference' key
+        Dict with 'georeference' and 'attributions' keys
     """
     feature_id = feature["id"]
     domain_id = feature["domain_id"]
@@ -109,7 +109,7 @@ def handle_osm(
 
     progress("Complete", 100)
 
-    return {"georeference": georeference}
+    return {"georeference": georeference, "attributions": [osm_attribution()]}
 
 
 def buffer_roads(road_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:

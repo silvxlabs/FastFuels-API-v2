@@ -4,7 +4,7 @@ api/v2/resources/inventories/modifications.py
 Modification schemas for tree inventories.
 
 Provides condition/action models for filtering and modifying tree attributes
-(dbh, height, crown_ratio, fia_species_code; tree_id in conditions only).
+(dbh, height, crown_base_height, fia_species_code; tree_id in conditions only).
 Supports optional unit conversion via pint for conditions and actions.
 """
 
@@ -32,7 +32,7 @@ class InventoryAttribute(StrEnum):
 
     dbh = "dbh"
     height = "height"
-    crown_ratio = "crown_ratio"
+    crown_base_height = "crown_base_height"
     fia_species_code = "fia_species_code"
     tree_id = "tree_id"
 
@@ -41,13 +41,13 @@ class InventoryAttribute(StrEnum):
 ATTRIBUTE_UNITS = {
     "dbh": "cm",
     "height": "m",
-    "crown_ratio": "dimensionless",
+    "crown_base_height": "m",
     "fia_species_code": None,
     "tree_id": None,
 }
 
 # Attributes allowed in expressions (excludes categorical fia_species_code, tree_id)
-EXPRESSION_ALLOWED_NAMES = {"dbh", "height", "crown_ratio"}
+EXPRESSION_ALLOWED_NAMES = {"dbh", "height", "crown_base_height"}
 
 # Categorical attributes: conditions support only eq/ne.
 EQUALITY_ONLY_ATTRIBUTES = {
@@ -173,14 +173,14 @@ class InventoryModificationCondition(BaseModel):
 class InventoryExpressionCondition(BaseModel):
     """Boolean expression condition evaluated against tree attributes.
 
-    Expressions use native units (cm, m, 0-1 fraction). No unit field
+    Expressions use native units (cm, m). No unit field
     is provided — convert values in the expression yourself.
 
     Example: "dbh < 5 and height < 2"
     """
 
     expression: str = Field(
-        ..., description="Boolean expression using dbh, height, crown_ratio"
+        ..., description="Boolean expression using dbh, height, crown_base_height"
     )
 
     @field_validator("expression")
@@ -354,8 +354,9 @@ class InventoryFeatureSpatialCondition(BaseModel):
     the domain CRS, optionally buffers it, and then evaluates the spatial
     operator against each tree's point coordinate.
 
-    A non-zero ``buffer_m`` is typically required for linestring features
-    (e.g. roads), since tree points almost never intersect a bare linestring.
+    A Feature with no geometry (e.g. OSM water over a domain with none)
+    matches no trees with ``within`` or ``intersects`` and every tree with
+    ``outside``.
     """
 
     model_config = ConfigDict(
@@ -380,9 +381,11 @@ class InventoryFeatureSpatialCondition(BaseModel):
     feature_id: str = Field(
         ...,
         description=(
-            "ID of a Feature resource (road, water, or layerset) hosted in "
+            "ID of a Feature resource (road, water, building, or layerset) hosted in "
             "the same domain as the inventory. Cross-domain references are "
-            "rejected; the feature must be in `completed` status."
+            "rejected; the feature must be in `completed` status. A Feature "
+            "with no geometry matches no trees with `within` or `intersects` "
+            "and every tree with `outside`."
         ),
     )
     buffer_m: float | None = Field(
@@ -390,9 +393,11 @@ class InventoryFeatureSpatialCondition(BaseModel):
         ge=0,
         description=(
             "Optional buffer distance in meters applied to the feature "
-            "geometry (in the domain's projected CRS) before testing. "
-            "Effectively required for linestring features such as roads "
-            "since a tree point almost never intersects a bare linestring."
+            "geometry (in the domain's projected CRS) before testing. Use "
+            "it to widen the selection beyond the feature, e.g. a corridor "
+            "around road polygons. Road features are already polygons (OSM "
+            "roads are buffered to road-class widths), so no buffer is "
+            "needed to select trees on the road surface itself."
         ),
     )
 

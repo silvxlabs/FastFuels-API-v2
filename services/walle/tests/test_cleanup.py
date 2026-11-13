@@ -527,3 +527,43 @@ def test_reap_log_nonguest_age_uses_modified_on(caplog):
         modified_on=NOW - timedelta(days=1),
     )
     assert _reap_log_age("ttl", r, caplog) == "age=1.0d"
+
+
+# --- expired test keys ----------------------------------------------------
+
+
+def test_find_expired_test_keys_keeps_only_test_owners(monkeypatch):
+    calls = {}
+
+    class _Snap:
+        def __init__(self, doc_id, owner_id):
+            self.reference = doc_id
+            self._data = {"owner_id": owner_id} if owner_id is not None else {}
+
+        def to_dict(self):
+            return self._data
+
+    class _Query:
+        def where(self, filter):
+            calls["filter"] = (filter.field_path, filter.op_string, filter.value)
+            return self
+
+        def select(self, fields):
+            calls["select"] = fields
+            return self
+
+        def stream(self):
+            return [
+                _Snap("k-test-owner", "test-owner"),
+                _Snap("k-test-uuid", "test-0123abcd"),
+                _Snap("k-user", "real-user"),
+                _Snap("k-no-owner", None),
+            ]
+
+    monkeypatch.setattr(cleanup.firestore_client, "collection", lambda _c: _Query())
+
+    assert cleanup.find_expired_test_keys(NOW) == ["k-test-owner", "k-test-uuid"]
+    # Only expired keys are read, so a valid key (like the shared CI key) is
+    # never a candidate.
+    assert calls["filter"] == ("expires_on", "<", NOW)
+    assert calls["select"] == ["owner_id"]

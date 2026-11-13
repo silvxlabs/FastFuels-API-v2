@@ -98,14 +98,31 @@ class TestKeyWithoutAccessField:
         assert exc.value.status_code == 404
 
 
+@pytest.fixture
+def post_key(client):
+    """POST /keys, then delete every key it created at teardown.
+
+    The created keys are real, so without this every run would leave them
+    in the shared project.
+    """
+    created = []
+
+    def _post(json):
+        response = client.post("/keys", json=json)
+        if response.status_code == 201:
+            created.append(response.json()["id"])
+        return response
+
+    yield _post
+    for key_id in created:
+        client.delete(f"/keys/{key_id}")
+
+
 class TestCreateKey:
     route = "/keys"
 
-    def test_personal_key(self, client):
-        response = client.post(
-            self.route,
-            json={"name": "Personal Test Key"},
-        )
+    def test_personal_key(self, post_key):
+        response = post_key({"name": "Personal Test Key"})
         assert response.status_code == 201
 
         data = response.json()
@@ -113,43 +130,36 @@ class TestCreateKey:
         assert data["access"] == "personal"
         assert "secret" in data
 
-    def test_secret_is_64_char_hex(self, client):
-        response = client.post(self.route, json={"name": "Hex Check Key"})
+    def test_secret_is_64_char_hex(self, post_key):
+        response = post_key({"name": "Hex Check Key"})
         assert response.status_code == 201
 
         secret = response.json()["secret"]
         assert len(secret) == 64
         int(secret, 16)  # Should not raise — valid hex
 
-    def test_id_is_sha256_of_secret(self, client):
-        response = client.post(self.route, json={"name": "Hash Check Key"})
+    def test_id_is_sha256_of_secret(self, post_key):
+        response = post_key({"name": "Hash Check Key"})
         assert response.status_code == 201
 
         data = response.json()
         expected_id = hash_api_key(data["secret"])
         assert data["id"] == expected_id
 
-    def test_custom_scopes(self, client):
-        response = client.post(
-            self.route,
-            json={"name": "RW Key", "scopes": ["read", "write"]},
-        )
+    def test_custom_scopes(self, post_key):
+        response = post_key({"name": "RW Key", "scopes": ["read", "write"]})
         assert response.status_code == 201
         assert response.json()["scopes"] == ["read", "write"]
 
-    def test_custom_valid_days(self, client):
-        response = client.post(
-            self.route,
-            json={"name": "Short Key", "valid_days": 7},
-        )
+    def test_custom_valid_days(self, post_key):
+        response = post_key({"name": "Short Key", "valid_days": 7})
         assert response.status_code == 201
         assert response.json()["valid_days"] == 7
 
-    def test_application_key(self, client, application_for_testing):
+    def test_application_key(self, post_key, application_for_testing):
         app_id = application_for_testing["id"]
-        response = client.post(
-            self.route,
-            json={
+        response = post_key(
+            {
                 "name": "App Key",
                 "access": "application",
                 "application_id": app_id,
@@ -161,11 +171,10 @@ class TestCreateKey:
         assert data["access"] == "application"
         assert data["application_id"] == app_id
 
-    def test_application_key_owner_is_app_id(self, client, application_for_testing):
+    def test_application_key_owner_is_app_id(self, post_key, application_for_testing):
         app_id = application_for_testing["id"]
-        response = client.post(
-            self.route,
-            json={
+        response = post_key(
+            {
                 "name": "App Owner Key",
                 "access": "application",
                 "application_id": app_id,
@@ -273,7 +282,9 @@ class TestGetKey:
     def personal_key(self, client):
         response = client.post(self.route, json={"name": "Get Test Key"})
         assert response.status_code == 201
-        return response.json()
+        key = response.json()
+        yield key
+        client.delete(f"{self.route}/{key['id']}")
 
     @pytest.fixture(scope="class")
     def application_key(self, client, application_for_testing):
@@ -286,7 +297,9 @@ class TestGetKey:
             },
         )
         assert response.status_code == 201
-        return response.json()
+        key = response.json()
+        yield key
+        client.delete(f"{self.route}/{key['id']}")
 
     def test_personal_key(self, client, personal_key):
         key_id = personal_key["id"]

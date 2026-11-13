@@ -4,7 +4,7 @@ api/v2/resources/grids/topography/schema.py
 Schema models for the Topography grid product.
 
 Topography data includes elevation, slope, and aspect. Sourced from
-LANDFIRE at 30m resolution or 3DEP at 1m/10m/30m resolution.
+LANDFIRE at 30m resolution or 3DEP at 1m/2m/10m/30m resolution.
 """
 
 from enum import IntEnum, StrEnum
@@ -101,19 +101,35 @@ class CreateLandfireTopographyRequest(CreateSourceGridRequestBase):
 
 
 class ThreeDepResolution(IntEnum):
-    """Available resolutions for 3DEP data (meters)."""
+    """3DEP source products, by resolution in meters.
+
+    - 1: Seamless 1-Meter DEM (S1M); where S1M has no tiles, the 1 m lidar
+      project DEM tiles
+    - 2: the 1 m lidar project DEM tiles, read at their 2 m overview
+    - 10: 1/3 arc-second seamless DEM
+    - 30: 1 arc-second seamless DEM
+    """
 
     one_meter = 1
+    two_meter = 2
     ten_meter = 10
     thirty_meter = 30
+
+
+THREEDEP_RESOLUTION_DESCRIPTION = (
+    "3DEP source product, in meters. 1: Seamless 1-Meter DEM (S1M), falling "
+    "back to the 1 m lidar project DEM tiles where S1M has no tiles. 2: the "
+    "1 m lidar project DEM tiles, read at their 2 m overview. 10: 1/3 "
+    "arc-second seamless DEM. 30: 1 arc-second seamless DEM."
+)
 
 
 class ThreeDepTopographySource(ThreeDepSource):
     """Source for 3DEP topographic data.
 
     Returns continuous elevation (meters), slope (degrees), and/or aspect
-    (degrees) data at user-selected resolution (1m, 10m, or 30m) from USGS
-    3DEP products accessed via AWS S3 COGs.
+    (degrees) data at user-selected resolution (1m, 2m, 10m, or 30m) from
+    USGS 3DEP products accessed via AWS S3 COGs.
     """
 
     product: Literal["topography"] = "topography"
@@ -132,11 +148,14 @@ class CreateThreeDepTopographyRequest(CreateSourceGridRequestBase):
     Returns a grid with one or more continuous bands: elevation (m),
     slope (degrees), and/or aspect (degrees).
 
-    `source_resolution` selects the 3DEP product family (1m, 10m, or 30m).
+    `source_resolution` selects the 3DEP product (1m, 2m, 10m, or 30m).
     To change the *output* cell size, set ``alignment.resolution`` instead.
     """
 
-    source_resolution: ThreeDepResolution = ThreeDepResolution.ten_meter
+    source_resolution: ThreeDepResolution = Field(
+        default=ThreeDepResolution.ten_meter,
+        description=THREEDEP_RESOLUTION_DESCRIPTION,
+    )
     bands: list[TopographyBand] = Field(
         default=[TopographyBand.elevation],
         min_length=1,
@@ -153,11 +172,22 @@ class ThreeDepCoverageResponse(BaseModel):
 
     model_config = ConfigDict(title="TopographyThreeDepCoverageResponse")
 
-    resolution: ThreeDepResolution
-    available: bool
+    resolution: ThreeDepResolution = Field(description=THREEDEP_RESOLUTION_DESCRIPTION)
+    available: bool | None = Field(
+        description=(
+            "Whether tiles cover the domain. null means coverage could not be "
+            "determined because the USGS National Map search did not respond; "
+            "try again shortly."
+        )
+    )
     tile_count: int
     tiles: list[str]
     acquisition_dates: list[str] | None = None
+    unavailable_reason: str | None = Field(
+        default=None,
+        description="Why coverage could not be determined. Set only when "
+        "`available` is null.",
+    )
 
 
 publish_band_defs(TopographyBand, TOPOGRAPHY_BAND_DEFS)

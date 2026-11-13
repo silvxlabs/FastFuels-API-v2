@@ -14,15 +14,20 @@ resolution, and real TNM Access searches for 1m and 2m. They require a
 running API server and valid GCP/AWS credentials.
 """
 
+import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from api.resources.grids.topography.router import check_3dep_coverage
 
 from lib.config import DOMAINS_COLLECTION
 from lib.testing import SHARED_TEST_DOMAINS_DIR
+from lib.threedep import TnmSearchError
 
 
 def _load_domain(path: Path, owner_id: str) -> dict:
@@ -262,3 +267,66 @@ class TestThreeDepCoverageResponseStructure:
         assert isinstance(data["available"], bool)
         assert isinstance(data["tile_count"], int)
         assert isinstance(data["tiles"], list)
+
+
+class TestThreeDepCoverageSearchUnavailable:
+    """A failed TNM search reports unknown coverage, not an error.
+
+    Router tests hit a live server that patches can't reach, so these call
+    the route function directly.
+    """
+
+    ROUTER = "api.resources.grids.topography.router"
+
+    @staticmethod
+    def _domain() -> dict:
+        with open(SHARED_TEST_DOMAINS_DIR / "blue_mtn.json") as f:
+            return json.load(f)
+
+    def _check(self, resolution: int):
+        return asyncio.run(check_3dep_coverage(self._domain(), resolution))
+
+    @pytest.mark.parametrize("resolution", [1, 2])
+    def test_search_failure_reports_unknown_coverage(self, resolution, caplog):
+        with (
+            patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
+            patch(
+                f"{self.ROUTER}.discover_lidar_project_tiles",
+                side_effect=TnmSearchError("read timed out"),
+            ),
+            caplog.at_level(logging.WARNING, logger=self.ROUTER),
+        ):
+            response = self._check(resolution)
+
+        data = response.model_dump()
+        assert data["resolution"] == resolution
+        assert data["available"] is None
+        assert data["unavailable_reason"]
+        assert data["tile_count"] == 0
+        assert data["tiles"] == []
+        assert data["acquisition_dates"] is None
+        assert "read timed out" in caplog.text
+
+    def test_s1m_hit_skips_search(self):
+        s1m_urls = ["https://prd-tnm.s3.amazonaws.com/S1M/tile.tif"]
+        with (
+            patch(
+                f"{self.ROUTER}.discover_s1m_tiles",
+                return_value=(s1m_urls, ["20230515"]),
+            ),
+            patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search,
+        ):
+            response = self._check(1)
+
+        search.assert_not_called()
+        assert response.available is True
+        assert response.unavailable_reason is None
+
+    @pytest.mark.parametrize("resolution", [10, 30])
+    def test_arc_second_never_searches(self, resolution):
+        with patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search:
+            response = self._check(resolution)
+
+        search.assert_not_called()
+        assert response.available is True
+        assert response.unavailable_reason is None

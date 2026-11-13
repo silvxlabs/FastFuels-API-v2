@@ -173,10 +173,21 @@ class ThreeDepCoverageResponse(BaseModel):
     model_config = ConfigDict(title="TopographyThreeDepCoverageResponse")
 
     resolution: ThreeDepResolution = Field(description=THREEDEP_RESOLUTION_DESCRIPTION)
-    available: bool
+    available: bool | None = Field(
+        description=(
+            "Whether tiles cover the domain. null means coverage could not be "
+            "determined because the USGS National Map search did not respond; "
+            "try again shortly."
+        )
+    )
     tile_count: int
     tiles: list[str]
     acquisition_dates: list[str] | None = None
+    unavailable_reason: str | None = Field(
+        default=None,
+        description="Why coverage could not be determined. Set only when "
+        "`available` is null.",
+    )
 
 
 publish_band_defs(TopographyBand, TOPOGRAPHY_BAND_DEFS)

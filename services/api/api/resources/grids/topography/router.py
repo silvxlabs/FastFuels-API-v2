@@ -5,6 +5,7 @@ Router for Topography grid product endpoints.
 """
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -47,10 +48,13 @@ from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.threedep import (
+    TnmSearchError,
     discover_lidar_project_tiles,
     discover_s1m_tiles,
     discover_tiles_arc_second,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -279,6 +283,11 @@ async def check_3dep_coverage(
 
     Returns tile availability, count, URLs, and (for 1m and 2m) acquisition
     dates. For lidar project tiles these are publication dates.
+
+    1m and 2m coverage from the lidar project tiles is looked up through the
+    USGS National Map search. If that search does not respond, the response
+    is still 200, with `available` set to null and `unavailable_reason`
+    explaining why. Try again shortly.
     """
     roi = parse_domain_gdf(domain)
 
@@ -292,9 +301,23 @@ async def check_3dep_coverage(
                 discover_s1m_tiles, roi
             )
         if not tile_urls:
-            tile_urls, acquisition_dates = await asyncio.to_thread(
-                discover_lidar_project_tiles, roi, timeout=TNM_TIMEOUT_SECONDS
-            )
+            try:
+                tile_urls, acquisition_dates = await asyncio.to_thread(
+                    discover_lidar_project_tiles, roi, timeout=TNM_TIMEOUT_SECONDS
+                )
+            except TnmSearchError as e:
+                logger.warning(f"3DEP lidar project coverage search failed: {e}")
+                return ThreeDepCoverageResponse(
+                    resolution=resolution,
+                    available=None,
+                    tile_count=0,
+                    tiles=[],
+                    acquisition_dates=None,
+                    unavailable_reason=(
+                        "The USGS National Map search did not respond, so "
+                        "coverage could not be determined. Try again shortly."
+                    ),
+                )
         acquisition_dates = acquisition_dates or None
 
     return ThreeDepCoverageResponse(

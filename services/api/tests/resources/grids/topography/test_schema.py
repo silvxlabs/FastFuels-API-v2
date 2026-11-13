@@ -13,6 +13,7 @@ from api.resources.grids.topography.schema import (
     CreateThreeDepTopographyRequest,
     LandfireTopographySource,
     LandfireTopographyVersion,
+    ThreeDepCoverageResponse,
     ThreeDepResolution,
     ThreeDepTopographySource,
     TopographyBand,
@@ -451,3 +452,29 @@ class TestCreateThreeDepTopographyRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateThreeDepTopographyRequest(extent_buffer_cells=11)
+
+
+class TestThreeDepCoverageResponse:
+    """Tests for the coverage pre-flight response model."""
+
+    def test_unavailable_reason_defaults_to_none(self):
+        response = ThreeDepCoverageResponse(
+            resolution=10, available=True, tile_count=1, tiles=["a.tif"]
+        )
+        assert response.unavailable_reason is None
+
+    def test_unknown_coverage(self):
+        response = ThreeDepCoverageResponse(
+            resolution=2,
+            available=None,
+            tile_count=0,
+            tiles=[],
+            unavailable_reason="The search did not respond.",
+        )
+        assert response.available is None
+        assert response.model_dump()["available"] is None
+
+    def test_available_is_required(self):
+        """null must be explicit, not an omitted field."""
+        with pytest.raises(ValidationError):
+            ThreeDepCoverageResponse(resolution=2, tile_count=0, tiles=[])

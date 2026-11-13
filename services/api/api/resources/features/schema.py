@@ -4,9 +4,11 @@ api/v2/resources/features/schema.py
 Core schema models for the Feature resource.
 """
 
+import math
 from datetime import datetime
 from enum import StrEnum
 
+from geojson_pydantic.geometries import MultiPolygon, Polygon
 from pydantic import BaseModel, Field
 
 from api.resources.attribution import Attribution
@@ -21,6 +23,27 @@ class FeatureType(StrEnum):
     layerset = "layerset"
     crown = "crown"
     building = "building"
+
+
+def require_finite_coordinates(
+    geometry: Polygon | MultiPolygon,
+) -> Polygon | MultiPolygon:
+    """Raise ``ValueError`` if any coordinate of ``geometry`` is inf or NaN."""
+    polygons = (
+        geometry.coordinates
+        if isinstance(geometry, MultiPolygon)
+        else [geometry.coordinates]
+    )
+    values = (
+        value
+        for polygon in polygons
+        for ring in polygon
+        for position in ring
+        for value in position
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("Coordinates must be finite numbers, not Infinity or NaN.")
+    return geometry
 
 
 class FeatureSortField(StrEnum):

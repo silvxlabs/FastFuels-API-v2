@@ -6,6 +6,8 @@ FeatureCollection shape. These are pure unit tests with no external
 dependencies.
 """
 
+import json
+
 import pytest
 from api.resources.features.layerset.examples import EXAMPLE_LAYERSET_MINIMAL
 from api.resources.features.layerset.schema import (
@@ -179,6 +181,27 @@ class TestLayersetFeatureCollection:
             ],
         )
         assert request.features[0].geometry.type == "Polygon"
+
+    @pytest.mark.parametrize("value", ["Infinity", "-Infinity", "NaN"])
+    def test_non_finite_coordinate_rejected(self, value):
+        ring = json.loads(f"[[0, 0], [{value}, 0], [1, 1], [0, 0]]")
+        with pytest.raises(ValidationError, match="must be finite"):
+            CreateLayersetRequestBody(
+                type="FeatureCollection",
+                features=[
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "fuel_type": "shrub",
+                            "fuel_loading": 1.0,
+                            "fuel_height": 1.0,
+                            "percent_cover": 50,
+                            "distribution": "homogeneous",
+                        },
+                        "geometry": {"type": "Polygon", "coordinates": [ring]},
+                    }
+                ],
+            )
 
     def test_random_clusters_requires_patch_size(self):
         """A random_clusters feature without patch_size is rejected at validation."""

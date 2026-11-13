@@ -560,6 +560,48 @@ def test_feature_not_ready():
     assert exc.value.code == "FEATURE_NOT_READY"
 
 
+@pytest.mark.parametrize(
+    "operator, target, expected",
+    [
+        ("within", "centroid", 1.0),
+        ("intersects", "centroid", 1.0),
+        ("within", "cell", 1.0),
+        ("intersects", "cell", 1.0),
+        ("outside", "centroid", 0.0),
+        ("outside", "cell", 0.0),
+    ],
+)
+def test_feature_empty_is_empty_geometry(operator, target, expected):
+    """A feature with no rows (e.g. OSM water over a domain with none) selects
+    no cells with within/intersects and every cell with outside. The empty
+    parquet carries no CRS and a buffer is requested, so the reproject/buffer
+    steps must be skipped."""
+    ds = _flat_dataset(1.0)
+    mods = [
+        {
+            "conditions": [
+                {
+                    "source": "feature",
+                    "operator": operator,
+                    "target": target,
+                    "feature_id": "f1",
+                    "buffer_m": 5,
+                }
+            ],
+            "actions": [{"band": "fuel_load.1hr", "modifier": "replace", "value": 0.0}],
+        }
+    ]
+    with (
+        patch("griddle.modifications.get_document", return_value=_patch_feature()),
+        patch(
+            "griddle.modifications.gpd.read_parquet",
+            return_value=gpd.GeoDataFrame(geometry=[]),
+        ),
+    ):
+        apply_modifications(ds, mods, "d")
+    assert (ds["fuel_load.1hr"].values == expected).all()
+
+
 # ----------------------------------------------------- feature cache
 
 

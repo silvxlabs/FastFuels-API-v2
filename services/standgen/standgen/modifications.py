@@ -17,7 +17,7 @@ import geopandas as gpd
 import pandas as pd
 import pint
 import pyproj
-from shapely.geometry import shape
+from shapely.geometry import GeometryCollection, shape
 
 from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.domain_utils import buffer_gdf
@@ -343,11 +343,12 @@ def _resolve_feature_geometry(
     parquet_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
     gdf = gpd.read_parquet(parquet_path)
     if gdf.empty:
-        raise ProcessingError(
-            code="FEATURE_EMPTY",
-            message=f"Feature '{feature_id}' has no geometry rows.",
-            suggestion="Re-create the feature so it contains geometries.",
-        )
+        # A feature with no rows (e.g. OSM water over a domain with none) is an
+        # empty geometry: `within`/`intersects` select nothing, `outside`
+        # selects everything.
+        geom = GeometryCollection()
+        cache[key] = geom
+        return geom
 
     # Reproject is a safety net — features are written in the domain CRS by
     # construction, and trees are in the domain CRS too. When both agree,

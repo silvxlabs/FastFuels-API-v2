@@ -1,15 +1,16 @@
 """
-End-to-end tests that generate static test data for backend services.
+End-to-end tests that run each pipeline through the deployed API.
 
-Each test creates a grid or inventory through the full API → Cloud Tasks →
-backend service pipeline, copies the output to a well-known static path in
-GCS, and saves a JSON template for use in integration tests.
+Each test creates a grid, inventory, feature or point cloud through the full
+API → Cloud Tasks → backend service pipeline and checks that it completes.
+Chained tests (PIM treemap → PIM inventory → tree voxels; FBFM40 → lookup)
+build on the resources earlier tests created in the same session, and
+@pytest.mark.dependency skips them when their source failed.
 
-Run manually when fixture data needs (re)generating:
-    cd services/api && uv run pytest tests/e2e/ -v --log-cli-level=INFO
-
-Tests use @pytest.mark.dependency to enforce execution order for chained
-fixtures (PIM treemap → PIM inventory → tree voxels; FBFM40 → lookup).
+By default nothing is published. To regenerate the static fixtures other
+services' integration tests read, publish each output to its
+``static-test-*`` path and write its JSON template, then commit the templates:
+    cd services/api && E2E_PUBLISH_FIXTURES=1 uv run pytest tests/e2e/ -v --log-cli-level=INFO
 
 `blue_mountain_domain` is `pad_to_resolution=2`, so every 2 m
 Domain-anchored fetch lands on origin `(720226, 5190646)` — the same

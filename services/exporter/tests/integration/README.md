@@ -63,7 +63,8 @@ Static fixtures live in GCS and should never be deleted by integration test clea
 - **Grids**: `gs://{GRIDS_BUCKET}/static-test-*` (zarr directories)
 - **Inventories**: `gs://{INVENTORIES_BUCKET}/static-test-*` (partitioned parquet)
 
-Both are created by the API e2e module (`services/api/tests/e2e/`). Regenerate when:
+Both are published by the API e2e module (`services/api/tests/e2e/`) when it
+runs with `E2E_PUBLISH_FIXTURES=1`; see its README. Regenerate when:
 
 - A handler's output format changes
 - Test domain geometry changes

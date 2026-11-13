@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 
 import pytest
+from api.resources.attribution import Attribution
 from api.resources.grids.schema import (
     CHUNK_SHAPE,
     Band,
@@ -26,6 +27,18 @@ from api.resources.grids.schema import (
 )
 from api.schema import JobStatus
 from pydantic import ValidationError
+
+LANDFIRE_ATTRIBUTION = {
+    "dataset": "LANDFIRE 40 Scott and Burgan Fire Behavior Fuel Models (LF 2022)",
+    "license_name": "LicenseRef-US-Government-Public-Domain",
+    "license_url": (
+        "https://www.usgs.gov/information-policies-and-instructions/"
+        "copyrights-and-credits"
+    ),
+    "citation": "LANDFIRE, 40 Scott and Burgan Fire Behavior Fuel Models, ...",
+    "access_url": "https://landfire.gov",
+    "accessed_on": "2026-11-13",
+}
 
 
 class TestChunkShape:
@@ -741,6 +754,26 @@ class TestGrid:
         grid = Grid(**minimal_grid_data)
         condition = grid.source["operations"][0]["conditions"][0]
         assert condition["geometry"]["coordinates"] == [ring]
+
+    def test_attributions_default_to_empty_list(self, minimal_grid_data):
+        """Firestore docs written before attributions existed have no field."""
+        assert "attributions" not in minimal_grid_data
+        grid = Grid(**minimal_grid_data)
+        assert grid.attributions == []
+        assert grid.model_dump(mode="json")["attributions"] == []
+
+    def test_attributions_serialize(self, minimal_grid_data):
+        minimal_grid_data["attributions"] = [dict(LANDFIRE_ATTRIBUTION)]
+        grid = Grid(**minimal_grid_data)
+        assert isinstance(grid.attributions[0], Attribution)
+        assert grid.model_dump(mode="json")["attributions"] == [LANDFIRE_ATTRIBUTION]
+
+    def test_attribution_missing_field_raises(self, minimal_grid_data):
+        entry = dict(LANDFIRE_ATTRIBUTION)
+        del entry["dataset"]
+        minimal_grid_data["attributions"] = [entry]
+        with pytest.raises(ValidationError):
+            Grid(**minimal_grid_data)
 
 
 class TestListGridsResponse:

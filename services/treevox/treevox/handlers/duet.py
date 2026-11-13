@@ -21,17 +21,17 @@ This is the first subprocess in v2. Two consequences shape the module:
 Unlike the voxelize handler, this one is single-process: DUET is one Fortran
 call over the whole domain, so there is nothing to chunk or pool.
 
-DUET always runs on cells of 1 m or smaller. Along any horizontal axis with
-cells larger than 1 m, it alternates loading between neighbouring cells, so a
-2 m grid comes out as a checkerboard (#754). A coarser source grid is split
-into ≤ 1 m cells for the run, and the output is averaged back to the source
-resolution.
+On grids coarser than 1 m, DUET alternates loading between neighbouring
+cells, so a 2 m grid comes out as a checkerboard (#754). The pattern sits at
+the grid's own cell scale, so `_suppress_checkerboard` removes it with a
+[1, 2, 1] / 4 filter on each axis. Running DUET on split 1 m cells avoids it
+instead, but costs about 7× the runtime and runs out of treevox's memory near
+1 km² (#794).
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import os
 import shutil
 import subprocess
@@ -247,46 +247,6 @@ def _horizontal_resolution(ds: xr.Dataset) -> float:
     return float(abs(ds.x.values[1] - ds.x.values[0])) if ds.sizes["x"] > 1 else 1.0
 
 
-def _split_factor(ds: xr.Dataset) -> int:
-    """How many cells per side each source cell is split into for DUET.
-
-    The smallest whole number that brings the cell size to 1 m or below: 1 for
-    a grid already at ≤ 1 m, 2 for 2 m, and 2 for 1.5 m (0.75 m cells). DUET
-    is clean at 1, 0.75 and 0.5 m. The rounding keeps a float-noisy 2.0000001
-    from becoming a 3.
-    """
-    return max(1, math.ceil(round(_horizontal_resolution(ds), 6)))
-
-
-def _refine(ds: xr.Dataset, split: int) -> xr.Dataset:
-    """Split each horizontal cell into `split` × `split` cells of the same value.
-
-    Repeating values keeps every voxel's bulk density and species, so total
-    foliage mass is unchanged. Only coordinate spacing is read downstream (by
-    `_write_duet_inputs`), but the new cell centres are placed exactly anyway.
-    """
-
-    def centres(coords: np.ndarray) -> np.ndarray:
-        step = (coords[1] - coords[0]) / split  # signed: y runs north to south
-        offsets = (np.arange(split) - (split - 1) / 2) * step
-        return (coords[:, None] + offsets).ravel()
-
-    return xr.Dataset(
-        {
-            name: (
-                da.dims,
-                da.values.repeat(split, axis=1).repeat(split, axis=2),
-            )
-            for name, da in ds.data_vars.items()
-        },
-        coords={
-            "z": ds.z.values,
-            "y": centres(ds.y.values),
-            "x": centres(ds.x.values),
-        },
-    )
-
-
 def _write_duet_inputs(work: Path, ds: xr.Dataset, source: dict, grid_id: str) -> None:
     """Stage the binary, its species table, and the three input arrays.
 
@@ -424,36 +384,45 @@ def _import_run(work: Path):
         calibration._loading_weighted_average = original
 
 
-def _coarsen_run(duet_run, split: int):
-    """Average a run made on split cells back to the source resolution.
+def _suppress_checkerboard(duet_run):
+    """Remove DUET's cell-to-cell alternation from a run on > 1 m cells.
 
-    - **Loading:** the plain block mean, which keeps the mass.
-    - **Depth:** also the plain block mean. DUET sets each layer's depth as a
-      fixed multiple of its loading (measured: 0.27 for grass, 0.15 for
-      litter), so this equals the depth DUET would give the averaged loading.
-    - **Moisture:** the loading-weighted block mean. DUET writes zero moisture
-      where there is no fuel, so a plain mean would dilute it.
+    Applies [1, 2, 1] / 4 along y and x. Its response is zero at the grid's
+    finest frequency, so it cancels a cell-to-cell alternation exactly
+    everywhere but the four corner cells. Edges are mirrored, which keeps each
+    layer's total.
+
+    - **Loading and depth:** filtered directly. DUET sets depth as a fixed
+      multiple of loading within each layer, so the ratio is kept.
+    - **Moisture:** the loading-weighted filter, filter(moisture × loading) /
+      filter(loading). DUET writes zero moisture where there is no fuel, so a
+      plain filter would dilute it.
+
+    The filter also spreads fuel one cell into empty neighbours.
 
     Runs before calibration, so calibration targets apply to the grid the user
     receives.
     """
     from duet_tools.calibration import DuetRun
 
-    def blocks(a: np.ndarray) -> np.ndarray:
-        layers, ny, nx = a.shape
-        return a.reshape(layers, ny // split, split, nx // split, split)
+    def smooth(a: np.ndarray) -> np.ndarray:
+        for axis in (1, 2):
+            a = np.moveaxis(a, axis, -1)
+            p = np.pad(a, [(0, 0)] * (a.ndim - 1) + [(1, 1)], mode="symmetric")
+            a = 0.25 * p[..., :-2] + 0.5 * p[..., 1:-1] + 0.25 * p[..., 2:]
+            a = np.moveaxis(a, -1, axis)
+        return a
 
-    loading = blocks(duet_run.loading)
-    mass = loading.sum(axis=(2, 4))
+    loading = smooth(duet_run.loading)
     moisture = np.divide(
-        (blocks(duet_run.moisture) * loading).sum(axis=(2, 4)),
-        mass,
-        out=np.zeros_like(mass),
-        where=mass > 0,
+        smooth(duet_run.moisture * duet_run.loading),
+        loading,
+        out=np.zeros_like(loading),
+        where=loading > 0,
     )
     return DuetRun(
-        loading=loading.mean(axis=(2, 4)),
-        depth=blocks(duet_run.depth).mean(axis=(2, 4)),
+        loading=loading,
+        depth=smooth(duet_run.depth),
         moisture=moisture,
         duet_version=duet_run.duet_version,
     )
@@ -585,13 +554,12 @@ def duet_grid(
 
     Stages:
       1. _load_source_grid  — read the three bands DUET needs.
-      2. _refine            — split cells larger than 1 m (see module docstring).
-      3. _write_duet_inputs — remap species, stage binary + dat files.
-      4. _run_binary        — the subprocess.
-      5. _import_run        — duet-tools import, with the empty-species shim.
-      6. _coarsen_run       — average back to the source resolution.
-      7. _calibrate         — optional target application.
-      8. _build_dataset     — requested bands as 2D (y, x), then save.
+      2. _write_duet_inputs     — remap species, stage binary + dat files.
+      3. _run_binary            — the subprocess.
+      4. _import_run            — duet-tools import, with the empty-species shim.
+      5. _suppress_checkerboard — on > 1 m cells (see module docstring).
+      6. _calibrate             — optional target application.
+      7. _build_dataset         — requested bands as 2D (y, x), then save.
 
     `domain_gdf` is unused: the source grid already carries the domain's extent
     and CRS, and DUET works in grid space. It stays in the signature to match
@@ -607,18 +575,14 @@ def duet_grid(
     progress("Loading source grid...", 5)
     source_ds = _load_source_grid(source["source_grid_id"])
     nz, ny, nx = source_ds[FOLIAGE_BAND].shape
-    split = _split_factor(source_ds)
     resolution = _horizontal_resolution(source_ds)
     logger.info(
         f"Source grid: {nz}x{ny}x{nx} (z, y, x) at {resolution:g} m, "
-        f"running DUET at {resolution / split:g} m, "
         f"{source['years_since_burn']} years since burn",
         extra={"grid_id": grid_id},
     )
     y_coords, x_coords = source_ds.y.values, source_ds.x.values
     crs = source_ds.rio.crs
-    if split > 1:
-        source_ds = _refine(source_ds, split)
 
     # Cloud Run's local writes are tmpfs, so this directory is RAM and counts
     # against the container's memory limit alongside the arrays themselves.
@@ -636,8 +600,8 @@ def duet_grid(
 
         progress("Importing DUET output...", 75)
         duet_run = _import_run(work)
-        if split > 1:
-            duet_run = _coarsen_run(duet_run, split)
+        if resolution > 1:
+            duet_run = _suppress_checkerboard(duet_run)
 
         progress("Calibrating...", 85)
         duet_run = _calibrate(duet_run, source.get("calibration"), grid_id)

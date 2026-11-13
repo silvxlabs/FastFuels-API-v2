@@ -16,6 +16,13 @@ on:
       - 'services/lib/**'
       - '.github/workflows/api.yml'
 
+# Runs on the same branch queue instead of overlapping: two overlapping runs
+# race on the deploy (Cloud Run serves whichever finishes last) and on shared
+# test data (#726). Never cancel a run in progress, so every deploy completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   determine-environment:
     name: Determine Deployment Environment

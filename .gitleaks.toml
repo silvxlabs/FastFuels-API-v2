@@ -1,0 +1,40 @@
+# Gitleaks: the default rules plus FastFuels API keys.
+#
+# The default generic-api-key rule only flags high-entropy values, so a short
+# or word-like key slips through it. These rules flag any literal value in the
+# places a FastFuels API key is written, whatever its entropy. Write keys as a
+# placeholder ({{API_KEY}}) or read them from the environment; a value that
+# starts with a non-alphanumeric character ({{API_KEY}}, $API_KEY, <key>) or an
+# unquoted name (API_KEY) does not match.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "fastfuels-api-key-header"
+description = "Literal value in an api-key header"
+regex = '''(?i)['"]api-key(?:['"]\s*:\s*['"]|:\s*)([A-Za-z0-9][A-Za-z0-9_\-]{7,})['"]'''
+secretGroup = 1
+keywords = ["api-key"]
+
+[[rules]]
+id = "fastfuels-api-key-variable"
+description = "Literal value assigned to an API key variable"
+regex = '''(?:\b[A-Z0-9_]*API_KEY|\bapi_key|\bapiKey)\s*[:=]\s*['"]([A-Za-z0-9][A-Za-z0-9_\-]{7,})['"]'''
+secretGroup = 1
+keywords = ["api_key", "apikey"]
+
+[[rules]]
+id = "fastfuels-api-key-script-constant"
+description = "Literal value assigned to KEY in a script"
+regex = '''\bKEY\s*=\s*['"]([A-Za-z0-9][A-Za-z0-9_\-]{7,})['"]'''
+path = '''\.(py|sh|ipynb)$'''
+secretGroup = 1
+keywords = ["key"]
+
+[[rules]]
+id = "fastfuels-sdk-api-key"
+description = "Literal value passed to the SDK's set_api_key"
+regex = '''set_api_key\(\s*['"]([A-Za-z0-9][A-Za-z0-9_\-]{7,})['"]'''
+secretGroup = 1
+keywords = ["set_api_key"]

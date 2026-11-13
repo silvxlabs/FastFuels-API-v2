@@ -64,6 +64,23 @@ def _source_dataset(nz=6, ny=8, nx=10, spcd=122, moisture=100.0) -> xr.Dataset:
     return ds.rio.write_crs("EPSG:32613")
 
 
+def _split_run(ny=16, nx=20, loading=1.5):
+    """A real DuetRun at the split resolution `duet_grid` runs a 2 m source at.
+
+    `_source_dataset` is 8 x 10 at 2 m, so DUET runs it at 16 x 20 cells of
+    1 m. Real rather than mocked because `_coarsen_run` reshapes its arrays.
+    """
+    from duet_tools.calibration import DuetRun
+
+    shape = (3, ny, nx)
+    return DuetRun(
+        loading=np.full(shape, loading),
+        depth=np.full(shape, loading * 0.15),
+        moisture=np.full(shape, 0.2),
+        duet_version="v2",
+    )
+
+
 class TestSplitBand:
     @pytest.mark.parametrize(
         "key,expected",
@@ -296,6 +313,100 @@ class TestWriteDuetInputs:
         assert raw[1 : expected.size + 1].reshape(expected.shape) == pytest.approx(
             expected
         )
+
+
+class TestSplitFactor:
+    """DUET checkerboards on cells larger than 1 m (#754), so it never sees one."""
+
+    @pytest.mark.parametrize(
+        "resolution, split",
+        [(2.0, 2), (1.0, 1), (0.5, 1), (1.5, 2), (3.0, 3), (2.0000001, 2)],
+    )
+    def test_brings_cells_to_one_meter_or_below(self, resolution, split):
+        ds = _source_dataset().assign_coords(x=np.arange(10, dtype=float) * resolution)
+        assert handler._split_factor(ds) == split
+
+
+class TestRefine:
+    def test_repeats_each_cell_and_keeps_its_values(self):
+        ds = _source_dataset(nz=6, ny=8, nx=10)
+        fine = handler._refine(ds, 2)
+        foliage = fine[handler.FOLIAGE_BAND].values
+        assert foliage.shape == (6, 16, 20)
+        coarse = ds[handler.FOLIAGE_BAND].values
+        assert np.array_equal(foliage[:, ::2, ::2], coarse)
+        assert np.array_equal(foliage[:, 1::2, 1::2], coarse)
+        # Same bulk density on a quarter of the area per cell: mass is kept.
+        assert foliage.sum() / 4 == pytest.approx(coarse.sum())
+        assert fine[handler.SPCD_BAND].dtype == ds[handler.SPCD_BAND].dtype
+
+    def test_cell_centres_tile_the_source_cells(self):
+        ds = _source_dataset(nx=10)  # x centres 1, 3, 5, ... at 2 m
+        fine = handler._refine(ds, 2)
+        assert fine.x.values[:4] == pytest.approx([0.5, 1.5, 2.5, 3.5])
+        assert handler._horizontal_resolution(fine) == pytest.approx(1.0)
+
+    def test_descending_y_stays_descending(self):
+        ds = _source_dataset(ny=8).assign_coords(
+            y=np.arange(8, dtype=float)[::-1] * 2.0
+        )
+        fine = handler._refine(ds, 2)
+        assert np.all(np.diff(fine.y.values) == pytest.approx(-1.0))
+
+    def test_input_file_gets_the_split_cell_size(self, tmp_path):
+        handler._write_duet_inputs(
+            tmp_path,
+            handler._refine(_source_dataset(nz=6, ny=8, nx=10), 2),
+            {"years_since_burn": 5, "wind_direction": 0, "wind_variability": 0},
+            "g1",
+        )
+        values = _read_duet_in(tmp_path)
+        assert [int(v) for v in values[:3]] == [20, 16, 6]
+        assert [float(v) for v in values[3:6]] == [1.0, 1.0, 1.0]
+
+
+class TestCoarsenRun:
+    def _run(self, loading, moisture):
+        from duet_tools.calibration import DuetRun
+
+        loading = np.asarray(loading, dtype=float)
+        return DuetRun(
+            loading=loading,
+            depth=loading * 0.15,
+            moisture=np.asarray(moisture, dtype=float),
+            duet_version="v2",
+        )
+
+    def test_loading_and_depth_are_block_means(self):
+        loading = np.zeros((3, 2, 2))
+        loading[1, 0, 0] = 4.0  # all of one 2 x 2 block's litter in one cell
+        run = handler._coarsen_run(self._run(loading, np.zeros((3, 2, 2))), 2)
+        assert run.loading.shape == (3, 1, 1)
+        assert run.loading[1, 0, 0] == pytest.approx(1.0)
+        # Depth stays the same multiple of loading DUET uses.
+        assert run.depth[1, 0, 0] == pytest.approx(0.15)
+
+    def test_moisture_is_weighted_by_loading(self):
+        # Moisture is zero where DUET left no fuel; a plain mean would quarter it.
+        loading = np.zeros((3, 2, 2))
+        loading[1, 0, 0] = 4.0
+        moisture = np.zeros((3, 2, 2))
+        moisture[1, 0, 0] = 0.2
+        run = handler._coarsen_run(self._run(loading, moisture), 2)
+        assert run.moisture[1, 0, 0] == pytest.approx(0.2)
+
+    def test_moisture_is_zero_where_there_is_no_fuel(self):
+        run = handler._coarsen_run(
+            self._run(np.zeros((3, 4, 4)), np.zeros((3, 4, 4))), 2
+        )
+        assert run.moisture.shape == (3, 2, 2)
+        assert not run.moisture.any()
+
+    def test_a_checkerboard_averages_out(self):
+        loading = np.zeros((3, 4, 6))
+        loading[1] = np.indices((4, 6)).sum(axis=0) % 2 * 2.0
+        run = handler._coarsen_run(self._run(loading, np.zeros((3, 4, 6))), 2)
+        assert run.loading[1] == pytest.approx(np.ones((2, 3)))
 
 
 class TestRunBinary:
@@ -544,8 +655,7 @@ class TestDuetGrid:
         return {"id": "g1", "domain_id": "d1", "source": source}
 
     def _run_handler(self, grid, saved):
-        duet_run = MagicMock()
-        duet_run.to_numpy.return_value = np.full((8, 10), 1.5)
+        duet_run = _split_run()
         with (
             patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
             patch.object(handler, "_run_binary") as run_binary,
@@ -582,8 +692,7 @@ class TestDuetGrid:
             captured["work"] = work
             return original(work, ds, source, grid_id)
 
-        duet_run = MagicMock()
-        duet_run.to_numpy.return_value = np.full((8, 10), 1.5)
+        duet_run = _split_run()
         with (
             patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
             patch.object(handler, "_write_duet_inputs", side_effect=capture),
@@ -630,8 +739,7 @@ class TestDuetGrid:
             original(work, ds, source, grid_id)
             captured["duet_in"] = _read_duet_in(work)
 
-        duet_run = MagicMock()
-        duet_run.to_numpy.return_value = np.full((8, 10), 1.5)
+        duet_run = _split_run()
         with (
             patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
             patch.object(handler, "_write_duet_inputs", side_effect=capture),
@@ -641,3 +749,55 @@ class TestDuetGrid:
         ):
             handler.duet_grid(self._grid(), MagicMock(), lambda *a, **k: None)
         assert int(captured["duet_in"][9]) == 25
+
+    def test_a_2_m_source_runs_at_1_m_and_comes_back_at_2_m(self):
+        captured = {}
+        original = handler._write_duet_inputs
+
+        def capture(work, ds, source, grid_id):
+            original(work, ds, source, grid_id)
+            captured["duet_in"] = _read_duet_in(work)
+
+        saved = {}
+        with (
+            patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
+            patch.object(handler, "_write_duet_inputs", side_effect=capture),
+            patch.object(handler, "_run_binary"),
+            patch.object(handler, "_import_run", return_value=_split_run()),
+            patch.object(
+                handler,
+                "save_zarr",
+                side_effect=lambda p, d, chunk_shape: saved.update(ds=d),
+            ),
+        ):
+            result = handler.duet_grid(self._grid(), MagicMock(), lambda *a, **k: None)
+
+        assert [int(v) for v in captured["duet_in"][:2]] == [20, 16]
+        assert [float(v) for v in captured["duet_in"][3:5]] == [1.0, 1.0]
+        assert result.georeference["shape"] == [8, 10]
+        assert saved["ds"]["fuel_load.grass"].shape == (8, 10)
+        assert np.array_equal(saved["ds"].x.values, _source_dataset().x.values)
+
+    def test_a_1_m_source_is_not_split(self):
+        one_meter = _source_dataset().assign_coords(
+            y=np.arange(8, dtype=float) + 0.5, x=np.arange(10, dtype=float) + 0.5
+        )
+        captured = {}
+        original = handler._write_duet_inputs
+
+        def capture(work, ds, source, grid_id):
+            original(work, ds, source, grid_id)
+            captured["duet_in"] = _read_duet_in(work)
+
+        with (
+            patch.object(handler, "_load_source_grid", return_value=one_meter),
+            patch.object(handler, "_write_duet_inputs", side_effect=capture),
+            patch.object(handler, "_run_binary"),
+            patch.object(handler, "_import_run", return_value=_split_run(8, 10)),
+            patch.object(handler, "_coarsen_run") as coarsen,
+            patch.object(handler, "save_zarr"),
+        ):
+            handler.duet_grid(self._grid(), MagicMock(), lambda *a, **k: None)
+
+        assert [int(v) for v in captured["duet_in"][:2]] == [10, 8]
+        coarsen.assert_not_called()

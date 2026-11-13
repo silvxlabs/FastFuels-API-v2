@@ -15,6 +15,7 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Body,
+    HTTPException,
     Request,
     Response,
     status,
@@ -25,6 +26,7 @@ from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.duet.examples import CREATE_DUET_OPENAPI_EXAMPLES
 from api.resources.grids.duet.schema import (
+    DUET_MAX_AREA_SQ_METERS,
     CreateDuetRequest,
     DuetSource,
     build_duet_bands,
@@ -38,6 +40,30 @@ from lib.config import GRIDS_COLLECTION, TREEVOX_QUEUE, TREEVOX_SERVICE
 router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
+
+
+def validate_source_area(grid_data: dict, grid_id: str) -> None:
+    """Reject a source grid whose horizontal extent exceeds DUET's area limit.
+
+    The area is read from the georeference: cells (height × width) times the
+    area of one cell, from the affine transform's determinant.
+
+    Raises:
+        HTTPException(422): If the grid covers more than 1 km².
+    """
+    georeference = grid_data["georeference"]
+    _, height, width = georeference["shape"]
+    a, b, _, d, e, _ = georeference["transform"]
+    area = height * width * abs(a * e - b * d)
+    if area > DUET_MAX_AREA_SQ_METERS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Grid {grid_id} covers {area / 1e6:.2f} km², but DUET grids are "
+                f"limited to {DUET_MAX_AREA_SQ_METERS / 1e6:g} km². Voxelize a "
+                f"tree grid over a smaller domain and run DUET on that."
+            ),
+        )
 
 
 @router.post(
@@ -77,11 +103,12 @@ async def create_duet_grid(
     ## Request Body
 
     - **source_grid_id**: (required) A completed 3D tree grid carrying the
-      `bulk_density.foliage.live`, `spcd`, and `fuel_moisture.live` bands.
-      Create one with `POST /grids/voxelize/inventory/tree`, requesting those
-      three bands — `spcd` in particular is not voxelized by default.
+      `bulk_density.foliage.live`, `spcd`, and `fuel_moisture.live` bands,
+      covering at most 1 km². Create one with `POST
+      /grids/voxelize/inventory/tree`, requesting those three bands — `spcd`
+      in particular is not voxelized by default.
     - **years_since_burn**: (required) Years of litter accumulation to simulate,
-      1–100. DUET starts from the year of the last fire, with grass and litter
+      1–25. DUET starts from the year of the last fire, with grass and litter
       consumed, so this is the stand's time since fire. It is the single most
       consequential parameter: a low value yields almost no litter because there
       has been no time for any to fall. It also drives runtime.
@@ -139,6 +166,7 @@ async def create_duet_grid(
     # `spcd` is the band users most often lack: voxelize defaults to foliage
     # bulk density alone.
     validate_grid_input(body, "source_grid_id", source_grid_data)
+    validate_source_area(source_grid_data, body.source_grid_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

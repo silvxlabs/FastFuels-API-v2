@@ -23,7 +23,9 @@ from typing import Any
 
 from geojson_pydantic import Feature, FeatureCollection
 from geojson_pydantic.geometries import MultiPolygon, Polygon
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from api.resources.features.schema import require_finite_coordinates
 
 
 class LayersetSource(BaseModel):
@@ -102,6 +104,13 @@ class LayersetFeature(Feature[Polygon | MultiPolygon, LayersetProperties]):
     """
 
     properties: LayersetProperties
+
+    @field_validator("geometry")
+    @classmethod
+    def coordinates_are_finite(
+        cls, value: Polygon | MultiPolygon
+    ) -> Polygon | MultiPolygon:
+        return require_finite_coordinates(value)
 
 
 class LayersetCrs(BaseModel):

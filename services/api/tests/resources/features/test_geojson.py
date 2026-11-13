@@ -105,6 +105,19 @@ class TestCreateGeojsonFeatureRequest:
         with pytest.raises(ValidationError):
             make_body(feature)
 
+    @pytest.mark.parametrize("value", ["Infinity", "-Infinity", "NaN"])
+    @pytest.mark.parametrize("geometry_type", ["Polygon", "MultiPolygon"])
+    def test_non_finite_coordinate_rejected(self, value, geometry_type):
+        ring = json.loads(f"[[0, 0], [{value}, 0], [1, 1], [0, 0]]")
+        coordinates = [ring] if geometry_type == "Polygon" else [[ring]]
+        feature = {
+            "type": "Feature",
+            "properties": {},
+            "geometry": {"type": geometry_type, "coordinates": coordinates},
+        }
+        with pytest.raises(ValidationError, match="must be finite"):
+            make_body(feature)
+
     def test_geometry_property_rejected(self):
         with pytest.raises(ValidationError, match="can't be used as a property"):
             make_body(polygon_feature(INSIDE, {"geometry": "x"}))

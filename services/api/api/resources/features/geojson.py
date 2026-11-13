@@ -26,7 +26,12 @@ from pyproj.exceptions import CRSError
 
 from api.db.documents import set_document_async
 from api.quota import enforce_create_quotas
-from api.resources.features.schema import Feature, FeatureGeoreference, FeatureType
+from api.resources.features.schema import (
+    Feature,
+    FeatureGeoreference,
+    FeatureType,
+    require_finite_coordinates,
+)
 from api.resources.features.storage import (
     encode_feature_parquet,
     upload_feature_parquet,
@@ -60,6 +65,13 @@ class GeojsonPolygonFeature(
     """One uploaded polygon. Its ``properties`` are stored as columns."""
 
     geometry: Polygon | MultiPolygon
+
+    @field_validator("geometry")
+    @classmethod
+    def coordinates_are_finite(
+        cls, value: Polygon | MultiPolygon
+    ) -> Polygon | MultiPolygon:
+        return require_finite_coordinates(value)
 
     @field_validator("properties")
     @classmethod

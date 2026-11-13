@@ -127,7 +127,7 @@ EXAMPLE_REMOVE_TREES_IN_WATER_FEATURE = {
     ],
 }
 
-# Remove trees within a buffered road Feature (linestring + buffer is typical)
+# Remove trees within a road Feature widened by a 3 m buffer
 EXAMPLE_REMOVE_TREES_IN_ROAD_BUFFERED = {
     "modifications": [
         {
@@ -272,10 +272,10 @@ APPLY_MODIFICATIONS_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_REMOVE_TREES_IN_ROAD_BUFFERED,
         "summary": "Remove trees within a 3 m road buffer",
         "description": (
-            "Roads are typically linestrings; tree points almost never "
-            "intersect a bare linestring, so `buffer_m` is effectively "
-            "required for road Features. Here we strip every tree within "
-            "3 metres of the road centerline."
+            "Road Features are polygons, so `within` alone removes the "
+            "trees on the road surface. `buffer_m` widens the road outward "
+            "first; here we strip every tree within 3 metres of the road's "
+            "edge."
         ),
     },
     "remove_large_trees_in_road_buffer": {

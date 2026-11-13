@@ -257,11 +257,14 @@ class TestBuildTopographyBands:
 class TestThreeDepResolution:
     """Tests for ThreeDepResolution enum."""
 
-    def test_has_exactly_three_members(self):
-        assert len(ThreeDepResolution) == 3
+    def test_has_exactly_four_members(self):
+        assert len(ThreeDepResolution) == 4
 
     def test_one_meter(self):
         assert ThreeDepResolution.one_meter == 1
+
+    def test_two_meter(self):
+        assert ThreeDepResolution.two_meter == 2
 
     def test_ten_meter(self):
         assert ThreeDepResolution.ten_meter == 10
@@ -363,9 +366,27 @@ class TestCreateThreeDepTopographyRequest:
         request = CreateThreeDepTopographyRequest(source_resolution=1)
         assert request.source_resolution == ThreeDepResolution.one_meter
 
+    def test_resolution_can_be_2m(self):
+        request = CreateThreeDepTopographyRequest(source_resolution=2)
+        assert request.source_resolution == ThreeDepResolution.two_meter
+
     def test_resolution_can_be_30m(self):
         request = CreateThreeDepTopographyRequest(source_resolution=30)
         assert request.source_resolution == ThreeDepResolution.thirty_meter
+
+    def test_source_resolution_description_names_each_product(self):
+        """Each value says which USGS product backs it."""
+        description = CreateThreeDepTopographyRequest.model_json_schema()["properties"][
+            "source_resolution"
+        ]["description"]
+        for product in (
+            "Seamless 1-Meter",
+            "lidar project",
+            "2 m overview",
+            "1/3 arc-second",
+            "1 arc-second",
+        ):
+            assert product in description
 
     def test_invalid_resolution_rejected(self):
         with pytest.raises(ValidationError):

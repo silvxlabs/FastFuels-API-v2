@@ -26,7 +26,7 @@ from api.dependencies import VerifiedDomain
 from api.quota import QUOTA_429_RESPONSE, enforce_create_quotas, register_dispatch
 from api.resources.grids.duet.examples import CREATE_DUET_OPENAPI_EXAMPLES
 from api.resources.grids.duet.schema import (
-    DUET_MAX_AREA_SQ_METERS,
+    DUET_MAX_HORIZONTAL_CELLS,
     CreateDuetRequest,
     DuetSource,
     build_duet_bands,
@@ -42,26 +42,31 @@ router = APIRouter()
 COLLECTION = GRIDS_COLLECTION
 
 
-def validate_source_area(grid_data: dict, grid_id: str) -> None:
-    """Reject a source grid whose horizontal extent exceeds DUET's area limit.
+def validate_source_size(grid_data: dict, grid_id: str) -> None:
+    """Reject a source grid with more horizontal cells than DUET can run.
 
-    The area is read from the georeference: cells (height × width) times the
-    area of one cell, from the affine transform's determinant.
+    The cell count (height × width) is read from the georeference. The error
+    also gives the grid's area and the largest area allowed at its cell size,
+    since that is what a user changes to fit.
 
     Raises:
-        HTTPException(422): If the grid covers more than 1 km².
+        HTTPException(422): If the grid has more than 600,000 horizontal cells.
     """
     georeference = grid_data["georeference"]
     _, height, width = georeference["shape"]
-    a, b, _, d, e, _ = georeference["transform"]
-    area = height * width * abs(a * e - b * d)
-    if area > DUET_MAX_AREA_SQ_METERS:
+    cells = height * width
+    if cells > DUET_MAX_HORIZONTAL_CELLS:
+        a, b, _, d, e, _ = georeference["transform"]
+        cell_area = abs(a * e - b * d)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Grid {grid_id} covers {area / 1e6:.2f} km², but DUET grids are "
-                f"limited to {DUET_MAX_AREA_SQ_METERS / 1e6:g} km². Voxelize a "
-                f"tree grid over a smaller domain and run DUET on that."
+                f"Grid {grid_id} has {cells:,} horizontal cells ({height} × "
+                f"{width}, {cells * cell_area / 1e6:.2f} km²), but DUET grids are "
+                f"limited to {DUET_MAX_HORIZONTAL_CELLS:,} cells: "
+                f"{DUET_MAX_HORIZONTAL_CELLS * cell_area / 1e6:.2f} km² at this "
+                f"grid's cell size. Voxelize a tree grid over a smaller domain, "
+                f"or at a coarser horizontal resolution, and run DUET on that."
             ),
         )
 
@@ -104,9 +109,9 @@ async def create_duet_grid(
 
     - **source_grid_id**: (required) A completed 3D tree grid carrying the
       `bulk_density.foliage.live`, `spcd`, and `fuel_moisture.live` bands,
-      covering at most 1 km². Create one with `POST
-      /grids/voxelize/inventory/tree`, requesting those three bands — `spcd`
-      in particular is not voxelized by default.
+      with at most 600,000 horizontal cells (2.4 km² at 2 m, 0.6 km² at 1 m).
+      Create one with `POST /grids/voxelize/inventory/tree`, requesting those
+      three bands — `spcd` in particular is not voxelized by default.
     - **years_since_burn**: (required) Years of litter accumulation to simulate,
       1–25. DUET starts from the year of the last fire, with grass and litter
       consumed, so this is the stand's time since fire. It is the single most
@@ -166,7 +171,7 @@ async def create_duet_grid(
     # `spcd` is the band users most often lack: voxelize defaults to foliage
     # bulk density alone.
     validate_grid_input(body, "source_grid_id", source_grid_data)
-    validate_source_area(source_grid_data, body.source_grid_id)
+    validate_source_size(source_grid_data, body.source_grid_id)
 
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()

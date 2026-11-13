@@ -11,11 +11,12 @@ import logging
 import math
 import sys
 import traceback
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import functions_framework
 from flask import Request
 
+from griddle.attributions import add_attributions, source_attributions
 from griddle.dispatch import dispatch_handler, update_grid_metadata
 from griddle.modifications import apply_modifications
 from griddle.storage import delete_zarr, load_zarr, save_zarr
@@ -345,7 +346,15 @@ def process_grid_request(request: Request):
             result = dispatch_handler(grid, domain_gdf, progress_callback)
 
             # Write back enriched source metadata (e.g., 3DEP tile provenance)
-            update_grid_metadata(grid_id, {"source": grid["source"]})
+            # with the source data's attributions, added to any already on the
+            # grid.
+            attributions = add_attributions(
+                grid.get("attributions"),
+                source_attributions(grid["source"], date.today()),
+            )
+            update_grid_metadata(
+                grid_id, {"source": grid["source"], "attributions": attributions}
+            )
 
             # Apply modifications if present
             if grid.get("modifications"):

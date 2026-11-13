@@ -298,11 +298,12 @@ def _default_bands() -> list[DuetBand]:
 # keys its litter parameters off species, and requires a canopy moisture field.
 DUET_REQUIRED_SOURCE_BANDS = ("bulk_density.foliage.live", "spcd", "fuel_moisture.live")
 
-# Size limits that keep a DUET job inside treevox's request timeout (#794).
-# DUET is single-threaded and runs on cells of 1 m or smaller, and its runtime
-# grows faster than the square of the years simulated.
+# Size limits that keep a DUET job inside treevox's memory and request timeout
+# (#794). DUET's memory scales with the number of cells, not the area they
+# cover: a 607k-cell grid runs on treevox's 16 GiB and a 1.15M-cell grid does
+# not. Its runtime grows faster than the square of the years simulated.
 DUET_MAX_YEARS_SINCE_BURN = 25
-DUET_MAX_AREA_SQ_METERS = 1_000_000
+DUET_MAX_HORIZONTAL_CELLS = 600_000
 
 
 class DuetSourceBase(BaseModel):

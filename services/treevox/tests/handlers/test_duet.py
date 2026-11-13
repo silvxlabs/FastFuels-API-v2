@@ -64,11 +64,10 @@ def _source_dataset(nz=6, ny=8, nx=10, spcd=122, moisture=100.0) -> xr.Dataset:
     return ds.rio.write_crs("EPSG:32613")
 
 
-def _split_run(ny=16, nx=20, loading=1.5):
-    """A real DuetRun at the split resolution `duet_grid` runs a 2 m source at.
+def _real_run(ny=8, nx=10, loading=1.5):
+    """A real DuetRun on `_source_dataset`'s 8 x 10 grid.
 
-    `_source_dataset` is 8 x 10 at 2 m, so DUET runs it at 16 x 20 cells of
-    1 m. Real rather than mocked because `_coarsen_run` reshapes its arrays.
+    Real rather than mocked because `_suppress_checkerboard` filters its arrays.
     """
     from duet_tools.calibration import DuetRun
 
@@ -315,57 +314,9 @@ class TestWriteDuetInputs:
         )
 
 
-class TestSplitFactor:
-    """DUET checkerboards on cells larger than 1 m (#754), so it never sees one."""
+class TestSuppressCheckerboard:
+    """DUET alternates loading between neighbouring > 1 m cells (#754)."""
 
-    @pytest.mark.parametrize(
-        "resolution, split",
-        [(2.0, 2), (1.0, 1), (0.5, 1), (1.5, 2), (3.0, 3), (2.0000001, 2)],
-    )
-    def test_brings_cells_to_one_meter_or_below(self, resolution, split):
-        ds = _source_dataset().assign_coords(x=np.arange(10, dtype=float) * resolution)
-        assert handler._split_factor(ds) == split
-
-
-class TestRefine:
-    def test_repeats_each_cell_and_keeps_its_values(self):
-        ds = _source_dataset(nz=6, ny=8, nx=10)
-        fine = handler._refine(ds, 2)
-        foliage = fine[handler.FOLIAGE_BAND].values
-        assert foliage.shape == (6, 16, 20)
-        coarse = ds[handler.FOLIAGE_BAND].values
-        assert np.array_equal(foliage[:, ::2, ::2], coarse)
-        assert np.array_equal(foliage[:, 1::2, 1::2], coarse)
-        # Same bulk density on a quarter of the area per cell: mass is kept.
-        assert foliage.sum() / 4 == pytest.approx(coarse.sum())
-        assert fine[handler.SPCD_BAND].dtype == ds[handler.SPCD_BAND].dtype
-
-    def test_cell_centres_tile_the_source_cells(self):
-        ds = _source_dataset(nx=10)  # x centres 1, 3, 5, ... at 2 m
-        fine = handler._refine(ds, 2)
-        assert fine.x.values[:4] == pytest.approx([0.5, 1.5, 2.5, 3.5])
-        assert handler._horizontal_resolution(fine) == pytest.approx(1.0)
-
-    def test_descending_y_stays_descending(self):
-        ds = _source_dataset(ny=8).assign_coords(
-            y=np.arange(8, dtype=float)[::-1] * 2.0
-        )
-        fine = handler._refine(ds, 2)
-        assert np.all(np.diff(fine.y.values) == pytest.approx(-1.0))
-
-    def test_input_file_gets_the_split_cell_size(self, tmp_path):
-        handler._write_duet_inputs(
-            tmp_path,
-            handler._refine(_source_dataset(nz=6, ny=8, nx=10), 2),
-            {"years_since_burn": 5, "wind_direction": 0, "wind_variability": 0},
-            "g1",
-        )
-        values = _read_duet_in(tmp_path)
-        assert [int(v) for v in values[:3]] == [20, 16, 6]
-        assert [float(v) for v in values[3:6]] == [1.0, 1.0, 1.0]
-
-
-class TestCoarsenRun:
     def _run(self, loading, moisture):
         from duet_tools.calibration import DuetRun
 
@@ -377,36 +328,43 @@ class TestCoarsenRun:
             duet_version="v2",
         )
 
-    def test_loading_and_depth_are_block_means(self):
-        loading = np.zeros((3, 2, 2))
-        loading[1, 0, 0] = 4.0  # all of one 2 x 2 block's litter in one cell
-        run = handler._coarsen_run(self._run(loading, np.zeros((3, 2, 2))), 2)
-        assert run.loading.shape == (3, 1, 1)
-        assert run.loading[1, 0, 0] == pytest.approx(1.0)
-        # Depth stays the same multiple of loading DUET uses.
-        assert run.depth[1, 0, 0] == pytest.approx(0.15)
+    def test_a_checkerboard_is_removed_away_from_the_corners(self):
+        loading = np.zeros((3, 6, 8))
+        loading[1] = 1.0 + 0.5 * (np.indices((6, 8)).sum(axis=0) % 2 * 2 - 1)
+        run = handler._suppress_checkerboard(self._run(loading, np.zeros_like(loading)))
+        # Mirrored edges can't cancel the alternation in the four corner cells.
+        assert run.loading[1, 1:-1, :] == pytest.approx(np.ones((4, 8)))
+        assert run.loading[1, :, 1:-1] == pytest.approx(np.ones((6, 6)))
+
+    def test_layer_totals_are_kept(self):
+        rng = np.random.default_rng(0)
+        loading = rng.random((3, 7, 9))
+        run = handler._suppress_checkerboard(self._run(loading, np.zeros_like(loading)))
+        assert run.loading.sum(axis=(1, 2)) == pytest.approx(loading.sum(axis=(1, 2)))
+
+    def test_depth_keeps_its_ratio_to_loading(self):
+        rng = np.random.default_rng(1)
+        loading = rng.random((3, 5, 5))
+        run = handler._suppress_checkerboard(self._run(loading, np.zeros_like(loading)))
+        assert run.depth == pytest.approx(run.loading * 0.15)
 
     def test_moisture_is_weighted_by_loading(self):
-        # Moisture is zero where DUET left no fuel; a plain mean would quarter it.
-        loading = np.zeros((3, 2, 2))
-        loading[1, 0, 0] = 4.0
-        moisture = np.zeros((3, 2, 2))
-        moisture[1, 0, 0] = 0.2
-        run = handler._coarsen_run(self._run(loading, moisture), 2)
-        assert run.moisture[1, 0, 0] == pytest.approx(0.2)
+        # Moisture is zero where DUET left no fuel; a plain filter would dilute it.
+        loading = np.zeros((3, 5, 5))
+        loading[1, 2, 2] = 4.0
+        moisture = np.zeros((3, 5, 5))
+        moisture[1, 2, 2] = 0.2
+        run = handler._suppress_checkerboard(self._run(loading, moisture))
+        assert run.moisture[1][run.loading[1] > 0] == pytest.approx(0.2)
+        assert not run.moisture[1][run.loading[1] == 0].any()
 
-    def test_moisture_is_zero_where_there_is_no_fuel(self):
-        run = handler._coarsen_run(
-            self._run(np.zeros((3, 4, 4)), np.zeros((3, 4, 4))), 2
+    def test_a_smooth_field_is_unchanged(self):
+        loading = np.full((3, 4, 4), 2.0)
+        run = handler._suppress_checkerboard(
+            self._run(loading, np.full_like(loading, 0.1))
         )
-        assert run.moisture.shape == (3, 2, 2)
-        assert not run.moisture.any()
-
-    def test_a_checkerboard_averages_out(self):
-        loading = np.zeros((3, 4, 6))
-        loading[1] = np.indices((4, 6)).sum(axis=0) % 2 * 2.0
-        run = handler._coarsen_run(self._run(loading, np.zeros((3, 4, 6))), 2)
-        assert run.loading[1] == pytest.approx(np.ones((2, 3)))
+        assert run.loading == pytest.approx(loading)
+        assert run.moisture == pytest.approx(0.1)
 
 
 class TestRunBinary:
@@ -655,7 +613,7 @@ class TestDuetGrid:
         return {"id": "g1", "domain_id": "d1", "source": source}
 
     def _run_handler(self, grid, saved):
-        duet_run = _split_run()
+        duet_run = _real_run()
         with (
             patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
             patch.object(handler, "_run_binary") as run_binary,
@@ -692,7 +650,7 @@ class TestDuetGrid:
             captured["work"] = work
             return original(work, ds, source, grid_id)
 
-        duet_run = _split_run()
+        duet_run = _real_run()
         with (
             patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
             patch.object(handler, "_write_duet_inputs", side_effect=capture),
@@ -739,7 +697,7 @@ class TestDuetGrid:
             original(work, ds, source, grid_id)
             captured["duet_in"] = _read_duet_in(work)
 
-        duet_run = _split_run()
+        duet_run = _real_run()
         with (
             patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
             patch.object(handler, "_write_duet_inputs", side_effect=capture),
@@ -750,7 +708,7 @@ class TestDuetGrid:
             handler.duet_grid(self._grid(), MagicMock(), lambda *a, **k: None)
         assert int(captured["duet_in"][9]) == 25
 
-    def test_a_2_m_source_runs_at_1_m_and_comes_back_at_2_m(self):
+    def test_a_2_m_source_is_filtered_on_its_own_grid(self):
         captured = {}
         original = handler._write_duet_inputs
 
@@ -758,46 +716,34 @@ class TestDuetGrid:
             original(work, ds, source, grid_id)
             captured["duet_in"] = _read_duet_in(work)
 
-        saved = {}
         with (
             patch.object(handler, "_load_source_grid", return_value=_source_dataset()),
             patch.object(handler, "_write_duet_inputs", side_effect=capture),
             patch.object(handler, "_run_binary"),
-            patch.object(handler, "_import_run", return_value=_split_run()),
+            patch.object(handler, "_import_run", return_value=_real_run()),
             patch.object(
-                handler,
-                "save_zarr",
-                side_effect=lambda p, d, chunk_shape: saved.update(ds=d),
-            ),
+                handler, "_suppress_checkerboard", wraps=handler._suppress_checkerboard
+            ) as suppress,
+            patch.object(handler, "save_zarr"),
         ):
             result = handler.duet_grid(self._grid(), MagicMock(), lambda *a, **k: None)
 
-        assert [int(v) for v in captured["duet_in"][:2]] == [20, 16]
-        assert [float(v) for v in captured["duet_in"][3:5]] == [1.0, 1.0]
+        assert [int(v) for v in captured["duet_in"][:2]] == [10, 8]
+        assert [float(v) for v in captured["duet_in"][3:5]] == [2.0, 2.0]
+        suppress.assert_called_once()
         assert result.georeference["shape"] == [8, 10]
-        assert saved["ds"]["fuel_load.grass"].shape == (8, 10)
-        assert np.array_equal(saved["ds"].x.values, _source_dataset().x.values)
 
-    def test_a_1_m_source_is_not_split(self):
+    def test_a_1_m_source_is_not_filtered(self):
         one_meter = _source_dataset().assign_coords(
             y=np.arange(8, dtype=float) + 0.5, x=np.arange(10, dtype=float) + 0.5
         )
-        captured = {}
-        original = handler._write_duet_inputs
-
-        def capture(work, ds, source, grid_id):
-            original(work, ds, source, grid_id)
-            captured["duet_in"] = _read_duet_in(work)
-
         with (
             patch.object(handler, "_load_source_grid", return_value=one_meter),
-            patch.object(handler, "_write_duet_inputs", side_effect=capture),
             patch.object(handler, "_run_binary"),
-            patch.object(handler, "_import_run", return_value=_split_run(8, 10)),
-            patch.object(handler, "_coarsen_run") as coarsen,
+            patch.object(handler, "_import_run", return_value=_real_run()),
+            patch.object(handler, "_suppress_checkerboard") as suppress,
             patch.object(handler, "save_zarr"),
         ):
             handler.duet_grid(self._grid(), MagicMock(), lambda *a, **k: None)
 
-        assert [int(v) for v in captured["duet_in"][:2]] == [10, 8]
-        coarsen.assert_not_called()
+        suppress.assert_not_called()

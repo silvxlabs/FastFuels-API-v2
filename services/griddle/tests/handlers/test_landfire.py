@@ -742,6 +742,17 @@ class TestCheckFdistCodes:
         assert exc_info.value.code == "INVALID_FDIST_CODES"
         assert "5, 400, 999" in exc_info.value.message
 
+    def test_only_the_first_invalid_codes_are_listed(self):
+        """A continuous band given as FDist has a distinct bad value in almost
+        every cell; the message names ten and counts the rest."""
+        with pytest.raises(ProcessingError) as exc_info:
+            _check_fdist_codes(np.arange(1, 100_001, dtype=float))
+
+        message = exc_info.value.message
+        # 100,000 values less the 63 valid codes, less the ten listed.
+        assert "1, 2, 3, 4, 5, 6, 7, 8, 9, 10 and 99927 more." in message
+        assert len(message) < 200
+
     def test_negative_values_other_than_nodata_are_invalid(self):
         with pytest.raises(ProcessingError) as exc_info:
             _check_fdist_codes(np.array([[-1, -9999, 121]]), nodata=-9999)

@@ -85,6 +85,9 @@ _DISTURBED_FUEL_MODELS = {
 # store flat as 0, matching 3DEP.
 LANDFIRE_FLAT_ASPECT: int = -1
 
+# Invalid FDist values named in an INVALID_FDIST_CODES message.
+_LISTED_FDIST_CODES = 10
+
 
 def _landfire_cog_url(product: str, version: str) -> str:
     """Build the gs:// path to a staged LANDFIRE COG."""
@@ -231,7 +234,11 @@ def _check_fdist_codes(fdist: np.ndarray, nodata: float | None = None) -> None:
     if invalid.size == 0:
         return
 
-    listed = ", ".join(f"{code:g}" for code in invalid)
+    # A few values are enough to show what's wrong, and the message is stored
+    # on the grid's record, so it must stay small.
+    listed = ", ".join(f"{code:g}" for code in invalid[:_LISTED_FDIST_CODES])
+    if invalid.size > _LISTED_FDIST_CODES:
+        listed += f" and {invalid.size - _LISTED_FDIST_CODES} more"
     raise ProcessingError(
         code="INVALID_FDIST_CODES",
         message=f"The disturbance data has values that aren't valid FDist codes: {listed}.",

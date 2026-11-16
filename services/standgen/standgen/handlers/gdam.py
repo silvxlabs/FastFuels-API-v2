@@ -31,9 +31,10 @@ the coverage 400 are from the v3_conus.1 contract):
 
 Reproducibility: each predicted value is one random draw. The draws depend on the
 model version, the seed and the trees of the request, so each partition sends a
-seed derived from the inventory id and the partition number (``batch_seed``).
-Reprocessing an inventory re-forms the same partitions from the same source and
-so reproduces its values.
+seed derived from the request's ``seed`` and the partition number
+(``batch_seed``); inventories created before ``seed`` was recorded use their id
+instead. The same seed and source re-form the same partitions, and so reproduce
+the same values, as long as ``GDAM_MODEL`` and ``GDAM_BATCH_SIZE`` are unchanged.
 """
 
 import hashlib
@@ -103,13 +104,15 @@ def _reproject_to_lonlat(x, y, source_crs):
     return lon, lat
 
 
-def batch_seed(inventory_id: str, partition: int) -> int:
-    """GDAM seed for one partition of an inventory, in [0, 2**32 - 1].
+def batch_seed(seed: int | str, partition: int) -> int:
+    """GDAM seed for one partition, in [0, 2**32 - 1].
 
-    Stable for the same inventory and partition (so a rerun reproduces the draws)
-    and different across partitions (so batches don't reuse the same noise).
+    ``seed`` is the request's seed, or the inventory id for inventories created
+    before the seed was recorded. Stable for the same seed and partition (so a
+    rerun reproduces the draws) and different across partitions (so batches
+    don't reuse the same noise).
     """
-    digest = hashlib.sha256(f"{inventory_id}/{partition}".encode()).digest()
+    digest = hashlib.sha256(f"{seed}/{partition}".encode()).digest()
     return int.from_bytes(digest[:4], "big")
 
 
@@ -364,7 +367,7 @@ def _process_partition(
     source_crs_str: str,
     pacific_northwest: bool,
     columns,
-    inventory_id: str,
+    seed: int | str,
     overwrite: bool = False,
     crown_base_model: str = FIA_NATIONAL_LOGIT_2026,
     partition_info=None,
@@ -385,8 +388,8 @@ def _process_partition(
     positive height gets no crown base. Always surfaces the selected `columns`
     so the partition's schema matches the declared ``meta``.
 
-    Dask passes ``partition_info``; its partition number seeds the draws
-    (``batch_seed``).
+    Dask passes ``partition_info``; its partition number and ``seed`` seed the
+    draws (``batch_seed``).
 
     GDAM returns predictions 0-based and aligned to the sent batch by position
     (it ignores the index it was sent). Those positions are mapped back onto
@@ -417,7 +420,7 @@ def _process_partition(
                 pdf,
                 source_crs_str,
                 gdam_columns,
-                inventory_id,
+                seed,
                 partition_info,
                 send_crown_base=gdam_crown_base,
             )
@@ -432,7 +435,7 @@ def _impute_gdam(
     pdf: pd.DataFrame,
     source_crs_str: str,
     columns,
-    inventory_id: str,
+    seed: int | str,
     partition_info,
     send_crown_base: bool = False,
 ) -> pd.DataFrame:
@@ -461,11 +464,11 @@ def _impute_gdam(
             suggestion="Remove or fix rows with a zero height before running GDAM.",
         )
 
-    seed = batch_seed(inventory_id, partition_info["number"])
+    partition_seed = batch_seed(seed, partition_info["number"])
     inputs = pdf
     if not send_crown_base:
         inputs = pdf.drop(columns=["crown_base_height"], errors="ignore")
-    payload = build_batch_payload(inputs, source_crs_str, seed)
+    payload = build_batch_payload(inputs, source_crs_str, partition_seed)
     data = _predict(payload, len(pdf))
     predicted = parse_gdam_response(data)
     positions = predicted.index.to_numpy()
@@ -512,6 +515,7 @@ def map_gdam(
     domain_gdf,
     columns,
     inventory_id: str,
+    seed: int | str,
     overwrite: bool = False,
     crown_base_model: str = FIA_NATIONAL_LOGIT_2026,
 ):
@@ -521,7 +525,7 @@ def map_gdam(
     maps every partition through ``_process_partition`` (convert -> predict ->
     fill-missing). ``columns`` must be in ``IMPUTED_COLUMNS`` order. Nothing
     runs until the result is computed, and each GDAM request covers one
-    partition.
+    partition, seeded from ``seed`` (``batch_seed``).
     """
     # Size partitions to the GDAM batch target. Row counts come from the parquet
     # footer (cheap) — not by loading the data.
@@ -533,8 +537,7 @@ def map_gdam(
     logger.info(
         f"Imputing {columns} (overwrite={overwrite}, crown base model "
         f"{crown_base_model}) for {total} trees in {npartitions} batch(es) with "
-        f"{GDAM_MODEL['name']}/{GDAM_MODEL['version']}, seeds from "
-        f"batch_seed(inventory_id, partition)",
+        f"{GDAM_MODEL['name']}/{GDAM_MODEL['version']}, seed {seed}",
         extra={"inventory_id": inventory_id},
     )
     # Pass the CRS as a string so the pyproj transformer is rebuilt inside each
@@ -544,7 +547,7 @@ def map_gdam(
         str(domain_gdf.crs),
         in_pacific_northwest(domain_gdf),
         columns,
-        inventory_id,
+        seed,
         overwrite,
         crown_base_model,
         meta=_result_meta(ddf, columns, overwrite),
@@ -562,7 +565,9 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     partition.
 
     Dict with 'georeference', 'columns' with per-column summary statistics,
-    and 'forestry_metrics' with stand-level forestry scalars or None.
+    'forestry_metrics' with stand-level forestry scalars or None, and
+    'source_extra' with the GDAM model (``gdam_model``), None when GDAM was not
+    called.
     """
     inventory_id = inventory["id"]
     source_id = source["source_tree_inventory_id"]
@@ -587,6 +592,10 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
     crown_base_model = (source.get("crown_base_height_model") or {}).get(
         "name", FIA_NATIONAL_LOGIT_2026
     )
+    # Older inventories have no seed; their id keeps reruns reproducible.
+    seed = source.get("seed")
+    if seed is None:
+        seed = inventory_id
 
     # An overwritten input is re-imputed, so imputed columns count as available.
     # GDAM's crown base needs no inputs.
@@ -609,9 +618,20 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
                 suggestion="Also impute the missing column(s).",
             )
 
+    gdam_called = any(
+        c in GDAM_COLUMNS
+        or (c == "crown_base_height" and crown_base_model == GDAM_CROWN_BASE_MODEL)
+        for c in impute_columns
+    )
+    gdam_model = (
+        {"name": GDAM_MODEL["name"], "version": GDAM_MODEL["version"]}
+        if gdam_called
+        else None
+    )
+
     progress("Imputing missing morphology via GDAM...", 40)
     result_ddf = map_gdam(
-        ddf, domain_gdf, impute_columns, inventory_id, overwrite, crown_base_model
+        ddf, domain_gdf, impute_columns, inventory_id, seed, overwrite, crown_base_model
     )
 
     # save_parquet triggers the single execution of the lazy graph above (this is
@@ -632,4 +652,5 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
             {**col, "summary": stats.get(col["key"])} for col in inventory["columns"]
         ],
         "forestry_metrics": forestry_metrics,
+        "source_extra": {"gdam_model": gdam_model},
     }

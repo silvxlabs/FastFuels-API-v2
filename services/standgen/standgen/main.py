@@ -93,6 +93,7 @@ def update_status(
     size_bytes=None,
     error=None,
     extra=None,
+    source_extra=None,
 ):
     """Update inventory status.
 
@@ -109,6 +110,8 @@ def update_status(
         extra: Additional fields merged into the update — used to clear
             ``pending_modifications`` or ``pending_treatments`` once an
             in-place handler completes.
+        source_extra: Fields merged into the stored ``source`` map on
+            completion (e.g. the GDAM model that made the predictions).
     """
     data = {"status": status, "modified_on": datetime.now(UTC)}
     if status == "completed":
@@ -127,6 +130,10 @@ def update_status(
         data["error"] = error
     if extra:
         data.update(extra)
+    if source_extra:
+        # Dotted keys merge into the stored source map rather than replacing it.
+        for key, value in source_extra.items():
+            data[f"source.{key}"] = value
     update_document_or_cancel(INVENTORIES_COLLECTION, inventory_id, data)
 
 
@@ -255,6 +262,7 @@ def process_inventory_request(request: Request):
             forestry_metrics=result.get("forestry_metrics"),
             size_bytes=inventory_size(inventory_id),
             extra=completion_extra,
+            source_extra=result.get("source_extra"),
         )
         logger.info("Processing complete", extra=ids)
         return "OK", 200

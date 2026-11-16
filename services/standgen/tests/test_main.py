@@ -110,6 +110,7 @@ def test_happy_path(
         },
         size_bytes=4096,
         extra=None,
+        source_extra=None,
     )
 
 
@@ -264,3 +265,16 @@ def test_cancelled_before_processing(mock_load, mock_status, mock_inventory):
     response, status_code = process_inventory_request(request)
 
     assert status_code == 200
+
+
+@patch("standgen.main.update_document_or_cancel")
+def test_update_status_merges_source_extra_into_source(mock_update):
+    from standgen.main import update_status
+
+    model = {"name": "flow_matching", "version": "v3_conus.2"}
+    update_status("inv", "completed", source_extra={"gdam_model": model})
+
+    data = mock_update.call_args.args[2]
+    # A dotted key merges into the stored source map instead of replacing it.
+    assert data["source.gdam_model"] == model
+    assert "source" not in data

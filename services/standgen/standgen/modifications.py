@@ -5,7 +5,7 @@ Tree inventory modification processing.
 
 Applies condition-based modifications to tree DataFrames. Supports
 attribute conditions, expression conditions, and actions with optional
-pint unit conversion.
+pint unit conversion. ``crown_base_height`` is kept within ``[0, height]``.
 """
 
 import copy
@@ -17,7 +17,7 @@ import geopandas as gpd
 import pandas as pd
 import pint
 import pyproj
-from shapely.geometry import shape
+from shapely.geometry import GeometryCollection, shape
 
 from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.domain_utils import buffer_gdf
@@ -48,13 +48,13 @@ MODIFIER_MAP = {
 NATIVE_UNITS = {
     "dbh": "cm",
     "height": "m",
-    "crown_ratio": "dimensionless",
+    "crown_base_height": "m",
 }
 
 CLAMP_RULES = {
     "dbh": (0, None),
     "height": (0, None),
-    "crown_ratio": (0, 1),
+    "crown_base_height": (0, None),
 }
 
 
@@ -69,9 +69,6 @@ def convert_value(attribute: str, value, unit: str | None):
     native = NATIVE_UNITS.get(attribute)
     if native is None:
         return value
-
-    if native == "dimensionless":
-        return float(value)
 
     converted = Q_(value, unit).to(native).magnitude
     return converted
@@ -218,6 +215,16 @@ def apply_action(df: pd.DataFrame, action: dict, mask: pd.Series) -> pd.DataFram
         if hi is not None:
             df.loc[mask, attribute] = df.loc[mask, attribute].clip(upper=hi)
 
+    # A crown base cannot sit above its tree. A NaN height leaves it unbounded.
+    if (
+        attribute in ("crown_base_height", "height")
+        and "crown_base_height" in df.columns
+        and mask.any()
+    ):
+        df.loc[mask, "crown_base_height"] = df.loc[mask, "crown_base_height"].clip(
+            upper=df.loc[mask, "height"]
+        )
+
     return df
 
 
@@ -336,11 +343,12 @@ def _resolve_feature_geometry(
     parquet_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
     gdf = gpd.read_parquet(parquet_path)
     if gdf.empty:
-        raise ProcessingError(
-            code="FEATURE_EMPTY",
-            message=f"Feature '{feature_id}' has no geometry rows.",
-            suggestion="Re-create the feature so it contains geometries.",
-        )
+        # A feature with no rows (e.g. OSM water over a domain with none) is an
+        # empty geometry: `within`/`intersects` select nothing, `outside`
+        # selects everything.
+        geom = GeometryCollection()
+        cache[key] = geom
+        return geom
 
     # Reproject is a safety net — features are written in the domain CRS by
     # construction, and trees are in the domain CRS too. When both agree,

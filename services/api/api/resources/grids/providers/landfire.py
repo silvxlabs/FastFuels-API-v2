@@ -146,7 +146,7 @@ class LandfireCreateLink(BaseModel):
     """The create request that fetches a release for this domain."""
 
     href: str = Field(
-        description="Path of the create endpoint, relative to the API base URL."
+        description="Path of the create endpoint on the API host, including `/v2`."
     )
     method: Literal["POST"] = "POST"
     body: dict = Field(description="Request body selecting this release.")

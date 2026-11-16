@@ -20,10 +20,12 @@ from griddle.handlers.threedep import (
     fetch_topography,
 )
 from rasterio.transform import from_bounds
+from rioxarray.exceptions import NoDataInBounds
 from shapely.geometry import box
 from xarray import DataArray
 
 from lib.errors import ProcessingError
+from lib.threedep import TnmSearchError
 
 # Helpers
 
@@ -213,7 +215,7 @@ class TestFetchTopography:
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_elevation_only_returns_dataset(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem()
+        mock_fetch.return_value = (_make_mock_dem(), ["https://example.com/tile.tif"])
 
         ds, metadata = fetch_topography(_make_roi(), 10, ["elevation"], MagicMock())
 
@@ -226,8 +228,9 @@ class TestFetchTopography:
     def test_slope_aspect_computed(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
         # Mosaic carries the gradient overhead; output strips it back down.
-        mock_fetch.return_value = _make_mock_dem(
-            shape=(50 + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,) * 2
+        mock_fetch.return_value = (
+            _make_mock_dem(shape=(50 + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,) * 2),
+            ["https://example.com/tile.tif"],
         )
 
         ds, _ = fetch_topography(_make_roi(), 10, ["slope", "aspect"], MagicMock())
@@ -239,8 +242,9 @@ class TestFetchTopography:
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_all_bands(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem(
-            shape=(50 + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,) * 2
+        mock_fetch.return_value = (
+            _make_mock_dem(shape=(50 + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS,) * 2),
+            ["https://example.com/tile.tif"],
         )
 
         ds, _ = fetch_topography(
@@ -254,7 +258,7 @@ class TestFetchTopography:
     def test_elevation_only_passes_buffer_unchanged(self, mock_discover, mock_fetch):
         """Without derivatives, the user's extent_buffer_cells reaches the fetch verbatim."""
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem()
+        mock_fetch.return_value = (_make_mock_dem(), ["https://example.com/tile.tif"])
 
         fetch_topography(
             _make_roi(), 10, ["elevation"], MagicMock(), extent_buffer_cells=4
@@ -274,7 +278,10 @@ class TestFetchTopography:
         # Output should be 50x50 after stripping overhead from each side.
         out_size = 50
         in_size = out_size + 2 * _DERIVATIVE_GRADIENT_OVERHEAD_CELLS
-        mock_fetch.return_value = _make_mock_dem(shape=(in_size, in_size))
+        mock_fetch.return_value = (
+            _make_mock_dem(shape=(in_size, in_size)),
+            ["https://example.com/tile.tif"],
+        )
 
         ds, _ = fetch_topography(
             _make_roi(), 10, ["slope", "aspect"], MagicMock(), extent_buffer_cells=4
@@ -290,7 +297,7 @@ class TestFetchTopography:
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_returns_tile_metadata(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem()
+        mock_fetch.return_value = (_make_mock_dem(), ["https://example.com/tile.tif"])
 
         _, metadata = fetch_topography(_make_roi(), 10, ["elevation"], MagicMock())
 
@@ -313,7 +320,7 @@ class TestFetchTopography:
     @patch("griddle.handlers.threedep.discover_tiles_arc_second")
     def test_progress_called(self, mock_discover, mock_fetch):
         mock_discover.return_value = ["https://example.com/tile.tif"]
-        mock_fetch.return_value = _make_mock_dem()
+        mock_fetch.return_value = (_make_mock_dem(), ["https://example.com/tile.tif"])
 
         progress = MagicMock()
         fetch_topography(_make_roi(), 10, ["elevation"], progress)
@@ -327,11 +334,99 @@ class TestFetchTopography:
         mock_discover.return_value = ["https://example.com/tile.tif"]
         nodata_dem = _make_mock_dem(value=-999999.0)
         nodata_dem = nodata_dem.rio.write_nodata(-999999.0)
-        mock_fetch.return_value = nodata_dem
+        mock_fetch.return_value = (nodata_dem, ["https://example.com/tile.tif"])
 
         with pytest.raises(ProcessingError) as exc_info:
             fetch_topography(_make_roi(), 1, ["elevation"], MagicMock())
         assert exc_info.value.code == "COVERAGE_ERROR"
+
+
+# Tile discovery per source resolution
+
+PROJECT_URLS = [
+    "https://example.com/1m/Projects/A/TIFF/USGS_1M_11_a.tif",
+    "https://example.com/1m/Projects/A/TIFF/USGS_1M_12_b.tif",
+]
+
+
+class TestTileDiscovery:
+    """Which discovery path each source resolution takes."""
+
+    @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
+    @patch("griddle.handlers.threedep.discover_s1m_tiles")
+    @patch("griddle.handlers.threedep.discover_lidar_project_tiles")
+    def test_2m_reads_lidar_projects(self, mock_projects, mock_s1m, mock_fetch):
+        mock_projects.return_value = (PROJECT_URLS, ["20210616"])
+        mock_fetch.return_value = (_make_mock_dem(), PROJECT_URLS)
+
+        _, metadata = fetch_topography(_make_roi(), 2, ["elevation"], MagicMock())
+
+        mock_s1m.assert_not_called()
+        assert mock_fetch.call_args[0][1] == PROJECT_URLS
+        assert mock_fetch.call_args[0][2] == 2
+        assert metadata["tile_source"] == "projects"
+        assert metadata["tiles"] == PROJECT_URLS
+        assert metadata["tile_count"] == 2
+        assert metadata["native_crs"] is None
+        assert metadata["acquisition_dates"] == ["20210616"]
+
+    @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
+    @patch("griddle.handlers.threedep.discover_s1m_tiles")
+    @patch("griddle.handlers.threedep.discover_lidar_project_tiles")
+    def test_1m_prefers_s1m(self, mock_projects, mock_s1m, mock_fetch):
+        s1m_urls = ["https://example.com/S1M/s1m.tif"]
+        mock_s1m.return_value = (s1m_urls, ["20230515"])
+        mock_fetch.return_value = (_make_mock_dem(), s1m_urls)
+
+        _, metadata = fetch_topography(_make_roi(), 1, ["elevation"], MagicMock())
+
+        mock_projects.assert_not_called()
+        assert metadata["tile_source"] == "s1m"
+        assert metadata["native_crs"] == "EPSG:6350"
+
+    @patch("griddle.handlers.threedep._fetch_and_mosaic_tiles")
+    @patch("griddle.handlers.threedep.discover_s1m_tiles")
+    @patch("griddle.handlers.threedep.discover_lidar_project_tiles")
+    def test_1m_falls_back_to_projects(self, mock_projects, mock_s1m, mock_fetch):
+        mock_s1m.return_value = ([], [])
+        mock_projects.return_value = (PROJECT_URLS, ["20210616"])
+        mock_fetch.return_value = (_make_mock_dem(), PROJECT_URLS)
+
+        _, metadata = fetch_topography(_make_roi(), 1, ["elevation"], MagicMock())
+
+        assert mock_fetch.call_args[0][1] == PROJECT_URLS
+        # Full resolution: the source resolution passed through is still 1.
+        assert mock_fetch.call_args[0][2] == 1
+        assert metadata["tile_source"] == "projects"
+
+    @patch("griddle.handlers.threedep.discover_s1m_tiles")
+    @patch("griddle.handlers.threedep.discover_lidar_project_tiles")
+    def test_1m_no_tiles_anywhere_raises_coverage_error(self, mock_projects, mock_s1m):
+        mock_s1m.return_value = ([], [])
+        mock_projects.return_value = ([], [])
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_topography(_make_roi(), 1, ["elevation"], MagicMock())
+        assert exc_info.value.code == "COVERAGE_ERROR"
+
+    @patch("griddle.handlers.threedep.discover_lidar_project_tiles")
+    def test_project_search_retried_with_timeout(self, mock_projects):
+        mock_projects.return_value = ([], [])
+
+        with pytest.raises(ProcessingError):
+            fetch_topography(_make_roi(), 2, ["elevation"], MagicMock())
+
+        kwargs = mock_projects.call_args.kwargs
+        assert kwargs["attempts"] > 1
+        assert kwargs["timeout"] > 0
+
+    @patch("griddle.handlers.threedep.discover_lidar_project_tiles")
+    def test_project_search_failure_is_tile_source_unavailable(self, mock_projects):
+        mock_projects.side_effect = TnmSearchError("HTTP 504")
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_topography(_make_roi(), 2, ["elevation"], MagicMock())
+        assert exc_info.value.code == "TILE_SOURCE_UNAVAILABLE"
 
 
 # _fetch_and_mosaic_tiles (mocked RasterConnection)
@@ -345,7 +440,7 @@ class TestFetchAndMosaicTiles:
         values = np.full((50, 50), 1234.0, dtype=np.float32)
         mock_rc_class.return_value = _make_mock_raster(values)
 
-        result = _fetch_and_mosaic_tiles(
+        result, used_urls = _fetch_and_mosaic_tiles(
             _make_roi(),
             ["https://example.com/tile.tif"],
             resolution=10,
@@ -357,6 +452,7 @@ class TestFetchAndMosaicTiles:
 
         assert isinstance(result, DataArray)
         assert result.shape == (50, 50)
+        assert used_urls == ["https://example.com/tile.tif"]
         call_kwargs = mock_rc_class.return_value.extract_window.call_args[1]
         assert "projection_padding_meters" not in call_kwargs
         assert call_kwargs["interpolation_padding_cells"] == 0
@@ -449,6 +545,127 @@ class TestFetchAndMosaicTiles:
         assert "destination_transform" not in call_kwargs
         assert "destination_shape" not in call_kwargs
         assert call_kwargs.get("destination_crs") is None
+
+    @pytest.mark.parametrize(
+        "resolution, open_options",
+        [(1, {}), (2, {"OVERVIEW_LEVEL": 0}), (10, {}), (30, {})],
+    )
+    @patch("griddle.handlers.threedep.RasterConnection")
+    def test_2m_opens_first_overview(self, mock_rc_class, resolution, open_options):
+        """2 opens each tile's first (2 m) overview; others open full resolution."""
+        mock_rc_class.return_value = _make_mock_raster(np.full((50, 50), 1.0))
+
+        _fetch_and_mosaic_tiles(
+            _make_roi(),
+            ["https://example.com/tile.tif"],
+            resolution=resolution,
+            extent_buffer_cells=0,
+            progress=MagicMock(),
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+
+        _, kwargs = mock_rc_class.call_args
+        assert {k: v for k, v in kwargs.items() if k.isupper()} == open_options
+
+    @patch("griddle.handlers.threedep.merge_arrays")
+    @patch("griddle.handlers.threedep.RasterConnection")
+    def test_one_destination_lattice_for_all_tiles(self, mock_rc_class, mock_merge):
+        """Tiles in different UTM zones report slightly different native cell
+        sizes in the domain CRS; every tile still lands on the first's lattice."""
+        values = np.full((50, 50), 1.0, dtype=np.float32)
+        zone_11 = _make_mock_raster(values, resolution=1.9991)
+        zone_12 = _make_mock_raster(values, resolution=1.9992)
+        mock_rc_class.side_effect = [zone_11, zone_12]
+        mock_merge.return_value = DataArray(values)
+
+        _fetch_and_mosaic_tiles(
+            _make_roi(),
+            PROJECT_URLS,
+            resolution=2,
+            extent_buffer_cells=0,
+            progress=MagicMock(),
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+
+        first = zone_11.extract_window.call_args.kwargs
+        second = zone_12.extract_window.call_args.kwargs
+        assert first["destination_transform"] == second["destination_transform"]
+        assert first["destination_shape"] == second["destination_shape"]
+        assert abs(first["destination_transform"].a) == pytest.approx(1.9991)
+
+    @patch("griddle.handlers.threedep.RasterConnection")
+    def test_tile_outside_domain_skipped(self, mock_rc_class):
+        """A tile whose EPSG:4326 bbox matched but which misses the domain."""
+        outside = _make_mock_raster(np.full((50, 50), 1.0))
+        outside.extract_window.side_effect = NoDataInBounds("No data found in bounds.")
+        inside = _make_mock_raster(np.full((50, 50), 1234.0))
+        mock_rc_class.side_effect = [outside, inside]
+
+        result, used_urls = _fetch_and_mosaic_tiles(
+            _make_roi(),
+            PROJECT_URLS,
+            resolution=2,
+            extent_buffer_cells=0,
+            progress=MagicMock(),
+            alignment={"target": "domain"},
+            target_grid_doc=None,
+        )
+
+        assert used_urls == PROJECT_URLS[1:]
+        assert float(result.max()) == 1234.0
+
+    @patch("griddle.handlers.threedep.RasterConnection")
+    def test_no_tile_reaches_domain_raises_coverage_error(self, mock_rc_class):
+        outside = _make_mock_raster(np.full((50, 50), 1.0))
+        outside.extract_window.side_effect = NoDataInBounds("No data found in bounds.")
+        mock_rc_class.return_value = outside
+
+        with pytest.raises(ProcessingError) as exc_info:
+            _fetch_and_mosaic_tiles(
+                _make_roi(),
+                PROJECT_URLS,
+                resolution=2,
+                extent_buffer_cells=0,
+                progress=MagicMock(),
+                alignment={"target": "domain"},
+                target_grid_doc=None,
+            )
+        assert exc_info.value.code == "COVERAGE_ERROR"
+
+    def test_merge_keeps_first_tile_where_both_valid(self):
+        """Overlap order is the discovery order: the first valid value wins
+        and later tiles only fill the first's nodata."""
+        nodata = -999999.0
+        first = _make_mock_dem(value=10.0).rio.write_nodata(nodata)
+        first.values[:, :25] = nodata
+        second = _make_mock_dem(value=20.0).rio.write_nodata(nodata)
+
+        with patch("griddle.handlers.threedep.RasterConnection") as mock_rc_class:
+            mock_rc_class.side_effect = [
+                _raster_returning(first),
+                _raster_returning(second),
+            ]
+            result, _ = _fetch_and_mosaic_tiles(
+                _make_roi(),
+                PROJECT_URLS,
+                resolution=2,
+                extent_buffer_cells=0,
+                progress=MagicMock(),
+                alignment={"target": "native"},
+                target_grid_doc=None,
+            )
+
+        assert np.all(result.values[:, :25] == 20.0)
+        assert np.all(result.values[:, 25:] == 10.0)
+
+
+def _raster_returning(da: DataArray) -> MagicMock:
+    raster = MagicMock()
+    raster.target_native_resolution.return_value = (1.0, 1.0)
+    raster.extract_window.return_value = da.expand_dims(band=[1])
+    return raster
 
 
 # DEM data validation

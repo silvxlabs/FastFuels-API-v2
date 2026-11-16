@@ -971,8 +971,9 @@ class TestGetGridDataJson:
     def test_3d_sparse_matches_static_zarr(
         self, client, domain_for_testing, static_3d_grid_in_firestore
     ):
+        # Chunk 0 has over MAX_JSON_SCALARS / 2 filled voxels; chunk 1 fits.
         metadata_response = client.get(
-            chunk_route(domain_for_testing["id"], STATIC_3D_NAME, 0)
+            chunk_route(domain_for_testing["id"], STATIC_3D_NAME, 1)
         )
         assert metadata_response.status_code == 200
         metadata = metadata_response.json()
@@ -981,6 +982,7 @@ class TestGetGridDataJson:
             domain_for_testing["id"],
             STATIC_3D_NAME,
             band=STATIC_3D_BAND,
+            chunk_index=1,
             array_format="sparse",
         )
         response = client.get(url, params=params)

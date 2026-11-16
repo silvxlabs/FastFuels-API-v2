@@ -298,18 +298,25 @@ def _default_bands() -> list[DuetBand]:
 # keys its litter parameters off species, and requires a canopy moisture field.
 DUET_REQUIRED_SOURCE_BANDS = ("bulk_density.foliage.live", "spcd", "fuel_moisture.live")
 
+# Size limits that keep a DUET job inside treevox's memory and request timeout
+# (#794). DUET's memory scales with the number of cells, not the area they
+# cover: a 607k-cell grid runs on treevox's 16 GiB and a 1.15M-cell grid does
+# not. Its runtime grows faster than the square of the years simulated.
+DUET_MAX_YEARS_SINCE_BURN = 25
+DUET_MAX_HORIZONTAL_CELLS = 600_000
+
 
 class DuetSourceBase(BaseModel):
     """Fields shared by the DUET request and the persisted source."""
 
     years_since_burn: int = Field(
         ge=1,
-        le=100,
+        le=DUET_MAX_YEARS_SINCE_BURN,
         description=(
-            "Years of litter accumulation to simulate. DUET begins the year of "
-            "the last burn, when standing grass and litter have been consumed, "
-            "so this is the stand's time since fire. It is the highest-leverage "
-            "parameter in the model and also drives runtime."
+            "Years of litter accumulation to simulate, 1–25. DUET begins the "
+            "year of the last burn, when standing grass and litter have been "
+            "consumed, so this is the stand's time since fire. It is the "
+            "highest-leverage parameter in the model and also drives runtime."
         ),
     )
     # Integers, not floats: DUET reads both with a Fortran integer list read, so

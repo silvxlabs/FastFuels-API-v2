@@ -19,7 +19,7 @@ import dask.dataframe as dd
 import geopandas as gpd
 import pyarrow.parquet as pq
 import pytest
-from shapely.geometry import box
+from shapely.geometry import MultiPolygon, box
 
 from lib.config import (
     DEPLOYMENT_ENV,
@@ -415,8 +415,9 @@ def feature_modifications_runner(shared_pim_source):
     inventory whose conditions reference that feature_id. Cleans up the feature
     blob, feature doc, and modifications inventory on teardown.
 
-    The caller passes a geometry GeoDataFrame (in the domain CRS) and the
-    modifications list; ``{feature_id}`` is substituted into the conditions.
+    The caller passes a geometry GeoDataFrame (in the domain CRS), the
+    modifications list, and optionally the Feature type (default ``water``);
+    ``{feature_id}`` is substituted into the conditions.
     """
     pim_inventory, pim_id, domain_id = shared_pim_source
     mod_ids = []
@@ -424,7 +425,9 @@ def feature_modifications_runner(shared_pim_source):
     feature_doc_ids = []
 
     def _run(
-        feature_gdf: gpd.GeoDataFrame, modifications: list[dict]
+        feature_gdf: gpd.GeoDataFrame,
+        modifications: list[dict],
+        feature_type: str = "water",
     ) -> tuple[dict, dict]:
         from standgen.main import process_inventory_request
 
@@ -445,7 +448,7 @@ def feature_modifications_runner(shared_pim_source):
             {
                 "id": feature_id,
                 "domain_id": domain_id,
-                "type": "water",
+                "type": feature_type,
                 "status": "completed",
                 "created_on": datetime.now(),
                 "modified_on": datetime.now(),
@@ -570,6 +573,57 @@ def test_feature_remove_drops_trees_inside_buffered_geometry(
         "found surviving trees inside the buffered feature"
     )
     # ... and the survivor count equals the originally-outside count.
+    assert len(mod_trees) == int((~inside).sum())
+
+
+def test_feature_building_remove_drops_trees_inside_footprints(
+    feature_modifications_runner, shared_pim_source
+):
+    """RemoveAction with a building Feature condition removes exactly the trees
+    inside the footprints (Polygon and MultiPolygon rows carrying etcher's
+    building columns), leaving the rest untouched."""
+    pim_inventory, _, _ = shared_pim_source
+    crs = pim_inventory["georeference"]["crs"]
+
+    source_trees = _load_trees(pim_inventory["id"])
+    if len(source_trees) < 40:
+        pytest.skip("Source PIM produced too few trees to place footprints on")
+
+    # 6 m x 6 m footprints centred on every 20th tree; the last two share one
+    # MultiPolygon row, as Overture buildings sometimes do.
+    anchors = source_trees.iloc[::20]
+    footprints = [box(x - 3, y - 3, x + 3, y + 3) for x, y in zip(anchors.x, anchors.y)]
+    geometry = footprints[:-2] + [MultiPolygon(footprints[-2:])]
+    buildings = gpd.GeoDataFrame(
+        {
+            "height": [7.5] * (len(geometry) - 1) + [None],
+            "height_source": ["OpenStreetMap"] * (len(geometry) - 1) + [None],
+            "source_dataset": ["OpenStreetMap"] * (len(geometry) - 1)
+            + ["Microsoft ML Buildings"],
+        },
+        geometry=geometry,
+        crs=crs,
+    )
+
+    footprint_union = buildings.geometry.union_all()
+    inside = source_trees.within(footprint_union)
+    assert inside.sum() >= len(anchors)
+    assert (~inside).sum() > 0
+
+    modifications = [
+        {
+            "conditions": [{"source": "feature", "operator": "within"}],
+            "actions": [{"modifier": "remove"}],
+        }
+    ]
+    _, mod_inventory = feature_modifications_runner(
+        buildings, modifications, feature_type="building"
+    )
+
+    mod_trees = _load_trees(mod_inventory["id"])
+    assert not mod_trees.within(footprint_union).any(), (
+        "found surviving trees inside a building footprint"
+    )
     assert len(mod_trees) == int((~inside).sum())
 
 

@@ -21,6 +21,10 @@ from pydantic import (
 )
 
 from api.resources.band_metadata import BandEnum, publish_band_defs
+from api.resources.crown_radius import (
+    AllometryMaxCrownRadiusSource,
+    MaxCrownRadiusSource,
+)
 from api.resources.features.schema import FeatureType
 from api.resources.grids.schema import Band, BandType, validate_no_duplicates
 from api.resources.input_requirements import feature, input_requirements, inventory
@@ -29,7 +33,7 @@ from api.resources.inventories.schema import TREE_ID_COLUMN
 # Columns a fastfuels-core Tree needs per row. `fia_status_code` is intentionally
 # excluded — treevox treats an absent status as live.
 VOXELIZE_REQUIRED_COLUMNS = frozenset(
-    {"x", "y", "height", "dbh", "crown_ratio", "fia_species_code"}
+    {"x", "y", "height", "dbh", "crown_base_height", "fia_species_code"}
 )
 
 
@@ -169,7 +173,7 @@ class CrownProfileModel(StrEnum):
 
 CROWN_PROFILE_MODEL_DESCRIPTION = (
     "Crown geometry model: the shape of each tree's crown, which runs from "
-    "the crown base, height × (1 − crown_ratio), to the tree height. "
+    "its `crown_base_height` to its height. "
     "`purves` (default): Purves et al. (2007), species-specific, widest at "
     "the crown base. "
     "`beta`: species-group beta distribution, widest within the crown per "
@@ -364,40 +368,6 @@ class InventoryColumnsBiomassSource(BiomassSourceBase):
 
 BiomassSource = Annotated[
     AllometryBiomassSource | InventoryColumnsBiomassSource,
-    Field(discriminator="type"),
-]
-
-
-class MaxCrownRadiusUnit(StrEnum):
-    """Accepted inventory max crown radius units."""
-
-    m = "m"
-
-
-class AllometryMaxCrownRadiusSource(BaseModel):
-    """Use the crown profile model's allometric max crown radius (default)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["allometry"] = "allometry"
-
-
-class InventoryColumnMaxCrownRadiusSource(BaseModel):
-    """Read per-tree max crown radius from an inventory column.
-
-    The crown profile model still drives the crown shape — the supplied
-    radius rescales it so the maximum radius matches the per-tree value.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["inventory_column"] = "inventory_column"
-    column: str
-    unit: MaxCrownRadiusUnit = MaxCrownRadiusUnit.m
-
-
-MaxCrownRadiusSource = Annotated[
-    AllometryMaxCrownRadiusSource | InventoryColumnMaxCrownRadiusSource,
     Field(discriminator="type"),
 ]
 

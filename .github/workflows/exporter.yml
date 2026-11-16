@@ -16,6 +16,13 @@ on:
       - 'services/lib/**'
       - '.github/workflows/exporter.yml'
 
+# Runs on the same branch queue instead of overlapping: two overlapping runs
+# race on the deploy (Cloud Run serves whichever finishes last) and on shared
+# test data (#726). Never cancel a run in progress, so every deploy completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   determine-environment:
     name: Determine Deployment Environment
@@ -81,13 +88,6 @@ jobs:
           gcloud run deploy ${{ env.SERVICE_NAME }}-${{ needs.determine-environment.outputs.deploy_env }} \
             --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ needs.determine-environment.outputs.deploy_env }} \
             --region ${{ env.REGION }} \
-            --update-env-vars="\
-              DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
-              GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
-              GCP_REGION=${{ env.REGION }},\
-              GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
-              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
-              EXPORTS_BUCKET=${{ secrets.EXPORTS_BUCKET }}" \
             --quiet
 
   test:

@@ -3,9 +3,9 @@ api/v2/resources/grids/providers/threedep.py
 
 Shared base model for 3DEP (3D Elevation Program) data products.
 
-3DEP provides elevation data at 1m, 10m, and 30m resolution from the USGS.
-Product-specific subclasses (Topography) live in their respective product
-directories and inherit from ThreeDepSource.
+3DEP provides elevation data at 1m, 2m, 10m, and 30m resolution from the
+USGS. Product-specific subclasses (Topography) live in their respective
+product directories and inherit from ThreeDepSource.
 """
 
 from typing import Literal
@@ -21,7 +21,7 @@ from api.resources.grids.alignment import (
 class ThreeDepSource(BaseModel):
     """Base source specification for 3DEP data products.
 
-    `source_resolution` selects the source product (1, 10, or 30 m). The
+    `source_resolution` selects the source product (1, 2, 10, or 30 m). The
     output cell size is controlled by ``alignment.resolution``.
 
     `extent_buffer_cells` records the user-requested output buffer. Griddle may

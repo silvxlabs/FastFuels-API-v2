@@ -72,6 +72,7 @@ def firestore_inventory():
                 {"key": "dbh", "type": "continuous", "unit": "cm"},
                 {"key": "height", "type": "continuous", "unit": "m"},
                 {"key": "crown_ratio", "type": "continuous"},
+                {"key": "crown_base_height", "type": "continuous", "unit": "m"},
             ],
             "type": "tree",
         }

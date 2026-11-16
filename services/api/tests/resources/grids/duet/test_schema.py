@@ -172,10 +172,16 @@ class TestCreateDuetRequest:
         with pytest.raises(ValidationError, match="years_since_burn"):
             CreateDuetRequest(source_grid_id="g1")
 
-    @pytest.mark.parametrize("years", [0, -1, 101])
+    @pytest.mark.parametrize("years", [0, -1, 26, 100])
     def test_years_since_burn_is_bounded(self, years):
+        # Capped at 25: runtime grows faster than the square of the years (#794).
         with pytest.raises(ValidationError):
             CreateDuetRequest(source_grid_id="g1", years_since_burn=years)
+
+    @pytest.mark.parametrize("years", [1, 25])
+    def test_years_since_burn_accepts_its_bounds(self, years):
+        body = CreateDuetRequest(source_grid_id="g1", years_since_burn=years)
+        assert body.years_since_burn == years
 
     @pytest.mark.parametrize("direction", [-1, 360, 400])
     def test_wind_direction_is_a_bearing(self, direction):

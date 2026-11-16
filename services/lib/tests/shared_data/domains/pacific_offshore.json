@@ -1,0 +1,49 @@
+{
+  "created_on": "2026-11-13T00:00:00.000000",
+  "crs": {
+    "properties": {
+      "name": "EPSG:32610"
+    },
+    "type": "name"
+  },
+  "description": "Open ocean off Cape Mendocino, CA, with no 3DEP 1m coverage from either S1M or the 1m lidar projects.",
+  "features": [
+    {
+      "geometry": {
+        "coordinates": [
+          [
+            [
+              337600,
+              4429300
+            ],
+            [
+              338100,
+              4429300
+            ],
+            [
+              338100,
+              4429800
+            ],
+            [
+              337600,
+              4429800
+            ],
+            [
+              337600,
+              4429300
+            ]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "id": "0",
+      "properties": {},
+      "type": "Feature"
+    }
+  ],
+  "id": "test-pacific-offshore",
+  "modified_on": "2026-11-13T00:00:00.000000",
+  "name": "Pacific offshore, California",
+  "tags": [],
+  "type": "FeatureCollection"
+}

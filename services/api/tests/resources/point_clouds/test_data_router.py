@@ -183,7 +183,7 @@ class TestMetadata:
 def test_openapi_documents_routes_parameters_workflows_and_response_fields():
     openapi = app.openapi()
     paths = openapi["paths"]
-    prefix = "/domains/{domain_id}/pointclouds/{point_cloud_id}/data"
+    prefix = "/v2/domains/{domain_id}/pointclouds/{point_cloud_id}/data"
 
     metadata = paths[f"{prefix}/metadata"]["get"]
     json_data = paths[f"{prefix}/{{tile_x}}/{{tile_y}}"]["get"]

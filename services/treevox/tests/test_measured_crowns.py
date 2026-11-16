@@ -67,7 +67,9 @@ def _source(profile="purves", geometry="crown_feature", **extra):
     return source
 
 
-def _row(tree_id=1, x=20.0, y=20.0, height=HEIGHT, crown_ratio=CROWN_RATIO):
+def _row(tree_id=1, x=20.0, y=20.0, height=HEIGHT, crown_base_height=None):
+    if crown_base_height is None:
+        crown_base_height = height * (1 - CROWN_RATIO)
     return pd.Series(
         {
             "tree_id": tree_id,
@@ -77,7 +79,7 @@ def _row(tree_id=1, x=20.0, y=20.0, height=HEIGHT, crown_ratio=CROWN_RATIO):
             "fia_status_code": 1,
             "dbh": 35.0,
             "height": height,
-            "crown_ratio": crown_ratio,
+            "crown_base_height": crown_base_height,
         }
     )
 

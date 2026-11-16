@@ -289,6 +289,67 @@ class TestProcessGridRequest:
             "test-grid-id", mock_result, chunk_shape=(512, 512)
         )
 
+    @patch("griddle.main.storage_size")
+    @patch("griddle.main.summarize_dataset")
+    @patch("griddle.main.update_grid_metadata")
+    @patch("griddle.main.save_zarr")
+    @patch("griddle.main.dispatch_handler")
+    @patch("griddle.main._load_domain")
+    @patch("griddle.main.update_status")
+    @patch("griddle.main.update_progress")
+    @patch("griddle.main.load_grid")
+    def test_source_attributions_written_with_source(
+        self,
+        mock_load_grid,
+        mock_update_progress,
+        mock_update_status,
+        mock_load_domain,
+        mock_dispatch,
+        mock_save_zarr,
+        mock_update_grid_metadata,
+        mock_summarize,
+        mock_storage_size,
+    ):
+        """The source's attributions join any already on the grid, in one write (#790)."""
+        osm = {
+            "dataset": "OpenStreetMap",
+            "license_name": "ODbL-1.0",
+            "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+            "citation": "© OpenStreetMap contributors",
+            "access_url": "https://www.openstreetmap.org/copyright",
+            "accessed_on": "2026-11-05",
+        }
+        source = {"name": "landfire", "product": "fbfm40", "version": "2024"}
+        mock_load_grid.return_value = {
+            "id": "test-grid-id",
+            "source": source,
+            "domain_id": "test-domain-id",
+            "bands": [{"key": "fbfm", "type": "categorical"}],
+            "attributions": [osm],
+        }
+        mock_load_domain.return_value = MagicMock()
+        mock_summarize.return_value = {}
+        mock_result = MagicMock()
+        mock_result.rio.crs = "EPSG:32610"
+        mock_result.rio.transform.return_value = [1, 0, 0, 0, -1, 0]
+        mock_result.rio.height = 100
+        mock_result.rio.width = 100
+        mock_dispatch.return_value = mock_result
+
+        process_grid_request(MockRequest(json_data={"id": "test-grid-id"}))
+
+        source_write = next(
+            c.args[1]
+            for c in mock_update_grid_metadata.call_args_list
+            if "source" in c.args[1]
+        )
+        assert source_write["source"] == source
+        assert [a["dataset"] for a in source_write["attributions"]] == [
+            "LANDFIRE 40 Scott and Burgan Fire Behavior Fuel Models (LF 2024)",
+            "OpenStreetMap",
+        ]
+        assert osm in source_write["attributions"]
+
     @patch("griddle.main._load_domain")
     @patch("griddle.main.dispatch_handler")
     @patch("griddle.main.update_status")

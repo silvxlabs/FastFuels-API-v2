@@ -38,6 +38,7 @@ from api.resources.inventories.tree.pim.fusion.chm.schema import (
 from api.resources.inventories.utils import (
     validate_feature_conditions,
     validate_inventory_wide_treatment_area,
+    validate_treatment_columns,
 )
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
@@ -130,6 +131,7 @@ async def create_pim_chm_fusion_inventory(
         [*body.modifications, *body.treatments], owner_id, domain_id
     )
     validate_inventory_wide_treatment_area(domain, body.treatments)
+    validate_treatment_columns(body.treatments, {c.key for c in BASE_INVENTORY_COLUMNS})
 
     # Validate the source PIM grid: owned, in this domain, completed.
     _, pim_snapshot = await get_document_async(

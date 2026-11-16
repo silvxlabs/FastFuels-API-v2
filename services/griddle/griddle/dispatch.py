@@ -128,7 +128,9 @@ def dispatch_handler(
         case "uniform":
             return handle_uniform(domain_gdf, source, progress_callback)
         case "canopy":
-            return handle_canopy(domain_gdf, source, progress_callback)
+            return handle_canopy(
+                domain_gdf, source, progress_callback, domain_id=grid["domain_id"]
+            )
         case "3dep":
             return handle_3dep(domain_gdf, source, progress_callback)
         case "compose":
@@ -485,6 +487,7 @@ def handle_canopy(
     domain_gdf: gpd.GeoDataFrame,
     source: dict,
     progress: Callable[[str, int | None], None],
+    domain_id: str | None = None,
 ) -> xr.Dataset:
     """Handle canopy source grids."""
     product = source["product"]
@@ -571,6 +574,7 @@ def handle_canopy(
                 target_grid_doc=target_grid_doc,
                 progress=progress,
                 extent_buffer_cells=extent_buffer_cells,
+                domain_id=domain_id,
             )
         case _:
             raise ProcessingError(

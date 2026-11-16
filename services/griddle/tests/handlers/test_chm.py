@@ -23,6 +23,7 @@ from rasterio._err import CPLE_HttpResponseError
 from rasterio.crs import CRS
 from rasterio.errors import RasterioIOError
 from rasterio.transform import from_bounds, from_origin
+from rioxarray.exceptions import NoDataInBounds
 from shapely.geometry import box
 
 from lib.errors import ProcessingError
@@ -738,6 +739,124 @@ class TestFetchNaipChm:
         right = values[:, width // 2 :]
         assert np.allclose(left, 10.0), f"left half lost tile A: {np.unique(left)}"
         assert np.allclose(right, 20.0), f"right half lost tile B: {np.unique(right)}"
+
+
+class TestTilesOutsideRoi:
+    """The index's EPSG:4326 bboxes over-match tiles that don't reach the ROI."""
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_non_overlapping_tile_is_skipped(self, mock_query, mock_raster_cls):
+        """A tile with no data in bounds is skipped; the output is the good tile."""
+        raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
+        good = _make_mock_raster(raw_values)
+        good_window = good.extract_window.return_value.squeeze("band", drop=True)
+        outside = MagicMock()
+        outside.extract_window.side_effect = NoDataInBounds("No data found in bounds.")
+        mock_raster_cls.side_effect = [outside, good]
+        mock_query.return_value = _make_naip_query_result(
+            urls=["http://fake/se.tif", "http://fake/sw.tif"]
+        )
+
+        ds, tile_metadata = fetch_naip_chm(
+            _make_roi(), MagicMock(), alignment={"target": "native"}
+        )
+
+        assert ds["chm"].shape == good_window.shape
+        assert ds.rio.transform() == good_window.rio.transform()
+        np.testing.assert_array_almost_equal(ds["chm"].values, raw_values / 100.0)
+        assert tile_metadata["tiles"] == ["http://fake/sw.tif"]
+        assert tile_metadata["tile_count"] == 1
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_all_tiles_outside_roi_raises_coverage_error(
+        self, mock_query, mock_raster_cls
+    ):
+        """If no matched tile reaches the ROI, report a coverage error."""
+        outside = MagicMock()
+        outside.extract_window.side_effect = NoDataInBounds("No data found in bounds.")
+        mock_raster_cls.return_value = outside
+        mock_query.return_value = _make_naip_query_result(
+            urls=["http://fake/a.tif", "http://fake/b.tif"]
+        )
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+
+        assert exc_info.value.code == "COVERAGE_ERROR"
+        assert mock_raster_cls.call_count == 2
+
+
+class TestTilesOutsideRoiRealRasters:
+    """Skipping is decided by the real window read, buffer included.
+
+    ROI is x 300000-300100. Tile A covers x 299950-300110 (all of the ROI);
+    tile B starts at x 300120, 20 m east of the ROI and beyond the source
+    clip's 3-cell guard.
+    """
+
+    ALIGNMENT = {"target": "domain", "resolution": 1.0, "method": "nearest"}
+
+    @staticmethod
+    def _write_tile(path, west, east, value):
+        south, north = 4099950, 4100150
+        width, height = east - west, north - south
+        da = xr.DataArray(
+            np.full((1, height, width), value, dtype=np.uint16),
+            dims=["band", "y", "x"],
+            coords={
+                "band": [1],
+                "y": north - np.arange(height) - 0.5,
+                "x": west + np.arange(width) + 0.5,
+            },
+        )
+        da = da.rio.write_crs("EPSG:32611")
+        da = da.rio.write_transform(from_origin(west, north, 1.0, 1.0))
+        da = da.rio.write_nodata(65535)
+        da.rio.to_raster(path)
+        return str(path)
+
+    @pytest.fixture
+    def tiles(self, tmp_path):
+        return [
+            self._write_tile(tmp_path / "a.tif", 299950, 300110, 1000),
+            self._write_tile(tmp_path / "b.tif", 300120, 300300, 2000),
+        ]
+
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_tile_outside_roi_is_skipped(self, mock_query, tiles):
+        """Without a buffer, B is skipped and A alone fills the whole domain."""
+        mock_query.return_value = _make_naip_query_result(urls=tiles)
+
+        ds, tile_metadata = fetch_naip_chm(
+            _make_roi(), MagicMock(), alignment=self.ALIGNMENT
+        )
+
+        assert ds["chm"].shape == (100, 100)
+        assert ds.rio.bounds() == (300000, 4100000, 300100, 4100100)
+        np.testing.assert_array_equal(ds["chm"].values, 10.0)
+        assert tile_metadata["tiles"] == [tiles[0]]
+
+    @patch("griddle.handlers.chm._query_tile_index")
+    def test_tile_overlapping_only_the_buffer_is_used(self, mock_query, tiles):
+        """A 30-cell buffer reaches x 300130, so B is read for the east edge."""
+        mock_query.return_value = _make_naip_query_result(urls=tiles)
+
+        ds, tile_metadata = fetch_naip_chm(
+            _make_roi(),
+            MagicMock(),
+            extent_buffer_cells=30,
+            alignment=self.ALIGNMENT,
+        )
+
+        assert ds["chm"].shape == (160, 160)
+        assert ds.rio.bounds() == (299970, 4099970, 300130, 4100130)
+        assert tile_metadata["tiles"] == tiles
+        values = ds["chm"].sel(y=4100050.5)
+        np.testing.assert_array_equal(values.sel(x=slice(299970, 300110)), 10.0)
+        assert np.isnan(values.sel(x=slice(300110, 300120))).all()
+        np.testing.assert_array_equal(values.sel(x=slice(300120, 300130)), 20.0)
 
 
 class TestCertificateExpired:

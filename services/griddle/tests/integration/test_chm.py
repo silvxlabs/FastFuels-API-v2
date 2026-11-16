@@ -97,6 +97,46 @@ def test_naip_chm_2_tiles(griddle_runner):
     _assert_tile_metadata(result.grid_id, expected_tile_count=2)
 
 
+NAIP_TILE_EDGE_BOUNDS = (713766.08, 5183439.03, 714438.85, 5183964.60)
+
+
+def test_naip_chm_tile_edge(griddle_runner):
+    """The index also matches the SE tile, which stops 48 m short of the domain.
+
+    The SW tile alone must fill the whole domain lattice with no nodata.
+    """
+    result = griddle_runner("naip_chm_tile_edge.json", "chm_naip.json")
+    _assert_valid_chm(result.ds, "32611")
+    _, snapshot = get_document(GRIDS_COLLECTION, result.grid_id)
+    tm = snapshot.to_dict()["source"]["tile_metadata"]
+    assert tm["tile_count"] == 1
+    assert "m_4611415_sw_" in tm["tiles"][0]
+
+    xmin, ymin, xmax, ymax = NAIP_TILE_EDGE_BOUNDS
+    transform = result.ds.rio.transform()
+    res = transform.a
+    assert transform.c == pytest.approx(xmin)
+    assert result.ds["chm"].shape == (
+        int(np.ceil((ymax - ymin) / res)),
+        int(np.ceil((xmax - xmin) / res)),
+    )
+    left, bottom, right, top = result.ds.rio.bounds()
+    assert left <= xmin and bottom <= ymin and right >= xmax and top >= ymax
+    assert not np.isnan(result.ds["chm"].values).any()
+
+
+def test_naip_chm_tile_edge_buffer_reaches_neighbor(griddle_runner):
+    """A 100-cell (~60 m) buffer reaches the SE tile, so it is read too."""
+    result = griddle_runner(
+        "naip_chm_tile_edge.json",
+        "chm_naip.json",
+        source_overrides={"extent_buffer_cells": 100},
+    )
+    _assert_valid_chm(result.ds, "32611")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=2)
+    assert not np.isnan(result.ds["chm"].values).any()
+
+
 def test_naip_chm_4_tiles(griddle_runner):
     """NAIP CHM across 4 tiles: domain on a tile corner."""
     result = griddle_runner("naip_chm_4_tiles.json", "chm_naip.json")

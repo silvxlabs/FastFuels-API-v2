@@ -186,6 +186,16 @@ def is_crs_geographic(crs: CRS) -> bool:
     return crs.is_geographic
 
 
+# Mirrors lib.alignment._cell_count (not importable: rasterio); keep in sync.
+def lattice_cell_count(extent: float, resolution: float) -> int:
+    """Ceil of extent / resolution, snapping float noise within 1e-9 to the integer."""
+    n = extent / resolution
+    nearest = round(n)
+    if abs(n - nearest) <= 1e-9 * max(1, nearest):
+        return max(1, int(nearest))
+    return max(1, math.ceil(n))
+
+
 def pad_bounds_to_resolution(
     minx: float,
     miny: float,

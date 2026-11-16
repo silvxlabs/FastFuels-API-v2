@@ -22,7 +22,7 @@ import numpy as np
 import pyproj
 import rasterio.features
 import xarray as xr
-from shapely.geometry import mapping, shape
+from shapely.geometry import GeometryCollection, mapping, shape
 
 from lib.config import FEATURES_BUCKET, FEATURES_COLLECTION
 from lib.domain_utils import buffer_gdf
@@ -162,6 +162,11 @@ def _evaluate_spatial_condition(
     out_shape = (ds.rio.height, ds.rio.width)
     transform = ds.rio.transform()
 
+    # rasterio can't rasterize an empty geometry; it covers no cells.
+    if geom.is_empty:
+        covered = np.zeros(out_shape, dtype=bool)
+        return ~covered if op_name == "outside" else covered
+
     # target=cell + op=within is the only combo that needs the strict
     # "cell fully inside the geometry" semantics. Every other combo reduces
     # to a single geometry_mask call (with all_touched / invert toggles).
@@ -257,11 +262,12 @@ def _resolve_feature_geometry(
     parquet_path = f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
     gdf = gpd.read_parquet(parquet_path)
     if gdf.empty:
-        raise ProcessingError(
-            code="FEATURE_EMPTY",
-            message=f"Feature '{feature_id}' has no geometry rows.",
-            suggestion="Re-create the feature so it contains geometries.",
-        )
+        # A feature with no rows (e.g. OSM water over a domain with none) is an
+        # empty geometry: `within`/`intersects` select nothing, `outside`
+        # selects everything.
+        geom = GeometryCollection()
+        cache[key] = geom
+        return geom
 
     # Vector reproject is a safety net — etcher writes features in the domain
     # CRS by construction, and the grid is in the domain CRS by default.

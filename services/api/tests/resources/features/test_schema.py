@@ -8,6 +8,7 @@ These are pure unit tests with no external dependencies.
 from datetime import datetime
 
 import pytest
+from api.resources.attribution import Attribution
 from api.resources.features.schema import (
     CreateFeatureRequestBase,
     Feature,
@@ -19,6 +20,15 @@ from api.resources.features.schema import (
 )
 from api.schema import JobStatus
 from pydantic import ValidationError
+
+OSM_ATTRIBUTION = {
+    "dataset": "OpenStreetMap",
+    "license_name": "ODbL-1.0",
+    "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+    "citation": "© OpenStreetMap contributors",
+    "access_url": "https://www.openstreetmap.org/copyright",
+    "accessed_on": "2026-11-05",
+}
 
 
 class TestFeatureType:
@@ -36,8 +46,11 @@ class TestFeatureType:
     def test_crown_value(self):
         assert FeatureType.crown.value == "crown"
 
+    def test_building_value(self):
+        assert FeatureType.building.value == "building"
+
     def test_enum_count(self):
-        assert len(FeatureType) == 4
+        assert len(FeatureType) == 5
 
     def test_can_create_from_string(self):
         assert FeatureType("road") == FeatureType.road
@@ -199,6 +212,27 @@ class TestFeature:
         feature = Feature(**minimal_feature_data)
         assert isinstance(feature.georeference, FeatureGeoreference)
         assert feature.georeference.crs == "EPSG:32610"
+
+    def test_attributions_default_to_empty_list(self, minimal_feature_data):
+        """Firestore docs written before attributions existed have no field."""
+        assert "attributions" not in minimal_feature_data
+        feature = Feature(**minimal_feature_data)
+        assert feature.attributions == []
+        assert feature.model_dump(mode="json")["attributions"] == []
+
+    def test_attributions_serialize(self, minimal_feature_data):
+        osm = dict(OSM_ATTRIBUTION)
+        minimal_feature_data["attributions"] = [osm]
+        feature = Feature(**minimal_feature_data)
+        assert isinstance(feature.attributions[0], Attribution)
+        assert feature.model_dump(mode="json")["attributions"] == [osm]
+
+    def test_attribution_missing_field_raises(self, minimal_feature_data):
+        osm = dict(OSM_ATTRIBUTION)
+        del osm["citation"]
+        minimal_feature_data["attributions"] = [osm]
+        with pytest.raises(ValidationError):
+            Feature(**minimal_feature_data)
 
 
 class TestListFeaturesResponse:

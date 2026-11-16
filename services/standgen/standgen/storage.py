@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 FLOAT_STATS = {"min", "max", "mean", "std"}
 
+# The API serves one Parquet row group per inventory data partition (#763).
+ROW_GROUP_SIZE = 50_000
+
 
 def _finite_or_none(value) -> float | None:
     """Coerce a reduction result to float, mapping NaN/inf to None.
@@ -133,11 +136,18 @@ def _write_parquet(ddf: dd.DataFrame, path: str) -> None:
     RangeIndex as a synthetic ``__null_dask_index__`` column in the file
     schema, which leaked into the API's data/metadata ``columns`` (#335).
 
+    Row groups are capped at ``ROW_GROUP_SIZE`` rows, so one dask partition
+    may span several row groups (each an API data partition, #763).
+
     Returns a deferred write for fusing with stats reductions in a single
     ``dask.compute`` call.
     """
     return ddf.to_parquet(
-        path, write_metadata_file=True, write_index=False, compute=False
+        path,
+        write_metadata_file=True,
+        write_index=False,
+        row_group_size=ROW_GROUP_SIZE,
+        compute=False,
     )
 
 

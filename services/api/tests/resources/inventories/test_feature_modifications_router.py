@@ -17,7 +17,7 @@ in its router; it is exercised over HTTP in ``test_modifications_router.py``.)
 
 import pytest
 
-from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION
+from lib.config import FEATURES_COLLECTION, GRIDS_COLLECTION, INVENTORIES_COLLECTION
 from tests.fixtures import make_feature_data, make_grid_data
 
 UNKNOWN_ID = "00000000000000000000000000000000"
@@ -149,3 +149,56 @@ def test_completed_feature_succeeds(client, endpoint, completed_feature):
     assert response.status_code == 201, response.json()
     condition = response.json()["modifications"][0]["conditions"][0]
     assert condition["feature_id"] == feature_id
+
+
+@pytest.fixture(scope="session")
+def completed_building_feature(firestore_client, domain_for_testing):
+    data = make_feature_data(
+        domain_id=domain_for_testing["id"],
+        type="building",
+        product="overture",
+        status="completed",
+    )
+    ref = firestore_client.collection(FEATURES_COLLECTION).document(data["id"])
+    ref.set(data)
+    yield data
+    ref.delete()
+
+
+@pytest.fixture(scope="session")
+def pending_building_feature(firestore_client, domain_for_testing):
+    data = make_feature_data(
+        domain_id=domain_for_testing["id"],
+        type="building",
+        product="overture",
+        status="pending",
+    )
+    ref = firestore_client.collection(FEATURES_COLLECTION).document(data["id"])
+    ref.set(data)
+    yield data
+    ref.delete()
+
+
+def test_completed_building_feature_succeeds(
+    client, firestore_client, endpoint, completed_building_feature
+):
+    """Building features (#768) are referenced like any other feature."""
+    url, base = endpoint
+    feature_id = completed_building_feature["id"]
+    response = client.post(url, json=_request(base, feature_id))
+    assert response.status_code == 201, response.json()
+    inventory = response.json()
+    firestore_client.collection(INVENTORIES_COLLECTION).document(
+        inventory["id"]
+    ).delete()
+    assert inventory["modifications"][0]["conditions"][0]["feature_id"] == feature_id
+
+
+def test_pending_building_feature_returns_422(
+    client, endpoint, pending_building_feature
+):
+    url, base = endpoint
+    feature_id = pending_building_feature["id"]
+    response = client.post(url, json=_request(base, feature_id))
+    assert response.status_code == 422
+    assert feature_id in response.json()["detail"]

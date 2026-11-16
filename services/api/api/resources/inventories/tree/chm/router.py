@@ -36,7 +36,11 @@ from api.resources.inventories.tree.chm.schema import (
     ChmInventorySource,
     CreateChmInventoryRequest,
 )
-from api.resources.inventories.utils import validate_feature_conditions
+from api.resources.inventories.utils import (
+    validate_feature_conditions,
+    validate_inventory_wide_treatment_area,
+    validate_treatment_columns,
+)
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
 from api.tasks import create_http_task_async
@@ -87,6 +91,13 @@ async def create_chm_inventory(
       (`dalponte2016` region growing) and add a `crown_radius` column (m).
       Requires a CHM cell size of 2 m or finer. Default parameters are
       provisional.
+    - **modifications**: (optional) Modifications to apply after stem extraction.
+    - **treatments**: (optional) Treatments to apply after modifications. CHM
+      extraction produces no diameter or species, so only a `crown_spacing`
+      treatment with `rank_by: height` and
+      `{"type": "inventory_column", "column": "crown_radius"}` as its
+      `max_crown_radius_source` applies, and it needs `crown_segmentation`.
+      Any other treatment is rejected with 422.
     - **type**: (optional) Entity type. Default: ``"tree"``.
     - **name**: (optional) Name for the inventory.
     - **description**: (optional) Description.
@@ -106,6 +117,7 @@ async def create_chm_inventory(
     await validate_feature_conditions(
         [*body.modifications, *body.treatments], owner_id, domain_id
     )
+    validate_inventory_wide_treatment_area(domain, body.treatments)
 
     # Validate source CHM grid exists, is owned, in this domain, and completed
     _, source_snapshot = await get_document_async(
@@ -134,6 +146,7 @@ async def create_chm_inventory(
             MAX_CROWN_SEGMENTATION_RESOLUTION_M,
         )
         columns.append(CROWN_RADIUS_COLUMN)
+    validate_treatment_columns(body.treatments, {c.key for c in columns})
 
     inventory_id = uuid.uuid4().hex
     request_time = datetime.now()

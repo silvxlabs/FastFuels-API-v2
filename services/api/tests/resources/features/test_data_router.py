@@ -38,6 +38,14 @@ from tests.fixtures import make_feature_data
 
 STATIC_ROADS = "static-test-blue-mtn-osm-roads"
 STATIC_WATER = "static-test-blue-mtn-osm-water"
+OSM_ATTRIBUTION = {
+    "dataset": "OpenStreetMap",
+    "license_name": "ODbL-1.0",
+    "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+    "citation": "© OpenStreetMap contributors",
+    "access_url": "https://www.openstreetmap.org/copyright",
+    "accessed_on": "2026-11-05",
+}
 
 
 # Helpers
@@ -72,11 +80,19 @@ def partition_route(domain_id: str, feature_id: str, partition_index: int):
     return f"/domains/{domain_id}/features/{feature_id}/data/{partition_index}"
 
 
-def _install_static_feature(firestore_client, test_owner_id, domain_id, static_name):
+def _install_static_feature(
+    firestore_client,
+    test_owner_id,
+    domain_id,
+    static_name,
+    feature_id=None,
+    attributions=None,
+):
     """Copy the bucket-root static blob into the test domain + register Firestore doc."""
+    feature_id = feature_id or static_name
     fs = gcsfs.GCSFileSystem()
     src = f"{FEATURES_BUCKET}/{static_name}.parquet"
-    dst = f"{FEATURES_BUCKET}/{domain_id}/{static_name}.parquet"
+    dst = f"{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
     if not fs.exists(src):
         pytest.skip(
             f"gs://{src} not found. Run the e2e fixture generator for {static_name}."
@@ -86,10 +102,12 @@ def _install_static_feature(firestore_client, test_owner_id, domain_id, static_n
     fs.cp(src, dst)
 
     template = _load_static_template(static_name)
-    template["id"] = static_name
+    template["id"] = feature_id
     template["owner_id"] = test_owner_id
     template["domain_id"] = domain_id
-    doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(static_name)
+    if attributions is not None:
+        template["attributions"] = attributions
+    doc_ref = firestore_client.collection(FEATURES_COLLECTION).document(feature_id)
     doc_ref.set(template)
     return template, doc_ref, dst
 
@@ -117,6 +135,22 @@ def static_roads_in_firestore(firestore_client, test_owner_id, domain_for_testin
 def static_water_in_firestore(firestore_client, test_owner_id, domain_for_testing):
     template, doc_ref, blob = _install_static_feature(
         firestore_client, test_owner_id, domain_for_testing["id"], STATIC_WATER
+    )
+    yield template
+    _uninstall_static_feature(doc_ref, blob)
+
+
+@pytest.fixture
+def attributed_roads_in_firestore(firestore_client, test_owner_id, domain_for_testing):
+    """A copy of the static roads feature, under its own id, carrying the OSM
+    attribution. Separate id so the shared static doc is never mutated."""
+    template, doc_ref, blob = _install_static_feature(
+        firestore_client,
+        test_owner_id,
+        domain_for_testing["id"],
+        STATIC_ROADS,
+        feature_id=f"test-{uuid4().hex}",
+        attributions=[OSM_ATTRIBUTION],
     )
     yield template
     _uninstall_static_feature(doc_ref, blob)
@@ -323,6 +357,21 @@ class TestGetFeatureDataPartition:
             assert json.dumps(got, sort_keys=True) == json.dumps(
                 want, sort_keys=True
             ), f"feature {i} mismatch:\n got={got}\nwant={want}"
+
+    def test_attributions_on_resource_not_partition(
+        self, client, domain_for_testing, attributed_roads_in_firestore
+    ):
+        feature_id = attributed_roads_in_firestore["id"]
+
+        response = client.get(
+            f"/domains/{domain_for_testing['id']}/features/{feature_id}"
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["attributions"] == [OSM_ATTRIBUTION]
+
+        response = client.get(partition_route(domain_for_testing["id"], feature_id, 0))
+        assert response.status_code == 200, response.text
+        assert "attributions" not in response.json()
 
     def test_water_endpoint_returns_geojson(
         self, client, domain_for_testing, static_water_in_firestore

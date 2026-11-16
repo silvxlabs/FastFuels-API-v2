@@ -8,11 +8,19 @@ straddle 1-degree tile boundaries in central Montana.
 
 These tests hit real 3DEP COGs via AWS S3 and write to real GCS/Firestore,
 so they require valid credentials and may take a few minutes.
+
+The lidar project tests call the handler directly over the Ronan, MT (CSKT)
+domain, where S1M has no tiles and the 1m lidar project tiles come from UTM
+zones 11 and 12. They need only public S3 and the TNM Access search.
 """
 
+import json
 from uuid import uuid4
 
+import geopandas as gpd
 import numpy as np
+import pytest
+from griddle.handlers.threedep import fetch_topography
 
 from lib.config import DOMAINS_COLLECTION, GRIDS_COLLECTION
 from lib.firestore.documents import delete_document, get_document, set_document
@@ -258,14 +266,15 @@ def test_topography_1m_s1m_4_tiles(griddle_runner):
 
 
 def test_topography_1m_no_coverage():
-    """3DEP 1m topography records COVERAGE_ERROR when S1M tiles don't exist.
+    """3DEP 1m topography records COVERAGE_ERROR when no 1m tiles exist.
 
-    Blue Mountain has no S1M coverage. The full pipeline should mark the
-    grid as failed with a COVERAGE_ERROR code in Firestore.
+    The offshore domain has neither S1M nor lidar project tiles. The full
+    pipeline should mark the grid as failed with a COVERAGE_ERROR code in
+    Firestore.
     """
     from griddle.main import process_grid_request
 
-    domain_data = load_json(DOMAINS_DIR / "blue_mtn.json")
+    domain_data = load_json(DOMAINS_DIR / "pacific_offshore.json")
     domain_id = f"test-{uuid4().hex}"
     data = _stringify_coordinates(domain_data)
     data["id"] = domain_id
@@ -290,3 +299,70 @@ def test_topography_1m_no_coverage():
     finally:
         delete_document(GRIDS_COLLECTION, grid_id)
         delete_document(DOMAINS_COLLECTION, domain_id)
+
+
+# Lidar project tiles (TNM Access discovery), handler level
+
+
+@pytest.fixture
+def cskt_roi() -> gpd.GeoDataFrame:
+    with open(DOMAINS_DIR / "cskt_ronan.json") as f:
+        domain = json.load(f)
+    return gpd.GeoDataFrame.from_features(
+        domain["features"], crs=domain["crs"]["properties"]["name"]
+    )
+
+
+def _assert_cskt_projects(ds, metadata, cell_size):
+    assert metadata["tile_source"] == "projects"
+    assert metadata["native_crs"] is None
+    assert metadata["tile_count"] == len(metadata["tiles"]) >= 1
+    assert all("/1m/Projects/" in url for url in metadata["tiles"])
+    assert metadata["acquisition_dates"]
+
+    assert "32611" in str(ds.rio.crs)
+    assert abs(ds.rio.resolution()[0]) == pytest.approx(cell_size, rel=1e-3)
+
+    elev_valid = _assert_valid_data(ds, "elevation", min_valid_frac=0.99)
+    assert elev_valid.min() >= 850
+    assert elev_valid.max() <= 1050
+
+
+def test_topography_2m_lidar_projects(cskt_roi):
+    """2m reads the lidar project tiles' 2 m overview: a 2.3 km domain
+    comes back at ~2 m cells, with slope and aspect."""
+    ds, metadata = fetch_topography(
+        cskt_roi, 2, ["elevation", "slope", "aspect"], lambda *a, **k: None
+    )
+
+    _assert_cskt_projects(ds, metadata, cell_size=2.0)
+    assert ds["elevation"].shape == pytest.approx((1141, 1151), abs=2)
+    slope_valid = _assert_valid_data(ds, "slope")
+    assert slope_valid.max() <= 90
+    aspect_valid = _assert_valid_data(ds, "aspect")
+    assert aspect_valid.max() < 360
+
+
+def test_topography_1m_falls_back_to_lidar_projects(cskt_roi):
+    """S1M has no tiles here; 1m falls back to the project tiles at full
+    resolution."""
+    ds, metadata = fetch_topography(cskt_roi, 1, ["elevation"], lambda *a, **k: None)
+
+    _assert_cskt_projects(ds, metadata, cell_size=1.0)
+    assert ds["elevation"].shape == pytest.approx((2281, 2301), abs=2)
+
+
+def test_topography_2m_matches_1m(cskt_roi):
+    """The 2 m overview agrees with the 1 m tiles resampled to the same
+    2 m lattice, to within lidar DEM noise."""
+    alignment = {"target": "domain", "resolution": 2.0}
+    ds2, _ = fetch_topography(
+        cskt_roi, 2, ["elevation"], lambda *a, **k: None, alignment=alignment
+    )
+    ds1, _ = fetch_topography(
+        cskt_roi, 1, ["elevation"], lambda *a, **k: None, alignment=alignment
+    )
+
+    assert ds2["elevation"].shape == ds1["elevation"].shape
+    diff = np.abs(ds2["elevation"].values - ds1["elevation"].values)
+    assert np.median(diff) < 0.1

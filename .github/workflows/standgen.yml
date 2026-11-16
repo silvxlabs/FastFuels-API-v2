@@ -7,7 +7,7 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT }}
   # Public GDAM allometry inference API. Literal (not a secret) so an unset
   # secret can't override the correct default with an empty string.
-  GDAM_API_URL: https://gdam-api-v2-782971006568.us-west1.run.app
+  GDAM_API_URL: https://api.fastfuels.silvxlabs.com/gdam
 
 on:
   push:
@@ -18,6 +18,13 @@ on:
       - 'services/standgen/**'
       - 'services/lib/**'
       - '.github/workflows/standgen.yml'
+
+# Runs on the same branch queue instead of overlapping: two overlapping runs
+# race on the deploy (Cloud Run serves whichever finishes last) and on shared
+# test data (#726). Never cancel a run in progress, so every deploy completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   determine-environment:
@@ -84,15 +91,6 @@ jobs:
           gcloud run deploy ${{ env.SERVICE_NAME }}-${{ needs.determine-environment.outputs.deploy_env }} \
             --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ needs.determine-environment.outputs.deploy_env }} \
             --region ${{ env.REGION }} \
-            --update-env-vars="\
-              DEPLOYMENT_ENV=${{ needs.determine-environment.outputs.deploy_env }},\
-              GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
-              GCP_REGION=${{ env.REGION }},\
-              GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
-              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
-              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
-              TABLES_BUCKET=${{ secrets.TABLES_BUCKET }},\
-              GDAM_API_URL=${{ env.GDAM_API_URL }}" \
             --quiet
 
   test:

@@ -198,15 +198,17 @@ class TestCreateChmInventoryRequest:
         request = CreateChmInventoryRequest(source_chm_grid_id="grid123")
         assert request.treatments == []
 
-    def test_treatments_rejected(self):
-        """A non-empty treatments list is rejected — CHM has no diameter."""
-        with pytest.raises(ValidationError, match="diameter"):
-            CreateChmInventoryRequest(
-                source_chm_grid_id="grid123",
-                treatments=[
-                    {"metric": "diameter", "method": "from_below", "value": 30.0}
-                ],
-            )
+    def test_treatments_accepted(self):
+        """The schema accepts any treatment; the router rejects one that reads a
+        column CHM extraction does not produce."""
+        request = CreateChmInventoryRequest(
+            source_chm_grid_id="grid123",
+            treatments=[
+                {"metric": "diameter", "method": "from_below", "value": 30.0},
+                {"metric": "crown_spacing", "value": 3.0, "rank_by": "height"},
+            ],
+        )
+        assert len(request.treatments) == 2
 
 
 class TestChmCrownSegmentation:

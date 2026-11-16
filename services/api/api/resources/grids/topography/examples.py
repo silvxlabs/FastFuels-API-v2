@@ -82,6 +82,11 @@ EXAMPLE_3DEP_1M = {
     "bands": ["elevation"],
 }
 
+EXAMPLE_3DEP_2M = {
+    "source_resolution": 2,
+    "bands": ["elevation", "slope", "aspect"],
+}
+
 EXAMPLE_3DEP_WITH_METADATA = {
     "name": "High-res terrain",
     "description": "10m elevation for wind flow modeling",
@@ -131,8 +136,17 @@ CREATE_3DEP_TOPOGRAPHY_OPENAPI_EXAMPLES = {
         "value": EXAMPLE_3DEP_1M,
         "summary": "1m elevation",
         "description": (
-            "Creates a grid with 1m elevation data from 3DEP seamless 1-meter "
-            "(S1M) or legacy project tiles."
+            "Creates a grid with 1m elevation data from the 3DEP Seamless "
+            "1-Meter DEM (S1M), or from the 1m lidar project tiles where S1M "
+            "has no tiles."
+        ),
+    },
+    "2m_terrain": {
+        "value": EXAMPLE_3DEP_2M,
+        "summary": "2m elevation, slope, and aspect",
+        "description": (
+            "Creates a grid from the 3DEP 1m lidar project tiles, read at "
+            "their 2m overview."
         ),
     },
     "with_metadata": {
@@ -172,6 +186,7 @@ ALL_3DEP_EXAMPLE_VALUES = [
     ("minimal", EXAMPLE_3DEP_MINIMAL),
     ("all_bands", EXAMPLE_3DEP_ALL_BANDS),
     ("1m_elevation", EXAMPLE_3DEP_1M),
+    ("2m_terrain", EXAMPLE_3DEP_2M),
     ("with_metadata", EXAMPLE_3DEP_WITH_METADATA),
     ("with_buffer", EXAMPLE_3DEP_WITH_BUFFER),
     ("domain_aligned_2m", EXAMPLE_3DEP_DOMAIN_2M),

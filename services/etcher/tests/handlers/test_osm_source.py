@@ -9,6 +9,7 @@ border:
     state_b -> box(10, 0, 20, 10)
 """
 
+from datetime import date
 from unittest.mock import patch
 
 import geopandas as gpd
@@ -149,3 +150,19 @@ class TestReadOsmFeatures:
             gdf = osm_source.read_osm_features((1, 1, 2, 2), "road")
         # Without an osm_id column there is no dedup; both rows survive.
         assert len(gdf) == 2
+
+
+class TestOsmAttribution:
+    def test_values(self):
+        assert osm_source.osm_attribution() == {
+            "dataset": "OpenStreetMap",
+            "license_name": "ODbL-1.0",
+            "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+            "citation": "© OpenStreetMap contributors",
+            "access_url": "https://www.openstreetmap.org/copyright",
+            "accessed_on": date.today().isoformat(),
+        }
+
+    def test_does_not_mutate_template(self):
+        osm_source.osm_attribution()["accessed_on"] = "2000-01-01"
+        assert "accessed_on" not in osm_source.OSM_ATTRIBUTION

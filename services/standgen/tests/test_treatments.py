@@ -2,8 +2,10 @@
 Unit tests for standgen/treatments.py
 
 Tests the treatment processing logic: unit conversion, the fastfuels-core
-thinner factory, region-area computation, spatial scoping/recombination, and the
-full apply_treatments pipeline (including reproducible proportional thinning).
+thinner factory, region-area computation, spatial scoping/recombination, the
+full apply_treatments pipeline (including reproducible proportional thinning),
+and crown-spacing thinning with its neighbourhood, radius sources, and
+per-treatment column check.
 """
 
 import math
@@ -13,11 +15,13 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from fastfuels_core.canopy_fuel.crown_radius import max_crown_radius
 from fastfuels_core.treatments import (
     DirectionalThinToDiameterLimit,
     DirectionalThinToStandBasalArea,
     ProportionalThinToBasalArea,
     ThinningDirection,
+    ThinToCrownSpacing,
 )
 from shapely.geometry import box
 from standgen.treatments import (
@@ -26,6 +30,7 @@ from standgen.treatments import (
     build_thinner,
     compute_region_area_ha,
     convert_treatment_value,
+    crown_radii,
 )
 
 from lib.errors import ProcessingError
@@ -429,3 +434,316 @@ class TestProportionalDeterminism:
         r1 = apply_treatments(_ddf(stand, 4), [treatment], domain_gdf, seed=1).compute()
         r2 = apply_treatments(_ddf(stand, 4), [treatment], domain_gdf, seed=2).compute()
         assert sorted(r1["id"].tolist()) != sorted(r2["id"].tolist())
+
+
+# Crown spacing (#780)
+
+
+def _trees(rows):
+    """Trees from (tree_id, x, y, dbh, crown_radius) rows; height = dbh / 2."""
+    df = pd.DataFrame(rows, columns=["tree_id", "x", "y", "dbh", "crown_radius"])
+    df["height"] = df["dbh"] / 2.0
+    return df
+
+
+def _spacing(value=1.0, conditions=None, rank_by="dbh", radius=None, unit=None):
+    """A stored crown-spacing treatment, reading radius from `crown_radius`."""
+    treatment = {
+        "metric": "crown_spacing",
+        "value": value,
+        "rank_by": rank_by,
+        "max_crown_radius_source": radius
+        or {"type": "inventory_column", "column": "crown_radius", "unit": "m"},
+        "conditions": conditions or [],
+    }
+    if unit is not None:
+        treatment["unit"] = unit
+    return treatment
+
+
+def _outside(geom):
+    """A resolved 'outside' spatial condition wrapping a geometry."""
+    return {"source": "geometry", "operator": "outside", "_resolved_geometry": geom}
+
+
+def _kept_ids(ddf):
+    return set(ddf.compute()["tree_id"])
+
+
+@pytest.fixture
+def spacing_domain_gdf():
+    """A 100 m × 100 m domain centred on the origin."""
+    return gpd.GeoDataFrame(geometry=[box(-50, -50, 50, 50)], crs=UTM_CRS)
+
+
+def _gap(df, i, j):
+    a, b = df.loc[i], df.loc[j]
+    return math.hypot(a.x - b.x, a.y - b.y) - a.crown_radius - b.crown_radius
+
+
+class TestCrownSpacingThinner:
+    def test_build_thinner_converts_feet(self):
+        thinner = build_thinner(_spacing(value=10.0, unit="ft"), None)
+        assert isinstance(thinner, ThinToCrownSpacing)
+        assert thinner.spacing == pytest.approx(3.048)
+        assert thinner.rank_by == "dbh"
+
+    def test_inventory_wide_keeps_larger_dbh(self, spacing_domain_gdf):
+        df = _trees([(1, 0.0, 0.0, 30.0, 1.0), (2, 2.5, 0.0, 20.0, 1.0)])
+        out = apply_treatments(_ddf(df, 1), [_spacing()], spacing_domain_gdf)
+        assert _kept_ids(out) == {1}
+
+    def test_rank_by_height_keeps_taller(self, spacing_domain_gdf):
+        df = _trees([(1, 0.0, 0.0, 30.0, 1.0), (2, 2.5, 0.0, 20.0, 1.0)])
+        df.loc[df.tree_id == 2, "height"] = 40.0
+        out = apply_treatments(
+            _ddf(df, 1), [_spacing(rank_by="height")], spacing_domain_gdf
+        )
+        assert _kept_ids(out) == {2}
+
+    def test_output_columns_unchanged(self, spacing_domain_gdf):
+        df = _trees([(1, 0.0, 0.0, 30.0, 1.0), (2, 2.5, 0.0, 20.0, 1.0)])
+        region = box(-10, -10, 10, 10)
+        for conditions in ([], [_within(region)]):
+            out = apply_treatments(
+                _ddf(df), [_spacing(conditions=conditions)], spacing_domain_gdf
+            ).compute()
+            assert out.columns.tolist() == df.columns.tolist()
+
+
+class TestCrownSpacingRegion:
+    """A scoped thin removes only in-region trees, but they must clear the
+    crowns around the region (issue #780 Standgen tests)."""
+
+    REGION = box(0, -10, 10, 10)
+
+    def test_region_edge(self, spacing_domain_gdf):
+        """A small in-region tree touching a large tree just outside is removed,
+        even with the larger dbh; no tree outside the region is removed. Passing
+        only the in-region subset would keep it."""
+        df = _trees(
+            [
+                (1, -1.0, 0.0, 10.0, 3.0),  # outside, big crown reaching in
+                (2, 2.0, 0.0, 50.0, 1.0),  # inside, touches tree 1
+                (3, 8.0, 0.0, 5.0, 0.5),  # inside, clear of everything
+                (4, -20.0, 0.0, 5.0, 1.0),  # outside, far away
+                (5, -20.5, 0.0, 5.0, 1.0),  # outside, overlaps tree 4
+            ]
+        )
+        out = apply_treatments(
+            _ddf(df), [_spacing(conditions=[_within(self.REGION)])], spacing_domain_gdf
+        )
+        assert _kept_ids(out) == {1, 3, 4, 5}
+
+    def test_neighbour_beyond_value_but_within_buffer(self, spacing_domain_gdf):
+        """A stem farther than `value` from the region, but within
+        value + 2 × max radius, still constrains in-region trees."""
+        df = _trees(
+            [
+                (1, -4.5, 0.0, 10.0, 1.0),  # 4.5 m outside the region
+                (2, 1.0, 0.0, 50.0, 4.0),  # inside; gap to tree 1 is 0.5 m
+                (3, -30.0, 0.0, 10.0, 1.0),  # out of reach
+            ]
+        )
+        assert _gap(df.set_index("tree_id"), 1, 2) == pytest.approx(0.5)
+        out = apply_treatments(
+            _ddf(df), [_spacing(conditions=[_within(self.REGION)])], spacing_domain_gdf
+        )
+        assert _kept_ids(out) == {1, 3}
+
+    def test_stem_decides_inside(self, spacing_domain_gdf):
+        """A tree is in the region when its stem is: a stem just outside with a
+        crown over the region is never removed, even ranked lowest."""
+        df = _trees(
+            [
+                (1, -0.5, 0.0, 5.0, 5.0),  # stem outside, crown covers 0..4.5
+                (2, 5.0, 0.0, 50.0, 0.5),  # stem inside, conflicts with tree 1
+            ]
+        )
+        out = apply_treatments(
+            _ddf(df, 1),
+            [_spacing(conditions=[_within(self.REGION)])],
+            spacing_domain_gdf,
+        )
+        assert _kept_ids(out) == {1}
+
+    def test_ring_zone(self, spacing_domain_gdf):
+        """`within` 9.14 m AND `outside` 1.52 m of a building thins only the
+        5–30 ft ring; trees in 0–5 ft and beyond 30 ft are fixed neighbours."""
+        building = box(-1, -1, 1, 1)
+        conditions = [_within(building.buffer(9.14)), _outside(building.buffer(1.52))]
+        df = _trees(
+            [
+                (1, 1.2, 0.0, 5.0, 1.0),  # 0–5 ft: fixed
+                (2, 3.0, 0.0, 50.0, 1.0),  # ring; conflicts with fixed tree 1
+                (3, 0.0, 7.0, 40.0, 1.0),  # ring; beats tree 4
+                (4, 0.0, 8.5, 30.0, 1.0),  # ring; loses to tree 3
+                (5, 11.0, 0.0, 5.0, 1.0),  # beyond 30 ft: fixed
+                (6, 9.5, 0.0, 50.0, 1.0),  # ring; conflicts with fixed tree 5
+                (7, 30.0, 0.0, 5.0, 1.0),  # far outside
+            ]
+        )
+        out = apply_treatments(
+            _ddf(df),
+            [_spacing(value=10.0, unit="ft", conditions=conditions)],
+            spacing_domain_gdf,
+        )
+        assert _kept_ids(out) == {1, 3, 5, 7}
+
+    @pytest.mark.parametrize("npartitions", [1, 3, 7])
+    def test_random_stand_invariants(self, spacing_domain_gdf, npartitions):
+        """On a random stand: no out-of-region tree is removed, every retained
+        pair with an in-region tree clears the spacing, and the result does not
+        depend on partitioning."""
+        rng = np.random.default_rng(7)
+        n = 400
+        df = _trees(
+            list(
+                zip(
+                    range(n),
+                    rng.uniform(-40, 40, n),
+                    rng.uniform(-40, 40, n),
+                    rng.uniform(5, 60, n),
+                    rng.uniform(0.5, 3.0, n),
+                )
+            )
+        )
+        region = box(-15, -15, 15, 15)
+        spacing = 2.0
+        out = apply_treatments(
+            _ddf(df, npartitions),
+            [_spacing(value=spacing, conditions=[_within(region)])],
+            spacing_domain_gdf,
+        ).compute()
+
+        inside = gpd.GeoSeries(gpd.points_from_xy(df.x, df.y)).within(region)
+        assert set(df.tree_id[~inside]) <= set(out.tree_id)
+        assert len(out) < len(df)
+
+        kept = out.set_index("tree_id")
+        kept_inside = set(df.tree_id[inside]) & set(kept.index)
+        for i in kept_inside:
+            for j in kept.index:
+                if i != j:
+                    assert _gap(kept, i, j) >= spacing - 1e-9
+
+        single = apply_treatments(
+            _ddf(df, 1),
+            [_spacing(value=spacing, conditions=[_within(region)])],
+            spacing_domain_gdf,
+        ).compute()
+        assert set(out.tree_id) == set(single.tree_id)
+
+    def test_inventory_wide_area_limit(self, big_domain_gdf):
+        df = _trees([(1, 0.0, 0.0, 30.0, 1.0)])
+        with pytest.raises(ProcessingError) as exc:
+            apply_treatments(_ddf(df, 1), [_spacing()], big_domain_gdf)
+        assert exc.value.code == "TREATMENT_AREA_TOO_LARGE"
+        assert "crown-spacing" in exc.value.message
+
+
+class TestCrownRadii:
+    """Radius source resolution and the missing-radius rule."""
+
+    @pytest.fixture
+    def fia_trees(self):
+        return pd.DataFrame(
+            {
+                "x": [0.0, 10.0, 20.0],
+                "y": [0.0, 0.0, 0.0],
+                "fia_species_code": [202, 122, 202],
+                "dbh": [20.0, 30.0, 40.0],
+                "height": [15.0, 20.0, 25.0],
+                "crown_base_height": [5.0, 8.0, 10.0],
+            }
+        )
+
+    @pytest.mark.parametrize("equations", ["purves", "crookston_stage"])
+    def test_allometry_matches_core(self, fia_trees, equations):
+        radius = crown_radii(fia_trees, {"type": "allometry", "equations": equations})
+        np.testing.assert_allclose(
+            radius, max_crown_radius(fia_trees, equations=equations)
+        )
+
+    def test_column_is_read(self, fia_trees):
+        fia_trees["crown_radius"] = [1.0, 2.0, 3.0]
+        radius = crown_radii(
+            fia_trees, {"type": "inventory_column", "column": "crown_radius"}
+        )
+        np.testing.assert_array_equal(radius, [1.0, 2.0, 3.0])
+
+    def test_null_column_value_uses_purves(self, fia_trees):
+        fia_trees["crown_radius"] = pd.array([1.0, None, 3.0], dtype="Float64")
+        radius = crown_radii(
+            fia_trees, {"type": "inventory_column", "column": "crown_radius"}
+        )
+        purves = max_crown_radius(fia_trees, equations="purves")
+        np.testing.assert_allclose(radius, [1.0, purves[1], 3.0])
+
+    def test_null_column_value_without_purves_inputs_fails(self):
+        chm = pd.DataFrame({"x": [0.0, 1.0], "y": [0.0, 0.0], "height": [10.0, 12.0]})
+        chm["crown_radius"] = [1.0, np.nan]
+        with pytest.raises(ProcessingError) as exc:
+            crown_radii(chm, {"type": "inventory_column", "column": "crown_radius"})
+        assert exc.value.code == "CROWN_RADIUS_UNAVAILABLE"
+        assert "crown_radius" in exc.value.message
+
+    def test_allometry_null_input_fails(self, fia_trees):
+        """Core would give a tree with no dbh a Purves radius of 0."""
+        fia_trees.loc[1, "dbh"] = np.nan
+        with pytest.raises(ProcessingError) as exc:
+            crown_radii(fia_trees, {"type": "allometry", "equations": "purves"})
+        assert exc.value.code == "CROWN_RADIUS_UNAVAILABLE"
+        assert "dbh" in exc.value.message
+
+    def test_allometry_unknown_species_fails(self, fia_trees):
+        fia_trees.loc[1, "fia_species_code"] = 99999
+        with pytest.raises(ProcessingError) as exc:
+            crown_radii(fia_trees, {"type": "allometry", "equations": "purves"})
+        assert exc.value.code == "CROWN_RADIUS_UNAVAILABLE"
+
+    def test_negative_radius_fails(self, spacing_domain_gdf):
+        df = _trees([(1, 0.0, 0.0, 30.0, -1.0), (2, 5.0, 0.0, 20.0, 1.0)])
+        with pytest.raises(ProcessingError) as exc:
+            apply_treatments(_ddf(df, 1), [_spacing()], spacing_domain_gdf)
+        assert exc.value.code == "INVALID_TREATMENT_INPUT"
+
+
+class TestTreatmentColumns:
+    """The per-treatment column check runs before any compute."""
+
+    @pytest.fixture
+    def chm_df(self):
+        """A CHM-derived inventory: position, height, and segmented radius."""
+        return pd.DataFrame(
+            {
+                "tree_id": [1, 2, 3],
+                "x": [0.0, 2.0, 10.0],
+                "y": [0.0, 0.0, 0.0],
+                "height": [20.0, 15.0, 10.0],
+                "crown_radius": [1.0, 1.0, 1.0],
+            }
+        )
+
+    def test_diameter_on_chm_rejected(self, chm_df, spacing_domain_gdf):
+        with pytest.raises(ProcessingError) as exc:
+            apply_treatments(
+                _ddf(chm_df, 1),
+                [{"metric": "diameter", "method": "from_below", "value": 10.0}],
+                spacing_domain_gdf,
+            )
+        assert exc.value.code == "TREATMENT_COLUMNS_MISSING"
+        assert "dbh" in exc.value.message
+
+    def test_default_crown_spacing_on_chm_rejected(self, chm_df, spacing_domain_gdf):
+        """The default dbh ranking and Purves radius read columns CHM lacks."""
+        treatment = _spacing(radius={"type": "allometry", "equations": "purves"})
+        with pytest.raises(ProcessingError) as exc:
+            apply_treatments(_ddf(chm_df, 1), [treatment], spacing_domain_gdf)
+        assert exc.value.code == "TREATMENT_COLUMNS_MISSING"
+
+    def test_height_ranked_crown_spacing_on_chm(self, chm_df, spacing_domain_gdf):
+        out = apply_treatments(
+            _ddf(chm_df, 1), [_spacing(rank_by="height")], spacing_domain_gdf
+        )
+        assert _kept_ids(out) == {1, 3}

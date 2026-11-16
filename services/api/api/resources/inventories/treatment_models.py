@@ -4,11 +4,11 @@ api/v2/resources/inventories/treatment_models.py
 Schema models for silvicultural treatments applied to tree inventories.
 
 A treatment thins the stand toward a target metric — a diameter-at-breast-height
-limit or a residual basal area — using a tree-selection method. Treatments are a
+limit, a residual basal area, or a minimum crown spacing. Treatments are a
 create-time field on inventory create requests (parallel to modifications),
-stored on the inventory for reproducibility. Standgen (#103) applies them,
-mapping the variants to fastfuels-core's DirectionalThinTo{DiameterLimit,
-StandBasalArea} and ProportionalThinToBasalArea.
+stored on the inventory for reproducibility. Standgen applies them, mapping the
+variants to fastfuels-core's DirectionalThinTo{DiameterLimit, StandBasalArea},
+ProportionalThinToBasalArea, and ThinToCrownSpacing.
 
 Modeled as a **discriminated union on ``metric``** so each variant carries
 exactly the fields and methods it supports — e.g. ``proportional`` exists only
@@ -22,7 +22,12 @@ from typing import Annotated, ClassVar, Literal
 import pint
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from api.resources.crown_radius import (
+    CanopyAllometryMaxCrownRadiusSource,
+    CanopyMaxCrownRadiusSource,
+)
 from api.resources.inventories.modification_models import InventorySpatialCondition
+from lib.inventory_io import treatment_required_columns
 from lib.units import validate_unit
 
 ureg = pint.UnitRegistry()
@@ -39,6 +44,17 @@ class InventoryTreatmentMethod(StrEnum):
     from_below = "from_below"
     from_above = "from_above"
     proportional = "proportional"
+
+
+class InventoryCrownSpacingRank(StrEnum):
+    """Column that decides which tree survives a crown-spacing conflict.
+
+    - dbh: the larger diameter is kept
+    - height: the taller tree is kept
+    """
+
+    dbh = "dbh"
+    height = "height"
 
 
 class _InventoryTreatmentBase(BaseModel):
@@ -94,6 +110,10 @@ class _InventoryTreatmentBase(BaseModel):
             )
         return self
 
+    def required_columns(self) -> set[str]:
+        """Inventory columns this treatment reads."""
+        return treatment_required_columns(self.model_dump(mode="json"))
+
 
 class InventoryDiameterTreatment(_InventoryTreatmentBase):
     """Thin to a diameter-at-breast-height limit.
@@ -147,7 +167,55 @@ class InventoryBasalAreaTreatment(_InventoryTreatmentBase):
     native_unit: ClassVar[str] = "m**2/ha"
 
 
+class InventoryCrownSpacingTreatment(_InventoryTreatmentBase):
+    """Thin to a minimum crown spacing.
+
+    Leaves every retained crown at least ``value`` apart, edge to edge, in plan
+    view. Trees are visited from the largest ``rank_by`` value down, and each is
+    kept only if its crown clears every crown already kept.
+
+    With ``conditions``, only trees whose stem is in the region can be removed.
+    Trees outside the region are never removed, but trees inside it must still
+    clear their crowns.
+    """
+
+    metric: Literal["crown_spacing"] = "crown_spacing"
+    value: float = Field(
+        ...,
+        gt=0,
+        description=(
+            "Minimum horizontal gap between retained crowns, crown edge to crown "
+            "edge, in m unless `unit` is set."
+        ),
+    )
+    rank_by: InventoryCrownSpacingRank = Field(
+        default=InventoryCrownSpacingRank.dbh,
+        description=(
+            "Which tree is kept when two crowns are too close: `dbh` keeps the "
+            "larger diameter, `height` keeps the taller tree. Use `height` for "
+            "inventories without a `dbh` column."
+        ),
+    )
+    max_crown_radius_source: CanopyMaxCrownRadiusSource = Field(
+        default_factory=CanopyAllometryMaxCrownRadiusSource,
+        description=(
+            "Source of each tree's crown radius. Defaults to the `purves` "
+            "allometry, the same default as tree voxelization. Set "
+            '`{"type": "allometry", "equations": "crookston_stage"}` for '
+            'FuelCalc crown widths, or `{"type": "inventory_column", "column": '
+            '"crown_radius"}` to read a measured radius in meters. Trees with no '
+            "value in the column use their `purves` radius. To keep thinned "
+            "crowns from overlapping in a voxelized or canopy grid, build the "
+            "grid with the same radius source."
+        ),
+    )
+
+    native_unit: ClassVar[str] = "m"
+
+
 InventoryTreatment = Annotated[
-    InventoryDiameterTreatment | InventoryBasalAreaTreatment,
+    InventoryDiameterTreatment
+    | InventoryBasalAreaTreatment
+    | InventoryCrownSpacingTreatment,
     Field(discriminator="metric"),
 ]

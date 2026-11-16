@@ -21,6 +21,13 @@ on:
       - 'services/lib/**'
       - '.github/workflows/walle.yml'
 
+# Runs on the same branch queue instead of overlapping: two overlapping runs
+# race on the deploy (Cloud Run serves whichever finishes last) and on shared
+# test data (#726). Never cancel a run in progress, so every deploy completes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build Docker Image and Push to Artifact Registry
@@ -73,15 +80,6 @@ jobs:
           gcloud run jobs deploy ${{ env.SERVICE_NAME }} \
             --image ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:prod \
             --region ${{ env.REGION }} \
-            --update-env-vars="\
-              DEPLOYMENT_ENV=prod,\
-              GCP_PROJECT=${{ secrets.GCP_PROJECT }},\
-              GCP_REGION=${{ env.REGION }},\
-              GRIDS_BUCKET=${{ secrets.GRIDS_BUCKET }},\
-              EXPORTS_BUCKET=${{ secrets.EXPORTS_BUCKET }},\
-              INVENTORIES_BUCKET=${{ secrets.INVENTORIES_BUCKET }},\
-              FEATURES_BUCKET=${{ secrets.FEATURES_BUCKET }},\
-              POINT_CLOUDS_BUCKET=${{ secrets.POINT_CLOUDS_BUCKET }}" \
             --quiet
 
   test:

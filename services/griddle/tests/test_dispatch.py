@@ -1089,7 +1089,9 @@ class TestDispatchHandlerCanopy:
 
         result = dispatch_handler(grid, mock_gdf, progress)
 
-        mock_handle_canopy.assert_called_once_with(mock_gdf, grid["source"], progress)
+        mock_handle_canopy.assert_called_once_with(
+            mock_gdf, grid["source"], progress, domain_id="test-domain-id"
+        )
         assert result == mock_result
 
 

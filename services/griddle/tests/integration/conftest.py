@@ -247,6 +247,7 @@ def griddle_runner():
         timeout: int = 300,
         source_overrides: dict | None = None,
         feature_file: str | None = None,
+        feature_gdf: gpd.GeoDataFrame | None = None,
         feature_id: str | None = None,
         feature_doc: bool = False,
         feature_type: str = "road",
@@ -272,13 +273,18 @@ def griddle_runner():
         # convert in-memory and upload the Parquet form to GCS — the
         # on-disk fixture format and production storage format are
         # deliberately decoupled.
-        if feature_file is not None:
+        # ``feature_gdf`` stages an in-memory GeoDataFrame (domain CRS) the
+        # same way, for synthetic features with no on-disk fixture.
+        if feature_file is not None or feature_gdf is not None:
             if feature_id is None:
                 feature_id = f"test-{uuid4().hex}"
             feature_gcs_path = (
                 f"gs://{FEATURES_BUCKET}/{domain_id}/{feature_id}.parquet"
             )
-            gdf = gpd.read_file(FEATURES_DIR / feature_file)
+            if feature_gdf is not None:
+                gdf = feature_gdf
+            else:
+                gdf = gpd.read_file(FEATURES_DIR / feature_file)
             with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
                 tmp_path = tmp.name
             try:

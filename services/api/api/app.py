@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 
 from api.auth import authenticate_user
+from api.dependencies import API_PREFIX
 from api.resources.applications.router import router as applications_router
 from api.resources.band_metadata import BAND_METADATA_DOC
 from api.resources.domains.router import router as domain_router
@@ -55,10 +56,9 @@ API_DESCRIPTION = """
 A JSON API for generating high-resolution 3D fuel inputs for physics-based
 wildfire simulation models such as **QUIC-Fire**, **FIRETEC**, and **FDS**.
 
-> ⚠️ **Beta — under active development.** v2 is a ground-up redesign of the
-> FastFuels API. Endpoints, request/response schemas, and resource semantics
-> may change without notice while the API is in beta. Pin to a specific
-> deployment and follow the changelog if you are building against it.
+> **Release candidate.** v2 is a ground-up redesign of the FastFuels API.
+> Endpoints, request/response schemas, and resource semantics may still change
+> before the 2.0.0 release.
 
 ## What's here
 
@@ -174,13 +174,17 @@ app = FastAPI(
     title="FastFuels API",
     summary="3D fuels for next-generation fire behavior models.",
     description=API_DESCRIPTION,
-    version="2.0.0-beta",
+    version="2.0.0-rc.1",
     license_info={
         "name": "MIT",
         "url": "https://github.com/silvxlabs/FastFuels-API-v2/blob/main/LICENSE",
     },
     openapi_tags=OPENAPI_TAGS,
     separate_input_output_schemas=False,
+    docs_url=f"{API_PREFIX}/docs",
+    redoc_url=f"{API_PREFIX}/redoc",
+    openapi_url=f"{API_PREFIX}/openapi.json",
+    swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect",
 )
 
 # Every response header the API sets that a browser client needs to read. Only
@@ -233,54 +237,6 @@ app.add_middleware(SkipDispatchMiddleware)
 api_router = APIRouter()
 
 
-@app.get(
-    "/",
-    tags=["Index"],
-    summary="Welcome / service metadata",
-    description="Returns service metadata, documentation links, and the current "
-    "deployment status. Useful as a liveness check and as a starting "
-    "point for discovering the API.",
-)
-async def index():
-    return {
-        "name": "FastFuels API",
-        "version": app.version,
-        "status": "beta",
-        "message": (
-            "Welcome to FastFuels v2 — the next-generation API for 3D fuels. "
-            "v2 is in active development; schemas and endpoints may change "
-            "without notice."
-        ),
-        "environment": DEPLOYMENT_ENV,
-        "documentation": {
-            "swagger": {
-                "url": "/docs",
-                "description": "Interactive API documentation (Swagger UI).",
-            },
-            "redoc": {
-                "url": "/redoc",
-                "description": "Static API documentation (ReDoc).",
-            },
-            "openapi": {
-                "url": "/openapi.json",
-                "description": "Raw OpenAPI 3.1 schema.",
-            },
-            "repository": {
-                "url": "https://github.com/silvxlabs/FastFuels-API-v2",
-                "description": "Source code, design docs, and changelog.",
-            },
-        },
-        "webApplication": {
-            "url": "https://beta-app-fastfuels-silvxlabs.web.app",
-            "description": "Beta web application for creating, editing, and visualizing FastFuels v2 data.",
-        },
-        "feedback": {
-            "issues": "https://github.com/silvxlabs/FastFuels-API-v2/issues",
-            "email": "support.fastfuels@silvxlabs.com",
-        },
-    }
-
-
 # Include resource routers
 api_router.include_router(domain_router, prefix="/domains", tags=["Domains"])
 api_router.include_router(exports_router, prefix="/exports", tags=["Exports"])
@@ -324,8 +280,66 @@ api_router.include_router(
     features_router, prefix="/domains/{domain_id}/features", tags=["Features"]
 )
 
+
+@app.get(
+    API_PREFIX,
+    tags=["Index"],
+    summary="Welcome / service metadata",
+    description="Returns service metadata, documentation links, and the current "
+    "deployment status. Useful as a liveness check and as a starting "
+    "point for discovering the API.",
+)
+async def index():
+    return {
+        "name": "FastFuels API",
+        "version": app.version,
+        "status": "release_candidate",
+        "message": (
+            "Welcome to FastFuels v2 — the next-generation API for 3D fuels. "
+            "v2 is a release candidate; schemas and endpoints may still change "
+            "before 2.0.0."
+        ),
+        "environment": DEPLOYMENT_ENV,
+        "documentation": {
+            "swagger": {
+                "url": f"{API_PREFIX}/docs",
+                "description": "Interactive API documentation (Swagger UI).",
+            },
+            "redoc": {
+                "url": f"{API_PREFIX}/redoc",
+                "description": "Static API documentation (ReDoc).",
+            },
+            "openapi": {
+                "url": f"{API_PREFIX}/openapi.json",
+                "description": "Raw OpenAPI 3.1 schema.",
+            },
+            "repository": {
+                "url": "https://github.com/silvxlabs/FastFuels-API-v2",
+                "description": "Source code, design docs, and changelog.",
+            },
+        },
+        "web_application": {
+            "url": "https://app.fastfuels.silvxlabs.com",
+            "description": "Web application for creating, editing, and visualizing FastFuels v2 data.",
+        },
+        "feedback": {
+            "issues": "https://github.com/silvxlabs/FastFuels-API-v2/issues",
+            "email": "support.fastfuels@silvxlabs.com",
+        },
+    }
+
+
 # Include router with authentication middleware
-app.include_router(api_router, dependencies=[Depends(authenticate_user)])
+app.include_router(
+    api_router, prefix=API_PREFIX, dependencies=[Depends(authenticate_user)]
+)
+
+# Migration window: the pre-/v2 root paths keep working on the run.app URL (the load
+# balancer forwards only /v2) and are left out of OpenAPI. Remove this include to end
+# the window, before locking ingress to the load balancer.
+app.include_router(
+    api_router, dependencies=[Depends(authenticate_user)], include_in_schema=False
+)
 
 
 # Simplify operation IDs

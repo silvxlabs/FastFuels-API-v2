@@ -712,7 +712,7 @@ async def _read_inventory_partition(
             )
 
     partition = meta.partitions[partition_index]
-    df = await read_partition(inventory_id, partition.path, columns=requested_columns)
+    df = await read_partition(inventory_id, partition, columns=requested_columns)
     return df, meta
 
 

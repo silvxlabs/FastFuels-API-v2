@@ -98,8 +98,9 @@ DEPLOYMENT_ENV=prod uv run pytest tests/integration/ -n auto -v
 ## Static Test Data
 
 Static fixtures live in GCS at `gs://{GRIDS_BUCKET}/static-test-*`. They are
-created by the API e2e module (`services/api/tests/e2e/`) and should never be
-deleted by integration test cleanup. Regenerate when:
+published by the API e2e module (`services/api/tests/e2e/`) when it runs with
+`E2E_PUBLISH_FIXTURES=1` (see its README), and should never be deleted by
+integration test cleanup. Regenerate when:
 
 - A handler's output format changes
 - Test domain geometry changes

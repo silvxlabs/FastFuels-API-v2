@@ -231,6 +231,15 @@ class TestCreate3DepTopography:
         assert response.status_code == 201
         assert response.json()["source"]["source_resolution"] == 1
 
+    def test_2m_source_resolution(self, client, domain_for_testing):
+        """Request with 2m source product."""
+        request_body = {"source_resolution": 2, "bands": ["elevation"]}
+
+        response = client.post(self.route(domain_for_testing["id"]), json=request_body)
+
+        assert response.status_code == 201
+        assert response.json()["source"]["source_resolution"] == 2
+
     def test_30m_source_resolution(self, client, domain_for_testing):
         """Request with 30m source product."""
         request_body = {"source_resolution": 30}

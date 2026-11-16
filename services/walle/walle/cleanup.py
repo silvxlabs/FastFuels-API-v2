@@ -12,6 +12,8 @@ idempotent GCS-then-doc routine:
    doc-only).
 5. Stale test resources — an ephemeral ``test-`` doc past a short retention
    window (doc + artifact; test domains are purged doc-only).
+6. Expired test keys — an API key owned by a test owner, once it has expired
+   (doc only).
 
 Docs are deleted synchronously by the API, so orphaned blobs (category 1) are
 the common case; 2 and 3 are the durable backstop and the retention policy; 4
@@ -30,10 +32,12 @@ from datetime import UTC, datetime, timedelta
 
 import firebase_admin
 from firebase_admin import auth as firebase_auth
+from google.cloud.firestore import FieldFilter
 
 from lib.config import (
     APPLICATIONS_COLLECTION,
     DOMAINS_COLLECTION,
+    KEYS_COLLECTION,
     USERS_COLLECTION,
 )
 from lib.firestore.documents import firestore_client
@@ -427,6 +431,25 @@ def find_stale_test(records: list[Record], now: datetime) -> list[Record]:
     ]
 
 
+def find_expired_test_keys(now: datetime) -> list:
+    """References to expired API keys owned by a test owner.
+
+    The key tests mint real keys through the API. Expiry is the dividing line:
+    an expired key can no longer authenticate, and the long-lived shared CI
+    key, also owned by ``test-owner``, is never touched while it is valid.
+    """
+    query = (
+        firestore_client.collection(KEYS_COLLECTION)
+        .where(filter=FieldFilter("expires_on", "<", now))
+        .select(["owner_id"])
+    )
+    return [
+        snap.reference
+        for snap in query.stream()
+        if ((snap.to_dict() or {}).get("owner_id") or "").startswith("test-")
+    ]
+
+
 def find_orphan_blobs(
     layout: ResourceLayout,
     artifacts: dict[str, str],
@@ -664,6 +687,15 @@ def run() -> dict:
                 gcs_deletes=gcs_deletes,
                 doc_deletes=doc_deletes,
             )
+
+    # Expired test keys carry no artifact; delete them with the other docs.
+    test_keys = find_expired_test_keys(now)
+    logger.info("keys: expired test keys=%d", len(test_keys))
+    if TEST_PURGE_DRY_RUN:
+        summary.dry_run["test_key"] += len(test_keys)
+    else:
+        doc_deletes.extend(test_keys)
+        summary.deleted["test_key"] += len(test_keys)
 
     # Execute the accumulated deletes in bulk: every GCS artifact first, then the
     # docs, so a crash between leaves the docs behind for the next run to re-reap.

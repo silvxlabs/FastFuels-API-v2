@@ -12,6 +12,9 @@ from ring import lru
 from api.db.documents import get_document_async
 from lib.config import DOMAINS_COLLECTION
 
+# Every route is served under this prefix; OpenAPI paths include it.
+API_PREFIX = "/v2"
+
 
 @lru(force_asyncio=True, expire=300)
 async def _get_domain(domain_id: str, owner_id: str) -> dict:

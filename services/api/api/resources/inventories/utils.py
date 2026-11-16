@@ -12,28 +12,34 @@ from api.resources.inventories.modification_models import (
 )
 from lib.config import FEATURES_COLLECTION, SUPPORT_EMAIL
 
-# Max area (km²) an inventory-wide basal-area treatment may cover. A basal-area
-# thin holds its whole treated population in memory at once; this bounds that to
-# standgen's worker memory. standgen enforces the same value as its backstop.
+# Max area (km²) an inventory-wide basal-area or crown-spacing treatment may
+# cover. Both thin the whole treated population at once, in memory; this bounds
+# that to standgen's worker memory. standgen enforces the same value as its
+# backstop.
 MAX_TREATMENT_AREA_SQ_KM = 16.0
+
+# Metrics that thin the whole treated population at once, in memory.
+IN_MEMORY_TREATMENT_METRICS = {"basal_area", "crown_spacing"}
 
 
 def validate_inventory_wide_treatment_area(domain: dict, treatments: list) -> None:
-    """Reject an inventory-wide basal-area treatment over a domain too large to
-    thin in memory.
+    """Reject an inventory-wide basal-area or crown-spacing treatment over a
+    domain too large to thin in memory.
 
-    A basal-area treatment holds its entire treated population in memory at once,
-    so the treated area is capped at ``MAX_TREATMENT_AREA_SQ_KM``. Only the
+    These treatments hold their entire treated population in memory at once, so
+    the treated area is capped at ``MAX_TREATMENT_AREA_SQ_KM``. Only the
     inventory-wide case (no spatial conditions) is checked here — its region is
     the whole domain, whose area is the ``bbox`` already stored at domain create.
     Spatially scoped treatments are bounded by their (sub-domain) region and are
     checked by standgen, which resolves their geometry.
 
     Raises:
-        HTTPException(422): If any basal-area treatment without conditions would
-            cover a domain larger than the limit.
+        HTTPException(422): If any such treatment without conditions would cover
+            a domain larger than the limit.
     """
-    if not any(t.metric == "basal_area" and not t.conditions for t in treatments):
+    if not any(
+        t.metric in IN_MEMORY_TREATMENT_METRICS and not t.conditions for t in treatments
+    ):
         return
 
     minx, miny, maxx, maxy = domain["bbox"]
@@ -44,14 +50,56 @@ def validate_inventory_wide_treatment_area(domain: dict, treatments: list) -> No
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         detail=(
-            f"A basal-area treatment thins the whole stand at once, so its entire "
-            f"treated population is held in memory. An inventory-wide treatment "
-            f"would cover this domain's {area_sq_km:.1f} km², above the "
-            f"{MAX_TREATMENT_AREA_SQ_KM:.0f} km² limit. Scope the treatment "
-            f"to a smaller area with a spatial condition, or contact "
-            f"{SUPPORT_EMAIL} to process a larger area."
+            f"Basal-area and crown-spacing treatments thin the whole stand at "
+            f"once, so the entire treated population is held in memory. An "
+            f"inventory-wide treatment would cover this domain's "
+            f"{area_sq_km:.1f} km², above the {MAX_TREATMENT_AREA_SQ_KM:.0f} km² "
+            f"limit. Scope the treatment to a smaller area with a spatial "
+            f"condition, or contact {SUPPORT_EMAIL} to process a larger area."
         ),
     )
+
+
+def validate_treatment_columns(treatments: list, column_keys: set[str]) -> None:
+    """Reject treatments that read a column the inventory does not have.
+
+    Diameter and basal-area treatments need `dbh`; a crown-spacing treatment
+    needs its `rank_by` column and its crown-radius column or allometry inputs
+    (see ``lib.inventory_io.treatment_required_columns``).
+
+    Raises:
+        HTTPException(422): If any treatment needs a missing column.
+    """
+    for index, treatment in enumerate(treatments):
+        missing = sorted(treatment.required_columns() - column_keys)
+        if not missing:
+            continue
+        missing_names = ", ".join(f"`{c}`" for c in missing)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"treatments[{index}] (`{treatment.metric}`) reads "
+                f"{missing_names}, which this inventory does not have."
+                f"{_missing_treatment_columns_hint(treatment, missing)}"
+            ),
+        )
+
+
+def _missing_treatment_columns_hint(treatment, missing: list[str]) -> str:
+    """A next step for the common missing-column cases."""
+    if treatment.metric != "crown_spacing":
+        return (
+            " Inventories without a diameter, such as CHM-derived ones, can be "
+            "thinned with a `crown_spacing` treatment instead."
+        )
+    if "dbh" in missing or "fia_species_code" in missing:
+        return (
+            " For an inventory without diameter or species, such as a "
+            "CHM-derived one with crown segmentation, set `rank_by` to "
+            '`height` and `max_crown_radius_source` to `{"type": '
+            '"inventory_column", "column": "crown_radius"}`.'
+        )
+    return ""
 
 
 async def validate_feature_conditions(

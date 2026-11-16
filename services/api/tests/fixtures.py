@@ -214,6 +214,7 @@ def make_inventory_data(
             {"key": "dbh", "type": "continuous", "unit": "cm"},
             {"key": "height", "type": "continuous", "unit": "m"},
             {"key": "crown_ratio", "type": "continuous", "unit": None},
+            {"key": "crown_base_height", "type": "continuous", "unit": "m"},
         ],
         "georeference": georeference,
         "error": None,

@@ -2,7 +2,6 @@
 api/v2/resources/domains/router.py
 """
 
-import math
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -39,6 +38,7 @@ from api.resources.domains.schema import (
 )
 from api.resources.domains.validate import (
     GUEST_MAX_DOMAIN_AREA_SQ_METERS,
+    lattice_cell_count,
     reproject_features,
     validate_area_within_limits,
     validate_crs,
@@ -642,8 +642,8 @@ async def get_domain_lattice(
     maxx += pad
     maxy += pad
     # North-up lattice anchored at (minx, miny), ceil-covering the padded bounds.
-    width = max(1, math.ceil((maxx - minx) / resolution))
-    height = max(1, math.ceil((maxy - miny) / resolution))
+    width = lattice_cell_count(maxx - minx, resolution)
+    height = lattice_cell_count(maxy - miny, resolution)
     return DomainLattice(
         crs=domain["crs"]["properties"]["name"],
         resolution=resolution,

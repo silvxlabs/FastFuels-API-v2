@@ -20,6 +20,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.spatial import cKDTree
 from shapely.geometry import box
 from standgen.storage import load_grid
 
@@ -339,15 +340,15 @@ def test_higher_crown_ratio_reduces_tree_count(standgen_runner, module_chm_grid)
     )
 
 
-# --- Treatment Rejection ---
+# --- Treatments ---
 
 
-def test_treatment_bearing_chm_inventory_fails(module_chm_grid):
-    """A CHM inventory carrying treatments fails fast (no diameter to thin against).
+def test_diameter_treatment_on_chm_inventory_fails(module_chm_grid):
+    """A CHM inventory carrying a diameter treatment fails before any write.
 
-    The API rejects this at create time; this verifies standgen's defensive guard
-    in case such a document still reaches the worker. The guard fires before the
-    grid is loaded, so the grid contents are irrelevant.
+    CHM extraction has no dbh to thin against. The API rejects this at create
+    time; this verifies standgen's column check in case such a document still
+    reaches the worker.
     """
     domain_data = load_json(DOMAINS_DIR / "blackfoot.json")
     domain_id = f"test-{uuid4().hex}"
@@ -377,7 +378,7 @@ def test_treatment_bearing_chm_inventory_fails(module_chm_grid):
         _, snapshot = get_document(INVENTORIES_COLLECTION, inv_id)
         inventory = snapshot.to_dict()
         assert inventory["status"] == "failed"
-        assert inventory["error"]["code"] == "TREATMENTS_NOT_SUPPORTED_FOR_CHM"
+        assert inventory["error"]["code"] == "TREATMENT_COLUMNS_MISSING"
     finally:
         gcs_path = f"gs://{INVENTORIES_BUCKET}/{inv_id}"
         if exists(gcs_path):
@@ -446,3 +447,30 @@ def test_crown_segmentation_adds_crown_radius(
     summary = {c["key"]: c["summary"] for c in runs[0]["columns"]}["crown_radius"]
     assert summary["count"] == len(df)
     assert summary["null_count"] == 0
+
+
+def test_crown_spacing_on_segmented_crowns(standgen_runner, module_chm_grid):
+    """A crown-spacing thin ranked by height on the segmented crown_radius
+    leaves every retained crown at least `value` from every other."""
+    spacing = 2.0
+    inv = standgen_runner(
+        "blackfoot.json",
+        "chm_lmf_crown_segmentation.json",
+        source_chm_grid_id=module_chm_grid,
+    )
+    untreated = len(dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{inv['id']}"))
+
+    treated = standgen_runner(
+        "blackfoot.json",
+        "chm_lmf_crown_segmentation_crown_spacing.json",
+        source_chm_grid_id=module_chm_grid,
+    )
+    df = dd.read_parquet(f"gs://{INVENTORIES_BUCKET}/{treated['id']}").compute()
+    assert 0 < len(df) < untreated
+
+    xy = df[["x", "y"]].to_numpy()
+    radius = df["crown_radius"].to_numpy()
+    pairs = cKDTree(xy).query_pairs(spacing + 2 * radius.max(), output_type="ndarray")
+    i, j = pairs[:, 0], pairs[:, 1]
+    gaps = np.hypot(*(xy[i] - xy[j]).T) - radius[i] - radius[j]
+    assert (gaps >= spacing - 1e-6).all()

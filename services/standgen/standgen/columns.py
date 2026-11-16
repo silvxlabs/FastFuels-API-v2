@@ -9,6 +9,7 @@ RENAME_MAP = {
     "DIA": "dbh",
     "HT": "height",
     "CR": "crown_ratio",
+    "CBH": "crown_base_height",
     "X": "x",
     "Y": "y",
 }
@@ -24,6 +25,7 @@ BASE_COLUMNS = [
     "dbh",
     "height",
     "crown_ratio",
+    "crown_base_height",
 ]
 
 TREE_ID_COLUMN = "tree_id"

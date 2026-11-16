@@ -45,6 +45,7 @@ def test_happy_path(
     mock_load_domain.return_value = MagicMock()
     mock_dispatch.return_value = {
         "georeference": {"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
+        "attributions": [{"dataset": "OpenStreetMap"}],
     }
     mock_feature_size.return_value = 4096
 
@@ -61,7 +62,40 @@ def test_happy_path(
         "completed",
         georeference={"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
         size_bytes=4096,
+        attributions=[{"dataset": "OpenStreetMap"}],
+        release=None,
     )
+
+
+@patch("etcher.main.feature_size")
+@patch("etcher.main._load_domain")
+@patch("etcher.main.dispatch_handler")
+@patch("etcher.main.update_status")
+@patch("etcher.main.load_feature")
+def test_happy_path_passes_release(
+    mock_load,
+    mock_status,
+    mock_dispatch,
+    mock_load_domain,
+    mock_feature_size,
+    mock_feature,
+):
+    """A handler-returned release is recorded on completion."""
+    from etcher.main import process_feature_request
+
+    mock_load.return_value = mock_feature
+    mock_load_domain.return_value = MagicMock()
+    mock_dispatch.return_value = {
+        "georeference": {"crs": "EPSG:32610", "bounds": [0, 0, 1000, 1000]},
+        "attributions": [],
+        "release": "2026-10-21.0",
+    }
+    mock_feature_size.return_value = 4096
+
+    process_feature_request(MockRequest({"id": "test-feature-123"}))
+
+    completed = [c for c in mock_status.call_args_list if c.args[1] == "completed"]
+    assert completed[0].kwargs["release"] == "2026-10-21.0"
 
 
 def test_missing_id():
@@ -188,3 +222,55 @@ def test_cancelled_before_processing(mock_load, mock_status, mock_feature):
     response, status_code = process_feature_request(request)
 
     assert status_code == 200
+
+
+@patch("etcher.main.update_document")
+def test_update_status_completed_writes_attributions(mock_update):
+    from etcher.main import update_status
+
+    attributions = [{"dataset": "OpenStreetMap"}]
+    update_status("f-1", "completed", attributions=attributions)
+
+    data = mock_update.call_args.args[2]
+    assert data["status"] == "completed"
+    assert data["attributions"] == attributions
+
+
+@patch("etcher.main.update_document")
+def test_update_status_completed_defaults_attributions_empty(mock_update):
+    from etcher.main import update_status
+
+    update_status("f-1", "completed")
+
+    assert mock_update.call_args.args[2]["attributions"] == []
+
+
+@patch("etcher.main.update_document")
+def test_update_status_running_omits_attributions(mock_update):
+    from etcher.main import update_status
+
+    update_status("f-1", "running")
+
+    assert "attributions" not in mock_update.call_args.args[2]
+
+
+@patch("etcher.main.update_document")
+def test_update_status_writes_release_as_nested_field(mock_update):
+    """The release is a dotted-path update, so other source fields survive."""
+    from etcher.main import update_status
+
+    update_status("f-1", "completed", release="2026-10-21.0")
+
+    data = mock_update.call_args.args[2]
+    assert data["source.release"] == "2026-10-21.0"
+    assert "source" not in data
+
+
+@patch("etcher.main.update_document")
+def test_update_status_without_release_leaves_source_alone(mock_update):
+    from etcher.main import update_status
+
+    update_status("f-1", "completed")
+
+    data = mock_update.call_args.args[2]
+    assert not any(key.startswith("source") for key in data)

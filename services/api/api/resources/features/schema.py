@@ -4,11 +4,14 @@ api/v2/resources/features/schema.py
 Core schema models for the Feature resource.
 """
 
+import math
 from datetime import datetime
 from enum import StrEnum
 
+from geojson_pydantic.geometries import MultiPolygon, Polygon
 from pydantic import BaseModel, Field
 
+from api.resources.attribution import Attribution
 from api.schema import JobError, JobProgress, JobStatus, PaginatedResponse
 
 
@@ -19,6 +22,28 @@ class FeatureType(StrEnum):
     water = "water"
     layerset = "layerset"
     crown = "crown"
+    building = "building"
+
+
+def require_finite_coordinates(
+    geometry: Polygon | MultiPolygon,
+) -> Polygon | MultiPolygon:
+    """Raise ``ValueError`` if any coordinate of ``geometry`` is inf or NaN."""
+    polygons = (
+        geometry.coordinates
+        if isinstance(geometry, MultiPolygon)
+        else [geometry.coordinates]
+    )
+    values = (
+        value
+        for polygon in polygons
+        for ring in polygon
+        for position in ring
+        for value in position
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("Coordinates must be finite numbers, not Infinity or NaN.")
+    return geometry
 
 
 class FeatureSortField(StrEnum):
@@ -83,6 +108,14 @@ class Feature(BaseModel):
         description="Error details if status is 'failed'.",
     )
     tags: list[str] = Field(default_factory=list)
+    attributions: list[Attribution] = Field(
+        default_factory=list,
+        description=(
+            "Licenses and citations for the third-party data this feature was "
+            "built from. Reproduce each `citation` wherever you use or share "
+            "the data. Empty if none are recorded."
+        ),
+    )
 
 
 class ListFeaturesResponse(PaginatedResponse):

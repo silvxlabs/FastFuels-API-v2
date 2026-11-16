@@ -2,6 +2,10 @@
 api/v2/resources/inventories/cache.py
 
 Cached async parquet metadata access for inventory data streaming.
+
+A data partition is one Parquet row group. Writers cap row groups at 50k rows
+(#763); older inventories have one row group per file, so their partitions are
+the same as when a partition was a whole file.
 """
 
 import asyncio
@@ -19,6 +23,7 @@ class PartitionMeta:
     index: int
     num_rows: int
     path: str
+    row_group: int
 
 
 @dataclass
@@ -36,18 +41,27 @@ def _read_metadata_sync(inventory_id: str) -> InventoryMeta:
 
 
 def _parse_metadata(metadata: pq.FileMetaData) -> InventoryMeta:
-    partitions_by_path: dict[str, int] = {}
+    """Enumerate ``_metadata`` row groups as partitions, ordered by file path
+    and then by row-group order within the file.
+
+    The aggregated ``_metadata`` appends each file's row groups in file order,
+    so the n-th entry for a path is row group n of that file.
+    """
+    row_groups_by_path: dict[str, list[int]] = {}
     for i in range(metadata.num_row_groups):
         rg = metadata.row_group(i)
-        path = rg.column(0).file_path
-        partitions_by_path[path] = partitions_by_path.get(path, 0) + rg.num_rows
+        row_groups_by_path.setdefault(rg.column(0).file_path, []).append(rg.num_rows)
 
     columns = metadata.schema.to_arrow_schema().names
 
-    sorted_paths = sorted(partitions_by_path.keys())
+    ordered = [
+        (path, row_group, num_rows)
+        for path in sorted(row_groups_by_path)
+        for row_group, num_rows in enumerate(row_groups_by_path[path])
+    ]
     partitions = [
-        PartitionMeta(index=idx, num_rows=partitions_by_path[path], path=path)
-        for idx, path in enumerate(sorted_paths)
+        PartitionMeta(index=idx, num_rows=num_rows, path=path, row_group=row_group)
+        for idx, (path, row_group, num_rows) in enumerate(ordered)
     ]
 
     return InventoryMeta(
@@ -75,10 +89,23 @@ async def get_inventory_metadata(
     return await asyncio.to_thread(_read_metadata_sync, inventory_id)
 
 
+def _read_row_group_sync(
+    path: str, row_group: int, columns: list[str] | None
+) -> pd.DataFrame:
+    # pyarrow's native GCS filesystem, not a sync gcsfs client (#265).
+    # pre_buffer coalesces column-chunk reads, as pd.read_parquet does.
+    with pq.ParquetFile(path, pre_buffer=True) as pf:
+        table = pf.read_row_group(row_group, columns=columns, use_pandas_metadata=True)
+    return table.to_pandas()
+
+
 async def read_partition(
     inventory_id: str,
-    partition_path: str,
+    partition: PartitionMeta,
     columns: list[str] | None = None,
 ) -> pd.DataFrame:
-    path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}/{partition_path}"
-    return await asyncio.to_thread(pd.read_parquet, path, columns=columns)
+    """Read one partition (a single row group of one file) from GCS."""
+    path = f"gs://{INVENTORIES_BUCKET}/{inventory_id}/{partition.path}"
+    return await asyncio.to_thread(
+        _read_row_group_sync, path, partition.row_group, columns
+    )

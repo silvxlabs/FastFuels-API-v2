@@ -325,6 +325,40 @@ class TestCreateCompose:
         stored = response.json()["source"]["operations"][0]["conditions"][0]["value"]
         assert stored == 101
 
+    def test_geometry_condition_coordinates_round_trip(
+        self, client, domain_for_testing, complete_grid
+    ):
+        ring = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 0.0]]
+        body = {
+            "inputs": [{"grid_id": complete_grid["id"], "alias": "a"}],
+            "operations": [
+                {
+                    "type": "select",
+                    "output": "fuel_load.1hr",
+                    "from": "a.fuel_load.1hr",
+                    "conditions": [
+                        {
+                            "source": "geometry",
+                            "operator": "within",
+                            "geometry": {"type": "Polygon", "coordinates": [ring]},
+                        }
+                    ],
+                    "else": 0,
+                }
+            ],
+        }
+
+        created = client.post(_route(domain_for_testing["id"]), json=body)
+        assert created.status_code == 201, created.json()
+        fetched = client.get(
+            f"/domains/{domain_for_testing['id']}/grids/{created.json()['id']}"
+        )
+        assert fetched.status_code == 200, fetched.json()
+
+        for grid in (created.json(), fetched.json()):
+            geometry = grid["source"]["operations"][0]["conditions"][0]["geometry"]
+            assert geometry["coordinates"] == [ring]
+
     def test_unknown_fbfm_label_returns_422(
         self, client, domain_for_testing, complete_grid
     ):

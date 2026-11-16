@@ -560,6 +560,48 @@ def test_feature_not_ready():
     assert exc.value.code == "FEATURE_NOT_READY"
 
 
+@pytest.mark.parametrize(
+    "operator, target, expected",
+    [
+        ("within", "centroid", 1.0),
+        ("intersects", "centroid", 1.0),
+        ("within", "cell", 1.0),
+        ("intersects", "cell", 1.0),
+        ("outside", "centroid", 0.0),
+        ("outside", "cell", 0.0),
+    ],
+)
+def test_feature_empty_is_empty_geometry(operator, target, expected):
+    """A feature with no rows (e.g. OSM water over a domain with none) selects
+    no cells with within/intersects and every cell with outside. The empty
+    parquet carries no CRS and a buffer is requested, so the reproject/buffer
+    steps must be skipped."""
+    ds = _flat_dataset(1.0)
+    mods = [
+        {
+            "conditions": [
+                {
+                    "source": "feature",
+                    "operator": operator,
+                    "target": target,
+                    "feature_id": "f1",
+                    "buffer_m": 5,
+                }
+            ],
+            "actions": [{"band": "fuel_load.1hr", "modifier": "replace", "value": 0.0}],
+        }
+    ]
+    with (
+        patch("griddle.modifications.get_document", return_value=_patch_feature()),
+        patch(
+            "griddle.modifications.gpd.read_parquet",
+            return_value=gpd.GeoDataFrame(geometry=[]),
+        ),
+    ):
+        apply_modifications(ds, mods, "d")
+    assert (ds["fuel_load.1hr"].values == expected).all()
+
+
 # ----------------------------------------------------- feature cache
 
 
@@ -603,6 +645,66 @@ def test_feature_cache_reads_once_per_buffer():
 
     assert mock_get.call_count == 1
     assert mock_read.call_count == 1
+
+
+def test_building_feature_marks_footprints_non_burnable(tmp_path):
+    """A building Feature (Polygon and MultiPolygon footprints carrying etcher's
+    height columns) reclassifies exactly the cells whose centers fall inside a
+    footprint."""
+    arr = np.full(GRID_SHAPE, 165, dtype=np.int16)  # TU5
+    ds = xr.Dataset({"fbfm": xr.DataArray(arr, dims=["y", "x"])})
+    ds = ds.rio.write_crs(GRID_CRS).rio.write_transform(GRID_TRANSFORM)
+
+    # Footprints sit on cell edges, so every cell center is clearly in or out.
+    buildings = gpd.GeoDataFrame(
+        {
+            "height": [6.5, None],
+            "height_source": ["OpenStreetMap", None],
+            "source_dataset": ["OpenStreetMap", "Microsoft ML Buildings"],
+        },
+        geometry=[
+            Polygon([(1, 6), (4, 6), (4, 9), (1, 9)]),
+            MultiPolygon(
+                [
+                    Polygon([(6, 1), (8, 1), (8, 3), (6, 3)]),
+                    Polygon([(8, 6), (9, 6), (9, 8), (8, 8)]),
+                ]
+            ),
+        ],
+        crs=GRID_CRS,
+    )
+    parquet_path = tmp_path / "building.parquet"
+    buildings.to_parquet(parquet_path)
+
+    mods = [
+        {
+            "conditions": [
+                {"source": "feature", "operator": "within", "feature_id": "b1"}
+            ],
+            "actions": [{"band": "fbfm", "modifier": "replace", "value": 91}],
+        }
+    ]
+    with (
+        patch(
+            "griddle.modifications.get_document",
+            return_value=_patch_feature(),
+        ),
+        patch(
+            "griddle.modifications.gpd.read_parquet",
+            return_value=gpd.read_parquet(parquet_path),
+        ),
+    ):
+        apply_modifications(ds, mods, "d")
+
+    # Rows count down from y=10, so y in [6, 9] is rows 1-3.
+    expected = np.zeros(GRID_SHAPE, dtype=bool)
+    expected[1:4, 1:4] = True
+    expected[7:9, 6:8] = True
+    expected[2:4, 8] = True
+    values = ds["fbfm"].values
+    assert values.dtype == np.int16
+    np.testing.assert_array_equal(values == 91, expected)
+    assert (values[~expected] == 165).all()
 
 
 # ----------------------------------------------- multi-modification

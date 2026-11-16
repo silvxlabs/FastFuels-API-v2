@@ -264,7 +264,7 @@ class TestLandfireCoverage:
         assert create["method"] == "POST"
         assert (
             create["href"]
-            == f"/domains/{lfps_covered_domain['id']}/grids/fbfm40/landfire"
+            == f"/v2/domains/{lfps_covered_domain['id']}/grids/fbfm40/landfire"
         )
         assert create["body"]["version"] == latest["version"]
 

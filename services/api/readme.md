@@ -24,7 +24,7 @@ uv sync
 uv run python -m api.main
 ```
 
-The server starts at `http://127.0.0.1:8080`. Append `/docs` for the interactive OpenAPI documentation.
+The server starts at `http://127.0.0.1:8080`; every route is under `/v2`. Open `/v2/docs` for the interactive OpenAPI documentation.
 
 ### Environment Variables
 

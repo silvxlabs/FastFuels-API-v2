@@ -212,8 +212,8 @@ class RasterConnection:
         outside the ROI when the destination lattice extends beyond it
         (e.g. ``target='grid'`` aligned to a grid with its own footprint
         buffer, or ``extent_buffer_cells > 0``). The destination footprint
-        is north-up by construction (``alignment.lattice_from_bounds``),
-        so ``e < 0`` and ``a > 0`` here.
+        is north-up (``alignment.lattice_from_bounds``, or a target grid's
+        own north-up lattice), so ``e < 0`` and ``a > 0`` here.
         """
         h, w = destination_shape
         a = destination_transform.a

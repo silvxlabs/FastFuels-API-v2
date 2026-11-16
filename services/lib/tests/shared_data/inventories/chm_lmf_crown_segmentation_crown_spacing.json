@@ -1,0 +1,66 @@
+{
+  "description": "Integration test for LMF CHM extraction with crown segmentation and a crown-spacing treatment",
+  "columns": [
+    {
+      "key": "tree_id",
+      "type": "categorical",
+      "unit": null
+    },
+    {
+      "key": "x",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "y",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "height",
+      "type": "continuous",
+      "unit": "m"
+    },
+    {
+      "key": "crown_radius",
+      "type": "continuous",
+      "unit": "m"
+    }
+  ],
+  "modifications": [],
+  "name": "Test CHM Inventory with crown spacing",
+  "source": {
+    "algorithm": {
+      "footprint_size": 3,
+      "min_height": 2.0,
+      "name": "lmf"
+    },
+    "crown_segmentation": {
+      "method": "dalponte2016",
+      "radius_estimator": "area_equivalent",
+      "min_relative_height": 0.45,
+      "min_relative_crown_height": 0.55,
+      "max_crown_radius": 10.0
+    },
+    "name": "chm",
+    "source_chm_grid_id": "placeholder"
+  },
+  "tags": [
+    "test"
+  ],
+  "type": "tree",
+  "treatments": [
+    {
+      "metric": "crown_spacing",
+      "value": 2.0,
+      "unit": null,
+      "rank_by": "height",
+      "max_crown_radius_source": {
+        "type": "inventory_column",
+        "column": "crown_radius",
+        "unit": "m"
+      },
+      "conditions": []
+    }
+  ]
+}

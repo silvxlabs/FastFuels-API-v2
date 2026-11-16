@@ -112,8 +112,10 @@ class GridGeometrySpatialCondition(BaseModel):
         description=(
             "Which part of each grid cell is tested against the geometry. "
             "`centroid` tests only the cell center point; `cell` tests the "
-            "full cell bounds (any overlap matches). Use `cell` to catch "
-            "every cell a linestring crosses without needing a buffer."
+            "full cell bounds: `intersects` matches any cell the geometry "
+            "touches, `within` only cells entirely inside it, and `outside` "
+            "only cells it does not touch. Use `cell` with `intersects` to "
+            "catch every cell a linestring crosses without needing a buffer."
         ),
     )
 
@@ -150,9 +152,12 @@ class GridFeatureSpatialCondition(BaseModel):
     feature_id: str = Field(
         ...,
         description=(
-            "ID of a Feature resource (road, water, or layerset) hosted in "
+            "ID of a Feature resource (road, water, building, or layerset) hosted in "
             "the same domain as the grid. Cross-domain references are "
-            "rejected; the feature must be in `completed` status."
+            "rejected; the feature must be in `completed` status. A Feature "
+            "with no geometry (e.g. OSM water over a domain with none) "
+            "matches no cells with `within` or `intersects` and every cell "
+            "with `outside`."
         ),
     )
     buffer_m: float | None = Field(
@@ -160,12 +165,11 @@ class GridFeatureSpatialCondition(BaseModel):
         ge=0,
         description=(
             "Optional buffer distance in meters applied to the feature "
-            "geometry (in the domain's projected CRS) before testing. "
-            'With `target="centroid"` (the default), a buffer is '
-            "typically needed for linestring features such as roads "
-            "since a bare linestring rarely passes through a cell "
-            'centroid; `target="cell"` catches every cell the line '
-            "crosses without a buffer."
+            "geometry (in the domain's projected CRS) before testing. Use "
+            "it to widen the selection beyond the feature, e.g. a corridor "
+            "around road polygons. Road features are already polygons (OSM "
+            "roads are buffered to road-class widths), so no buffer is "
+            "needed to cover the road surface itself."
         ),
     )
     target: GridSpatialTarget = Field(
@@ -173,7 +177,9 @@ class GridFeatureSpatialCondition(BaseModel):
         description=(
             "Which part of each grid cell is tested against the geometry. "
             "`centroid` tests only the cell center point; `cell` tests the "
-            "full cell bounds (any overlap matches)."
+            "full cell bounds: `intersects` matches any cell the geometry "
+            "touches, `within` only cells entirely inside it, and `outside` "
+            "only cells it does not touch."
         ),
     )
 
@@ -228,8 +234,9 @@ class GridModification(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
-                # Wipe all surface fuel inside a road Feature (linestring +
-                # target=cell catches every cell the road crosses)
+                # Wipe all surface fuel in every cell a road Feature touches
+                # (intersects + target=cell catches cells whose center lies
+                # outside a narrow road polygon)
                 {
                     "conditions": [
                         {

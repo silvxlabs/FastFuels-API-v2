@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from api.resources.attribution import Attribution
 from api.resources.band_metadata import BAND_QUANTITIES_SCHEMA
 from api.resources.grids.alignment import (
     GridAlignmentDomainTarget,
@@ -137,7 +138,7 @@ class Band(BaseModel):
         description=(
             "Physical unit of the band's pixel values, in UDUNITS-2-conformant "
             "ASCII form with `**` for exponents (e.g. `kg/m**3`, `1/m`, `%`). "
-            "`None` for categorical/identifier bands. See docs/units.md."
+            "`None` for categorical/identifier bands."
         ),
         examples=["kg/m**3", "1/m", "%", "m"],
     )
@@ -345,6 +346,16 @@ class Grid(BaseModel):
     # User organization
     tags: list[str] = Field(default_factory=list)
 
+    attributions: list[Attribution] = Field(
+        default_factory=list,
+        description=(
+            "Licenses and citations for the third-party data this grid was "
+            "built from, added when it finishes processing. Reproduce each "
+            "`citation` wherever you use or share the data. Empty if none are "
+            "recorded."
+        ),
+    )
+
     @model_validator(mode="before")
     @classmethod
     def _parse_modification_coordinates(cls, data: Any) -> Any:
@@ -353,11 +364,17 @@ class Grid(BaseModel):
         Inline-geometry modification conditions are stored with their
         ``coordinates`` JSON-encoded (Firestore rejects nested arrays). This
         runs before validation so GET / list / create responses return proper
-        nested-list GeoJSON. Idempotent: API-request data (already nested
-        lists) passes through unchanged.
+        nested-list GeoJSON. Also decodes ``source.operations`` for compose
+        grids, whose operation conditions are stored the same way.
+        Idempotent: API-request data (already nested lists) passes through
+        unchanged.
         """
-        if isinstance(data, dict) and isinstance(data.get("modifications"), list):
-            parse_modification_coordinates(data["modifications"])
+        if isinstance(data, dict):
+            if isinstance(data.get("modifications"), list):
+                parse_modification_coordinates(data["modifications"])
+            source = data.get("source")
+            if isinstance(source, dict) and isinstance(source.get("operations"), list):
+                parse_modification_coordinates(source["operations"])
         return data
 
 

@@ -34,6 +34,7 @@ from api.resources.inventories.treatments.schema import ApplyTreatmentsRequest
 from api.resources.inventories.utils import (
     validate_feature_conditions,
     validate_inventory_wide_treatment_area,
+    validate_treatment_columns,
 )
 from api.resources.modifications import stringify_modification_coordinates
 from api.schema import JobStatus
@@ -72,8 +73,8 @@ async def apply_treatments(
     asynchronously. To keep the original data instead, duplicate the inventory
     first (`POST .../{inventory_id}/duplicate`) and treat the copy.
 
-    A treatment thins the stand toward a target metric using a tree-selection
-    method. Treatments compose: each is applied to the result of the previous.
+    A treatment thins the stand toward a target metric. Treatments compose: each
+    is applied to the result of the previous.
 
     ## Metrics
 
@@ -87,13 +88,22 @@ async def apply_treatments(
       until the target is reached; `proportional` removes across all diameter
       classes, preserving the diameter distribution.
 
+    - `crown_spacing` — thin to a minimum gap between retained crowns, crown
+      edge to crown edge (in `m` unless `unit` is set). Trees are visited from
+      the largest `rank_by` value down (`dbh` by default, or `height`), and each
+      is kept only if its crown clears every crown already kept. Crown radii
+      come from `max_crown_radius_source`: the `purves` allometry by default,
+      `crookston_stage`, or a radius column such as the `crown_radius` added by
+      CHM crown segmentation. Trees with no value in the column use their
+      `purves` radius.
+
     `proportional` is only valid for a basal-area target — it is not an option
     for a diameter limit.
 
     ## Units
 
     `value` uses the metric's native unit (`cm` for diameter, `m**2/ha` for
-    basal area) unless an optional `unit` is supplied. A supplied `unit` must be
+    basal area, `m` for crown spacing) unless an optional `unit` is supplied. A supplied `unit` must be
     canonical and dimensionally compatible with the native unit; it is converted
     before the treatment is applied.
 
@@ -106,15 +116,22 @@ async def apply_treatments(
     in `completed` status; cross-domain, missing, or unfinished references are
     rejected with 422.
 
-    Because a basal-area treatment holds its entire treated population in memory
-    at once, an inventory-wide basal-area treatment over a very large domain is
+    A tree is in the region when its stem is. A spatially scoped crown-spacing
+    treatment removes only trees in the region, but trees in the region must
+    also clear the crowns of the trees around it.
+
+    Basal-area and crown-spacing treatments hold their entire treated population
+    in memory at once, so an inventory-wide one over a very large domain is
     rejected with 422 — scope it with a spatial condition.
 
     ## Requirements
 
-    Treatments thin against tree diameter, so the inventory must have a `dbh`
-    column. Inventories derived from a canopy height model (CHM) carry only
-    height and position, so treatments cannot be applied to them (422).
+    The inventory must have every column a treatment reads. Diameter and
+    basal-area treatments read `dbh`. A crown-spacing treatment reads its
+    `rank_by` column and either its radius column or the columns of its radius
+    allometry (`fia_species_code`, `dbh`, `height`, and, for `purves`,
+    `crown_base_height`). A CHM-derived inventory with crown segmentation can be
+    thinned with `rank_by: height` and the `crown_radius` column.
 
     ## Response
 
@@ -134,10 +151,11 @@ async def apply_treatments(
     - **404 Not Found**: The inventory does not exist, is not owned by the
       caller, or is not in this domain.
     - **422 Unprocessable Content**: The inventory is not in `completed` status
-      (and is not a retryable failed treatment); the inventory has no `dbh`
-      column to thin against (e.g. CHM-derived); an inventory-wide basal-area
-      treatment over a very large domain; or a referenced `feature_id` is
-      missing, cross-domain, or not completed.
+      (and is not a retryable failed treatment); the inventory lacks a column a
+      treatment reads (e.g. `dbh` on a CHM-derived inventory); an
+      inventory-wide basal-area or crown-spacing treatment over a very large
+      domain; or a referenced `feature_id` is missing, cross-domain, or not
+      completed.
     - **429 Too Many Requests**: You have too many active inventory jobs in
       progress (your `max_active_inventories` quota). Wait for jobs to complete
       or delete unneeded inventories, then retry. The response detail names the
@@ -174,21 +192,13 @@ async def apply_treatments(
                 detail=f"Document not found: inventories/{inventory_id}",
             )
 
-        # Treatments thin against diameter; an inventory without a dbh column
-        # (e.g. a CHM-derived inventory) has nothing to thin. Reject in the same
-        # spirit as the create-time CHM rejection rather than failing the async
-        # job later.
-        columns = inventory_data.get("columns", [])
-        if not any(column.get("key") == "dbh" for column in columns):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=(
-                    "Silvicultural treatments require a tree diameter (`dbh`) to "
-                    "thin against, but this inventory has no `dbh` column. "
-                    "CHM-derived inventories carry only height and position, so "
-                    "treatments cannot be applied to them."
-                ),
-            )
+        # Reject a treatment that reads a column this inventory lacks (e.g. a
+        # diameter limit on a CHM-derived inventory) rather than failing the
+        # async job later.
+        validate_treatment_columns(
+            body.treatments,
+            {column["key"] for column in inventory_data.get("columns", [])},
+        )
 
         pending = inventory_data.get("pending_treatments") or []
         inventory_status = inventory_data.get("status")

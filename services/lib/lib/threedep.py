@@ -1,21 +1,42 @@
 """
 3DEP tile discovery utilities.
 
-Shared logic for discovering USGS 3DEP tile URLs from AWS S3. Used by both
+Shared logic for discovering USGS 3DEP tile URLs on AWS S3. Used by both
 the API (coverage pre-flight check) and Griddle (grid processing).
 
+Products, by ``source_resolution``:
+
+- 1: Seamless 1-Meter (S1M), falling back to the 1 m lidar project tiles
+- 2: the 1 m lidar project tiles, read at their 2 m overview
+- 10: 1/3 arc-second seamless DEM
+- 30: 1 arc-second seamless DEM
+
 All functions are synchronous. The API wraps blocking I/O calls with
-asyncio.to_thread() to avoid blocking the event loop.
+asyncio.to_thread() to avoid blocking the event loop. Nothing here may
+import GDAL: the API imports this module.
 """
 
 import logging
 import math
+import time
 
 import geopandas as gpd
+import requests
 
 logger = logging.getLogger(__name__)
 
 S3_BASE = "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation"
+
+# The National Map (TNM) Access product search. Lidar project tile names
+# carry the project name, so unlike S1M and arc-second tiles they cannot be
+# built from coordinates and have to be looked up.
+TNM_PRODUCTS_URL = "https://tnmaccess.nationalmap.gov/api/v1/products"
+TNM_1M_DATASET = "Digital Elevation Model (DEM) 1 meter"
+_TNM_PAGE_SIZE = 100
+
+
+class TnmSearchError(Exception):
+    """The TNM Access product search failed or returned an unusable response."""
 
 
 def s1m_tile_path(ty: int, tx: int) -> tuple[str, str]:
@@ -143,3 +164,90 @@ def discover_tiles_arc_second(
             urls.append(url)
 
     return urls
+
+
+def discover_lidar_project_tiles(
+    roi: gpd.GeoDataFrame,
+    timeout: float = 30.0,
+    attempts: int = 1,
+) -> tuple[list[str], list[str]]:
+    """Discover 1 m lidar project DEM tiles via the TNM Access product search.
+
+    Each tile is a COG in its own UTM zone. Areas flown more than once, and
+    ground near a zone boundary, return overlapping tiles. Tiles are ordered
+    newest publication date first, ties broken by URL, so a first-wins mosaic
+    is reproducible.
+
+    Args:
+        roi: Region of interest. Its bounding box is searched.
+        timeout: Seconds allowed for each HTTP request.
+        attempts: Tries per page. Timeouts, connection errors and 5xx
+            responses are retried with a short backoff.
+
+    Returns:
+        Tuple of (tile_urls, publication_dates). Dates are unique
+        ``YYYYMMDD`` strings, sorted. Empty lists if no tiles intersect.
+
+    Raises:
+        TnmSearchError: If the search cannot be completed.
+    """
+    min_lon, min_lat, max_lon, max_lat = roi.to_crs("EPSG:4326").total_bounds
+    params = {
+        "datasets": TNM_1M_DATASET,
+        "bbox": f"{min_lon},{min_lat},{max_lon},{max_lat}",
+        "prodFormats": "GeoTIFF",
+        "max": _TNM_PAGE_SIZE,
+    }
+
+    dates_by_url: dict[str, str] = {}
+    offset = 0
+    while True:
+        page = _search_tnm({**params, "offset": offset}, timeout, attempts)
+        items = page["items"]
+        for item in items:
+            url = item.get("downloadURL") or ""
+            if url.endswith(".tif"):
+                dates_by_url[url] = item.get("publicationDate") or ""
+        offset += len(items)
+        if not items or offset >= page["total"]:
+            break
+
+    urls = sorted(dates_by_url)
+    urls.sort(key=dates_by_url.__getitem__, reverse=True)
+    dates = sorted({d.replace("-", "") for d in dates_by_url.values() if d})
+    return urls, dates
+
+
+def _search_tnm(params: dict, timeout: float, attempts: int) -> dict:
+    """Fetch one page of TNM product search results."""
+    error: Exception | None = None
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(2**attempt)
+        try:
+            response = requests.get(TNM_PRODUCTS_URL, params=params, timeout=timeout)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            error = e
+            logger.warning(f"TNM product search attempt {attempt + 1} failed: {e}")
+            continue
+        if response.status_code >= 500:
+            error = requests.HTTPError(f"HTTP {response.status_code}")
+            logger.warning(
+                f"TNM product search attempt {attempt + 1} failed: "
+                f"HTTP {response.status_code}"
+            )
+            continue
+        try:
+            response.raise_for_status()
+            body = response.json()
+        except (requests.HTTPError, ValueError) as e:
+            raise TnmSearchError(f"TNM product search failed: {e}") from e
+        if body.get("errors") or not isinstance(body.get("items"), list):
+            raise TnmSearchError(
+                f"TNM product search returned an error: {body.get('errors')}"
+            )
+        body.setdefault("total", 0)
+        return body
+    raise TnmSearchError(
+        f"TNM product search failed after {attempts} attempt(s): {error}"
+    ) from error

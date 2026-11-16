@@ -75,7 +75,8 @@ class CacheEntry:
     Why the shared attrs exist
     --------------------------
     All trees sharing a `_cache_key` fall in the same
-    `(species, dbh_bin, height_bin, crown_ratio_bin)` bucket, so
+    `(species, dbh_bin, height_bin, crown_ratio_bin)` bucket (crown ratio
+    from the crown base, `1 - crown_base_height / height`), so
     `crown_base_height`, `foliage_sav`, and `species_code` are identical
     (or close enough — see TREEVOX.md). Caching them here means the outer
     `voxelize_chunk` loop makes zero Tree-allometry calls per row — those
@@ -273,14 +274,12 @@ def crown_halo_cells(df: pd.DataFrame, source_config: dict, hr: float) -> int:
         rows = df[allometric]
         species = rows["fia_species_code"].to_numpy("int64")
         height = rows["height"].to_numpy("float64")
-        crown_ratio = rows["crown_ratio"].to_numpy("float64")
+        crown_base = rows["crown_base_height"].to_numpy("float64")
         if source_config["crown_profile_model"] == "beta":
-            model = BetaCrownProfile(
-                species, height - height * crown_ratio, height * crown_ratio
-            )
+            model = BetaCrownProfile(species, crown_base, height - crown_base)
         else:
             model = PurvesCrownProfile(
-                species, rows["dbh"].to_numpy("float64"), height, crown_ratio
+                species, rows["dbh"].to_numpy("float64"), height, crown_base
             )
         radius = np.concatenate([radius, np.ravel(model.get_max_radius())])
 
@@ -366,7 +365,7 @@ def build_tree(
     species_code = int(row["fia_species_code"])
     diameter = float(row["dbh"])
     height = float(row["height"])
-    crown_ratio = float(row["crown_ratio"])
+    crown_base_height = float(row["crown_base_height"])
     profile = source_config["crown_profile_model"]
 
     max_crown_radius = None
@@ -376,22 +375,22 @@ def build_tree(
     elif profile in GEOMETRIC_CROWN_PROFILES:
         max_crown_radius = float(
             PurvesCrownProfile(
-                species_code, diameter, height, crown_ratio
+                species_code, diameter, height, crown_base_height
             ).get_max_radius()
         )
 
     max_crown_diameter_height = None
     if profile in SINGLE_LOBE_CROWN_PROFILES:
-        # Same expression as core's Tree.crown_base_height, so core's
+        # Core's Tree stores float(crown_base_height), so its
         # [crown_base_height, height] range check sees an exact match.
-        max_crown_diameter_height = height - height * crown_ratio
+        max_crown_diameter_height = crown_base_height
 
     return Tree(
         species_code=species_code,
         status_code=int(row["fia_status_code"]),
         diameter=diameter,
         height=height,
-        crown_ratio=crown_ratio,
+        crown_base_height=crown_base_height,
         x=float(row["x"]),
         y=float(row["y"]),
         crown_profile_model_type=CROWN_PROFILE_MODEL_MAP[profile],
@@ -408,21 +407,24 @@ def compute_cache_keys(
 ) -> pd.Series:
     """Group trees into cache-equivalence classes by binned characteristics.
 
-    Trees with the same (species, binned dbh, binned height, binned crown_ratio)
-    share voxelized biomass realizations — they're morphologically
+    Trees with the same (species, binned dbh, binned height, binned crown
+    ratio) share voxelized biomass realizations — they're morphologically
     indistinguishable within the chosen bin widths. When foliage biomass comes
     from an inventory column, that per-row biomass value is also part of the
     key so rows with the same morphology but different supplied biomass do not
     reuse the first row's cached density arrays. A per-tree max_crown_radius
     column changes the crown geometry, so it splits bins too, binned at
     `CROWN_RADIUS_BIN_M`; a null radius is its own key value (allometric
-    fallback). Returns integer codes via `groupby().ngroup()`.
+    fallback). The crown ratio binned is `1 - crown_base_height / height`;
+    a tree of height 0 has no crown and bins as 0.
+    Returns integer codes via `groupby().ngroup()`.
 
     See TREEVOX.md for rationale and bin widths.
     """
     dbh_bin = (df["dbh"] / DBH_BIN_CM).astype("int64")
     height_bin = (df["height"] / HEIGHT_BIN_M).astype("int64")
-    cr_bin = (df["crown_ratio"] / CR_BIN).round().astype("int64")
+    crown_ratio = (1 - df["crown_base_height"] / df["height"]).fillna(0.0)
+    cr_bin = (crown_ratio / CR_BIN).round().astype("int64")
     groupers = [
         df["fia_species_code"].astype("int64"),
         dbh_bin,
@@ -565,7 +567,7 @@ def build_chunk_cache(
         height-sorted ASC and carrying a `_cache_key` column (int group id
         from `compute_cache_keys`) plus the raw tree columns the v2
         inventory schema guarantees: `x`, `y`, `fia_species_code`,
-        `fia_status_code`, `dbh`, `height`, `crown_ratio`. Empty frame
+        `fia_status_code`, `dbh`, `height`, `crown_base_height`. Empty frame
         returns an empty cache.
     hr
         Horizontal voxel resolution in meters. Threaded into

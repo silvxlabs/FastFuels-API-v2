@@ -30,6 +30,7 @@ from api.resources.grids.schema import (
 )
 from api.resources.input_requirements import input_requirements, point_cloud
 from api.resources.point_clouds.schema import PointCloudType
+from lib.landfire import LANDFIRE_VERSIONS
 
 
 class LandfireCanopyFuelBand(BandEnum):
@@ -414,10 +415,17 @@ class CreatePointCloudChmRequest(CreateSourceGridRequestBase):
     )
 
 
-class LandfireCanopyVersion(StrEnum):
-    """Available LANDFIRE canopy data versions."""
-
-    v2024 = "2024"
+# Staged annual versions plus on-demand LFPS versions, both accepted here.
+_CANOPY_ALL_VERSIONS = list(
+    dict.fromkeys(
+        LANDFIRE_VERSIONS["canopy"]["available"]
+        + LANDFIRE_VERSIONS["canopy"]["lfps_available"]
+    )
+)
+LandfireCanopyVersion = StrEnum(
+    "LandfireCanopyVersion",
+    {f"v{version}": version for version in _CANOPY_ALL_VERSIONS},
+)
 
 
 class LandfireCanopySource(CanopySource):
@@ -451,7 +459,15 @@ class CreateLandfireCanopyRequest(CreateSourceGridRequestBase):
     duplicated.
     """
 
-    version: LandfireCanopyVersion = LandfireCanopyVersion.v2024
+    version: LandfireCanopyVersion = Field(
+        default=LandfireCanopyVersion(LANDFIRE_VERSIONS["canopy"]["default"]),
+        description=(
+            "LANDFIRE landscape vintage year (e.g. '2024'). Most years are "
+            "served from staged LANDFIRE data; version "
+            f"{', '.join(LANDFIRE_VERSIONS['canopy']['lfps_available'])} "
+            "is instead fetched on demand from LANDFIRE Product Service."
+        ),
+    )
     bands: list[LandfireCanopyFuelBand] = Field(
         default=[
             LandfireCanopyFuelBand.chm,

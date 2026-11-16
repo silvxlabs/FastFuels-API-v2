@@ -41,6 +41,17 @@ def test_unknown_product_for_water_raises():
     assert exc_info.value.code == "UNKNOWN_PRODUCT"
 
 
+def test_unknown_product_for_building_raises():
+    """Ensure an unsupported product for a building feature raises an error."""
+    feature = {"type": "building", "source": {"product": "microsoft"}}
+    mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+
+    with pytest.raises(ProcessingError) as exc_info:
+        dispatch_handler(feature, mock_gdf, MagicMock())
+
+    assert exc_info.value.code == "UNKNOWN_PRODUCT"
+
+
 def test_unknown_product_for_crown_raises():
     """Ensure an unsupported product for a crown feature raises an error."""
     feature = {"type": "crown", "source": {"product": "lidar"}}
@@ -104,6 +115,25 @@ def test_water_osm_dispatch(mock_handle_osm):
     result = dispatch_handler(feature, mock_gdf, progress)
 
     mock_handle_osm.assert_called_once_with(
+        feature, feature["source"], mock_gdf, progress
+    )
+    assert "georeference" in result
+
+
+@patch("etcher.handlers.building.handle_overture")
+def test_building_overture_dispatch(mock_handle_overture):
+    """Ensure building+overture correctly routes to the building Overture handler."""
+    mock_handle_overture.return_value = {
+        "georeference": {"crs": "EPSG:4326", "bounds": [0, 0, 1, 1]}
+    }
+
+    feature = {"type": "building", "source": {"product": "overture"}}
+    mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
+    progress = MagicMock()
+
+    result = dispatch_handler(feature, mock_gdf, progress)
+
+    mock_handle_overture.assert_called_once_with(
         feature, feature["source"], mock_gdf, progress
     )
     assert "georeference" in result

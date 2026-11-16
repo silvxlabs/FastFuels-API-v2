@@ -91,8 +91,15 @@ def handle_crown_base_height(
 
     progress("Computing crown base heights...", 40)
     if use_gdam:
+        # This route takes no seed; the inventory id seeds the draws.
         result_ddf = gdam.map_gdam(
-            ddf, domain_gdf, ["crown_base_height"], inventory_id, overwrite, model
+            ddf,
+            domain_gdf,
+            ["crown_base_height"],
+            inventory_id,
+            seed=inventory_id,
+            overwrite=overwrite,
+            crown_base_model=model,
         )
     else:
         result_ddf = ddf.map_partitions(

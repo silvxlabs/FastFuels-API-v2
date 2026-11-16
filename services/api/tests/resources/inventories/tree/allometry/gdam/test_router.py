@@ -197,6 +197,24 @@ class TestCreateGdamInventory:
         assert response.status_code == 201
         assert response.json()["source"]["impute_columns"] == ["fia_species_code"]
 
+    def test_seed_persisted(self, client, domain_for_testing, source_tree_inventory):
+        """A given seed is stored on the source; an omitted one is generated.
+        The GDAM model is recorded only on completion."""
+        route = self.route(domain_for_testing["id"])
+        seeded = client.post(
+            route,
+            json={"source_tree_inventory_id": source_tree_inventory["id"], "seed": 42},
+        )
+        assert seeded.status_code == 201
+        assert seeded.json()["source"]["seed"] == 42
+        assert seeded.json()["source"]["gdam_model"] is None
+
+        unseeded = client.post(
+            route, json={"source_tree_inventory_id": source_tree_inventory["id"]}
+        )
+        assert unseeded.status_code == 201
+        assert isinstance(unseeded.json()["source"]["seed"], int)
+
     def test_crown_base_height_without_inputs_returns_422(
         self, client, domain_for_testing, source_tree_inventory
     ):

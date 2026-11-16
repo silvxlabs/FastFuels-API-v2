@@ -11,6 +11,7 @@ four are imputed, filling empty cells only; the caller can narrow that with
 `impute_columns` and replace existing values with `overwrite`.
 """
 
+from random import randint
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -46,6 +47,17 @@ _DEFAULT_IMPUTE_COLUMNS: list[ImputableColumn] = [
 
 # Inputs of a crown base height equation: each must be imputed or on the source.
 CROWN_BASE_HEIGHT_INPUTS = ("dbh", "crown_ratio", "fia_species_code")
+
+
+def _generate_random_seed() -> int:
+    return randint(1, 1_000_000_000)
+
+
+class GdamModelVersion(BaseModel):
+    """The GDAM model that made an inventory's predictions."""
+
+    name: str = Field(description="GDAM model name.")
+    version: str = Field(description="GDAM model version.")
 
 
 def _validate_impute_columns(v: list[str]) -> list[str]:
@@ -99,6 +111,21 @@ class GdamAllometrySource(BaseModel):
             "recorded."
         ),
     )
+    seed: int | None = Field(
+        default=None,
+        description=(
+            "The seed of GDAM's random draws. `null` for inventories created "
+            "before this was recorded."
+        ),
+    )
+    gdam_model: GdamModelVersion | None = Field(
+        default=None,
+        description=(
+            "The GDAM model that made the predictions, recorded when the "
+            "inventory completes. `null` while pending, when GDAM was not "
+            "called, and for inventories created before this was recorded."
+        ),
+    )
 
 
 class CreateGdamAllometryRequest(CreateInventoryRequestBase):
@@ -139,6 +166,14 @@ class CreateGdamAllometryRequest(CreateInventoryRequestBase):
             "`false` keeps existing values and fills only empty cells of "
             "`impute_columns`. `true` replaces every tree's value in "
             "`impute_columns`; the old values are not given to GDAM."
+        ),
+    )
+    seed: int = Field(
+        default_factory=_generate_random_seed,
+        description=(
+            "Random seed for reproducibility. Generated randomly if omitted. "
+            "The same seed, source inventory and request reproduce the same "
+            "trees under the same GDAM model version (`source.gdam_model`)."
         ),
     )
     crown_base_height_model: CrownBaseHeightModel = Field(

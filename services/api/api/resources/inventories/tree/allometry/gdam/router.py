@@ -105,6 +105,9 @@ async def create_gdam_inventory(
       other than ``gdam``, overwriting ``crown_ratio`` without
       ``crown_base_height`` leaves crown bases that no longer match the new
       crown ratios.
+    - **seed**: (optional) Random seed for reproducibility. Generated randomly
+      if omitted. The same seed, source and request give the same trees under
+      the same GDAM model version.
     - **crown_base_height_model**: (optional) The model that gives
       ``crown_base_height``, selected by ``name``. Defaults to
       ``{"name": "gdam"}``: GDAM predicts it with the other columns. The other
@@ -138,9 +141,11 @@ async def create_gdam_inventory(
     ## Source
 
     The created inventory's ``source`` records ``impute_columns``,
-    ``overwrite``, ``crown_base_height_model`` and ``conditioned_columns`` (the
-    source columns GDAM conditioned on, including ``crown_base_height`` when
-    the ``gdam`` model was sent it).
+    ``overwrite``, ``seed``, ``crown_base_height_model`` and
+    ``conditioned_columns`` (the source columns GDAM conditioned on, including
+    ``crown_base_height`` when the ``gdam`` model was sent it). On completion it
+    also records ``gdam_model``, the GDAM model name and version that made the
+    predictions.
 
     ## Response
 
@@ -217,6 +222,7 @@ async def create_gdam_inventory(
         source_tree_inventory_checksum=source_data.get("checksum"),
         impute_columns=body.impute_columns,
         overwrite=body.overwrite,
+        seed=body.seed,
         crown_base_height_model=body.crown_base_height_model,
         conditioned_columns=gdam_conditioned_columns(
             source_keys, body.impute_columns, body.overwrite, model_name

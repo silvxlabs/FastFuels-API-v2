@@ -215,10 +215,15 @@ class TestBuildBatchPayload:
 
 
 class TestBatchSeed:
-    """batch_seed: stable per (inventory, partition), distinct across them."""
+    """batch_seed: stable per (seed, partition), distinct across them."""
 
     def test_stable(self):
         assert batch_seed("inv-a", 3) == batch_seed("inv-a", 3)
+        assert batch_seed(42, 3) == batch_seed(42, 3)
+
+    def test_distinct_across_partitions_and_seeds(self):
+        seeds = {batch_seed(seed, p) for seed in (1, 42) for p in range(50)}
+        assert len(seeds) == 100
 
     def test_distinct_across_partitions_and_inventories(self):
         seeds = {batch_seed(inv, p) for inv in ("inv-a", "inv-b") for p in range(50)}
@@ -567,10 +572,80 @@ class TestHandleGdam:
         assert result["dbh"].notna().all()
         assert sorted(result.index) == [0, 1, 2, 3, 4]
 
-    def test_each_partition_sends_its_own_stable_seed(
+    def test_request_seed_reproduces_across_inventories(
         self, mock_domain_gdf, monkeypatch
     ):
-        # 5 trees / batch 2 -> 3 partitions, each seeded batch_seed(id, partition).
+        # 5 trees / batch 2 -> 3 partitions, each seeded batch_seed(seed, p), so
+        # two inventories from the same request send the same seeds.
+        monkeypatch.setattr(gdam.config, "GDAM_BATCH_SIZE", 2)
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0 + i for i in range(5)],
+                "y": [4500000.0] * 5,
+                "height": [10.0] * 5,
+            }
+        )
+        source = {**_SOURCE, "seed": 42}
+        runs = []
+        for inventory_id in ("inv-a", "inv-b"):
+            with _patched(frame, _ok_post) as (_, mock_post):
+                gdam.handle_gdam(
+                    {**_INVENTORY, "id": inventory_id},
+                    dict(source),
+                    mock_domain_gdf,
+                    _noop_progress,
+                )
+            runs.append(
+                sorted(
+                    c.kwargs["json"]["model"]["seed"] for c in mock_post.call_args_list
+                )
+            )
+        expected = sorted(batch_seed(42, p) for p in range(3))
+        assert runs[0] == expected
+        assert runs[1] == expected
+
+    def test_records_gdam_model(self, mock_domain_gdf):
+        frame = pd.DataFrame({"x": [500000.0], "y": [4500000.0], "height": [10.0]})
+        with _patched(frame, _ok_post):
+            out = gdam.handle_gdam(
+                dict(_INVENTORY), dict(_SOURCE), mock_domain_gdf, _noop_progress
+            )
+        assert out["source_extra"] == {
+            "gdam_model": {
+                "name": gdam.GDAM_MODEL["name"],
+                "version": gdam.GDAM_MODEL["version"],
+            }
+        }
+
+    def test_no_gdam_model_when_gdam_not_called(self, mock_domain_gdf):
+        # Only crown base height, from an equation: no GDAM request.
+        frame = pd.DataFrame(
+            {
+                "x": [500000.0],
+                "y": [4500000.0],
+                "height": [10.0],
+                "dbh": [20.0],
+                "crown_ratio": [0.5],
+                "fia_species_code": pd.array([122], dtype="Int64"),
+            }
+        )
+        source = {
+            **_SOURCE,
+            "impute_columns": ["crown_base_height"],
+            "crown_base_height_model": {"name": "toney_reeves_2009"},
+        }
+        with _patched(frame, _ok_post) as (_, mock_post):
+            out = gdam.handle_gdam(
+                dict(_INVENTORY), source, mock_domain_gdf, _noop_progress
+            )
+        assert mock_post.call_count == 0
+        assert out["source_extra"] == {"gdam_model": None}
+
+    def test_legacy_source_without_seed_seeds_from_inventory_id(
+        self, mock_domain_gdf, monkeypatch
+    ):
+        # Inventories created before `seed` was recorded keep reproducing on a
+        # rerun: 3 partitions, each seeded batch_seed(id, partition).
         monkeypatch.setattr(gdam.config, "GDAM_BATCH_SIZE", 2)
         frame = pd.DataFrame(
             {

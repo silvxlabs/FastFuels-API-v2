@@ -15,11 +15,9 @@ from api.resources.grids.exports.quicfire.schema import (
     QuicfireExportRequest,
 )
 from api.resources.grids.exports.quicfire.validators import (
-    _MAX_CELLS,
     _ROLE_CONTRACT,
     _build_fire_grid,
     _check_3d_role_vertical,
-    _check_cell_count_cap,
     _check_role_alignment,
     _check_role_contract,
     _iter_roles,
@@ -545,17 +543,6 @@ class TestCheck3dRoleVertical:
                 fire_grid,
             )
         assert exc.value.status_code == 422
-
-
-class TestCheckCellCountCap:
-    def test_under_cap_passes(self):
-        _check_cell_count_cap({"nx": 100, "ny": 100, "nz": 10})
-
-    def test_over_cap_rejected(self):
-        with pytest.raises(HTTPException) as exc:
-            _check_cell_count_cap({"nx": _MAX_CELLS + 1, "ny": 1, "nz": 1})
-        assert exc.value.status_code == 422
-        assert "exceeds cap" in exc.value.detail
 
 
 class TestMakeSource:

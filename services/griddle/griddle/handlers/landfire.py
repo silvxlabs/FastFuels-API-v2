@@ -807,14 +807,30 @@ def _most_frequent(x: ndarray, non_burnable_keys: list[int]) -> float:
     return central
 
 
+def _user_disturbance(disturbance: dict) -> str | None:
+    """What a plan's user disturbance holds: "annual_disturbance" or "fdist".
+
+    None when the plan uses LANDFIRE's disturbance only.
+    """
+    if disturbance["source"] == "feature":
+        return "fdist"
+    if disturbance["source"] == "grid":
+        return disturbance["band"]
+    return None
+
+
 def disturbance_layer_versions(disturbance: dict) -> dict[str, str]:
     """LANDFIRE layers and versions a disturbance plan reads, besides the fuel model.
 
-    Ordered as `fetch_disturbed_fuel` requests them from LFPS.
+    Ordered as `fetch_disturbed_fuel` requests them from LFPS. A user's
+    disturbance replaces the LANDFIRE layer it stands in for.
     """
-    layers = {"fdist": disturbance["fdist_version"]}
-    if disturbance["mode"] != "fdist":
-        layers["annual_disturbance"] = disturbance["ldist_version"]
+    user = _user_disturbance(disturbance)
+    layers = {}
+    if user != "fdist" or disturbance["include_landfire"]:
+        layers["fdist"] = disturbance["fdist_version"]
+        if disturbance["mode"] != "fdist" and user != "annual_disturbance":
+            layers["annual_disturbance"] = disturbance["ldist_version"]
     for product in ("fvt", "fvc", "fvh", "bps"):
         layers[product] = LANDFIRE_VERSIONS[product]["default"]
     return layers
@@ -869,8 +885,8 @@ def fetch_disturbed_fuel(
     rules_column, band_key = _DISTURBED_FUEL_MODELS[fuel_model]
     from_grid = disturbance["source"] == "grid"
     from_feature = disturbance["source"] == "feature"
-    user_ldist = from_grid and disturbance["band"] == "annual_disturbance"
-    user_fdist = from_feature or (from_grid and disturbance["band"] == "fdist")
+    user_ldist = _user_disturbance(disturbance) == "annual_disturbance"
+    user_fdist = _user_disturbance(disturbance) == "fdist"
     user_only = user_fdist and not disturbance["include_landfire"]
     combined = not user_only and disturbance["mode"] != "fdist"
 
@@ -885,13 +901,7 @@ def fetch_disturbed_fuel(
 
     # One LFPS job for every layer it serves. `previous` joins it only when
     # its version is LFPS-only; a staged one is fetched on its own below.
-    layers = {}
-    if not user_only:
-        layers["fdist"] = disturbance["fdist_version"]
-    if combined and not user_ldist:
-        layers["annual_disturbance"] = disturbance["ldist_version"]
-    for product in ("fvt", "fvc", "fvh", "bps"):
-        layers[product] = LANDFIRE_VERSIONS[product]["default"]
+    layers = disturbance_layer_versions(disturbance)
     previous_needs_lfps = _needs_lfps(fuel_model, version)
     if previous_needs_lfps:
         layers[fuel_model] = version

@@ -22,6 +22,8 @@ import time
 
 import geopandas as gpd
 import requests
+from shapely.geometry import box, shape
+from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
 
@@ -230,25 +232,32 @@ def discover_lidar_project_tiles(
     return urls, dates
 
 
-def lidar_collected_over(roi: gpd.GeoDataFrame, timeout: float = 30.0) -> bool:
-    """Whether 3DEP lidar was collected anywhere over the ROI's bounding box.
+def lidar_coverage_fraction(roi: gpd.GeoDataFrame, timeout: float = 30.0) -> float:
+    """Fraction of the ROI's bounding box where 3DEP lidar was collected.
 
     Args:
-        roi: Region of interest. Its bounding box is queried.
+        roi: Region of interest. Its bounding box is measured.
         timeout: Seconds allowed for the HTTP request.
+
+    Returns:
+        A fraction from 0 to 1.
 
     Raises:
         LidarIndexError: If the query cannot be completed.
     """
     if roi.crs.to_epsg() is None:
         roi = roi.to_crs("EPSG:4326")
+    epsg = roi.crs.to_epsg()
+    bounds = roi.total_bounds
     params = {
-        "geometry": ",".join(str(v) for v in roi.total_bounds),
+        "geometry": ",".join(str(v) for v in bounds),
         "geometryType": "esriGeometryEnvelope",
-        "inSR": roi.crs.to_epsg(),
+        "inSR": epsg,
         "spatialRel": "esriSpatialRelIntersects",
-        "returnCountOnly": "true",
-        "f": "json",
+        "outFields": "OBJECTID",
+        "returnGeometry": "true",
+        "outSR": epsg,
+        "f": "geojson",
     }
     try:
         response = requests.get(LIDAR_WORK_UNITS_URL, params=params, timeout=timeout)
@@ -256,12 +265,16 @@ def lidar_collected_over(roi: gpd.GeoDataFrame, timeout: float = 30.0) -> bool:
         body = response.json()
     except (requests.RequestException, ValueError) as e:
         raise LidarIndexError(f"Lidar work-unit query failed: {e}") from e
-    count = body.get("count")
-    if "error" in body or not isinstance(count, int):
+    features = body.get("features")
+    if "error" in body or not isinstance(features, list):
         raise LidarIndexError(
             f"Lidar work-unit query returned an error: {body.get('error')}"
         )
-    return count > 0
+    domain = box(*bounds)
+    collected = unary_union(
+        [shape(f["geometry"]) for f in features if f.get("geometry")]
+    )
+    return min(collected.intersection(domain).area / domain.area, 1.0)
 
 
 def _search_tnm(params: dict, timeout: float, attempts: int) -> dict:

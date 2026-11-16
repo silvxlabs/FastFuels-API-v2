@@ -180,6 +180,16 @@ class ThreeDepCoverageResponse(BaseModel):
             "again shortly."
         )
     )
+    coverage_fraction: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "For 1m and 2m, the fraction of the domain, from 0 to 1, where USGS "
+            "collected lidar. null for 10m and 30m, and when it could not be "
+            "determined."
+        ),
+    )
     tile_count: int
     tiles: list[str]
     acquisition_dates: list[str] | None = None

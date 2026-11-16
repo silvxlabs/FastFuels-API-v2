@@ -119,6 +119,7 @@ class TestThreeDepCoverage10m:
         data = response.json()
         assert data["resolution"] == 10
         assert data["available"] is True
+        assert data["coverage_fraction"] is None
         assert data["tile_count"] >= 1
         assert len(data["tiles"]) == data["tile_count"]
         assert all(url.endswith(".tif") for url in data["tiles"])
@@ -184,6 +185,7 @@ class TestThreeDepCoverage1m:
         data = response.json()
         assert data["resolution"] == 1
         assert data["available"] is True
+        assert 0 < data["coverage_fraction"] <= 1
         assert data["tile_count"] == len(data["tiles"]) >= 1
         assert all("/1m/Projects/" in url for url in data["tiles"])
         assert data["acquisition_dates"]
@@ -195,6 +197,7 @@ class TestThreeDepCoverage1m:
         assert response.status_code == 200
         data = response.json()
         assert data["available"] is False
+        assert data["coverage_fraction"] == 0.0
         assert data["tiles"] == []
 
     def test_not_available_without_any_1m_coverage(self, client, offshore_domain):
@@ -227,6 +230,7 @@ class TestThreeDepCoverage2m:
         data = response.json()
         assert data["resolution"] == 2
         assert data["available"] is True
+        assert 0 < data["coverage_fraction"] <= 1
         assert data["tile_count"] == len(data["tiles"]) >= 1
         assert all("/1m/Projects/" in url for url in data["tiles"])
         assert data["acquisition_dates"]
@@ -237,6 +241,7 @@ class TestThreeDepCoverage2m:
         assert response.status_code == 200
         data = response.json()
         assert data["available"] is False
+        assert data["coverage_fraction"] == 0.0
         assert data["tiles"] == []
 
     def test_not_available_without_lidar_projects(self, client, offshore_domain):
@@ -325,7 +330,7 @@ class TestThreeDepCoverageSearchUnavailable:
     def test_search_failure_reports_unknown_coverage(self, resolution, caplog):
         with (
             patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
-            patch(f"{self.ROUTER}.lidar_collected_over", return_value=True),
+            patch(f"{self.ROUTER}.lidar_coverage_fraction", return_value=1.0),
             patch(
                 f"{self.ROUTER}.discover_lidar_project_tiles",
                 side_effect=TnmSearchError("read timed out"),
@@ -348,7 +353,7 @@ class TestThreeDepCoverageSearchUnavailable:
         with (
             patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
             patch(
-                f"{self.ROUTER}.lidar_collected_over",
+                f"{self.ROUTER}.lidar_coverage_fraction",
                 side_effect=LidarIndexError("HTTP 500"),
             ),
             patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search,
@@ -365,7 +370,7 @@ class TestThreeDepCoverageSearchUnavailable:
     def test_no_lidar_collected_skips_search(self, resolution):
         with (
             patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
-            patch(f"{self.ROUTER}.lidar_collected_over", return_value=False),
+            patch(f"{self.ROUTER}.lidar_coverage_fraction", return_value=0.0),
             patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search,
         ):
             response = self._check(resolution)
@@ -375,6 +380,23 @@ class TestThreeDepCoverageSearchUnavailable:
         assert response.tiles == []
         assert response.acquisition_dates is None
 
+    @pytest.mark.parametrize("resolution", [1, 2])
+    def test_reports_coverage_fraction(self, resolution):
+        urls = ["https://prd-tnm.s3.amazonaws.com/1m/Projects/A/TIFF/tile.tif"]
+        with (
+            patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
+            patch(f"{self.ROUTER}.lidar_coverage_fraction", return_value=0.4),
+            patch(
+                f"{self.ROUTER}.discover_lidar_project_tiles",
+                return_value=(urls, ["20240101"]),
+            ),
+        ):
+            response = self._check(resolution)
+
+        assert response.available is True
+        assert response.coverage_fraction == 0.4
+        assert response.tiles == urls
+
     def test_s1m_hit_skips_search(self):
         s1m_urls = ["https://prd-tnm.s3.amazonaws.com/S1M/tile.tif"]
         with (
@@ -382,19 +404,45 @@ class TestThreeDepCoverageSearchUnavailable:
                 f"{self.ROUTER}.discover_s1m_tiles",
                 return_value=(s1m_urls, ["20230515"]),
             ),
+            patch(f"{self.ROUTER}.lidar_coverage_fraction", return_value=1.0),
             patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search,
         ):
             response = self._check(1)
 
         search.assert_not_called()
         assert response.available is True
+        assert response.coverage_fraction == 1.0
+        assert response.unavailable_reason is None
+
+    def test_s1m_hit_survives_lidar_index_failure(self):
+        """S1M tiles answer availability; only the fraction is unknown."""
+        s1m_urls = ["https://prd-tnm.s3.amazonaws.com/S1M/tile.tif"]
+        with (
+            patch(
+                f"{self.ROUTER}.discover_s1m_tiles",
+                return_value=(s1m_urls, ["20230515"]),
+            ),
+            patch(
+                f"{self.ROUTER}.lidar_coverage_fraction",
+                side_effect=LidarIndexError("HTTP 500"),
+            ),
+        ):
+            response = self._check(1)
+
+        assert response.available is True
+        assert response.coverage_fraction is None
         assert response.unavailable_reason is None
 
     @pytest.mark.parametrize("resolution", [10, 30])
     def test_arc_second_never_searches(self, resolution):
-        with patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search:
+        with (
+            patch(f"{self.ROUTER}.lidar_coverage_fraction") as fraction,
+            patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search,
+        ):
             response = self._check(resolution)
 
+        fraction.assert_not_called()
         search.assert_not_called()
         assert response.available is True
+        assert response.coverage_fraction is None
         assert response.unavailable_reason is None

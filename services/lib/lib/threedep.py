@@ -34,9 +34,21 @@ TNM_PRODUCTS_URL = "https://tnmaccess.nationalmap.gov/api/v1/products"
 TNM_1M_DATASET = "Digital Elevation Model (DEM) 1 meter"
 _TNM_PAGE_SIZE = 100
 
+# USGS 3DEP Elevation Index, lidar work units (WESM): the areas where lidar
+# was actually collected. Lidar project DEM tiles are fixed 10 km cells, so a
+# tile can exist over ground the project never flew, filled with nodata.
+LIDAR_WORK_UNITS_URL = (
+    "https://index.nationalmap.gov/arcgis/rest/services/"
+    "3DEPElevationIndex/MapServer/8/query"
+)
+
 
 class TnmSearchError(Exception):
     """The TNM Access product search failed or returned an unusable response."""
+
+
+class LidarIndexError(Exception):
+    """The 3DEP lidar work-unit query failed or returned an unusable response."""
 
 
 def s1m_tile_path(ty: int, tx: int) -> tuple[str, str]:
@@ -216,6 +228,40 @@ def discover_lidar_project_tiles(
     urls.sort(key=dates_by_url.__getitem__, reverse=True)
     dates = sorted({d.replace("-", "") for d in dates_by_url.values() if d})
     return urls, dates
+
+
+def lidar_collected_over(roi: gpd.GeoDataFrame, timeout: float = 30.0) -> bool:
+    """Whether 3DEP lidar was collected anywhere over the ROI's bounding box.
+
+    Args:
+        roi: Region of interest. Its bounding box is queried.
+        timeout: Seconds allowed for the HTTP request.
+
+    Raises:
+        LidarIndexError: If the query cannot be completed.
+    """
+    if roi.crs.to_epsg() is None:
+        roi = roi.to_crs("EPSG:4326")
+    params = {
+        "geometry": ",".join(str(v) for v in roi.total_bounds),
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": roi.crs.to_epsg(),
+        "spatialRel": "esriSpatialRelIntersects",
+        "returnCountOnly": "true",
+        "f": "json",
+    }
+    try:
+        response = requests.get(LIDAR_WORK_UNITS_URL, params=params, timeout=timeout)
+        response.raise_for_status()
+        body = response.json()
+    except (requests.RequestException, ValueError) as e:
+        raise LidarIndexError(f"Lidar work-unit query failed: {e}") from e
+    count = body.get("count")
+    if "error" in body or not isinstance(count, int):
+        raise LidarIndexError(
+            f"Lidar work-unit query returned an error: {body.get('error')}"
+        )
+    return count > 0
 
 
 def _search_tnm(params: dict, timeout: float, attempts: int) -> dict:

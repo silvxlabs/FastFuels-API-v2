@@ -5,12 +5,16 @@ GET /domains/{domain_id}/grids/topography/3dep/coverage
 
 Tests use three domain fixtures with known 3DEP coverage characteristics:
 - Bondurant, WY (EPSG:32612): Has S1M 1m coverage
-- Blue Mountain, MT (EPSG:32611): No S1M 1m coverage, but has 1m lidar
-  project tiles (so 1m via the project fallback, and 2m), and 10m/30m
+- Blue Mountain, MT (EPSG:32611): No S1M, and no lidar collected over it,
+  though 1m lidar project tiles from a nearby project reach it (empty
+  there); has 10m/30m
+- CSKT Ronan, MT (EPSG:32611): No S1M, but lidar collected and 1m lidar
+  project tiles (so 1m via the project fallback, and 2m)
 - Pacific offshore, CA (EPSG:32610): No 1m coverage of either kind
 
 These tests make real HTTP requests to the API, real S3 calls for 1m
-resolution, and real TNM Access searches for 1m and 2m. They require a
+resolution, and real USGS lidar work-unit and TNM Access queries for 1m and
+2m. They require a
 running API server and valid GCP/AWS credentials.
 """
 
@@ -27,7 +31,7 @@ from api.resources.grids.topography.router import check_3dep_coverage
 
 from lib.config import DOMAINS_COLLECTION
 from lib.testing import SHARED_TEST_DOMAINS_DIR
-from lib.threedep import TnmSearchError
+from lib.threedep import LidarIndexError, TnmSearchError
 
 
 def _load_domain(path: Path, owner_id: str) -> dict:
@@ -64,6 +68,20 @@ def bondurant_domain(firestore_client, test_owner_id):
 def blue_mtn_domain(firestore_client, test_owner_id):
     """Blue Mountain, MT — no S1M, has 1m lidar project tiles and 10m/30m."""
     domain_data = _load_domain(SHARED_TEST_DOMAINS_DIR / "blue_mtn.json", test_owner_id)
+    doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
+        domain_data["id"]
+    )
+    doc_ref.set(domain_data)
+    yield domain_data
+    doc_ref.delete()
+
+
+@pytest.fixture(scope="session")
+def cskt_ronan_domain(firestore_client, test_owner_id):
+    """CSKT Ronan, MT — no S1M, has lidar and 1m lidar project tiles."""
+    domain_data = _load_domain(
+        SHARED_TEST_DOMAINS_DIR / "cskt_ronan.json", test_owner_id
+    )
     doc_ref = firestore_client.collection(DOMAINS_COLLECTION).document(
         domain_data["id"]
     )
@@ -158,9 +176,9 @@ class TestThreeDepCoverage1m:
         assert data["acquisition_dates"] is not None
         assert len(data["acquisition_dates"]) >= 1
 
-    def test_falls_back_to_lidar_projects_without_s1m(self, client, blue_mtn_domain):
-        """Blue Mountain, MT has no S1M coverage, but has lidar project tiles."""
-        response = client.get(_route(blue_mtn_domain["id"]), params={"resolution": 1})
+    def test_falls_back_to_lidar_projects_without_s1m(self, client, cskt_ronan_domain):
+        """CSKT Ronan, MT has no S1M coverage, but has lidar project tiles."""
+        response = client.get(_route(cskt_ronan_domain["id"]), params={"resolution": 1})
 
         assert response.status_code == 200
         data = response.json()
@@ -169,6 +187,15 @@ class TestThreeDepCoverage1m:
         assert data["tile_count"] == len(data["tiles"]) >= 1
         assert all("/1m/Projects/" in url for url in data["tiles"])
         assert data["acquisition_dates"]
+
+    def test_not_available_where_no_lidar_collected(self, client, blue_mtn_domain):
+        """Blue Mountain's nearby tiles hold no data over it."""
+        response = client.get(_route(blue_mtn_domain["id"]), params={"resolution": 1})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["available"] is False
+        assert data["tiles"] == []
 
     def test_not_available_without_any_1m_coverage(self, client, offshore_domain):
         """Offshore has neither S1M nor lidar project tiles — should return empty."""
@@ -193,8 +220,8 @@ class TestThreeDepCoverage1m:
 class TestThreeDepCoverage2m:
     """Tests for 2m resolution coverage (real TNM Access search)."""
 
-    def test_available_from_lidar_projects(self, client, blue_mtn_domain):
-        response = client.get(_route(blue_mtn_domain["id"]), params={"resolution": 2})
+    def test_available_from_lidar_projects(self, client, cskt_ronan_domain):
+        response = client.get(_route(cskt_ronan_domain["id"]), params={"resolution": 2})
 
         assert response.status_code == 200
         data = response.json()
@@ -203,6 +230,14 @@ class TestThreeDepCoverage2m:
         assert data["tile_count"] == len(data["tiles"]) >= 1
         assert all("/1m/Projects/" in url for url in data["tiles"])
         assert data["acquisition_dates"]
+
+    def test_not_available_where_no_lidar_collected(self, client, blue_mtn_domain):
+        response = client.get(_route(blue_mtn_domain["id"]), params={"resolution": 2})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["available"] is False
+        assert data["tiles"] == []
 
     def test_not_available_without_lidar_projects(self, client, offshore_domain):
         response = client.get(_route(offshore_domain["id"]), params={"resolution": 2})
@@ -290,6 +325,7 @@ class TestThreeDepCoverageSearchUnavailable:
     def test_search_failure_reports_unknown_coverage(self, resolution, caplog):
         with (
             patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
+            patch(f"{self.ROUTER}.lidar_collected_over", return_value=True),
             patch(
                 f"{self.ROUTER}.discover_lidar_project_tiles",
                 side_effect=TnmSearchError("read timed out"),
@@ -306,6 +342,38 @@ class TestThreeDepCoverageSearchUnavailable:
         assert data["tiles"] == []
         assert data["acquisition_dates"] is None
         assert "read timed out" in caplog.text
+
+    @pytest.mark.parametrize("resolution", [1, 2])
+    def test_lidar_index_failure_reports_unknown_coverage(self, resolution, caplog):
+        with (
+            patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
+            patch(
+                f"{self.ROUTER}.lidar_collected_over",
+                side_effect=LidarIndexError("HTTP 500"),
+            ),
+            patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search,
+            caplog.at_level(logging.WARNING, logger=self.ROUTER),
+        ):
+            response = self._check(resolution)
+
+        search.assert_not_called()
+        assert response.available is None
+        assert response.unavailable_reason
+        assert "HTTP 500" in caplog.text
+
+    @pytest.mark.parametrize("resolution", [1, 2])
+    def test_no_lidar_collected_skips_search(self, resolution):
+        with (
+            patch(f"{self.ROUTER}.discover_s1m_tiles", return_value=([], [])),
+            patch(f"{self.ROUTER}.lidar_collected_over", return_value=False),
+            patch(f"{self.ROUTER}.discover_lidar_project_tiles") as search,
+        ):
+            response = self._check(resolution)
+
+        search.assert_not_called()
+        assert response.available is False
+        assert response.tiles == []
+        assert response.acquisition_dates is None
 
     def test_s1m_hit_skips_search(self):
         s1m_urls = ["https://prd-tnm.s3.amazonaws.com/S1M/tile.tif"]

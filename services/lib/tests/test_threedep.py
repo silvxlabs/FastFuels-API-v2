@@ -20,10 +20,12 @@ from lib.testing import SHARED_TEST_DATA_DIR
 from lib.threedep import (
     S3_BASE,
     TNM_1M_DATASET,
+    LidarIndexError,
     TnmSearchError,
     discover_lidar_project_tiles,
     discover_s1m_tiles,
     discover_tiles_arc_second,
+    lidar_collected_over,
     s1m_tile_path,
 )
 
@@ -335,3 +337,53 @@ class TestDiscoverLidarProjectTiles:
 
         with pytest.raises(TnmSearchError):
             discover_lidar_project_tiles(self._roi(-114.20, 47.55, -114.17, 47.57))
+
+
+class TestLidarCollectedOver:
+    """Lidar work-unit query, mocked."""
+
+    @staticmethod
+    def _roi():
+        return gpd.GeoDataFrame(
+            geometry=[box(720228, 5189763, 721534, 5190645)], crs=32611
+        )
+
+    @pytest.mark.parametrize("count, expected", [(0, False), (1, True), (3, True)])
+    @patch("lib.threedep.requests.get")
+    def test_count(self, mock_get, count, expected):
+        mock_get.return_value = _tnm_response({"count": count})
+        assert lidar_collected_over(self._roi()) is expected
+
+    @patch("lib.threedep.requests.get")
+    def test_queries_bbox_in_roi_crs(self, mock_get):
+        mock_get.return_value = _tnm_response({"count": 0})
+
+        lidar_collected_over(self._roi(), timeout=5.0)
+
+        params = mock_get.call_args.kwargs["params"]
+        bbox = [float(v) for v in params["geometry"].split(",")]
+        assert bbox == pytest.approx([720228, 5189763, 721534, 5190645])
+        assert params["inSR"] == 32611
+        assert params["returnCountOnly"] == "true"
+        assert mock_get.call_args.kwargs["timeout"] == 5.0
+
+    @patch("lib.threedep.requests.get")
+    def test_timeout_raises(self, mock_get):
+        mock_get.side_effect = requests.Timeout("read timed out")
+        with pytest.raises(LidarIndexError):
+            lidar_collected_over(self._roi())
+
+    @patch("lib.threedep.requests.get")
+    def test_http_error_raises(self, mock_get):
+        mock_get.return_value = _tnm_response(status_code=500)
+        with pytest.raises(LidarIndexError):
+            lidar_collected_over(self._roi())
+
+    @patch("lib.threedep.requests.get")
+    def test_arcgis_error_body_raises(self, mock_get):
+        """ArcGIS reports errors as HTTP 200 with an error body."""
+        mock_get.return_value = _tnm_response(
+            {"error": {"code": 500, "message": "Unable to complete operation."}}
+        )
+        with pytest.raises(LidarIndexError):
+            lidar_collected_over(self._roi())

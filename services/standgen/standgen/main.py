@@ -175,27 +175,6 @@ def process_inventory_request(request: Request):
         logger.error("No id in request body")
         return "Missing id", 400
 
-    # Check if we've already tried to process this task before (Cloud Tasks sets X-CloudTasks-TaskRetryCount header)
-    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
-    if retry_count > 0:
-        logger.error(
-            "Failed on previous attempt, marking as failed",
-            extra={"inventory_id": inventory_id},
-        )
-        try:
-            update_status(
-                inventory_id,
-                "failed",
-                error={
-                    "code": "UNEXPECTED_FAILURE",
-                    "message": UNEXPECTED_FAILURE_MESSAGE,
-                },
-            )
-        except (CancelledException, DocumentNotFoundError):
-            pass
-        return "OK", 200
-
-    logger.info("Processing started", extra={"inventory_id": inventory_id})
     try:
         inventory = load_inventory(inventory_id)
     except DocumentNotFoundError:
@@ -207,6 +186,35 @@ def process_inventory_request(request: Request):
 
     domain_id = inventory.get("domain_id")
     ids = {"inventory_id": inventory_id, "domain_id": domain_id}
+
+    # Cloud Tasks sets X-CloudTasks-TaskRetryCount on every re-dispatch. Only an
+    # inventory already "running" proves the previous attempt executed and died
+    # without recording an outcome; one still "pending" was rejected by Cloud
+    # Run before any container ran and must be processed (#664). A terminal
+    # inventory finished but its response was lost; leave it alone.
+    retry_count = int(request.headers.get("X-CloudTasks-TaskRetryCount", 0))
+    if retry_count > 0:
+        status = inventory.get("status")
+        if status == "running":
+            logger.warning("Failed on previous attempt, marking as failed", extra=ids)
+            try:
+                update_status(
+                    inventory_id,
+                    "failed",
+                    error={
+                        "code": "UNEXPECTED_FAILURE",
+                        "message": UNEXPECTED_FAILURE_MESSAGE,
+                    },
+                )
+            except (CancelledException, DocumentNotFoundError):
+                pass
+            return "OK", 200
+        if status in ("completed", "failed"):
+            logger.info("Retry of a finished job, nothing to do", extra=ids)
+            return "OK", 200
+        logger.info("Previous attempt never ran, processing", extra=ids)
+
+    logger.info("Processing started", extra=ids)
 
     try:
         update_status(inventory_id, "running")
@@ -293,7 +301,22 @@ def process_inventory_request(request: Request):
 
     except Exception as e:
         logger.exception(f"Unexpected error: {e}", extra=ids)
-        return "Internal error", 500
+        # Record the failure now instead of leaving it to a retry: a retry
+        # exists only while attempts remain, and without one the resource
+        # would stay "running" forever (#664). If this write itself fails,
+        # the exception escapes as a 500 and the retry marks it failed.
+        try:
+            update_status(
+                inventory_id,
+                "failed",
+                error={
+                    "code": "UNEXPECTED_FAILURE",
+                    "message": UNEXPECTED_FAILURE_MESSAGE,
+                },
+            )
+        except CancelledException:
+            delete_parquet(inventory_id)
+        return "OK", 200
 
 
 if __name__ == "__main__":

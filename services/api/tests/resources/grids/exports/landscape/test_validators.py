@@ -14,10 +14,8 @@ from api.resources.grids.exports.landscape.schema import (
     LandscapeFieldSource,
 )
 from api.resources.grids.exports.landscape.validators import (
-    _MAX_CELLS,
     _ROLE_CONTRACT,
     _build_landscape_grid,
-    _check_cell_count_cap,
     _check_fuel_model_declaration,
     _check_role_alignment,
     _check_role_contract,
@@ -371,17 +369,6 @@ class TestCheckRoleAlignment:
             )
         assert exc.value.status_code == 422
         assert "cover" in exc.value.detail
-
-
-class TestCheckCellCountCap:
-    def test_under_cap_passes(self):
-        _check_cell_count_cap({"nx": 1000, "ny": 1000})
-
-    def test_over_cap_rejected(self):
-        with pytest.raises(HTTPException) as exc:
-            _check_cell_count_cap({"nx": _MAX_CELLS + 1, "ny": 1})
-        assert exc.value.status_code == 422
-        assert "exceeds cap" in exc.value.detail
 
 
 class TestMakeSource:

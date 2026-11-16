@@ -9,12 +9,13 @@ canopy stitching math, Y-flip, NaN handling, optional file presence).
 End-to-end tests against real GCS live in tests/integration/test_quicfire.py.
 """
 
+import io
 import json
 import os
 import tempfile
 import zipfile
 from collections.abc import Iterator
-from pathlib import Path
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import numpy as np
@@ -152,9 +153,25 @@ def _build_source(
     return source
 
 
+class _UnseekableWriter(io.RawIOBase):
+    """Write-only, unseekable stream, like the GCS blob writer."""
+
+    def __init__(self, f):
+        self._f = f
+
+    def writable(self):
+        return True
+
+    def write(self, b):
+        return self._f.write(b)
+
+    def tell(self):
+        return self._f.tell()
+
+
 @pytest.fixture
 def captured_zip(tmp_path) -> Iterator[dict]:
-    """Patch GCS upload + domain Firestore read; capture the staged zip locally.
+    """Patch GCS upload + domain Firestore read; capture the streamed zip locally.
 
     Yields a mutable dict whose ``zip_path`` key the handler populates with
     the local path of the zip it would have uploaded. Tests inspect the zip
@@ -162,13 +179,13 @@ def captured_zip(tmp_path) -> Iterator[dict]:
     """
     captured = {"zip_path": None, "gcs_path": None}
 
-    def fake_upload(zip_path, export):
-        # Copy out of tmp before the handler's TemporaryDirectory cleanup.
-        copied = tmp_path / "captured.zip"
-        copied.write_bytes(Path(zip_path).read_bytes())
-        captured["zip_path"] = str(copied)
+    @contextmanager
+    def fake_open_upload(export):
+        path = tmp_path / "captured.zip"
+        captured["zip_path"] = str(path)
         captured["gcs_path"] = f"gs://exports/{export['id']}/captured.zip"
-        return captured["gcs_path"]
+        with open(path, "wb") as f:
+            yield captured["gcs_path"], _UnseekableWriter(f)
 
     class _FakeSnapshot:
         def to_dict(self):
@@ -178,7 +195,7 @@ def captured_zip(tmp_path) -> Iterator[dict]:
         return None, _FakeSnapshot()
 
     with (
-        patch("exporter.handlers.quicfire._upload_zip", side_effect=fake_upload),
+        patch("exporter.handlers.quicfire._open_upload", fake_open_upload),
         patch("exporter.handlers.quicfire.get_document", side_effect=fake_get_document),
     ):
         yield captured
@@ -790,3 +807,51 @@ class TestMissingCanopy:
         assert moist[0, _NY - 1, 0] == pytest.approx(0.06)
         assert rhof[3, _NY - 1, 0] == 0.0
         assert rhof[0, 0, 0] == pytest.approx(0.7)
+
+
+class TestZSlabs:
+    """Canopy bands are read in z-slabs; output must not depend on slab size."""
+
+    @pytest.mark.parametrize("moist_merge", ["max", "weighted_avg"])
+    def test_slabbed_output_matches_single_slab(
+        self, captured_zip, patch_load_grid, moist_merge
+    ):
+        rng = np.random.default_rng(0)
+        tree_ds = _make_3d_dataset(
+            {
+                "bulk_density.foliage.live": rng.random((_NZ, _NY, _NX), np.float32),
+                "fuel_moisture.live": rng.random((_NZ, _NY, _NX), np.float32) * 200,
+                "savr.foliage": rng.random((_NZ, _NY, _NX), np.float32) * 5000,
+            }
+        )
+        surf_ds = _make_2d_dataset(
+            {
+                "fuel_load.1hr": rng.random((_NY, _NX), np.float32),
+                "fuel_depth": rng.random((_NY, _NX), np.float32),
+                "fuel_moisture.1hr": rng.random((_NY, _NX), np.float32) * 30,
+                "savr.1hr": rng.random((_NY, _NX), np.float32) * 5000,
+            }
+        )
+        source = _build_source(
+            canopy_savr_grid_id="tree", surface_savr_grid_id="uniform"
+        )
+        source["moist_merge"] = moist_merge
+        members = [
+            "treesrhof.dat",
+            "treesmoist.dat",
+            "treesfueldepth.dat",
+            "treesss.dat",
+        ]
+
+        def run(export_id: str) -> dict[str, bytes]:
+            with patch_load_grid({"tree": tree_ds, "uniform": surf_ds}):
+                export_quicfire({"id": export_id, "name": ""}, source, noop_progress)
+            with zipfile.ZipFile(captured_zip["zip_path"]) as zf:
+                return {m: zf.read(m) for m in members}
+
+        single = run("exp-one-slab")
+        # Two layers per slab over _NZ=5 layers: slabs of 2, 2, 1.
+        with patch("exporter.handlers.quicfire._SLAB_CELLS", 2 * _NY * _NX):
+            slabbed = run("exp-slabs")
+
+        assert slabbed == single

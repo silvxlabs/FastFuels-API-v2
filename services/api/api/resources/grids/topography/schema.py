@@ -175,9 +175,9 @@ class ThreeDepCoverageResponse(BaseModel):
     resolution: ThreeDepResolution = Field(description=THREEDEP_RESOLUTION_DESCRIPTION)
     available: bool | None = Field(
         description=(
-            "Whether tiles cover the domain. null means coverage could not be "
-            "determined because the USGS National Map search did not respond; "
-            "try again shortly."
+            "Whether 3DEP data covers the domain. null means coverage could "
+            "not be determined because a USGS service did not respond; try "
+            "again shortly."
         )
     )
     tile_count: int

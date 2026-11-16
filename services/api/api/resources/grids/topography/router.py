@@ -48,10 +48,12 @@ from api.tasks import create_http_task_async
 from lib.config import GRIDDLE_QUEUE, GRIDDLE_SERVICE, GRIDS_COLLECTION
 from lib.domain_utils import parse_domain_gdf
 from lib.threedep import (
+    LidarIndexError,
     TnmSearchError,
     discover_lidar_project_tiles,
     discover_s1m_tiles,
     discover_tiles_arc_second,
+    lidar_collected_over,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,8 +62,9 @@ router = APIRouter()
 
 COLLECTION = GRIDS_COLLECTION
 
-# Per-request timeout on the TNM Access product search behind the 1m
-# fallback and 2m coverage checks. The search has no SLA.
+# Per-request timeout on the USGS lidar work-unit query and TNM Access
+# product search behind the 1m fallback and 2m coverage checks. Neither
+# service has an SLA.
 TNM_TIMEOUT_SECONDS = 10.0
 
 
@@ -284,10 +287,11 @@ async def check_3dep_coverage(
     Returns tile availability, count, URLs, and (for 1m and 2m) acquisition
     dates. For lidar project tiles these are publication dates.
 
-    1m and 2m coverage from the lidar project tiles is looked up through the
-    USGS National Map search. If that search does not respond, the response
-    is still 200, with `available` set to null and `unavailable_reason`
-    explaining why. Try again shortly.
+    1m and 2m coverage from the lidar project tiles is available where USGS
+    collected lidar over the domain and has published DEM tiles there. If
+    either USGS service does not respond, the response is still 200, with
+    `available` set to null and `unavailable_reason` explaining why. Try
+    again shortly.
     """
     roi = parse_domain_gdf(domain)
 
@@ -302,10 +306,13 @@ async def check_3dep_coverage(
             )
         if not tile_urls:
             try:
-                tile_urls, acquisition_dates = await asyncio.to_thread(
-                    discover_lidar_project_tiles, roi, timeout=TNM_TIMEOUT_SECONDS
-                )
-            except TnmSearchError as e:
+                if await asyncio.to_thread(
+                    lidar_collected_over, roi, timeout=TNM_TIMEOUT_SECONDS
+                ):
+                    tile_urls, acquisition_dates = await asyncio.to_thread(
+                        discover_lidar_project_tiles, roi, timeout=TNM_TIMEOUT_SECONDS
+                    )
+            except (LidarIndexError, TnmSearchError) as e:
                 logger.warning(f"3DEP lidar project coverage search failed: {e}")
                 return ThreeDepCoverageResponse(
                     resolution=resolution,
@@ -314,7 +321,7 @@ async def check_3dep_coverage(
                     tiles=[],
                     acquisition_dates=None,
                     unavailable_reason=(
-                        "The USGS National Map search did not respond, so "
+                        "A USGS coverage service did not respond, so "
                         "coverage could not be determined. Try again shortly."
                     ),
                 )

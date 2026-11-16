@@ -515,6 +515,7 @@ def map_gdam(
     domain_gdf,
     columns,
     inventory_id: str,
+    *,
     seed: int | str,
     overwrite: bool = False,
     crown_base_model: str = FIA_NATIONAL_LOGIT_2026,
@@ -631,7 +632,13 @@ def handle_gdam(inventory: dict, source: dict, domain_gdf, progress) -> dict:
 
     progress("Imputing missing morphology via GDAM...", 40)
     result_ddf = map_gdam(
-        ddf, domain_gdf, impute_columns, inventory_id, seed, overwrite, crown_base_model
+        ddf,
+        domain_gdf,
+        impute_columns,
+        inventory_id,
+        seed=seed,
+        overwrite=overwrite,
+        crown_base_model=crown_base_model,
     )
 
     # save_parquet triggers the single execution of the lazy graph above (this is

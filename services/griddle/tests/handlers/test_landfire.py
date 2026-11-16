@@ -1562,6 +1562,33 @@ class TestFetchDisturbedFuel:
 
         assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
 
+    @pytest.mark.parametrize(
+        ("plan", "band", "submitted"),
+        [
+            (GRID_FDIST, "fdist.perimeters", ["fvt", "fvc", "fvh", "bps"]),
+            (
+                GRID_LDIST,
+                "annual_disturbance.edited",
+                ["fdist", "fvt", "fvc", "fvh", "bps"],
+            ),
+        ],
+    )
+    def test_labelled_band_is_used_like_its_quantity(
+        self, roi, env, mock_load_band, plan, band, submitted
+    ):
+        codes = 121 if band.startswith("fdist") else 2882
+        mock_load_band.return_value = _make_canopy_raster(
+            np.array([[codes, 0], [0, 0]])
+        )
+
+        result = fetch_disturbed_fuel(
+            roi, "fbfm40", "2024", {**plan, "band": band}, MagicMock()
+        )
+
+        assert list(env.submitted) == submitted
+        mock_load_band.assert_called_once_with("g1", band)
+        assert result["fbfm"].values.tolist() == [[101, 5], [5, 5]]
+
     def test_invalid_user_fdist_codes_fail_before_the_lfps_job(
         self, roi, env, mock_load_band
     ):

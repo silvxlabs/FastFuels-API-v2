@@ -29,6 +29,7 @@ from xarray import DataArray
 from griddle.handlers import landfire_lfps
 from griddle.storage import load_band
 from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
+from lib.band_quantities import band_quantity
 from lib.config import (
     FEATURES_BUCKET,
     FEATURES_COLLECTION,
@@ -815,7 +816,7 @@ def _user_disturbance(disturbance: dict) -> str | None:
     if disturbance["source"] == "feature":
         return "fdist"
     if disturbance["source"] == "grid":
-        return disturbance["band"]
+        return band_quantity(disturbance["band"])
     return None
 
 

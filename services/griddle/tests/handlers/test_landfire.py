@@ -18,7 +18,6 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from fastfuels_core.fuel_models import update_fuel_models
 from fastfuels_core.fuel_models.fdist_builder import LDIST_TO_FDIST
-from griddle.handlers import landfire as landfire_handler
 from griddle.handlers.landfire import (
     FBFM_NON_BURNABLE,
     FCCS_BARE_GROUND,

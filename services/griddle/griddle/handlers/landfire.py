@@ -745,6 +745,18 @@ def fetch_fccs(
     return _to_dataset({"fccs": data})
 
 
+def _user_disturbance(disturbance: dict) -> str | None:
+    """What a plan's user disturbance holds: "annual_disturbance" or "fdist".
+
+    None when the plan uses LANDFIRE's disturbance only.
+    """
+    if disturbance["source"] == "feature":
+        return "fdist"
+    if disturbance["source"] == "grid":
+        return band_quantity(disturbance["band"])
+    return None
+
+
 def disturbance_layer_versions(disturbance: dict) -> dict[str, str]:
     """LANDFIRE layers and versions a disturbance plan reads, besides the fuel model.
 

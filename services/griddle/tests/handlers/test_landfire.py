@@ -28,7 +28,7 @@ from griddle.handlers.landfire import (
     _ldist_attributes,
     _lf_map_zones,
     _lookup_lf_zones,
-    _most_frequent,
+    _most_frequent_burnable,
     _needs_lfps,
     _remove_non_burnable_blocks,
     fetch_annual_disturbance,
@@ -1652,45 +1652,57 @@ class TestFetchTopography:
         assert progress.call_count == 2
 
 
-class TestMostFrequent:
-    """Unit tests for _most_frequent majority filter function."""
-
-    def test_returns_central_when_burnable_and_most_frequent(self):
-        """Central pixel is returned when it's burnable and tied for max freq."""
-        # 5x5 window flattened, central pixel at index 12
-        window = np.array([101] * 13 + [102] * 12, dtype=np.int16)
-        assert _most_frequent(window, [91, 93, 99]) == 101
+class TestMostFrequentBurnable:
+    """Unit tests for the per-window rule of _most_frequent_burnable."""
 
     def test_skips_non_burnable_in_ranking(self):
         """Non-burnable codes are skipped even when most frequent."""
-        # Non-burnable 99 is most frequent, but burnable 101 should be returned
-        window = np.array([99] * 20 + [101] * 5, dtype=np.int16)
-        assert _most_frequent(window, [99]) == 101
+        windows = np.array([[99] * 20 + [101] * 5], dtype=np.int16)
+        codes, found = _most_frequent_burnable(windows, [99])
+        assert found[0] and codes[0] == 101
 
-    def test_falls_back_to_central_when_all_non_burnable(self):
-        """Returns central pixel when no burnable values exist."""
-        window = np.array([91] * 13 + [99] * 12, dtype=np.int16)
-        assert _most_frequent(window, [91, 99]) == 91
+    def test_tie_goes_to_larger_code(self):
+        """Tied burnable codes resolve to the larger code."""
+        windows = np.array([[101] * 12 + [99] + [102] * 12], dtype=np.int16)
+        codes, found = _most_frequent_burnable(windows, [99])
+        assert found[0] and codes[0] == 102
 
-    def test_prefers_central_over_tie(self):
-        """Central pixel wins ties when it's burnable."""
-        # 101 and 102 tied, central pixel is 101
-        window = np.full(25, 102, dtype=np.int16)
-        window[12] = 101
-        # Actually need a real tie: equal counts
-        window = np.array(
-            [101] * 12 + [101] + [102] * 12, dtype=np.int16
-        )  # 13 x 101, 12 x 102 => 101 is most frequent
-        assert _most_frequent(window, [91]) == 101
+    def test_not_found_when_window_has_no_burnable(self):
+        """A window of only excluded codes reports no fill."""
+        windows = np.array([[91] * 13 + [99] * 12], dtype=np.int16)
+        _, found = _most_frequent_burnable(windows, [91, 99])
+        assert not found[0]
 
-    def test_selects_most_frequent_burnable_when_central_is_non_burnable(self):
-        """When central is non-burnable, returns most frequent burnable neighbor."""
-        window = np.array([101] * 12 + [99] + [102] * 12, dtype=np.int16)
-        # central=99 (non-burnable), 101 appears 12 times, 102 appears 12 times
-        # 101 and 102 are tied but 101 comes first sorted by descending count
-        result = _most_frequent(window, [99])
-        assert result in (101, 102)
-        assert result != 99
+    def test_rows_are_independent(self):
+        """Each row is ranked on its own."""
+        windows = np.array(
+            [[101] * 20 + [102] * 5, [102] * 20 + [101] * 5], dtype=np.int16
+        )
+        codes, found = _most_frequent_burnable(windows, [99])
+        assert found.all()
+        np.testing.assert_array_equal(codes, [101, 102])
+
+
+def _reference_targeted_fill(grid, non_burnable_keys, nodata=None):
+    """Cell-by-cell statement of the targeted fill, used as a test oracle."""
+    excluded = set(non_burnable_keys) | ({nodata} if nodata is not None else set())
+    out = grid.copy()
+    h, w = grid.shape
+    while True:
+        updates = {}
+        for r, c in zip(*np.nonzero(np.isin(out, non_burnable_keys))):
+            counts = {}
+            for dr in range(-2, 3):
+                for dc in range(-2, 3):
+                    v = int(out[min(max(r + dr, 0), h - 1), min(max(c + dc, 0), w - 1)])
+                    if v not in excluded:
+                        counts[v] = counts.get(v, 0) + 1
+            if counts:
+                updates[(r, c)] = max(counts, key=lambda v: (counts[v], v))
+        if not updates:
+            return out
+        for (r, c), v in updates.items():
+            out[r, c] = v
 
 
 class TestRemoveNonBurnableBlocks:
@@ -1762,17 +1774,49 @@ class TestRemoveNonBurnableBlocks:
         """Non-burnable cells with no burnable neighbour are left as-is, promptly."""
         grid = np.full((5, 5), 99, dtype=np.int16)
         grid[:, :nodata_cols] = -9999
-        real_filter = landfire_handler.generic_filter
+        real_filter = landfire_handler._most_frequent_burnable
         calls = []
 
         def capped_filter(*args, **kwargs):
             calls.append(1)
-            assert len(calls) <= 2, "filter kept running without progress"
+            assert len(calls) <= 1, "filter kept running without progress"
             return real_filter(*args, **kwargs)
 
-        with patch.object(landfire_handler, "generic_filter", capped_filter):
+        with patch.object(landfire_handler, "_most_frequent_burnable", capped_filter):
             result = _remove_non_burnable_blocks(grid, [99], nodata=-9999)
         np.testing.assert_array_equal(result, grid)
+
+    def test_burnable_cells_never_change(self):
+        """Only targeted cells are written; a lone burnable cell outvoted by
+        its neighbours keeps its code and still counts as a donor."""
+        grid = np.full((20, 20), 101, dtype=np.int16)
+        grid[6:14, :] = 91  # 8-cell road: needs two passes
+        grid[5, 10] = 102  # lone burnable cell beside the road
+        result = _remove_non_burnable_blocks(grid, [91])
+        keep = grid != 91
+        np.testing.assert_array_equal(result[keep], grid[keep])
+        assert not np.any(result == 91)
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_matches_cell_by_cell_reference(self, seed):
+        """Matches a cell-by-cell statement of the fill on random grids,
+        including multi-pass fills, nodata, and unreachable cells."""
+        rng = np.random.default_rng(seed)
+        shape = (40, 53)
+        coarse = rng.choice([101, 102, 121, 165], size=(10, 14))
+        grid = np.kron(coarse, np.ones((4, 4), dtype=int))[: shape[0], : shape[1]]
+        grid = grid.astype(np.int16)
+        grid[5:17, 8:22] = 91
+        grid[25:30, 30:45] = 99
+        grid[rng.random(shape) < 0.08] = 93
+        grid[rng.random(shape) < 0.03] = 98
+        grid[:, :3] = -9999
+        grid[0:6, 0:6] = 99
+        keys = [91, 93, 99]
+
+        expected = _reference_targeted_fill(grid, keys, -9999)
+        actual = _remove_non_burnable_blocks(grid, keys, -9999)
+        np.testing.assert_array_equal(actual, expected)
 
 
 def _make_canopy_raster(

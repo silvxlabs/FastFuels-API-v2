@@ -22,7 +22,6 @@ from fastfuels_core.fuel_models import (
 from numpy import ndarray
 from rasterio.features import rasterize
 from rasterio.transform import array_bounds
-from scipy.ndimage import generic_filter
 from shapely.geometry import box
 from xarray import DataArray
 
@@ -637,10 +636,12 @@ def _remove_non_burnable_blocks(
 ) -> ndarray:
     """Replace non-burnable fuel model codes with neighboring burnable codes.
 
-    Uses a 5x5 majority filter to replace each targeted non-burnable cell
-    with the most frequent burnable fuel model in its neighborhood. The
-    filter is applied iteratively until no targeted codes remain or a pass
-    fills nothing; cells with no reachable burnable neighbour keep their code.
+    Each targeted cell takes the most frequent burnable code in its 5x5
+    window (edges extended by nearest value; ties go to the larger code).
+    Wide features fill from the edges inward over repeated passes. Each pass
+    reads the original burnable cells plus cells filled by earlier passes;
+    burnable cells are never changed. Cells with no reachable burnable
+    neighbour keep their code.
 
     Args:
         grid: 2D array of LANDFIRE (FBFM or FCCS) fuel model codes
@@ -650,51 +651,44 @@ def _remove_non_burnable_blocks(
     Returns:
         Copy of grid with targeted non-burnable codes replaced
     """
-    nb_mask = np.isin(grid, non_burnable_keys)
-    if not np.any(nb_mask):
-        return grid.copy()
-
+    output = grid.copy()
     excluded = list(non_burnable_keys)
     if nodata is not None:
         excluded.append(nodata)
 
-    filtered = grid
-    remaining = np.count_nonzero(nb_mask)
-    while remaining:
-        filtered = generic_filter(
-            filtered,
-            function=_most_frequent,
-            size=(5, 5),
-            mode="nearest",
-            extra_arguments=(excluded,),
-        )
-        still = np.count_nonzero(np.isin(filtered, non_burnable_keys))
-        if still == remaining:
+    rows, cols = np.nonzero(np.isin(grid, non_burnable_keys))
+    offsets = np.arange(-2, 3)
+    while rows.size:
+        window_rows = np.clip(rows[:, None] + offsets, 0, grid.shape[0] - 1)
+        window_cols = np.clip(cols[:, None] + offsets, 0, grid.shape[1] - 1)
+        windows = output[window_rows[:, :, None], window_cols[:, None, :]]
+        fill, found = _most_frequent_burnable(windows.reshape(rows.size, -1), excluded)
+        if not found.any():
             break
-        remaining = still
+        output[rows[found], cols[found]] = fill[found]
+        rows, cols = rows[~found], cols[~found]
 
-    output = grid.copy()
-    output[nb_mask] = filtered[nb_mask]
     return output
 
 
-def _most_frequent(x: ndarray, non_burnable_keys: list[int]) -> float:
-    """Return the most frequent burnable value in a flattened window.
+def _most_frequent_burnable(
+    windows: ndarray, excluded: list
+) -> tuple[ndarray, ndarray]:
+    """Most frequent non-excluded code in each row of `windows`.
 
-    Prefers the central pixel when it is burnable and tied for most frequent.
-    Falls back to the central pixel if no burnable values exist in the window.
+    Ties go to the larger code. Returns the codes and a mask of rows that
+    held any non-excluded code; codes for the other rows are meaningless.
     """
-    central = x[x.size // 2]
-    values, counts = np.unique(x, return_counts=True)
-    max_freq = counts.max()
-    modes = values[counts == max_freq]
-    if central in modes and central not in non_burnable_keys:
-        return central
-    sorted_values = values[np.argsort(counts)[::-1]]
-    for val in sorted_values:
-        if val not in non_burnable_keys:
-            return val
-    return central
+    best_code = np.zeros(windows.shape[0], dtype=windows.dtype)
+    best_count = np.zeros(windows.shape[0], dtype=np.int64)
+    candidates = np.unique(windows[~np.isin(windows, excluded)])
+    # Ascending so that ">=" hands ties to the larger code.
+    for code in candidates:
+        count = np.count_nonzero(windows == code, axis=1)
+        better = (count > 0) & (count >= best_count)
+        best_count[better] = count[better]
+        best_code[better] = code
+    return best_code, best_count > 0
 
 
 def disturbance_layer_versions(disturbance: dict) -> dict[str, str]:

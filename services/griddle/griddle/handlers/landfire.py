@@ -17,9 +17,9 @@ import xarray as xr
 from affine import Affine
 from fastfuels_core.fuel_models import (
     build_fdist_raster,
+    fill_non_burnable,
     update_fuel_models,
 )
-from numpy import ndarray
 from rasterio.features import rasterize
 from rasterio.transform import array_bounds
 from shapely.geometry import box
@@ -513,9 +513,7 @@ def fetch_fbfm13(
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
-        filtered = _remove_non_burnable_blocks(
-            data.values, non_burnable_keys, data.rio.nodata
-        )
+        filtered = fill_non_burnable(data.values, non_burnable_keys, data.rio.nodata)
         data = data.copy(data=filtered)
 
     if boundary_scatter:
@@ -570,9 +568,7 @@ def fetch_fbfm40(
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
-        filtered = _remove_non_burnable_blocks(
-            data.values, non_burnable_keys, data.rio.nodata
-        )
+        filtered = fill_non_burnable(data.values, non_burnable_keys, data.rio.nodata)
         data = data.copy(data=filtered)
 
     if boundary_scatter:
@@ -622,73 +618,13 @@ def fetch_fccs(
     )
 
     if remove_bare_ground:
-        filtered = _remove_non_burnable_blocks(data.values, [0], data.rio.nodata)
+        filtered = fill_non_burnable(data.values, [0], data.rio.nodata)
         data = data.copy(data=filtered)
 
     if boundary_scatter:
         data = _apply_boundary_scatter(data, boundary_scatter, FCCS_BARE_GROUND)
 
     return _to_dataset({"fccs": data})
-
-
-def _remove_non_burnable_blocks(
-    grid: ndarray, non_burnable_keys: list[int], nodata: float | None = None
-) -> ndarray:
-    """Replace non-burnable fuel model codes with neighboring burnable codes.
-
-    Each targeted cell takes the most frequent burnable code in its 5x5
-    window (edges extended by nearest value; ties go to the larger code).
-    Wide features fill from the edges inward over repeated passes. Each pass
-    reads the original burnable cells plus cells filled by earlier passes;
-    burnable cells are never changed. Cells with no reachable burnable
-    neighbour keep their code.
-
-    Args:
-        grid: 2D array of LANDFIRE (FBFM or FCCS) fuel model codes
-        non_burnable_keys: Numeric codes to replace (e.g., [91, 93, 99])
-        nodata: Nodata value; never used as a fill value and left untouched.
-
-    Returns:
-        Copy of grid with targeted non-burnable codes replaced
-    """
-    output = grid.copy()
-    excluded = list(non_burnable_keys)
-    if nodata is not None:
-        excluded.append(nodata)
-
-    rows, cols = np.nonzero(np.isin(grid, non_burnable_keys))
-    offsets = np.arange(-2, 3)
-    while rows.size:
-        window_rows = np.clip(rows[:, None] + offsets, 0, grid.shape[0] - 1)
-        window_cols = np.clip(cols[:, None] + offsets, 0, grid.shape[1] - 1)
-        windows = output[window_rows[:, :, None], window_cols[:, None, :]]
-        fill, found = _most_frequent_burnable(windows.reshape(rows.size, -1), excluded)
-        if not found.any():
-            break
-        output[rows[found], cols[found]] = fill[found]
-        rows, cols = rows[~found], cols[~found]
-
-    return output
-
-
-def _most_frequent_burnable(
-    windows: ndarray, excluded: list
-) -> tuple[ndarray, ndarray]:
-    """Most frequent non-excluded code in each row of `windows`.
-
-    Ties go to the larger code. Returns the codes and a mask of rows that
-    held any non-excluded code; codes for the other rows are meaningless.
-    """
-    best_code = np.zeros(windows.shape[0], dtype=windows.dtype)
-    best_count = np.zeros(windows.shape[0], dtype=np.int64)
-    candidates = np.unique(windows[~np.isin(windows, excluded)])
-    # Ascending so that ">=" hands ties to the larger code.
-    for code in candidates:
-        count = np.count_nonzero(windows == code, axis=1)
-        better = (count > 0) & (count >= best_count)
-        best_count[better] = count[better]
-        best_code[better] = code
-    return best_code, best_count > 0
 
 
 def disturbance_layer_versions(disturbance: dict) -> dict[str, str]:
@@ -829,15 +765,11 @@ def fetch_disturbed_fuel(
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
         data = data.copy(
-            data=_remove_non_burnable_blocks(
-                data.values, non_burnable_keys, data.rio.nodata
-            )
+            data=fill_non_burnable(data.values, non_burnable_keys, data.rio.nodata)
         )
 
     if remove_bare_ground:
-        data = data.copy(
-            data=_remove_non_burnable_blocks(data.values, [0], data.rio.nodata)
-        )
+        data = data.copy(data=fill_non_burnable(data.values, [0], data.rio.nodata))
 
     if boundary_scatter:
         protected = FCCS_BARE_GROUND if fuel_model == "fccs" else FBFM_NON_BURNABLE

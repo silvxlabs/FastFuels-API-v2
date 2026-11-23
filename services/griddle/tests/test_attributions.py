@@ -184,6 +184,40 @@ class TestSourceAttributions:
         assert "LANDFIRE Fuel Disturbance (LF 2026)" in names
         assert not any("Annual Disturbance" in n for n in names)
 
+    def test_user_fdist_alone_credits_no_landfire_disturbance(self):
+        source = {
+            "name": "landfire",
+            "product": "fbfm40",
+            "version": "2024",
+            "disturbance": {
+                "source": "feature",
+                "feature_id": "f1",
+                "include_landfire": False,
+            },
+        }
+        names = datasets(source_attributions(source, ACCESSED))
+        assert not any("Disturbance" in n for n in names)
+        assert any(n.startswith("LANDFIRE Fuel Vegetation Type (LF ") for n in names)
+
+    def test_user_ldist_grid_credits_fdist_but_not_annual(self):
+        source = {
+            "name": "landfire",
+            "product": "fbfm40",
+            "version": "2024",
+            "disturbance": {
+                "source": "grid",
+                "grid_id": "g1",
+                "checksum": "abc",
+                "band": "annual_disturbance",
+                "mode": "ldist_and_last_year_fdist",
+                "ldist_version": "2025",
+                "fdist_version": "2024",
+            },
+        }
+        names = datasets(source_attributions(source, ACCESSED))
+        assert "LANDFIRE Fuel Disturbance (LF 2024)" in names
+        assert not any("Annual Disturbance" in n for n in names)
+
     def test_landfire_annual_disturbance(self):
         source = {
             "name": "landfire",

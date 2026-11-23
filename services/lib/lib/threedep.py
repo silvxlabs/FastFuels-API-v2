@@ -22,6 +22,8 @@ import time
 
 import geopandas as gpd
 import requests
+from shapely.geometry import box, shape
+from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +36,21 @@ TNM_PRODUCTS_URL = "https://tnmaccess.nationalmap.gov/api/v1/products"
 TNM_1M_DATASET = "Digital Elevation Model (DEM) 1 meter"
 _TNM_PAGE_SIZE = 100
 
+# USGS 3DEP Elevation Index, lidar work units (WESM): the areas where lidar
+# was actually collected. Lidar project DEM tiles are fixed 10 km cells, so a
+# tile can exist over ground the project never flew, filled with nodata.
+LIDAR_WORK_UNITS_URL = (
+    "https://index.nationalmap.gov/arcgis/rest/services/"
+    "3DEPElevationIndex/MapServer/8/query"
+)
+
 
 class TnmSearchError(Exception):
     """The TNM Access product search failed or returned an unusable response."""
+
+
+class LidarIndexError(Exception):
+    """The 3DEP lidar work-unit query failed or returned an unusable response."""
 
 
 def s1m_tile_path(ty: int, tx: int) -> tuple[str, str]:
@@ -216,6 +230,51 @@ def discover_lidar_project_tiles(
     urls.sort(key=dates_by_url.__getitem__, reverse=True)
     dates = sorted({d.replace("-", "") for d in dates_by_url.values() if d})
     return urls, dates
+
+
+def lidar_coverage_fraction(roi: gpd.GeoDataFrame, timeout: float = 30.0) -> float:
+    """Fraction of the ROI's bounding box where 3DEP lidar was collected.
+
+    Args:
+        roi: Region of interest. Its bounding box is measured.
+        timeout: Seconds allowed for the HTTP request.
+
+    Returns:
+        A fraction from 0 to 1.
+
+    Raises:
+        LidarIndexError: If the query cannot be completed.
+    """
+    if roi.crs.to_epsg() is None:
+        roi = roi.to_crs("EPSG:4326")
+    epsg = roi.crs.to_epsg()
+    bounds = roi.total_bounds
+    params = {
+        "geometry": ",".join(str(v) for v in bounds),
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": epsg,
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "OBJECTID",
+        "returnGeometry": "true",
+        "outSR": epsg,
+        "f": "geojson",
+    }
+    try:
+        response = requests.get(LIDAR_WORK_UNITS_URL, params=params, timeout=timeout)
+        response.raise_for_status()
+        body = response.json()
+    except (requests.RequestException, ValueError) as e:
+        raise LidarIndexError(f"Lidar work-unit query failed: {e}") from e
+    features = body.get("features")
+    if "error" in body or not isinstance(features, list):
+        raise LidarIndexError(
+            f"Lidar work-unit query returned an error: {body.get('error')}"
+        )
+    domain = box(*bounds)
+    collected = unary_union(
+        [shape(f["geometry"]) for f in features if f.get("geometry")]
+    )
+    return min(collected.intersection(domain).area / domain.area, 1.0)
 
 
 def _search_tnm(params: dict, timeout: float, attempts: int) -> dict:

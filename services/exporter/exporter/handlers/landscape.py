@@ -25,7 +25,8 @@ LCP-to-GeoTIFF transition memo):
   otherwise implicit. Fire behavior tools read bands positionally.
 
 Oversized role grids are cropped to the landscape extent by integer
-slicing — never resampled.
+slicing — never resampled. Bands are read and written in row blocks, so
+peak memory scales with one block, not with the landscape.
 """
 
 import logging
@@ -40,6 +41,7 @@ import rioxarray  # noqa: F401
 import xarray as xr
 from google.cloud import storage as gcs_storage
 from rasterio.transform import Affine
+from rasterio.windows import Window
 
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
@@ -49,6 +51,9 @@ from lib.config import EXPORTS_BUCKET
 logger = logging.getLogger(__name__)
 
 _NODATA = -9999
+
+# Cells per row block read and encoded at a time.
+_BLOCK_CELLS = 4_000_000
 
 # (role, layer name, units label, scale factor) in LANDFIRE band order.
 # The fuel model units label is filled per-request from
@@ -86,8 +91,8 @@ def export_landscape(
 
     grid_cache: dict[str, xr.Dataset] = {}
 
-    def load_band(role: dict) -> np.ndarray:
-        """Load a band, crop to the landscape extent, return a float64 array.
+    def open_band(role: dict) -> xr.DataArray:
+        """Lazily open a band cropped to the landscape extent.
 
         The validator already enforced lattice alignment and coverage, so the
         offsets here are integers within tolerance — `round` cleans the
@@ -113,10 +118,6 @@ def export_landscape(
                 suggestion=f"Available bands: {list(ds.data_vars)}",
             )
         da = ds[band].transpose("y", "x")
-        raw = da.values
-        arr = raw.astype(np.float64)
-        if da.rio.nodata is not None:
-            arr[raw == da.rio.nodata] = np.nan
 
         # x coords ascend (west→east), y coords descend (north→south).
         # Coordinates are cell centers; offset back to cell origin by half a cell.
@@ -124,23 +125,33 @@ def export_landscape(
         role_maxy = float(ds.y.values[0]) + dy / 2
         i0 = round((minx - role_minx) / dx)
         j0 = round((role_maxy - maxy) / dy)
-        return arr[j0 : j0 + ny, i0 : i0 + nx]
+        return da.isel(y=slice(j0, j0 + ny), x=slice(i0, i0 + nx))
 
-    fuel_model_units = _FUEL_MODEL_UNITS[source["fire_behavior_fuel_model"]]
+    def encode(da: xr.DataArray, rows: slice, scale: int) -> np.ndarray:
+        """Read rows of a band and apply the LANDFIRE int16 encoding.
 
-    progress("Loading and encoding bands...", 20)
-    bands: list[tuple[np.ndarray, str, str]] = []
-    for role_name, layer_name, units, scale in _BAND_SPECS:
-        raw = load_band(source[role_name])
-        scaled = np.rint(raw * scale)
-        encoded = np.where(
+        NaN and the band's ``rio.nodata`` become ``_NODATA``.
+        """
+        raw = da.isel(y=rows).values
+        arr = raw.astype(np.float64)
+        if da.rio.nodata is not None:
+            arr[raw == da.rio.nodata] = np.nan
+        scaled = np.rint(arr * scale)
+        return np.where(
             np.isnan(scaled),
             _NODATA,
             np.clip(scaled, np.iinfo(np.int16).min, np.iinfo(np.int16).max),
         ).astype(np.int16)
-        bands.append((encoded, layer_name, units or fuel_model_units))
 
-    progress("Writing GeoTIFF...", 60)
+    fuel_model_units = _FUEL_MODEL_UNITS[source["fire_behavior_fuel_model"]]
+
+    # (DataArray, scale, layer name, units) in LANDFIRE band order. Every band
+    # is opened before any work starts, so a missing grid or band fails fast.
+    bands = [
+        (open_band(source[role_name]), scale, layer_name, units or fuel_model_units)
+        for role_name, layer_name, units, scale in _BAND_SPECS
+    ]
+
     profile = {
         "driver": "GTiff",
         "width": nx,
@@ -153,16 +164,26 @@ def export_landscape(
         "compress": "lzw",
         "interleave": "pixel",
     }
+    block_rows = max(1, _BLOCK_CELLS // nx)
     with tempfile.TemporaryDirectory() as tmp:
         tif_path = Path(tmp) / "landscape.tif"
         try:
             with rasterio.open(tif_path, "w", **profile) as dst:
                 dst.update_tags(Creator="FastFuels API")
-                for index, (encoded, layer_name, units) in enumerate(bands, start=1):
-                    dst.write(encoded, index)
+                for index, (_, _, layer_name, units) in enumerate(bands, start=1):
                     dst.set_band_description(index, layer_name)
                     dst.update_tags(index, BandName=layer_name, Units=units)
-        except ProcessingError:
+                # All bands of a row block are written together: the file is
+                # pixel-interleaved and compressed, so writing it band by band
+                # would rewrite every strip.
+                for r0 in range(0, ny, block_rows):
+                    progress("Writing GeoTIFF...", 20 + 70 * r0 // ny)
+                    rows = slice(r0, min(r0 + block_rows, ny))
+                    block = np.stack(
+                        [encode(da, rows, scale) for da, scale, _, _ in bands]
+                    )
+                    dst.write(block, window=Window(0, r0, nx, block.shape[1]))
+        except (ProcessingError, FileNotFoundError):
             raise
         except Exception as e:
             raise ProcessingError(

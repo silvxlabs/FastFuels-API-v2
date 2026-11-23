@@ -18,6 +18,7 @@ EXAMPLE_GDAM_FULL = {
     "source_tree_inventory_id": "PLACEHOLDER_INVENTORY_ID",
     "impute_columns": ["dbh", "crown_ratio", "fia_species_code", "crown_base_height"],
     "overwrite": False,
+    "seed": 42,
     "crown_base_height_model": {"name": "gdam"},
     "name": "GDAM allometry inventory",
     "description": "Position+height inventory filled in with GDAM-predicted morphology",

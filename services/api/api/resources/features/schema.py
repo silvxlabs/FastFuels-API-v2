@@ -23,6 +23,7 @@ class FeatureType(StrEnum):
     layerset = "layerset"
     crown = "crown"
     building = "building"
+    disturbance = "disturbance"
 
 
 def require_finite_coordinates(

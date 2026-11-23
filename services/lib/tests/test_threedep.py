@@ -14,16 +14,18 @@ from unittest.mock import MagicMock, patch
 import geopandas as gpd
 import pytest
 import requests
-from shapely.geometry import box
+from shapely.geometry import box, mapping
 
 from lib.testing import SHARED_TEST_DATA_DIR
 from lib.threedep import (
     S3_BASE,
     TNM_1M_DATASET,
+    LidarIndexError,
     TnmSearchError,
     discover_lidar_project_tiles,
     discover_s1m_tiles,
     discover_tiles_arc_second,
+    lidar_coverage_fraction,
     s1m_tile_path,
 )
 
@@ -335,3 +337,87 @@ class TestDiscoverLidarProjectTiles:
 
         with pytest.raises(TnmSearchError):
             discover_lidar_project_tiles(self._roi(-114.20, 47.55, -114.17, 47.57))
+
+
+class TestLidarCoverageFraction:
+    """Lidar work-unit coverage, mocked with synthetic work units."""
+
+    BOUNDS = (720000, 5190000, 721000, 5191000)
+
+    @classmethod
+    def _roi(cls):
+        return gpd.GeoDataFrame(geometry=[box(*cls.BOUNDS)], crs=32611)
+
+    @staticmethod
+    def _work_units(*boxes):
+        return {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "geometry": mapping(box(*b)), "properties": {}}
+                for b in boxes
+            ],
+        }
+
+    @patch("lib.threedep.requests.get")
+    def test_no_work_units(self, mock_get):
+        mock_get.return_value = _tnm_response(self._work_units())
+        assert lidar_coverage_fraction(self._roi()) == 0.0
+
+    @patch("lib.threedep.requests.get")
+    def test_partial(self, mock_get):
+        """A work unit over the west 40% of the domain."""
+        mock_get.return_value = _tnm_response(
+            self._work_units((719000, 5189000, 720400, 5192000))
+        )
+        assert lidar_coverage_fraction(self._roi()) == pytest.approx(0.4)
+
+    @patch("lib.threedep.requests.get")
+    def test_full(self, mock_get):
+        mock_get.return_value = _tnm_response(
+            self._work_units((710000, 5180000, 730000, 5200000))
+        )
+        assert lidar_coverage_fraction(self._roi()) == 1.0
+
+    @patch("lib.threedep.requests.get")
+    def test_overlapping_work_units_counted_once(self, mock_get):
+        mock_get.return_value = _tnm_response(
+            self._work_units(
+                (719000, 5189000, 720600, 5192000),
+                (720400, 5189000, 720800, 5192000),
+            )
+        )
+        assert lidar_coverage_fraction(self._roi()) == pytest.approx(0.8)
+
+    @patch("lib.threedep.requests.get")
+    def test_queries_bbox_in_roi_crs(self, mock_get):
+        mock_get.return_value = _tnm_response(self._work_units())
+
+        lidar_coverage_fraction(self._roi(), timeout=5.0)
+
+        params = mock_get.call_args.kwargs["params"]
+        bbox = [float(v) for v in params["geometry"].split(",")]
+        assert bbox == pytest.approx(self.BOUNDS)
+        assert params["inSR"] == params["outSR"] == 32611
+        assert params["returnGeometry"] == "true"
+        assert mock_get.call_args.kwargs["timeout"] == 5.0
+
+    @patch("lib.threedep.requests.get")
+    def test_timeout_raises(self, mock_get):
+        mock_get.side_effect = requests.Timeout("read timed out")
+        with pytest.raises(LidarIndexError):
+            lidar_coverage_fraction(self._roi())
+
+    @patch("lib.threedep.requests.get")
+    def test_http_error_raises(self, mock_get):
+        mock_get.return_value = _tnm_response(status_code=500)
+        with pytest.raises(LidarIndexError):
+            lidar_coverage_fraction(self._roi())
+
+    @patch("lib.threedep.requests.get")
+    def test_arcgis_error_body_raises(self, mock_get):
+        """ArcGIS reports errors as HTTP 200 with an error body."""
+        mock_get.return_value = _tnm_response(
+            {"error": {"code": 500, "message": "Unable to complete operation."}}
+        )
+        with pytest.raises(LidarIndexError):
+            lidar_coverage_fraction(self._roi())

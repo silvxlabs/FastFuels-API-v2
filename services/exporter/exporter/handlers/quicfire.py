@@ -22,6 +22,9 @@ Surface and canopy values are merged at the bottom slab (k=0):
 Oversized role grids are cropped to the fire-grid extent by integer
 slicing — never resampled.
 
+Canopy bands are read in z-slabs and the zip is streamed straight to GCS, so
+peak memory scales with one slab, not with the fire grid.
+
 Output zip layout (flat):
     treesrhof.dat
     treesmoist.dat
@@ -34,19 +37,20 @@ Output zip layout (flat):
 
 import json
 import logging
-import shutil
 import tempfile
 import traceback
-from collections.abc import Callable
+import zipfile
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import BinaryIO
 
 import geopandas as gpd
 import numpy as np
 import rioxarray  # noqa: F401
 import xarray as xr
 from google.cloud import storage as gcs_storage
-from scipy.io import FortranFile
 
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
@@ -56,15 +60,19 @@ from lib.firestore.documents import get_document
 
 logger = logging.getLogger(__name__)
 
+# Cells per canopy z-slab (~64 MB as float32). Peak memory holds roughly ten
+# slab-sized arrays; smaller slabs mean more passes over the zarr chunks.
+_SLAB_CELLS = 16_000_000
+
 
 def export_quicfire(
     export: dict,
     source: dict,
     progress: Callable[[str, int | None], None],
 ) -> str:
-    """Build a QUIC-Fire input zip and upload it to GCS."""
+    """Build a QUIC-Fire input zip and stream it to GCS."""
     georeference = source["georeference"]
-    ny, nx = (int(n) for n in georeference["shape"][-2:])
+    nz, ny, nx = (int(n) for n in georeference["shape"])
     transform = [float(c) for c in georeference["transform"]]
     dx = abs(transform[0])
     dz = float(georeference["z_resolution"])
@@ -73,11 +81,8 @@ def export_quicfire(
 
     grid_cache: dict[str, xr.Dataset] = {}
 
-    def load_band(role: dict, *, rank: int) -> np.ndarray:
-        """Load a band, crop to the fire-grid extent, return a float32 array.
-
-        Nodata (NaN or the band's ``rio.nodata``) becomes 0 so a missing
-        value contributes nothing to the k=0 merge.
+    def open_band(role: dict, *, rank: int) -> xr.DataArray:
+        """Lazily open a band cropped to the fire-grid extent.
 
         The validator already enforced lattice alignment and coverage, so the
         offsets here are integers within tolerance — `round` cleans the
@@ -104,10 +109,6 @@ def export_quicfire(
             )
         dims = ("z", "y", "x") if rank == 3 else ("y", "x")
         da = ds[band].transpose(*dims)
-        raw = da.values
-        arr = np.nan_to_num(raw.astype(np.float32))
-        if da.rio.nodata is not None:
-            arr[raw == da.rio.nodata] = 0.0
 
         # x coords ascend (west→east), y coords descend (north→south).
         # Coordinates are cell centers; offset back to cell origin by dx/2.
@@ -115,71 +116,116 @@ def export_quicfire(
         role_maxy = float(ds.y.values[0]) + dx / 2
         i0 = round((fire_minx - role_minx) / dx)
         j0 = round((role_maxy - fire_maxy) / dx)
-        return arr[..., j0 : j0 + ny, i0 : i0 + nx]
+        return da.isel(y=slice(j0, j0 + ny), x=slice(i0, i0 + nx))
 
-    progress("Loading canopy bands...", 10)
-    canopy_rhof = load_band(source["canopy_bulk_density"], rank=3)
-    canopy_moist = load_band(source["canopy_moisture"], rank=3) / 100.0
+    def read(da: xr.DataArray, **isel) -> np.ndarray:
+        """Read a window of a band as float32.
 
-    progress("Loading surface bands...", 25)
-    surf_load = load_band(source["surface_fuel_load"], rank=2)
-    surf_depth = load_band(source["surface_fuel_depth"], rank=2)
-    surf_moist = load_band(source["surface_moisture"], rank=2) / 100.0
-    surf_rhof_layer = surf_load / dz
+        Nodata (NaN or the band's ``rio.nodata``) becomes 0 so a missing
+        value contributes nothing to the k=0 merge.
+        """
+        raw = da.isel(**isel).values
+        arr = np.nan_to_num(raw.astype(np.float32))
+        if da.rio.nodata is not None:
+            arr[raw == da.rio.nodata] = 0.0
+        return arr
 
-    progress("Stitching surface + canopy...", 40)
-    rhof = canopy_rhof.copy()
-    rhof[0] = canopy_rhof[0] + surf_rhof_layer
-
-    moist = canopy_moist.copy()
-    if source.get("moist_merge", "max") == "max":
-        moist[0] = np.maximum(canopy_moist[0], surf_moist)
-    else:
-        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer
-        numerator = canopy_rhof[0] * canopy_moist[0] + surf_rhof_layer * surf_moist
-        with np.errstate(divide="ignore", invalid="ignore"):
-            moist[0] = np.where(total_rhof_k0 > 0, numerator / total_rhof_k0, 0.0)
-
-    fueldepth = np.zeros_like(canopy_rhof)
-    fueldepth[0] = surf_depth
-
-    progress("Building optional layers...", 55)
-    treesss = None
+    # Open every role before the upload starts, so a missing grid or band
+    # fails without touching GCS.
+    canopy_rhof = open_band(source["canopy_bulk_density"], rank=3)
+    canopy_moist = open_band(source["canopy_moisture"], rank=3)
+    canopy_savr = None
     if source.get("canopy_savr") and source.get("surface_savr"):
-        canopy_savr = load_band(source["canopy_savr"], rank=3)
-        surf_savr = load_band(source["surface_savr"], rank=2)
-        savr_arr = canopy_savr.copy()
-        total_rhof_k0 = canopy_rhof[0] + surf_rhof_layer
-        savr_numerator = canopy_rhof[0] * canopy_savr[0] + surf_rhof_layer * surf_savr
-        with np.errstate(divide="ignore", invalid="ignore"):
-            savr_arr[0] = np.where(
-                total_rhof_k0 > 0, savr_numerator / total_rhof_k0, 0.0
-            )
-            # SAVR (1/m) → particle size scale (m): 2 / SAVR. Zero where SAVR
-            # is non-positive or NaN — those cells carry no resolvable fuel
-            # geometry.
-            treesss = np.where(savr_arr > 0, 2.0 / savr_arr, 0.0).astype(np.float32)
+        canopy_savr = open_band(source["canopy_savr"], rank=3)
 
+    progress("Loading surface bands...", 10)
+    surf_load = read(open_band(source["surface_fuel_load"], rank=2))
+    surf_depth = read(open_band(source["surface_fuel_depth"], rank=2))
+    surf_moist = read(open_band(source["surface_moisture"], rank=2)) / 100.0
+    surf_rhof_layer = surf_load / dz
+    surf_savr = None
+    if canopy_savr is not None:
+        surf_savr = read(open_band(source["surface_savr"], rank=2))
     topo_arr = None
     if source.get("topography"):
-        topo_arr = load_band(source["topography"], rank=2)
+        topo_arr = read(open_band(source["topography"], rank=2))
 
-    progress("Writing output files...", 70)
-    with tempfile.TemporaryDirectory() as tmp:
-        out_dir = Path(tmp) / "quicfire"
-        out_dir.mkdir()
+    # The k=0 moisture and SAVR merges weight by the canopy bulk density there.
+    canopy_rhof_k0 = read(canopy_rhof, z=0)
+    total_rhof_k0 = canopy_rhof_k0 + surf_rhof_layer
+
+    slab_nz = max(1, _SLAB_CELLS // (ny * nx))
+    z_slabs = [slice(k, min(k + slab_nz, nz)) for k in range(0, nz, slab_nz)]
+
+    def rhof_slabs() -> Iterator[np.ndarray]:
+        for zs in z_slabs:
+            slab = read(canopy_rhof, z=zs)
+            if zs.start == 0:
+                slab[0] = slab[0] + surf_rhof_layer
+            yield slab
+
+    def moist_slabs() -> Iterator[np.ndarray]:
+        for zs in z_slabs:
+            slab = read(canopy_moist, z=zs) / 100.0
+            if zs.start == 0:
+                if source.get("moist_merge", "max") == "max":
+                    slab[0] = np.maximum(slab[0], surf_moist)
+                else:
+                    numerator = canopy_rhof_k0 * slab[0] + surf_rhof_layer * surf_moist
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        slab[0] = np.where(
+                            total_rhof_k0 > 0, numerator / total_rhof_k0, 0.0
+                        )
+            yield slab
+
+    def fueldepth_slabs() -> Iterator[np.ndarray]:
+        for zs in z_slabs:
+            slab = np.zeros((zs.stop - zs.start, ny, nx), dtype=np.float32)
+            if zs.start == 0:
+                slab[0] = surf_depth
+            yield slab
+
+    def treesss_slabs() -> Iterator[np.ndarray]:
+        for zs in z_slabs:
+            savr = read(canopy_savr, z=zs)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                if zs.start == 0:
+                    numerator = canopy_rhof_k0 * savr[0] + surf_rhof_layer * surf_savr
+                    savr[0] = np.where(
+                        total_rhof_k0 > 0, numerator / total_rhof_k0, 0.0
+                    )
+                # SAVR (1/m) → particle size scale (m): 2 / SAVR. Zero where
+                # SAVR is non-positive or NaN — those cells carry no
+                # resolvable fuel geometry.
+                yield np.where(savr > 0, 2.0 / savr, 0.0).astype(np.float32)
+
+    nbytes_3d = nz * ny * nx * np.dtype(np.float32).itemsize
+    with (
+        _open_upload(export) as (gcs_path, fp),
+        zipfile.ZipFile(fp, "w", zipfile.ZIP_DEFLATED) as zf,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            geojson_path = Path(tmp) / "domain.geojson"
+            _write_domain_geojson(geojson_path, source["domain_id"])
+            zf.write(geojson_path, "domain.geojson")
 
         try:
-            _write_fortran_3d(out_dir / "treesrhof.dat", rhof)
-            _write_fortran_3d(out_dir / "treesmoist.dat", moist)
-            _write_fortran_3d(out_dir / "treesfueldepth.dat", fueldepth)
+            progress("Writing treesrhof.dat...", 20)
+            _write_record(zf, "treesrhof.dat", nbytes_3d, map(_prep_3d, rhof_slabs()))
+            progress("Writing treesmoist.dat...", 40)
+            _write_record(zf, "treesmoist.dat", nbytes_3d, map(_prep_3d, moist_slabs()))
+            progress("Writing treesfueldepth.dat...", 55)
+            _write_record(
+                zf, "treesfueldepth.dat", nbytes_3d, map(_prep_3d, fueldepth_slabs())
+            )
+            if canopy_savr is not None:
+                progress("Writing treesss.dat...", 65)
+                _write_record(
+                    zf, "treesss.dat", nbytes_3d, map(_prep_3d, treesss_slabs())
+                )
             if topo_arr is not None:
-                _write_fortran_2d(out_dir / "topo.dat", topo_arr)
-            if treesss is not None:
-                _write_fortran_3d(out_dir / "treesss.dat", treesss)
-            _write_metadata(out_dir / "metadata.json", export, source, georeference)
-            _write_domain_geojson(out_dir / "domain.geojson", source["domain_id"])
-        except ProcessingError:
+                _write_record(zf, "topo.dat", topo_arr.size * 4, [_prep_2d(topo_arr)])
+        except (ProcessingError, FileNotFoundError):
             raise
         except Exception as e:
             raise ProcessingError(
@@ -189,18 +235,14 @@ def export_quicfire(
                 traceback=traceback.format_exc(),
             )
 
-        progress("Compressing...", 85)
-        zip_base = str(Path(tmp) / "quicfire")
-        zip_path = shutil.make_archive(zip_base, "zip", str(out_dir))
-
-        progress("Uploading...", 90)
-        gcs_path = _upload_zip(zip_path, export)
+        zf.writestr("metadata.json", _metadata_json(export, source, georeference))
+        progress("Finishing upload...", 85)
 
     return gcs_path
 
 
 def _prep_3d(arr: np.ndarray) -> np.ndarray:
-    """NaN→0, Y-flip, ascontiguous float32, ready for FortranFile.write_record."""
+    """NaN→0, Y-flip, ascontiguous float32, ready for a Fortran record."""
     cleaned = np.nan_to_num(arr.astype(np.float32, copy=False))
     flipped = np.flip(cleaned, axis=1)
     return np.ascontiguousarray(flipped)
@@ -212,14 +254,27 @@ def _prep_2d(arr: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(flipped)
 
 
-def _write_fortran_3d(path: Path, arr: np.ndarray) -> None:
-    with FortranFile(str(path), "w") as f:
-        f.write_record(_prep_3d(arr))
+def _write_record(
+    zf: zipfile.ZipFile, name: str, nbytes: int, parts: Iterable[np.ndarray]
+) -> None:
+    """Write one Fortran unformatted sequential record as a zip member.
 
-
-def _write_fortran_2d(path: Path, arr: np.ndarray) -> None:
-    with FortranFile(str(path), "w") as f:
-        f.write_record(_prep_2d(arr))
+    Byte-identical to ``scipy.io.FortranFile.write_record`` on the
+    concatenated parts: a uint32 byte-count marker, the data, the marker
+    again.
+    """
+    marker = np.array([nbytes], dtype=np.uint32).tobytes()
+    written = 0
+    # A member can exceed 2 GiB, and a streamed zip can't be patched to
+    # ZIP64 after the fact.
+    with zf.open(name, "w", force_zip64=True) as f:
+        f.write(marker)
+        for part in parts:
+            f.write(memoryview(part).cast("B"))
+            written += part.nbytes
+        f.write(marker)
+    if written != nbytes:
+        raise RuntimeError(f"{name}: wrote {written} bytes, expected {nbytes}")
 
 
 def _fire_grid_spec(georeference: dict) -> dict:
@@ -244,12 +299,7 @@ def _fire_grid_spec(georeference: dict) -> dict:
     }
 
 
-def _write_metadata(
-    path: Path,
-    export: dict,
-    source: dict,
-    georeference: dict,
-) -> None:
+def _metadata_json(export: dict, source: dict, georeference: dict) -> str:
     metadata = {
         "format": "quicfire",
         "exporter_version": "1",
@@ -259,8 +309,7 @@ def _write_metadata(
         "export_name": export.get("name"),
         "source": source,
     }
-    with open(path, "w") as f:
-        json.dump(metadata, f, indent=2, default=str)
+    return json.dumps(metadata, indent=2, default=str)
 
 
 def _write_domain_geojson(path: Path, domain_id: str) -> None:
@@ -296,7 +345,13 @@ def _write_domain_geojson(path: Path, domain_id: str) -> None:
     gdf.to_file(str(path), driver="GeoJSON")
 
 
-def _upload_zip(zip_path: str, export: dict) -> str:
+@contextmanager
+def _open_upload(export: dict) -> Iterator[tuple[str, BinaryIO]]:
+    """Open a streaming writer for the export zip in GCS.
+
+    An exception inside the block cancels the upload, so no partial object
+    is left behind.
+    """
     export_id = export["id"]
     filename = sanitize_filename(export.get("name", ""), ".zip")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
@@ -306,5 +361,7 @@ def _upload_zip(zip_path: str, export: dict) -> str:
     client = gcs_storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    blob.upload_from_filename(zip_path)
-    return gcs_path
+    # zipfile flushes when it finishes; the GCS writer raises on flush()
+    # unless told to ignore it.
+    with blob.open("wb", content_type="application/zip", ignore_flush=True) as fp:
+        yield gcs_path, fp

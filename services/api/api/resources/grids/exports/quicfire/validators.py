@@ -16,7 +16,6 @@ helpers, each unit-testable without Firestore or the async runtime:
   offset, horizontal coverage (shared `exports.alignment` checks).
 * `_check_3d_role_vertical` — per 3D role: `dz` / `nz` / `z_origin` match
   the fire grid's vertical (the exporter never resamples vertically).
-* `_check_cell_count_cap` — total cell count under the v1 cap.
 * `_make_source` — assemble the persisted `QuicfireExportSource`, whose
   `georeference` is the fire grid the exporter writes onto.
 
@@ -61,9 +60,6 @@ _ROLE_CONTRACT: dict[str, tuple[int, str]] = {
     "surface_savr": (2, "1/m"),
     "topography": (2, "m"),
 }
-
-# Cap matches v1.
-_MAX_CELLS = 50_000_000
 
 
 def _iter_roles(
@@ -200,18 +196,6 @@ def _check_3d_role_vertical(
         )
 
 
-def _check_cell_count_cap(fire_grid: dict) -> None:
-    """Reject fire grids that exceed `_MAX_CELLS`."""
-    nx, ny, nz = fire_grid["nx"], fire_grid["ny"], fire_grid["nz"]
-    cells = nx * ny * nz
-    if cells > _MAX_CELLS:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Resolved fire grid has {cells:_} cells "
-            f"(nx={nx}, ny={ny}, nz={nz}); exceeds cap of {_MAX_CELLS:_}.",
-        )
-
-
 def _make_source(
     request: QuicfireExportRequest, domain_id: str, fire_grid: dict
 ) -> QuicfireExportSource:
@@ -271,5 +255,4 @@ async def validate_quicfire_request(
         _check_role_alignment(grid_data, src, role_name, fire_grid)
         _check_3d_role_vertical(grid_data, src, role_name, fire_grid)
 
-    _check_cell_count_cap(fire_grid)
     return _make_source(request, domain_id, fire_grid)

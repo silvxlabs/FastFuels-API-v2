@@ -175,10 +175,20 @@ class ThreeDepCoverageResponse(BaseModel):
     resolution: ThreeDepResolution = Field(description=THREEDEP_RESOLUTION_DESCRIPTION)
     available: bool | None = Field(
         description=(
-            "Whether tiles cover the domain. null means coverage could not be "
-            "determined because the USGS National Map search did not respond; "
-            "try again shortly."
+            "Whether 3DEP data covers the domain. null means coverage could "
+            "not be determined because a USGS service did not respond; try "
+            "again shortly."
         )
+    )
+    coverage_fraction: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "For 1m and 2m, the fraction of the domain, from 0 to 1, where USGS "
+            "collected lidar. null for 10m and 30m, and when it could not be "
+            "determined."
+        ),
     )
     tile_count: int
     tiles: list[str]

@@ -17,12 +17,11 @@ import xarray as xr
 from affine import Affine
 from fastfuels_core.fuel_models import (
     build_fdist_raster,
+    fill_non_burnable,
     update_fuel_models,
 )
-from numpy import ndarray
 from rasterio.features import rasterize
 from rasterio.transform import array_bounds
-from scipy.ndimage import generic_filter
 from shapely.geometry import box
 from xarray import DataArray
 
@@ -632,9 +631,7 @@ def fetch_fbfm13(
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
-        filtered = _remove_non_burnable_blocks(
-            data.values, non_burnable_keys, data.rio.nodata
-        )
+        filtered = fill_non_burnable(data.values, non_burnable_keys, data.rio.nodata)
         data = data.copy(data=filtered)
 
     if boundary_scatter:
@@ -689,9 +686,7 @@ def fetch_fbfm40(
 
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
-        filtered = _remove_non_burnable_blocks(
-            data.values, non_burnable_keys, data.rio.nodata
-        )
+        filtered = fill_non_burnable(data.values, non_burnable_keys, data.rio.nodata)
         data = data.copy(data=filtered)
 
     if boundary_scatter:
@@ -741,90 +736,13 @@ def fetch_fccs(
     )
 
     if remove_bare_ground:
-        filtered = _remove_non_burnable_blocks(data.values, [0], data.rio.nodata)
+        filtered = fill_non_burnable(data.values, [0], data.rio.nodata)
         data = data.copy(data=filtered)
 
     if boundary_scatter:
         data = _apply_boundary_scatter(data, boundary_scatter, FCCS_BARE_GROUND)
 
     return _to_dataset({"fccs": data})
-
-
-def _remove_non_burnable_blocks(
-    grid: ndarray, non_burnable_keys: list[int], nodata: float | None = None
-) -> ndarray:
-    """Replace non-burnable fuel model codes with neighboring burnable codes.
-
-    Uses a 5x5 majority filter to replace each targeted non-burnable cell
-    with the most frequent burnable fuel model in its neighborhood. The
-    filter is applied iteratively until no targeted codes remain or a pass
-    fills nothing; cells with no reachable burnable neighbour keep their code.
-
-    Args:
-        grid: 2D array of LANDFIRE (FBFM or FCCS) fuel model codes
-        non_burnable_keys: Numeric codes to replace (e.g., [91, 93, 99])
-        nodata: Nodata value; never used as a fill value and left untouched.
-
-    Returns:
-        Copy of grid with targeted non-burnable codes replaced
-    """
-    nb_mask = np.isin(grid, non_burnable_keys)
-    if not np.any(nb_mask):
-        return grid.copy()
-
-    excluded = list(non_burnable_keys)
-    if nodata is not None:
-        excluded.append(nodata)
-
-    filtered = grid
-    remaining = np.count_nonzero(nb_mask)
-    while remaining:
-        filtered = generic_filter(
-            filtered,
-            function=_most_frequent,
-            size=(5, 5),
-            mode="nearest",
-            extra_arguments=(excluded,),
-        )
-        still = np.count_nonzero(np.isin(filtered, non_burnable_keys))
-        if still == remaining:
-            break
-        remaining = still
-
-    output = grid.copy()
-    output[nb_mask] = filtered[nb_mask]
-    return output
-
-
-def _most_frequent(x: ndarray, non_burnable_keys: list[int]) -> float:
-    """Return the most frequent burnable value in a flattened window.
-
-    Prefers the central pixel when it is burnable and tied for most frequent.
-    Falls back to the central pixel if no burnable values exist in the window.
-    """
-    central = x[x.size // 2]
-    values, counts = np.unique(x, return_counts=True)
-    max_freq = counts.max()
-    modes = values[counts == max_freq]
-    if central in modes and central not in non_burnable_keys:
-        return central
-    sorted_values = values[np.argsort(counts)[::-1]]
-    for val in sorted_values:
-        if val not in non_burnable_keys:
-            return val
-    return central
-
-
-def _user_disturbance(disturbance: dict) -> str | None:
-    """What a plan's user disturbance holds: "annual_disturbance" or "fdist".
-
-    None when the plan uses LANDFIRE's disturbance only.
-    """
-    if disturbance["source"] == "feature":
-        return "fdist"
-    if disturbance["source"] == "grid":
-        return band_quantity(disturbance["band"])
-    return None
 
 
 def disturbance_layer_versions(disturbance: dict) -> dict[str, str]:
@@ -1004,15 +922,11 @@ def fetch_disturbed_fuel(
     if remove_non_burnable:
         non_burnable_keys = [NB_CODE_MAP[code] for code in remove_non_burnable]
         data = data.copy(
-            data=_remove_non_burnable_blocks(
-                data.values, non_burnable_keys, data.rio.nodata
-            )
+            data=fill_non_burnable(data.values, non_burnable_keys, data.rio.nodata)
         )
 
     if remove_bare_ground:
-        data = data.copy(
-            data=_remove_non_burnable_blocks(data.values, [0], data.rio.nodata)
-        )
+        data = data.copy(data=fill_non_burnable(data.values, [0], data.rio.nodata))
 
     if boundary_scatter:
         protected = FCCS_BARE_GROUND if fuel_model == "fccs" else FBFM_NON_BURNABLE

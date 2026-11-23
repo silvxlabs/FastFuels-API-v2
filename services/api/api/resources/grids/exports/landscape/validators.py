@@ -15,7 +15,6 @@ helpers, each unit-testable without Firestore or the async runtime:
   (shared `exports.alignment` helpers).
 * `_check_role_alignment` — per role: CRS, cell size, integer-cell lattice
   offset, coverage (shared `exports.alignment` checks).
-* `_check_cell_count_cap` — total cell count under the cap.
 * `_make_source` — assemble the persisted `LandscapeExportSource`, whose
   `georeference` is the output lattice the exporter renders onto.
 
@@ -56,9 +55,6 @@ _ROLE_CONTRACT: dict[str, str | None] = {
     "canopy_base_height": "m",
     "canopy_bulk_density": "kg/m**3",
 }
-
-# Cap matches the QUIC-Fire export.
-_MAX_CELLS = 50_000_000
 
 
 def _iter_roles(
@@ -171,18 +167,6 @@ def _check_role_alignment(
     )
 
 
-def _check_cell_count_cap(landscape_grid: dict) -> None:
-    """Reject landscape lattices that exceed `_MAX_CELLS`."""
-    nx, ny = landscape_grid["nx"], landscape_grid["ny"]
-    cells = nx * ny
-    if cells > _MAX_CELLS:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            f"Resolved landscape grid has {cells:_} cells "
-            f"(nx={nx}, ny={ny}); exceeds cap of {_MAX_CELLS:_}.",
-        )
-
-
 def _make_source(
     request: LandscapeExportRequest, domain_id: str, landscape_grid: dict
 ) -> LandscapeExportSource:
@@ -241,5 +225,4 @@ async def validate_landscape_request(
     for role_name, src in roles:
         _check_role_alignment(grid_cache[src.grid_id], src, role_name, landscape_grid)
 
-    _check_cell_count_cap(landscape_grid)
     return _make_source(request, domain_id, landscape_grid)

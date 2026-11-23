@@ -67,6 +67,8 @@ class TestGdamAllometrySource:
             "overwrite": False,
             "crown_base_height_model": {"name": "fia_national_logit_2026"},
             "conditioned_columns": None,
+            "seed": None,
+            "gdam_model": None,
         }
 
     def test_document_without_new_fields_validates(self):
@@ -83,6 +85,8 @@ class TestGdamAllometrySource:
         assert source.overwrite is False
         assert source.crown_base_height_model.name == "fia_national_logit_2026"
         assert source.conditioned_columns is None
+        assert source.seed is None
+        assert source.gdam_model is None
 
     def test_records_new_fields(self):
         source = GdamAllometrySource(
@@ -96,6 +100,18 @@ class TestGdamAllometrySource:
         assert data["crown_base_height_model"] == {"name": "randolph_2010"}
         assert data["conditioned_columns"] == ["dbh"]
 
+    def test_records_seed_and_gdam_model(self):
+        source = GdamAllometrySource.model_validate(
+            {
+                "source_tree_inventory_id": "inv123",
+                "seed": 42,
+                "gdam_model": {"name": "flow_matching", "version": "v3_conus.2"},
+            }
+        )
+        data = source.model_dump()
+        assert data["seed"] == 42
+        assert data["gdam_model"] == {"name": "flow_matching", "version": "v3_conus.2"}
+
 
 class TestCreateGdamAllometryRequest:
     """Tests for CreateGdamAllometryRequest model."""
@@ -108,6 +124,14 @@ class TestCreateGdamAllometryRequest:
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
+
+    def test_seed_generated_when_omitted(self):
+        request = CreateGdamAllometryRequest(source_tree_inventory_id="inv123")
+        assert isinstance(request.seed, int)
+
+    def test_seed_kept_when_given(self):
+        request = CreateGdamAllometryRequest(source_tree_inventory_id="inv123", seed=42)
+        assert request.seed == 42
 
     def test_request_with_metadata(self):
         """Optional metadata fields are accepted and stored."""
@@ -139,6 +163,7 @@ class TestCreateGdamAllometryRequest:
             "source_tree_inventory_id",
             "impute_columns",
             "overwrite",
+            "seed",
             "crown_base_height_model",
         }
 

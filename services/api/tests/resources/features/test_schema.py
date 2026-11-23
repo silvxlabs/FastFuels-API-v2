@@ -49,8 +49,11 @@ class TestFeatureType:
     def test_building_value(self):
         assert FeatureType.building.value == "building"
 
+    def test_disturbance_value(self):
+        assert FeatureType.disturbance.value == "disturbance"
+
     def test_enum_count(self):
-        assert len(FeatureType) == 5
+        assert len(FeatureType) == 6
 
     def test_can_create_from_string(self):
         assert FeatureType("road") == FeatureType.road

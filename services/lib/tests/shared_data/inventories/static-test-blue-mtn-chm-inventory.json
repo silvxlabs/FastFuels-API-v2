@@ -1,14 +1,25 @@
 {
   "columns": [
     {
+      "key": "tree_id",
+      "summary": {
+        "count": 8685,
+        "null_count": 0,
+        "type": "categorical",
+        "unique_count": 8685
+      },
+      "type": "categorical",
+      "unit": null
+    },
+    {
       "key": "x",
       "summary": {
-        "count": 9227,
+        "count": 8685,
         "max": 721533.7026895626,
-        "mean": 720772.0657284688,
+        "mean": 720756.4655094506,
         "min": 720226.2998630336,
         "null_count": 0,
-        "std": 365.3882023680253,
+        "std": 363.5704865169702,
         "type": "continuous"
       },
       "type": "continuous",
@@ -17,12 +28,12 @@
     {
       "key": "y",
       "summary": {
-        "count": 9227,
+        "count": 8685,
         "max": 5190646.296086108,
-        "mean": 5190226.879943475,
+        "mean": 5190224.686174946,
         "min": 5189762.299863034,
         "null_count": 0,
-        "std": 250.60264716338543,
+        "std": 250.5487904811801,
         "type": "continuous"
       },
       "type": "continuous",
@@ -31,12 +42,12 @@
     {
       "key": "height",
       "summary": {
-        "count": 9227,
-        "max": 32.689998626708984,
-        "mean": 14.734069580554808,
+        "count": 8685,
+        "max": 34.15999984741211,
+        "mean": 13.149221647506344,
         "min": 2.009999990463257,
         "null_count": 0,
-        "std": 6.691886304929943,
+        "std": 6.055715502096661,
         "type": "continuous"
       },
       "type": "continuous",
@@ -68,8 +79,9 @@
       "min_height": 2.0,
       "name": "lmf"
     },
+    "crown_segmentation": null,
     "name": "chm",
-    "source_chm_grid_checksum": null,
+    "source_chm_grid_checksum": "afb71472040340418b28ffcad52027ee",
     "source_chm_grid_id": "static-test-blue-mtn-naip-chm"
   },
   "status": "completed",

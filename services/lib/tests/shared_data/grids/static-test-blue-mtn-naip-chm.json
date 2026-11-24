@@ -1,18 +1,28 @@
 {
+  "attributions": [
+    {
+      "access_url": "https://data.ntsg.umt.edu/naip-chm-v1/",
+      "accessed_on": "2026-11-24",
+      "citation": "Morford, S. L., Allred, B. W., Coons, S. P., Marcozzi, A. A., McCord, S. E., Smith, J. T., & Naugle, D. E. (2026). A 0.6-meter resolution canopy height model for the contiguous United States. Scientific Data, 13, 1207. https://doi.org/10.1038/s41597-026-07549-w",
+      "dataset": "NAIP-CHM v1",
+      "license_name": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/"
+    }
+  ],
   "bands": [
     {
-      "description": "Height of the canopy top above ground.",
+      "description": "Height above ground of the canopy top.",
       "index": 0,
       "key": "chm",
       "name": "Canopy Height",
       "nodata": null,
       "summary": {
         "count": 3216975,
-        "max": 32.689998626708984,
-        "mean": 5.950183918105713,
+        "max": 34.15999984741211,
+        "mean": 5.153560916817932,
         "min": 0.0,
         "nodata_count": 0,
-        "std": 7.25633903389633,
+        "std": 6.4134348333583855,
         "type": "continuous"
       },
       "type": "continuous",
@@ -64,14 +74,26 @@
     "name": "canopy",
     "product": "naip",
     "tile_metadata": {
-      "acquisition_dates": null,
+      "acquisition_dates": [
+        "2025-09-20"
+      ],
       "native_crs": "EPSG:32611",
       "tile_count": 1,
-      "tile_source": null,
+      "tile_models": [
+        "model_20251016.pt"
+      ],
+      "tile_source": "naip-chm-v1",
+      "tile_source_gsds": [
+        0.3
+      ],
+      "tile_years": [
+        2025
+      ],
       "tiles": [
-        "https://rangeland.ntsg.umt.edu/data/naip-chm/2023/11/m_4611416_nw_11_060_20231019_20240103_chm.tif"
+        "https://data.ntsg.umt.edu/naip-chm-v1/2025/11/m_4611416_nw_11_030_20250920_chm.tif"
       ]
-    }
+    },
+    "year": 2025
   },
   "status": "completed",
   "tags": []

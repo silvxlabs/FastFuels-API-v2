@@ -5,6 +5,7 @@ Tests for CHM handler.
 import io
 import os
 import ssl
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
@@ -27,6 +28,7 @@ from rioxarray.exceptions import NoDataInBounds
 from shapely.geometry import box
 
 from lib.errors import ProcessingError
+from lib.naip_chm import NaipChmTile
 
 
 def _make_mock_raster(chm_values, crs="EPSG:32611"):
@@ -85,20 +87,23 @@ def _make_meta_query_result(tiles=None):
     )
 
 
-def _make_naip_query_result(urls=None):
-    """Return a DataFrame mimicking _query_tile_index output for NAIP."""
+def _make_naip_tile(url, year=2023, model="v2-pc-model", source_gsd=0.6):
+    return NaipChmTile(
+        url=url,
+        year=year,
+        footprint=box(-180, -90, 180, 90),
+        datetime=datetime(year, 7, 14, 18, 30, tzinfo=UTC),
+        source_gsd=source_gsd,
+        pipeline="v2-pc",
+        model=model,
+    )
+
+
+def _make_naip_selection(urls=None, year=2023):
+    """Return a value mimicking select_naip_chm_tiles output."""
     if urls is None:
         urls = ["http://fake-ntsg-server.com/tile_001.tif"]
-    return pd.DataFrame(
-        {
-            "chm_url": urls,
-            "scale_factor": [100.0] * len(urls),
-            "bbox_xmin": [-180.0] * len(urls),
-            "bbox_ymin": [-90.0] * len(urls),
-            "bbox_xmax": [180.0] * len(urls),
-            "bbox_ymax": [90.0] * len(urls),
-        }
-    )
+    return [_make_naip_tile(url, year) for url in urls], year
 
 
 def _serialize_df(df: pd.DataFrame) -> bytes:
@@ -515,16 +520,16 @@ class TestFetchNaipChm:
     """Tests for fetch_naip_chm with chm band."""
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_returns_dataset_and_tile_metadata(self, mock_query, mock_raster_cls):
         """fetch_naip_chm returns a (Dataset, TileMetadata) tuple."""
         raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_naip_chm(
-            _make_roi(), progress, alignment={"target": "native"}
+        ds, tile_metadata, _ = fetch_naip_chm(
+            _make_roi(), None, progress, alignment={"target": "native"}
         )
 
         assert isinstance(ds, xr.Dataset)
@@ -532,116 +537,124 @@ class TestFetchNaipChm:
         assert len(tile_metadata["tiles"]) == 1
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_has_chm_variable(self, mock_query, mock_raster_cls):
         """Dataset contains a 'chm' variable."""
         raw_values = np.array([[1050, 2030]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, progress, alignment={"target": "native"}
+        )
 
         assert "chm" in ds.data_vars
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_chm_values_scaled(self, mock_query, mock_raster_cls):
         """CHM pixel values are correctly divided by the scale factor (100)."""
         raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
         expected_values = np.array([[10.5, 20.3], [15.2, 18.7]], dtype=np.float32)
 
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, progress, alignment={"target": "native"}
+        )
 
         np.testing.assert_array_almost_equal(ds["chm"].values, expected_values)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_crs_preserved(self, mock_query, mock_raster_cls):
         """CRS is preserved in the output dataset."""
         raw_values = np.array([[1050, 2030]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values, crs="EPSG:32611")
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, progress, alignment={"target": "native"}
+        )
 
         assert ds.rio.crs == CRS.from_epsg(32611)
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_dims_are_y_x(self, mock_query, mock_raster_cls):
         """CHM variable has (y, x) dims."""
         raw_values = np.array([[1050, 2030]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, progress, alignment={"target": "native"}
+        )
 
         assert ds["chm"].dims == ("y", "x")
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_http_url_passed_to_raster_connection(self, mock_query, mock_raster_cls):
         """Correct HTTP URL is passed directly to RasterConnection."""
         raw_values = np.array([[1050]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
         progress = MagicMock()
 
-        fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        fetch_naip_chm(_make_roi(), None, progress, alignment={"target": "native"})
 
         url = mock_raster_cls.call_args[0][0]
         assert url == "http://fake-ntsg-server.com/tile_001.tif"
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_progress_called(self, mock_query, mock_raster_cls):
         """Progress callback is invoked during processing."""
         raw_values = np.array([[1050]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
         progress = MagicMock()
 
-        fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        fetch_naip_chm(_make_roi(), None, progress, alignment={"target": "native"})
 
         assert progress.call_count >= 2
 
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_no_intersecting_tiles_raises(self, mock_query):
         """Raises ProcessingError(COVERAGE_ERROR) when no tiles intersect the ROI."""
-        mock_query.return_value = _make_naip_query_result(urls=[]).iloc[0:0]
+        mock_query.return_value = ([], 2023)
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+            fetch_naip_chm(_make_roi(), None, progress, alignment={"target": "native"})
 
         assert exc_info.value.code == "COVERAGE_ERROR"
 
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_index_fetch_failure_raises(self, mock_query):
         """Raises ProcessingError(INDEX_FETCH_FAILED) when the index cannot be loaded."""
         mock_query.side_effect = Exception("Network error")
         progress = MagicMock()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+            fetch_naip_chm(_make_roi(), None, progress, alignment={"target": "native"})
 
         assert exc_info.value.code == "INDEX_FETCH_FAILED"
 
     @patch("griddle.handlers.chm.merge_arrays")
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_multiple_tiles_merged(self, mock_query, mock_raster_cls, mock_merge):
         """Multiple intersecting tiles are fetched and merged."""
         raw_values = np.array([[1050]], dtype=np.uint16)
         mock_raster_cls.return_value = _make_mock_raster(raw_values)
-        mock_query.return_value = _make_naip_query_result(
+        mock_query.return_value = _make_naip_selection(
             urls=["http://fake.com/a.tif", "http://fake.com/b.tif"]
         )
 
@@ -651,8 +664,8 @@ class TestFetchNaipChm:
 
         progress = MagicMock()
 
-        ds, tile_metadata = fetch_naip_chm(
-            _make_roi(), progress, alignment={"target": "native"}
+        ds, tile_metadata, _ = fetch_naip_chm(
+            _make_roi(), None, progress, alignment={"target": "native"}
         )
 
         assert mock_raster_cls.call_count == 2
@@ -661,7 +674,7 @@ class TestFetchNaipChm:
         assert tile_metadata["tile_count"] == 2
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_multi_tile_does_not_leak_scaled_nodata(self, mock_query, mock_raster_cls):
         """Regression for the chunk-boundary garbage bug.
 
@@ -718,12 +731,14 @@ class TestFetchNaipChm:
             _half_tile_raster(tile_a),
             _half_tile_raster(tile_b),
         ]
-        mock_query.return_value = _make_naip_query_result(
+        mock_query.return_value = _make_naip_selection(
             urls=["http://fake/a.tif", "http://fake/b.tif"]
         )
         progress = MagicMock()
 
-        ds, _ = fetch_naip_chm(_make_roi(), progress, alignment={"target": "native"})
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, progress, alignment={"target": "native"}
+        )
         values = ds["chm"].values
 
         # The post-scale sentinel value would be 65535 / 100 = 655.35.
@@ -741,11 +756,202 @@ class TestFetchNaipChm:
         assert np.allclose(right, 20.0), f"right half lost tile B: {np.unique(right)}"
 
 
+class TestNaipTileSelection:
+    """fetch_naip_chm reads the tiles select_naip_chm_tiles picks."""
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_passes_domain_and_year_to_selection(self, mock_select, mock_raster_cls):
+        mock_raster_cls.return_value = _make_mock_raster(
+            np.array([[1050]], dtype=np.uint16)
+        )
+        mock_select.return_value = _make_naip_selection(year=2021)
+        roi = _make_roi()
+
+        fetch_naip_chm(roi, 2021, MagicMock(), alignment={"target": "native"})
+
+        geometry, crs, year = mock_select.call_args.args
+        assert geometry.equals(roi.geometry.union_all())
+        assert crs == roi.crs
+        assert year == 2021
+
+    @pytest.mark.parametrize(
+        "requested,resolved", [(2021, 2021), (None, 2023), (None, None)]
+    )
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_returns_resolved_year(
+        self, mock_select, mock_raster_cls, requested, resolved
+    ):
+        """The explicit year, the default year, or None under the fallback."""
+        mock_raster_cls.return_value = _make_mock_raster(
+            np.array([[1050]], dtype=np.uint16)
+        )
+        tiles, _ = _make_naip_selection()
+        mock_select.return_value = (tiles, resolved)
+
+        _, _, year = fetch_naip_chm(
+            _make_roi(), requested, MagicMock(), alignment={"target": "native"}
+        )
+
+        assert year == resolved
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_buffer_selects_resolved_year_over_buffered_extent(
+        self, mock_select, mock_raster_cls
+    ):
+        """The year resolves on the domain; tiles come from the buffered box."""
+        mock_raster_cls.return_value = _make_mock_raster(
+            np.array([[1050]], dtype=np.uint16)
+        )
+        mock_select.return_value = _make_naip_selection(year=2023)
+
+        fetch_naip_chm(
+            _make_roi(),
+            None,
+            MagicMock(),
+            extent_buffer_cells=30,
+            alignment={"target": "native", "resolution": 1.0},
+        )
+
+        domain_call, extent_call = mock_select.call_args_list
+        assert domain_call.args[2] is None
+        extent, crs, year = extent_call.args
+        assert extent.bounds == (299970, 4099970, 300130, 4100130)
+        assert crs == "EPSG:32611"
+        assert year == 2023
+
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_grid_target_selects_over_target_grid_extent(
+        self, mock_select, mock_raster_cls
+    ):
+        mock_raster_cls.return_value = _make_mock_raster(
+            np.array([[1050]], dtype=np.uint16)
+        )
+        mock_select.return_value = _make_naip_selection(year=2023)
+        target_grid_doc = {
+            "georeference": {
+                "crs": "EPSG:32611",
+                "transform": [2.0, 0.0, 299900.0, 0.0, -2.0, 4100200.0],
+                "shape": [200, 200],
+            }
+        }
+
+        fetch_naip_chm(
+            _make_roi(),
+            2023,
+            MagicMock(),
+            alignment={"target": "grid", "grid_id": "g"},
+            target_grid_doc=target_grid_doc,
+        )
+
+        extent, _, year = mock_select.call_args_list[1].args
+        assert extent.bounds == (299900, 4099800, 300300, 4100200)
+        assert year == 2023
+
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_explicit_year_without_tiles_names_the_year(self, mock_select):
+        mock_select.return_value = ([], 2012)
+
+        with pytest.raises(ProcessingError) as exc_info:
+            fetch_naip_chm(
+                _make_roi(), 2012, MagicMock(), alignment={"target": "native"}
+            )
+
+        assert exc_info.value.code == "COVERAGE_ERROR"
+        assert "2012" in exc_info.value.message
+
+    @patch("griddle.handlers.chm.merge_arrays")
+    @patch("griddle.handlers.chm.RasterConnection")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_tile_metadata_lists_stay_aligned_with_tiles_read(
+        self, mock_select, mock_raster_cls, mock_merge
+    ):
+        """A skipped tile drops out of every per-tile list, not just ``tiles``."""
+        values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
+        merged = _make_mock_raster(values).extract_window.return_value
+        mock_merge.return_value = merged.squeeze("band", drop=True)
+        outside = MagicMock()
+        outside.extract_window.side_effect = NoDataInBounds("No data found in bounds.")
+        mock_raster_cls.side_effect = [
+            _make_mock_raster(values),
+            outside,
+            _make_mock_raster(values),
+        ]
+        mock_select.return_value = (
+            [
+                _make_naip_tile("http://fake/a.tif", 2025, "model-a", 0.3),
+                _make_naip_tile("http://fake/b.tif", 2023, "model-b", 0.6),
+                _make_naip_tile("http://fake/c.tif", 2021, "model-c", 1.0),
+            ],
+            None,
+        )
+
+        _, tile_metadata, _ = fetch_naip_chm(
+            _make_roi(), None, MagicMock(), alignment={"target": "native"}
+        )
+
+        assert tile_metadata == {
+            "tiles": ["http://fake/a.tif", "http://fake/c.tif"],
+            "tile_source": "naip-chm-v1",
+            "tile_count": 2,
+            "native_crs": "EPSG:32611",
+            "acquisition_dates": ["2025-07-14", "2021-07-14"],
+            "tile_years": [2025, 2021],
+            "tile_source_gsds": [0.3, 1.0],
+            "tile_models": ["model-a", "model-c"],
+        }
+
+
+class TestNaipOverlapPriority:
+    """Where tiles overlap, the first tile in selection order (newest) wins.
+
+    ROI is x 300000-300100. The 2025 tile covers x 299950-300060 and the 2021
+    tile all of the ROI, so 2021 only shows where 2025 has no data.
+    """
+
+    ALIGNMENT = {"target": "domain", "resolution": 1.0, "method": "nearest"}
+
+    @pytest.fixture
+    def tiles(self, tmp_path):
+        write = TestTilesOutsideRoiRealRasters._write_tile
+        return [
+            _make_naip_tile(write(tmp_path / "new.tif", 299950, 300060, 3000), 2025),
+            _make_naip_tile(write(tmp_path / "old.tif", 299950, 300110, 1000), 2021),
+        ]
+
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_newer_tile_wins_overlap(self, mock_select, tiles):
+        mock_select.return_value = (tiles, None)
+
+        ds, tile_metadata, _ = fetch_naip_chm(
+            _make_roi(), None, MagicMock(), alignment=self.ALIGNMENT
+        )
+
+        row = ds["chm"].sel(y=4100050.5)
+        np.testing.assert_array_equal(row.sel(x=slice(300000, 300060)), 30.0)
+        np.testing.assert_array_equal(row.sel(x=slice(300060, 300100)), 10.0)
+        assert tile_metadata["tile_years"] == [2025, 2021]
+
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
+    def test_order_decides_the_winner(self, mock_select, tiles):
+        """Reversed, the older tile covers everything: order, not year, decides."""
+        mock_select.return_value = (tiles[::-1], None)
+
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, MagicMock(), alignment=self.ALIGNMENT
+        )
+
+        np.testing.assert_array_equal(ds["chm"].values, 10.0)
+
+
 class TestTilesOutsideRoi:
     """The index's EPSG:4326 bboxes over-match tiles that don't reach the ROI."""
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_non_overlapping_tile_is_skipped(self, mock_query, mock_raster_cls):
         """A tile with no data in bounds is skipped; the output is the good tile."""
         raw_values = np.array([[1050, 2030], [1520, 1870]], dtype=np.uint16)
@@ -754,12 +960,12 @@ class TestTilesOutsideRoi:
         outside = MagicMock()
         outside.extract_window.side_effect = NoDataInBounds("No data found in bounds.")
         mock_raster_cls.side_effect = [outside, good]
-        mock_query.return_value = _make_naip_query_result(
+        mock_query.return_value = _make_naip_selection(
             urls=["http://fake/se.tif", "http://fake/sw.tif"]
         )
 
-        ds, tile_metadata = fetch_naip_chm(
-            _make_roi(), MagicMock(), alignment={"target": "native"}
+        ds, tile_metadata, _ = fetch_naip_chm(
+            _make_roi(), None, MagicMock(), alignment={"target": "native"}
         )
 
         assert ds["chm"].shape == good_window.shape
@@ -769,7 +975,7 @@ class TestTilesOutsideRoi:
         assert tile_metadata["tile_count"] == 1
 
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_all_tiles_outside_roi_raises_coverage_error(
         self, mock_query, mock_raster_cls
     ):
@@ -777,12 +983,14 @@ class TestTilesOutsideRoi:
         outside = MagicMock()
         outside.extract_window.side_effect = NoDataInBounds("No data found in bounds.")
         mock_raster_cls.return_value = outside
-        mock_query.return_value = _make_naip_query_result(
+        mock_query.return_value = _make_naip_selection(
             urls=["http://fake/a.tif", "http://fake/b.tif"]
         )
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+            fetch_naip_chm(
+                _make_roi(), None, MagicMock(), alignment={"target": "native"}
+            )
 
         assert exc_info.value.code == "COVERAGE_ERROR"
         assert mock_raster_cls.call_count == 2
@@ -824,13 +1032,13 @@ class TestTilesOutsideRoiRealRasters:
             self._write_tile(tmp_path / "b.tif", 300120, 300300, 2000),
         ]
 
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_tile_outside_roi_is_skipped(self, mock_query, tiles):
         """Without a buffer, B is skipped and A alone fills the whole domain."""
-        mock_query.return_value = _make_naip_query_result(urls=tiles)
+        mock_query.return_value = _make_naip_selection(urls=tiles)
 
-        ds, tile_metadata = fetch_naip_chm(
-            _make_roi(), MagicMock(), alignment=self.ALIGNMENT
+        ds, tile_metadata, _ = fetch_naip_chm(
+            _make_roi(), None, MagicMock(), alignment=self.ALIGNMENT
         )
 
         assert ds["chm"].shape == (100, 100)
@@ -838,13 +1046,14 @@ class TestTilesOutsideRoiRealRasters:
         np.testing.assert_array_equal(ds["chm"].values, 10.0)
         assert tile_metadata["tiles"] == [tiles[0]]
 
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_tile_overlapping_only_the_buffer_is_used(self, mock_query, tiles):
         """A 30-cell buffer reaches x 300130, so B is read for the east edge."""
-        mock_query.return_value = _make_naip_query_result(urls=tiles)
+        mock_query.return_value = _make_naip_selection(urls=tiles)
 
-        ds, tile_metadata = fetch_naip_chm(
+        ds, tile_metadata, _ = fetch_naip_chm(
             _make_roi(),
+            None,
             MagicMock(),
             extent_buffer_cells=30,
             alignment=self.ALIGNMENT,
@@ -908,7 +1117,7 @@ class TestExpiredCertificateFallback:
     @patch("griddle.handlers.chm.cog_env")
     @patch("griddle.handlers.chm._certificate_expired", return_value=True)
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_expired_cert_retries_with_verification_disabled(
         self, mock_query, mock_raster_cls, mock_expired, mock_cog_env
     ):
@@ -918,9 +1127,11 @@ class TestExpiredCertificateFallback:
             RasterioIOError("CURL error: SSL certificate ... has expired (10)"),
             _make_mock_raster(raw_values),
         ]
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
 
-        ds, _ = fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, MagicMock(), alignment={"target": "native"}
+        )
 
         assert isinstance(ds, xr.Dataset)
         # First attempt verifies; only the retry disables verification.
@@ -931,7 +1142,7 @@ class TestExpiredCertificateFallback:
     @patch("griddle.handlers.chm.cog_env")
     @patch("griddle.handlers.chm._certificate_expired", return_value=True)
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_read_error_from_cpl_also_triggers_retry(
         self, mock_query, mock_raster_cls, mock_expired, mock_cog_env
     ):
@@ -941,39 +1152,45 @@ class TestExpiredCertificateFallback:
             CPLE_HttpResponseError(1, 11, "Read failed. See previous exception."),
             _make_mock_raster(raw_values),
         ]
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
 
-        ds, _ = fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+        ds, _, _ = fetch_naip_chm(
+            _make_roi(), None, MagicMock(), alignment={"target": "native"}
+        )
 
         assert isinstance(ds, xr.Dataset)
         assert mock_cog_env.call_args_list[1].kwargs["GDAL_HTTP_UNSAFESSL"] == "YES"
 
     @patch("griddle.handlers.chm._certificate_expired", return_value=False)
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_valid_cert_does_not_retry(self, mock_query, mock_raster_cls, mock_expired):
         """A read failure unrelated to expiry is reported, never retried unsafely."""
         mock_raster_cls.side_effect = RasterioIOError("HTTP response code: 503")
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+            fetch_naip_chm(
+                _make_roi(), None, MagicMock(), alignment={"target": "native"}
+            )
 
         assert exc_info.value.code == "TILE_SOURCE_UNAVAILABLE"
         assert mock_raster_cls.call_count == 1
 
     @patch("griddle.handlers.chm._certificate_expired", return_value=True)
     @patch("griddle.handlers.chm.RasterConnection")
-    @patch("griddle.handlers.chm._query_tile_index")
+    @patch("griddle.handlers.chm.select_naip_chm_tiles")
     def test_failed_retry_reports_source_unavailable(
         self, mock_query, mock_raster_cls, mock_expired
     ):
         """If the retry also fails, the user gets a retryable error, not a crash."""
         mock_raster_cls.side_effect = RasterioIOError("CURL error: connection reset")
-        mock_query.return_value = _make_naip_query_result()
+        mock_query.return_value = _make_naip_selection()
 
         with pytest.raises(ProcessingError) as exc_info:
-            fetch_naip_chm(_make_roi(), MagicMock(), alignment={"target": "native"})
+            fetch_naip_chm(
+                _make_roi(), None, MagicMock(), alignment={"target": "native"}
+            )
 
         assert exc_info.value.code == "TILE_SOURCE_UNAVAILABLE"
         assert exc_info.value.suggestion

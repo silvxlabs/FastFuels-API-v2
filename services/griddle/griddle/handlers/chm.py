@@ -26,12 +26,18 @@ from rasterio._err import CPLE_BaseError
 from rasterio.errors import RasterioIOError
 from rioxarray.exceptions import NoDataInBounds
 from rioxarray.merge import merge_arrays
+from shapely.geometry import box
 
 from griddle.handlers.tiles import TileMetadata
-from lib.alignment import RESAMPLING_METHOD_MAP, resolve_alignment_destination
+from lib.alignment import (
+    RESAMPLING_METHOD_MAP,
+    resolve_alignment_destination,
+    target_grid_bounds,
+)
 from lib.config import TABLES_BUCKET
 from lib.errors import ProcessingError
 from lib.gcs import get_gcsfs_client
+from lib.naip_chm import select_naip_chm_tiles
 from lib.raster import RasterConnection, cog_env
 
 META_VERSION_CONFIG = {
@@ -44,7 +50,10 @@ META_VERSION_CONFIG = {
         "tile_index": f"{TABLES_BUCKET}/Meta_chmv2_index_optimized.parquet",
     },
 }
-NAIP_INDEX_PATH = f"{TABLES_BUCKET}/naip_chm_index_optimized.parquet"
+NAIP_TILE_SOURCE = "naip-chm-v1"
+# NAIP-CHM stores UInt16 centimeters with no scale tag on disk.
+NAIP_SCALE_FACTOR = 100.0
+NAIP_NATIVE_RESOLUTION = 0.6
 
 TILE_READ_ERRORS = (RasterioIOError, CPLE_BaseError)
 
@@ -233,11 +242,12 @@ def _process_intersecting_tiles(
 
     progress("Building dataset...", 80)
 
-    # Mosaic if the ROI spanned multiple tiles
+    # Mosaic if the ROI spanned multiple tiles. Where tiles overlap, the first
+    # valid pixel in list order wins, so callers pass tiles in priority order.
     if len(tile_arrays) == 1:
         chm_da = tile_arrays[0]
     else:
-        chm_da = merge_arrays(tile_arrays)
+        chm_da = merge_arrays(tile_arrays, method="first")
 
     # Now that compositing is done, mask the source nodata sentinel to NaN
     # and apply the scale factor (e.g. NAIP UInt16 -> float meters). Both
@@ -327,17 +337,40 @@ def fetch_meta_chm(
     )
 
 
+def _output_extent(
+    roi: gpd.GeoDataFrame,
+    alignment: dict,
+    target_grid_doc: dict | None,
+    extent_buffer_cells: int,
+):
+    """Box the output lattice covers, buffer included, and its CRS."""
+    if alignment["target"] == "grid":
+        georef = target_grid_doc["georeference"]
+        xmin, ymin, xmax, ymax = target_grid_bounds(georef)
+        crs = georef["crs"]
+        resolution = alignment.get("resolution") or abs(georef["transform"][0])
+    else:
+        xmin, ymin, xmax, ymax = roi.total_bounds
+        crs = roi.crs
+        resolution = alignment.get("resolution") or NAIP_NATIVE_RESOLUTION
+    pad = extent_buffer_cells * resolution
+    return box(xmin - pad, ymin - pad, xmax + pad, ymax + pad), crs
+
+
 def fetch_naip_chm(
     roi: gpd.GeoDataFrame,
+    year: int | None,
     progress: Callable[[str, int | None], None],
     extent_buffer_cells: int = 0,
     alignment: dict | None = None,
     target_grid_doc: dict | None = None,
-) -> tuple[xr.Dataset, TileMetadata]:
-    """Fetch NAIP high-resolution canopy height model data.
+) -> tuple[xr.Dataset, TileMetadata, int | None]:
+    """Fetch NAIP-CHM v1 canopy height model data.
 
     Args:
         roi: GeoDataFrame defining the region of interest
+        year: NAIP year to read. ``None`` selects the latest year that fully
+            covers the ROI, or the newest tile per footprint if none does.
         progress: Progress callback
         extent_buffer_cells: Result-grid cells of buffer around the ROI
         alignment: Alignment specification dict. Defaults to
@@ -346,13 +379,24 @@ def fetch_naip_chm(
             ``alignment["target"] == "grid"``.
 
     Returns:
-        Tuple of (Dataset with the ``chm`` variable, tile metadata dict).
+        Tuple of (Dataset with the ``chm`` variable, tile metadata dict,
+        resolved year). The resolved year is ``None`` when the per-footprint
+        fallback was used.
     """
     alignment = alignment or {"target": "domain"}
-    progress("Loading NAIP CHM parquet index...", 10)
+    progress("Loading NAIP CHM tile index...", 10)
 
     try:
-        intersecting = _query_tile_index(NAIP_INDEX_PATH, roi)
+        # The year resolves against the domain, as the API's coverage check
+        # does; the tiles are then chosen over the whole output extent.
+        tiles, resolved_year = select_naip_chm_tiles(
+            roi.geometry.union_all(), roi.crs, year
+        )
+        if tiles and (extent_buffer_cells or alignment["target"] == "grid"):
+            extent, extent_crs = _output_extent(
+                roi, alignment, target_grid_doc, extent_buffer_cells
+            )
+            tiles, _ = select_naip_chm_tiles(extent, extent_crs, resolved_year)
     except Exception as e:
         tb = traceback.format_exc()
         logging.getLogger(__name__).error("NAIP CHM index lookup failed: %s\n%s", e, tb)
@@ -362,27 +406,37 @@ def fetch_naip_chm(
             traceback=tb,
         )
 
-    if intersecting.empty:
+    if not tiles:
+        if year is None:
+            message = "No NAIP CHM tiles found for the given domain extent."
+        else:
+            message = (
+                f"No NAIP CHM tiles from {year} found for the given domain extent."
+            )
         raise ProcessingError(
             code="COVERAGE_ERROR",
-            message="No NAIP CHM tiles found for the given domain extent.",
+            message=message,
             suggestion="The domain may be outside the CONUS coverage area.",
         )
 
-    # Extract exactly what the helper needs into explicit Python lists
-    fetch_urls = intersecting["chm_url"].tolist()
-    if "scale_factor" in intersecting.columns:
-        scale_factors = intersecting["scale_factor"].tolist()
-    else:
-        scale_factors = [100.0] * len(fetch_urls)
-
-    return _process_intersecting_tiles(
+    # Newest first, so newer tiles win where tiles overlap.
+    fetch_urls = [tile.url for tile in tiles]
+    dataset, tile_metadata = _process_intersecting_tiles(
         roi=roi,
         fetch_urls=fetch_urls,
-        scale_factors=scale_factors,
+        scale_factors=[NAIP_SCALE_FACTOR] * len(fetch_urls),
         gdal_env={},  # Standard HTTP requests require no auth config
         progress=progress,
         extent_buffer_cells=extent_buffer_cells,
         alignment=alignment,
         target_grid_doc=target_grid_doc,
     )
+
+    by_url = {tile.url: tile for tile in tiles}
+    used = [by_url[url] for url in tile_metadata["tiles"]]
+    tile_metadata["tile_source"] = NAIP_TILE_SOURCE
+    tile_metadata["acquisition_dates"] = [t.datetime.date().isoformat() for t in used]
+    tile_metadata["tile_years"] = [t.year for t in used]
+    tile_metadata["tile_source_gsds"] = [t.source_gsd for t in used]
+    tile_metadata["tile_models"] = [t.model for t in used]
+    return dataset, tile_metadata, resolved_year

@@ -6,6 +6,7 @@ from datetime import date
 
 import pytest
 from griddle.attributions import (
+    NAIP_CHM_CITATION,
     US_PUBLIC_DOMAIN_LICENSE,
     add_attributions,
     source_attributions,
@@ -275,6 +276,20 @@ class TestSourceAttributions:
         # source.attribution itself is left as it was.
         assert source["attribution"] == source_attribution
 
+    def test_naip_chm(self):
+        source = {"name": "canopy", "product": "naip", "year": 2023}
+        assert source_attributions(source, ACCESSED) == [
+            {
+                "dataset": "NAIP-CHM v1",
+                "license_name": "CC-BY-4.0",
+                "license_url": "https://creativecommons.org/licenses/by/4.0/",
+                "citation": NAIP_CHM_CITATION,
+                "access_url": "https://data.ntsg.umt.edu/naip-chm-v1/",
+                "accessed_on": "2026-11-13",
+            }
+        ]
+        assert "https://doi.org/10.1038/s41597-026-07549-w" in NAIP_CHM_CITATION
+
     @pytest.mark.parametrize(
         "source",
         [
@@ -284,7 +299,6 @@ class TestSourceAttributions:
             {"name": "lookup", "table": "fbfm40"},
             {"name": "fosberg"},
             {"name": "layerset"},
-            {"name": "canopy", "product": "naip"},
             {"name": "canopy", "product": "point_cloud"},
             {"name": "canopy", "product": "inventory"},
         ],

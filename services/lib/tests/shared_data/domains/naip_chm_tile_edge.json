@@ -6,7 +6,7 @@
     },
     "type": "name"
   },
-  "description": "Inside NAIP tile m_4611415_sw, 48 m west of m_4611415_se, whose wider EPSG:4326 index bbox also matches.",
+  "description": "Inside NAIP tile m_4611415_sw; in NAIP-CHM v1 (2025) its east edge is 110 m west of m_4611415_se.",
   "features": [
     {
       "geometry": {

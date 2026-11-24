@@ -4,8 +4,9 @@ Integration tests for CHM grid processing.
 Tests the full griddle pipeline: Firestore setup -> process_grid_request ->
 verify GCS output.
 
-These tests hit real Meta CHM tiles via S3 and write to real GCS/Firestore,
-so they require valid credentials and may take a few minutes.
+These tests hit real Meta CHM tiles via S3 and NAIP-CHM v1 tiles via HTTP range
+requests, and write to real GCS/Firestore, so they require valid credentials
+and may take a few minutes.
 """
 
 import os
@@ -83,11 +84,44 @@ def test_meta_chm_4_tiles(griddle_runner):
     _assert_tile_metadata(result.grid_id, expected_tile_count=4)
 
 
+def _naip_source(grid_id):
+    """The stored source, after asserting its NAIP-CHM v1 tile metadata."""
+    _, snapshot = get_document(GRIDS_COLLECTION, grid_id)
+    grid = snapshot.to_dict()
+    assert [a["dataset"] for a in grid["attributions"]] == ["NAIP-CHM v1"]
+    source = grid["source"]
+    tm = source["tile_metadata"]
+    assert tm["tile_source"] == "naip-chm-v1"
+    for key in ("acquisition_dates", "tile_years", "tile_source_gsds", "tile_models"):
+        assert len(tm[key]) == tm["tile_count"]
+    assert tm["tile_years"] == sorted(tm["tile_years"], reverse=True)
+    return source
+
+
 def test_naip_chm(griddle_runner):
-    """NAIP CHM single-tile: Blue Mountain domain (~1 sq km in Montana)."""
+    """NAIP CHM single-tile, default year: the latest year fully covering Blue
+    Mountain (~1 sq km in Montana)."""
     result = griddle_runner("blue_mtn.json", "chm_naip.json")
     _assert_valid_chm(result.ds, "32611")
     _assert_tile_metadata(result.grid_id, expected_tile_count=1)
+    source = _naip_source(result.grid_id)
+    assert source["year"] >= 2025
+    assert source["tile_metadata"]["tile_years"] == [source["year"]]
+
+
+def test_naip_chm_explicit_year(griddle_runner):
+    """NAIP CHM with an explicit year reads that year's tile."""
+    result = griddle_runner(
+        "blue_mtn.json", "chm_naip.json", source_overrides={"year": 2019}
+    )
+    _assert_valid_chm(result.ds, "32611")
+    _assert_tile_metadata(result.grid_id, expected_tile_count=1)
+    source = _naip_source(result.grid_id)
+    assert source["year"] == 2019
+    tm = source["tile_metadata"]
+    assert tm["tile_years"] == [2019]
+    assert tm["acquisition_dates"][0].startswith("2019-")
+    assert "m_4611416_nw_" in tm["tiles"][0]
 
 
 def test_naip_chm_2_tiles(griddle_runner):
@@ -101,7 +135,7 @@ NAIP_TILE_EDGE_BOUNDS = (713766.08, 5183439.03, 714438.85, 5183964.60)
 
 
 def test_naip_chm_tile_edge(griddle_runner):
-    """The index also matches the SE tile, which stops 48 m short of the domain.
+    """The SE tile stops 48 m short of the domain, so only SW is read.
 
     The SW tile alone must fill the whole domain lattice with no nodata.
     """
@@ -126,11 +160,11 @@ def test_naip_chm_tile_edge(griddle_runner):
 
 
 def test_naip_chm_tile_edge_buffer_reaches_neighbor(griddle_runner):
-    """A 100-cell (~60 m) buffer reaches the SE tile, so it is read too."""
+    """A 250-cell (~150 m) buffer reaches the SE tile, 110 m east in 2025."""
     result = griddle_runner(
         "naip_chm_tile_edge.json",
         "chm_naip.json",
-        source_overrides={"extent_buffer_cells": 100},
+        source_overrides={"year": 2025, "extent_buffer_cells": 250},
     )
     _assert_valid_chm(result.ds, "32611")
     _assert_tile_metadata(result.grid_id, expected_tile_count=2)

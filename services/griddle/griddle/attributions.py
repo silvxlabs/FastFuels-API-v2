@@ -99,6 +99,15 @@ TREEMAP_CITATIONS = {
     ),
 }
 
+# The paper the dataset README asks users to cite, in APA form.
+NAIP_CHM_ACCESS_URL = "https://data.ntsg.umt.edu/naip-chm-v1/"
+NAIP_CHM_CITATION = (
+    "Morford, S. L., Allred, B. W., Coons, S. P., Marcozzi, A. A., McCord, S. E., "
+    "Smith, J. T., & Naugle, D. E. (2026). A 0.6-meter resolution canopy height "
+    "model for the contiguous United States. Scientific Data, 13, 1207. "
+    "https://doi.org/10.1038/s41597-026-07549-w"
+)
+
 # Dataset name and SPDX license id of the Meta CHM entry griddle writes to
 # source.attribution, by version.
 META_CHM_DATASETS = {
@@ -143,6 +152,8 @@ def source_attributions(source: dict, accessed_on: date) -> list[dict]:
             ]
         case "canopy", "meta":
             return [meta_chm_attribution(source)]
+        case "canopy", "naip":
+            return [naip_chm_attribution(accessed_on)]
         case "pim", "treemap":
             return [treemap_attribution(source.get("version", "2022"), accessed_on)]
         case _:
@@ -214,6 +225,18 @@ def treemap_attribution(version: str, accessed_on: date) -> dict:
         "license_url": catalog_url,
         "citation": citation,
         "access_url": catalog_url,
+        "accessed_on": accessed_on.isoformat(),
+    }
+
+
+def naip_chm_attribution(accessed_on: date) -> dict:
+    """The entry for NAIP-CHM v1."""
+    return {
+        "dataset": "NAIP-CHM v1",
+        "license_name": "CC-BY-4.0",
+        "license_url": "https://creativecommons.org/licenses/by/4.0/",
+        "citation": NAIP_CHM_CITATION,
+        "access_url": NAIP_CHM_ACCESS_URL,
         "accessed_on": accessed_on.isoformat(),
     }
 

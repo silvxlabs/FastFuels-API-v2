@@ -1170,7 +1170,7 @@ class TestHandleCanopy:
             "native_crs": "EPSG:32611",
             "acquisition_dates": None,
         }
-        mock_fetch.return_value = (mock_dataset, mock_metadata)
+        mock_fetch.return_value = (mock_dataset, mock_metadata, 2023)
         progress = MagicMock()
 
         source = {
@@ -1182,6 +1182,7 @@ class TestHandleCanopy:
 
         mock_fetch.assert_called_once_with(
             mock_gdf,
+            None,
             progress,
             extent_buffer_cells=0,
             alignment={"target": "domain"},
@@ -1189,6 +1190,19 @@ class TestHandleCanopy:
         )
         assert result == mock_dataset
         assert source["tile_metadata"] == mock_metadata
+        assert source["year"] == 2023
+
+    @pytest.mark.parametrize("resolved", [2019, None])
+    @patch("griddle.dispatch.chm.fetch_naip_chm")
+    def test_naip_writes_back_resolved_year(self, mock_fetch, resolved):
+        """The requested year goes to the handler; the resolved one is stored."""
+        mock_fetch.return_value = (MagicMock(), {}, resolved)
+        source = {"product": "naip", "year": 2019 if resolved else None}
+
+        handle_canopy(MagicMock(spec=gpd.GeoDataFrame), source, MagicMock())
+
+        assert mock_fetch.call_args.args[1] == (2019 if resolved else None)
+        assert source["year"] == resolved
 
     @patch("griddle.dispatch.chm.fetch_meta_chm")
     def test_calls_progress_callback(self, mock_fetch):
@@ -1246,7 +1260,7 @@ class TestHandleCanopy:
     def test_naip_does_not_populate_attribution(self, mock_fetch):
         """handle_canopy does not populate attribution for naip product."""
         mock_gdf = MagicMock(spec=gpd.GeoDataFrame)
-        mock_fetch.return_value = (MagicMock(), {})
+        mock_fetch.return_value = (MagicMock(), {}, 2023)
         progress = MagicMock()
 
         source = {"product": "naip", "version": "2020"}

@@ -518,13 +518,15 @@ def handle_canopy(
 
             return dataset
         case "naip":
-            dataset, tile_metadata = chm.fetch_naip_chm(
+            dataset, tile_metadata, year = chm.fetch_naip_chm(
                 domain_gdf,
+                source.get("year"),
                 progress,
                 extent_buffer_cells=extent_buffer_cells,
                 alignment=alignment,
                 target_grid_doc=target_grid_doc,
             )
+            source["year"] = year
             source["tile_metadata"] = tile_metadata
             return dataset
         case "landfire":

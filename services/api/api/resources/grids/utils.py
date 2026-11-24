@@ -37,6 +37,7 @@ from lib.crs import crs_equal
 from lib.domain_utils import parse_domain_gdf
 from lib.fuel_models import UnknownFuelModelError, resolve_fuel_model_value
 from lib.landfire import CoverageStatus, covers_annual, covers_seasonal
+from lib.naip_chm import naip_chm_coverage
 
 
 def dump_modifications_for_firestore(
@@ -102,6 +103,38 @@ def validate_lfps_coverage(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Can't fetch {product!r} version {version!r}{season_clause}: {reason}; {info}.",
         )
+
+
+def validate_naip_chm_year_coverage(year: int, domain: dict) -> None:
+    """Reject a NAIP CHM year that covers none of the domain.
+
+    `partial` coverage is allowed through, same as LFPS -- the uncovered
+    portion comes back as nodata. A year missing from the index reports
+    `none` coverage, so it is rejected the same way.
+
+    This is a plain sync function -- it reads the NAIP-CHM index from GCS, so
+    async callers should wrap it with `asyncio.to_thread(...)`.
+
+    Raises:
+        HTTPException(422): The year covers none of the domain.
+    """
+    gdf = parse_domain_gdf(domain)
+    coverage = naip_chm_coverage(gdf.geometry.union_all(), gdf.crs)
+    if any(y.year == year and y.coverage != "none" for y in coverage.years):
+        return
+
+    covering = [str(y.year) for y in coverage.years if y.coverage != "none"]
+    if covering:
+        available = f"years that cover it: {', '.join(covering)}"
+    else:
+        available = "no NAIP year covers it"
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=(
+            f"NAIP CHM year {year} doesn't cover this domain ({available}); "
+            f"see GET /domains/{domain['id']}/grids/canopy/naip/coverage."
+        ),
+    )
 
 
 def resolve_disturbance_plan(

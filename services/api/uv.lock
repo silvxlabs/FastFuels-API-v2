@@ -184,7 +184,7 @@ dependencies = [
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
     { name = "gunicorn" },
-    { name = "lib", extra = ["entwine", "inventory", "pointcloud", "threedep"] },
+    { name = "lib", extra = ["entwine", "inventory", "naip-chm", "pointcloud", "threedep"] },
     { name = "orjson" },
     { name = "pandas" },
     { name = "pandera" },
@@ -223,7 +223,7 @@ requires-dist = [
     { name = "google-cloud-storage", specifier = ">=3.9.0" },
     { name = "google-cloud-tasks", specifier = ">=2.21.0" },
     { name = "gunicorn", specifier = ">=25.0.1" },
-    { name = "lib", extras = ["threedep", "entwine", "pointcloud", "inventory"], editable = "../lib" },
+    { name = "lib", extras = ["threedep", "entwine", "pointcloud", "inventory", "naip-chm"], editable = "../lib" },
     { name = "orjson", specifier = ">=3.13.0" },
     { name = "pandas", specifier = ">=3.0.0" },
     { name = "pandera", specifier = ">=0.29.0" },
@@ -1284,6 +1284,12 @@ inventory = [
     { name = "pandas" },
     { name = "pyarrow" },
 ]
+naip-chm = [
+    { name = "gcsfs" },
+    { name = "pyarrow" },
+    { name = "pyproj" },
+    { name = "shapely" },
+]
 pointcloud = [
     { name = "google-cloud-storage" },
     { name = "laspy", extra = ["lazrs"] },
@@ -1305,6 +1311,7 @@ requires-dist = [
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'inventory'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'landfire'", specifier = ">=2026.2.0" },
+    { name = "gcsfs", marker = "extra == 'naip-chm'", specifier = ">=2026.2.0" },
     { name = "gcsfs", marker = "extra == 'zarr'", specifier = ">=2026.2.0" },
     { name = "geopandas", marker = "extra == 'entwine'", specifier = ">=1.1.2" },
     { name = "geopandas", marker = "extra == 'landfire'", specifier = ">=1.1.2" },
@@ -1322,7 +1329,9 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'entwine'", specifier = ">=18.0.0" },
     { name = "pyarrow", marker = "extra == 'inventory'", specifier = ">=18.0.0" },
     { name = "pyarrow", marker = "extra == 'landfire'", specifier = ">=18.0.0" },
+    { name = "pyarrow", marker = "extra == 'naip-chm'", specifier = ">=18.0.0" },
     { name = "pyarrow", marker = "extra == 'pointcloud'", specifier = ">=18.0.0" },
+    { name = "pyproj", marker = "extra == 'naip-chm'", specifier = ">=3.6" },
     { name = "pyproj", marker = "extra == 'pointcloud'", specifier = ">=3.6" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rasterio", marker = "extra == 'raster'", specifier = ">=1.5.0" },
@@ -1333,11 +1342,12 @@ requires-dist = [
     { name = "s3fs", marker = "extra == 'threedep'", specifier = ">=2024.2.0" },
     { name = "shapely", marker = "extra == 'entwine'", specifier = ">=2.0" },
     { name = "shapely", marker = "extra == 'landfire'", specifier = ">=2.0" },
+    { name = "shapely", marker = "extra == 'naip-chm'", specifier = ">=2.0" },
     { name = "xarray", marker = "extra == 'raster'", specifier = ">=2025.1.0" },
     { name = "xarray", marker = "extra == 'zarr'", specifier = ">=2025.1.0" },
     { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1.5" },
 ]
-provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "inventory", "entwine", "pointcloud", "landfire"]
+provides-extras = ["firestore", "gcs", "zarr", "raster", "threedep", "inventory", "entwine", "pointcloud", "naip-chm", "landfire"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]

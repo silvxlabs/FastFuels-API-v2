@@ -18,13 +18,18 @@ from api.resources.grids.canopy.schema import (
     CreateNaipChmRequest,
     CreatePointCloudChmRequest,
     MetaChmSource,
+    NaipChmCoverage,
     NaipChmSource,
     PointCloudChmSource,
     build_chm_bands,
+    build_naip_chm_coverage_response,
 )
 from api.resources.grids.providers.canopy import CanopySource
 from api.resources.grids.schema import BandType
 from pydantic import ValidationError
+
+from lib.naip_chm import NaipChmCoverage as LibNaipChmCoverage
+from lib.naip_chm import NaipChmYearCoverage
 
 
 class TestCanopySource:
@@ -279,7 +284,6 @@ class TestCreateNaipChmRequest:
     def test_minimal_valid_request(self):
         """Minimal request with no required body fields."""
         request = CreateNaipChmRequest()
-        # Assumes you updated the default to 2023 in the schema!
         assert request.name == ""
         assert request.description == ""
         assert request.tags == []
@@ -315,6 +319,127 @@ class TestCreateNaipChmRequest:
     def test_extent_buffer_cells_rejects_above_maximum(self):
         with pytest.raises(ValidationError):
             CreateNaipChmRequest(extent_buffer_cells=11)
+
+    def test_year_defaults_to_none(self):
+        assert CreateNaipChmRequest().year is None
+
+    def test_year_accepts_first_naip_chm_year(self):
+        assert CreateNaipChmRequest(year=2007).year == 2007
+
+    def test_year_has_no_upper_bound(self):
+        """Years the index doesn't have yet are left to the coverage check."""
+        assert CreateNaipChmRequest(year=2099).year == 2099
+
+    def test_year_before_2007_rejected(self):
+        with pytest.raises(ValidationError):
+            CreateNaipChmRequest(year=2006)
+
+
+class TestNaipChmSourceYearAndTileMetadata:
+    """`year` and the NAIP-specific tile metadata on stored sources."""
+
+    OLD_DOC = {
+        "name": "canopy",
+        "product": "naip",
+        "description": "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)",
+        "extent_buffer_cells": 0,
+        "tile_metadata": {
+            "tiles": ["https://example.org/a.tif"],
+            "tile_source": "naip-chm",
+            "tile_count": 1,
+            "native_crs": "EPSG:26911",
+            "acquisition_dates": ["2023-07-01"],
+        },
+    }
+
+    def test_year_defaults_to_none(self):
+        assert NaipChmSource().year is None
+        assert NaipChmSource().model_dump()["year"] is None
+
+    def test_year_round_trips(self):
+        assert NaipChmSource(year=2023).model_dump()["year"] == 2023
+
+    def test_stored_doc_without_year_validates(self):
+        source = NaipChmSource.model_validate(self.OLD_DOC)
+        assert source.year is None
+        assert source.tile_metadata.tile_years is None
+        assert source.tile_metadata.tile_source_gsds is None
+        assert source.tile_metadata.tile_models is None
+
+    def test_tile_metadata_with_per_tile_fields(self):
+        doc = {
+            **self.OLD_DOC,
+            "year": None,
+            "tile_metadata": {
+                "tiles": ["https://example.org/a.tif", "https://example.org/b.tif"],
+                "tile_source": "naip-chm-v1",
+                "tile_count": 2,
+                "native_crs": "EPSG:26911",
+                "acquisition_dates": ["2025-06-30", "2023-07-01"],
+                "tile_years": [2025, 2023],
+                "tile_source_gsds": [0.3, 0.6],
+                "tile_models": ["model-a", "model-b"],
+            },
+        }
+        source = NaipChmSource.model_validate(doc)
+        assert source.tile_metadata.tile_years == [2025, 2023]
+        assert source.tile_metadata.tile_source_gsds == [0.3, 0.6]
+        assert source.tile_metadata.tile_models == ["model-a", "model-b"]
+
+
+class TestBuildNaipChmCoverageResponse:
+    """Builds the coverage response from lib.naip_chm's coverage result."""
+
+    HREF = "/v2/domains/abc/grids/canopy/naip"
+
+    def _coverage(self, years, default_year):
+        return LibNaipChmCoverage(
+            years=[NaipChmYearCoverage(y, p, c) for y, p, c in years],
+            default_year=default_year,
+        )
+
+    def test_create_link_only_for_years_that_cover_the_domain(self):
+        coverage = self._coverage(
+            [(2025, 62.7, "partial"), (2024, 0.0, "none"), (2023, 100.0, "full")],
+            2023,
+        )
+        response = build_naip_chm_coverage_response(coverage, self.HREF)
+        links = [y.links.create for y in response.years]
+
+        assert links[1] is None
+        for link, year in ((links[0], 2025), (links[2], 2023)):
+            assert link.href == self.HREF
+            assert link.method == "POST"
+            assert link.body == {"year": year}
+
+    def test_years_keep_order_and_map_coverage(self):
+        coverage = self._coverage(
+            [(2025, 62.7, "partial"), (2024, 0.0, "none"), (2023, 100.0, "full")],
+            2023,
+        )
+        response = build_naip_chm_coverage_response(coverage, self.HREF)
+
+        assert response.product == "naip"
+        assert response.default == 2023
+        assert [y.year for y in response.years] == [2025, 2024, 2023]
+        assert [y.coverage for y in response.years] == [
+            NaipChmCoverage.partial,
+            NaipChmCoverage.none,
+            NaipChmCoverage.full,
+        ]
+
+    def test_percent_rounded_to_two_decimals(self):
+        coverage = self._coverage([(2025, 62.756789, "partial")], None)
+        response = build_naip_chm_coverage_response(coverage, self.HREF)
+        assert response.years[0].percent == 62.76
+
+    def test_default_null_when_no_year_is_full(self):
+        coverage = self._coverage(
+            [(2025, 40.0, "partial"), (2024, 60.0, "partial")], None
+        )
+        response = build_naip_chm_coverage_response(coverage, self.HREF)
+        assert response.default is None
+        assert response.model_dump(mode="json")["default"] is None
 
 
 class TestChmSpikeFilter:

@@ -153,6 +153,7 @@ jobs:
           UPLOADS_BUCKET: ${{ secrets.UPLOADS_BUCKET }}
           FEATURES_BUCKET: ${{ secrets.FEATURES_BUCKET }}
           POINT_CLOUDS_BUCKET: ${{ secrets.POINT_CLOUDS_BUCKET }}
+          TABLES_BUCKET: ${{ secrets.TABLES_BUCKET }}
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
           # Prod is tested through the load balancer, as users reach it.
           TEST_API_URL: ${{ needs.determine-environment.outputs.deploy_env == 'prod' && 'https://api.fastfuels.silvxlabs.com' || needs.deploy.outputs.service_url }}

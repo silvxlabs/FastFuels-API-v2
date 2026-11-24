@@ -31,6 +31,7 @@ from api.resources.grids.schema import (
 from api.resources.input_requirements import input_requirements, point_cloud
 from api.resources.point_clouds.schema import PointCloudType
 from lib.landfire import LANDFIRE_VERSIONS
+from lib.naip_chm import NaipChmCoverage as LibNaipChmCoverage
 
 
 class LandfireCanopyFuelBand(BandEnum):
@@ -154,19 +155,52 @@ def build_chm_bands() -> list[Band]:
     return [CHM_BAND]
 
 
+NAIP_CHM_FIRST_YEAR = 2007
+
+
+class NaipChmTileMetadata(TileMetadata):
+    """Tiles read for a NAIP CHM grid.
+
+    The ``tile_*`` lists run parallel to ``tiles``: entry *i* describes tile *i*.
+    """
+
+    tile_years: list[int] | None = Field(
+        default=None, description="NAIP acquisition year of each tile."
+    )
+    tile_source_gsds: list[float] | None = Field(
+        default=None,
+        description="Pixel size of the NAIP imagery each tile was derived from, in meters.",
+    )
+    tile_models: list[str] | None = Field(
+        default=None, description="Model that produced each tile's canopy heights."
+    )
+
+
 class NaipChmSource(CanopySource):
     """Source for NAIP high-resolution canopy height data.
 
-    Returns a continuous canopy height raster at ~0.6m resolution (CONUS).
+    Returns a continuous canopy height raster at ~0.6m resolution (CONUS)
+    from the NAIP-CHM v1 dataset.
     """
 
     product: Literal["naip"] = "naip"
     description: Literal[
         "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)"
     ] = "NAIP high-resolution canopy height model at ~0.6m resolution (CONUS)"
+    year: int | None = Field(
+        default=None,
+        description=(
+            "NAIP year the grid was built from: the requested year. When no "
+            "year was requested it is null until the grid finishes "
+            "processing, then holds the latest year that fully covers the "
+            "domain, or stays null when no single year did and tiles from "
+            "several years were combined; `tile_metadata.tile_years` lists "
+            "each tile's year."
+        ),
+    )
 
     # Post-processing metadata populated by Griddle after processing
-    tile_metadata: TileMetadata | None = None
+    tile_metadata: NaipChmTileMetadata | None = None
 
 
 class CreateNaipChmRequest(CreateSourceGridRequestBase):
@@ -175,6 +209,147 @@ class CreateNaipChmRequest(CreateSourceGridRequestBase):
     Returns a grid with a single continuous band:
     - chm: Canopy height in meters
     """
+
+    year: int | None = Field(
+        default=None,
+        ge=NAIP_CHM_FIRST_YEAR,
+        description=(
+            "NAIP year to build the grid from. Omit it to use the latest year "
+            "that fully covers the domain; if no single year does, each part "
+            "of the domain uses the latest year available there. With a year, "
+            "only that year's tiles are used: parts of the domain it doesn't "
+            "cover are nodata, and a year that covers none of the domain is "
+            "rejected with 422. `GET /domains/{domain_id}/grids/canopy/naip/coverage` "
+            "lists each year's coverage of the domain."
+        ),
+    )
+
+
+class NaipChmCoverage(StrEnum):
+    """How much of a domain a NAIP year covers."""
+
+    full = "full"
+    partial = "partial"
+    none = "none"
+
+
+class NaipChmCreateLink(BaseModel):
+    """The create request that builds a grid from one NAIP year."""
+
+    href: str = Field(
+        description="Path of the create endpoint on the API host, including `/v2`."
+    )
+    method: Literal["POST"] = "POST"
+    body: dict = Field(description="Request body selecting this year.")
+
+
+class NaipChmYearLinks(BaseModel):
+    """Actions available for a NAIP year on this domain."""
+
+    create: NaipChmCreateLink | None = Field(
+        description=(
+            "Request that creates a grid from this year. Null when the year "
+            "doesn't cover the domain, so the create would be rejected."
+        )
+    )
+
+
+class NaipChmYearCoverageResponse(BaseModel):
+    """One NAIP year and its coverage of the domain."""
+
+    year: int = Field(description="NAIP acquisition year.")
+    coverage: NaipChmCoverage = Field(
+        description=(
+            "`full` or `partial` years can be created for this domain; a "
+            "`partial` year leaves the uncovered part of the domain nodata. "
+            "`none` years don't cover the domain."
+        )
+    )
+    percent: float = Field(
+        ge=0, le=100, description="Share of the domain this year covers, in percent."
+    )
+    links: NaipChmYearLinks
+
+
+class NaipChmCoverageResponse(BaseModel):
+    """Response model for the NAIP CHM coverage pre-flight check."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "product": "naip",
+                    "default": 2023,
+                    "years": [
+                        {
+                            "year": 2025,
+                            "coverage": "partial",
+                            "percent": 62.76,
+                            "links": {
+                                "create": {
+                                    "href": "/v2/domains/abc123/grids/canopy/naip",
+                                    "method": "POST",
+                                    "body": {"year": 2025},
+                                }
+                            },
+                        },
+                        {
+                            "year": 2023,
+                            "coverage": "full",
+                            "percent": 100.0,
+                            "links": {
+                                "create": {
+                                    "href": "/v2/domains/abc123/grids/canopy/naip",
+                                    "method": "POST",
+                                    "body": {"year": 2023},
+                                }
+                            },
+                        },
+                        {
+                            "year": 2022,
+                            "coverage": "none",
+                            "percent": 0.0,
+                            "links": {"create": None},
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    product: Literal["naip"] = "naip"
+    default: int | None = Field(
+        description=(
+            "Year a create request without `year` uses: the latest year that "
+            "fully covers the domain. Null when no single year does; such a "
+            "request then uses the latest year available in each part of the "
+            "domain."
+        )
+    )
+    years: list[NaipChmYearCoverageResponse] = Field(
+        description="Every NAIP year in the dataset, newest first."
+    )
+
+
+def build_naip_chm_coverage_response(
+    coverage: LibNaipChmCoverage, create_href: str
+) -> NaipChmCoverageResponse:
+    """Build the coverage response, attaching a create link to each creatable year."""
+    years = []
+    for item in coverage.years:
+        status = NaipChmCoverage(item.coverage)
+        create = None
+        if status is not NaipChmCoverage.none:
+            create = NaipChmCreateLink(href=create_href, body={"year": item.year})
+        years.append(
+            NaipChmYearCoverageResponse(
+                year=item.year,
+                coverage=status,
+                percent=round(item.percent, 2),
+                links=NaipChmYearLinks(create=create),
+            )
+        )
+    return NaipChmCoverageResponse(default=coverage.default_year, years=years)
 
 
 class PointCloudGroundSource(StrEnum):

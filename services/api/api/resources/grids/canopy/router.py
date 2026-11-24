@@ -38,10 +38,12 @@ from api.resources.grids.canopy.schema import (
     CreatePointCloudChmRequest,
     LandfireCanopySource,
     MetaChmSource,
+    NaipChmCoverageResponse,
     NaipChmSource,
     PointCloudChmSource,
     build_chm_bands,
     build_landfire_canopy_bands,
+    build_naip_chm_coverage_response,
 )
 from api.resources.grids.providers.landfire import (
     LandfireCoverageResponse,
@@ -52,6 +54,7 @@ from api.resources.grids.utils import (
     dump_modifications_for_firestore,
     validate_feature_modifications,
     validate_lfps_coverage,
+    validate_naip_chm_year_coverage,
     validate_target_grid_alignment,
 )
 from api.resources.point_clouds.schema import PointCloudType
@@ -65,6 +68,7 @@ from lib.config import (
 )
 from lib.domain_utils import parse_domain_gdf
 from lib.landfire import LANDFIRE_VERSIONS, list_releases
+from lib.naip_chm import naip_chm_coverage
 
 router = APIRouter()
 
@@ -179,10 +183,20 @@ async def create_naip_chm(
     """
     # Create NAIP CHM Grid
 
-    Creates a grid with canopy height data from the NAIP high-resolution
-    canopy height model at ~0.6m resolution (CONUS).
+    Creates a grid with canopy height data from the NAIP-CHM v1 canopy height
+    model at ~0.6m resolution (CONUS), derived from NAIP aerial imagery.
+
+    NAIP imagery is flown state by state, so the years available differ across
+    the country and some places have several. Use
+    `GET /domains/{domain_id}/grids/canopy/naip/coverage` to see which years
+    cover this domain.
 
     ## Request Body
+    - **year**: (optional) NAIP year to use. Omit it to use the latest year
+      that fully covers the domain; if no single year does, each part of the
+      domain uses the latest year available there. With a year, parts of the
+      domain it doesn't cover are nodata, and a year that covers none of the
+      domain is rejected with 422.
     - **name**: (optional) Name for the grid.
     - **description**: (optional) Description.
     - **tags**: (optional) Tags for organizing grids.
@@ -200,9 +214,13 @@ async def create_naip_chm(
     await validate_target_grid_alignment(body.alignment, owner_id, domain_id)
     await validate_feature_modifications(body.modifications, owner_id, domain_id)
 
+    if body.year is not None:
+        await asyncio.to_thread(validate_naip_chm_year_coverage, body.year, domain)
+
     grid_id = uuid.uuid4().hex
     request_time = datetime.now()
     source = NaipChmSource(
+        year=body.year,
         extent_buffer_cells=body.extent_buffer_cells,
         alignment=body.alignment,
     )
@@ -233,6 +251,38 @@ async def create_naip_chm(
     register_dispatch(request, response, background_tasks)
 
     return Grid(**grid_data)
+
+
+@router.get(
+    "/naip/coverage",
+    response_model=NaipChmCoverageResponse,
+    summary="Check NAIP CHM year coverage for a domain",
+)
+async def check_naip_chm_coverage(request: Request, domain: VerifiedDomain):
+    """
+    # Check NAIP CHM Coverage
+
+    Immediate pre-flight check reporting every NAIP year in the NAIP-CHM v1
+    dataset and how much of this domain each one covers. NAIP imagery is flown
+    state by state, so the years that cover a domain depend on where it is.
+
+    ## Response
+
+    `default` is the year a create request without `year` uses: the latest
+    year that fully covers the domain, or null when no single year does. `years`
+    lists every year, newest first, with the share of the domain it covers.
+    Each year that covers the domain carries a `links.create` request: send its
+    `body` to its `href`, a path relative to this API's base URL, to create
+    the grid.
+    """
+    gdf = parse_domain_gdf(domain)
+    coverage = await asyncio.to_thread(
+        naip_chm_coverage, gdf.geometry.union_all(), gdf.crs
+    )
+    create_href = str(
+        request.app.url_path_for("create_naip_chm", domain_id=domain["id"])
+    )
+    return build_naip_chm_coverage_response(coverage, create_href)
 
 
 @router.post(

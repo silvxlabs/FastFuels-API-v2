@@ -92,13 +92,18 @@ EXAMPLE_NAIP_CHM_WITH_METADATA = {
     "tags": ["chm", "naip", "high-res"],
 }
 
+EXAMPLE_NAIP_CHM_YEAR = {
+    "year": 2023,
+}
+
 CREATE_NAIP_CHM_OPENAPI_EXAMPLES = {
     "minimal": {
         "value": EXAMPLE_NAIP_CHM_MINIMAL,
         "summary": "Minimal request",
         "description": (
             "Creates a grid with default settings. Returns NAIP canopy height "
-            "at ~0.6m resolution."
+            "at ~0.6m resolution from the latest year that fully covers the "
+            "domain."
         ),
     },
     "with_metadata": {
@@ -109,12 +114,24 @@ CREATE_NAIP_CHM_OPENAPI_EXAMPLES = {
             "Useful for detailed stand-level analysis."
         ),
     },
+    "year": {
+        "value": EXAMPLE_NAIP_CHM_YEAR,
+        "summary": "A specific NAIP year",
+        "description": (
+            "Builds the grid from 2023 NAIP imagery only. Parts of the domain "
+            "2023 doesn't cover are nodata; if it covers none of the domain "
+            "the request is rejected with 422. Check "
+            "`GET /domains/{domain_id}/grids/canopy/naip/coverage` for the "
+            "years that cover the domain."
+        ),
+    },
 }
 
 
 NAIP_CHM_EXAMPLE_VALUES = [
     ("naip_minimal", EXAMPLE_NAIP_CHM_MINIMAL),
     ("naip_with_metadata", EXAMPLE_NAIP_CHM_WITH_METADATA),
+    ("naip_year", EXAMPLE_NAIP_CHM_YEAR),
 ]
 
 # LANDFIRE canopy examples

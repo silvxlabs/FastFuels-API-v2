@@ -19,7 +19,6 @@ threedep = ["s3fs>=2024.2.0", "geopandas>=1.1.2", "requests>=2.32"]
 inventory = ["pandas>=2.0.0", "numpy>=2.0.0", "pyarrow>=18.0.0", "gcsfs>=2026.2.0"]
 entwine = ["geopandas>=1.1.2", "shapely>=2.0", "requests>=2.32", "pyarrow>=18.0.0", "gcsfs>=2026.2.0"]
 pointcloud = ["laspy[lazrs]>=2.7.0", "numpy>=2.0.0", "pyproj>=3.6", "pyarrow>=18.0.0", "google-cloud-storage>=3.9.0"]
-naip_chm = ["pyarrow>=18.0.0", "gcsfs>=2026.2.0", "shapely>=2.0", "pyproj>=3.6"]
 landfire = ["geopandas>=1.1.2", "shapely>=2.0", "pyarrow>=18.0.0", "requests>=2.32", "gcsfs>=2026.2.0"]
 
 [dependency-groups]

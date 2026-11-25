@@ -15,6 +15,8 @@ import textwrap
 import uuid
 from pathlib import Path
 
+import pytest
+
 from lib.config import TEST_BUCKET
 
 API_ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +43,13 @@ FORK_SCRIPT = textwrap.dedent(
 )
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason=(
+        "grpcio>=1.80 macOS wheels abort the forked child in the Objective-C "
+        "runtime fork check; prod and CI run Linux (#821)"
+    ),
+)
 def test_first_call_after_fork_succeeds():
     path = f"blobs/{uuid.uuid4().hex}/nonexistent"
 

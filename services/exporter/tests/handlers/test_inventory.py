@@ -447,7 +447,9 @@ PEAK_RSS_SCRIPT = textwrap.dedent(
     import resource, sys
     from unittest.mock import patch
 
-    import fsspec, numpy as np, pandas as pd
+    import io
+
+    import numpy as np, pandas as pd
 
     from exporter.handlers import inventory
 
@@ -463,9 +465,17 @@ PEAK_RSS_SCRIPT = textwrap.dedent(
         "crown_ratio": rng.uniform(0.1, 0.9, rows),
     })
 
+    class Discard(io.RawIOBase):
+        # Write-only and unseekable, like a gcsfs upload stream.
+        def writable(self):
+            return True
+
+        def write(self, b):
+            return len(b)
+
     class DiscardFS:
         def open(self, path, mode):
-            return fsspec.filesystem("file").open("/dev/null", mode)
+            return Discard()
 
         def put_file(self, local, path):
             pass

@@ -412,8 +412,10 @@ dependencies = [
     { name = "lib", extra = ["firestore", "gcs", "zarr"] },
     { name = "pandas" },
     { name = "pyarrow" },
+    { name = "pyogrio" },
     { name = "rioxarray" },
     { name = "scipy" },
+    { name = "shapely" },
 ]
 
 [package.optional-dependencies]
@@ -444,10 +446,12 @@ requires-dist = [
     { name = "lib", extras = ["firestore", "gcs", "zarr"], editable = "../lib" },
     { name = "pandas", specifier = ">=2.0.0" },
     { name = "pyarrow", specifier = ">=15.0.0" },
+    { name = "pyogrio", specifier = ">=0.8.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.5.0" },
     { name = "rioxarray", specifier = ">=0.21.0" },
     { name = "scipy", specifier = ">=1.13" },
+    { name = "shapely", specifier = ">=2.0.0" },
 ]
 provides-extras = ["test"]
 

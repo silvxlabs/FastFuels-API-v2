@@ -6,17 +6,20 @@ subset, and writes to the requested format (Parquet ZIP, CSV, GeoJSON,
 GeoPackage).
 """
 
-import io
+import json
 import logging
 import os
 import tempfile
+import time
 import traceback
 import zipfile
 from collections.abc import Callable
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point
+import pyarrow as pa
+import pyogrio
+import shapely
 
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
@@ -25,6 +28,9 @@ from lib.config import EXPORTS_BUCKET
 from lib.gcs import get_gcsfs_client
 
 logger = logging.getLogger(__name__)
+
+# Rows per GeoJSON/GeoPackage write; bounds what one export holds at once (#608).
+WRITE_BATCH_ROWS = 50_000
 
 
 def _load_and_select(
@@ -71,15 +77,8 @@ def _load_and_select(
     return df
 
 
-def _to_geodataframe(df: pd.DataFrame, crs: str | None) -> gpd.GeoDataFrame:
-    """Convert a DataFrame to a GeoDataFrame using x and y columns.
-
-    Args:
-        df: DataFrame that must contain 'x' and 'y' columns
-        crs: Coordinate reference system string (e.g. "EPSG:32611")
-
-    Returns:
-        GeoDataFrame with Point geometry
+def _require_xy(df: pd.DataFrame) -> None:
+    """Raise if the DataFrame lacks the x and y columns.
 
     Raises:
         ProcessingError: If x or y columns are missing
@@ -94,23 +93,19 @@ def _to_geodataframe(df: pd.DataFrame, crs: str | None) -> gpd.GeoDataFrame:
             ),
         )
 
-    geometry = [Point(xy) for xy in zip(df["x"], df["y"])]
-    gdf = gpd.GeoDataFrame(df, geometry=geometry, crs=crs)
-    # Drop x/y columns since they're now in the geometry
-    gdf = gdf.drop(columns=["x", "y"])
-    return gdf
 
-
-def _upload_bytes(data: bytes, gcs_path: str) -> None:
-    """Upload bytes to GCS.
+def _to_geodataframe(df: pd.DataFrame, crs: str | None) -> gpd.GeoDataFrame:
+    """Convert a DataFrame to a GeoDataFrame using x and y columns.
 
     Args:
-        data: Raw bytes to upload
-        gcs_path: Full GCS path (gs://bucket/path/to/file)
+        df: DataFrame that must contain 'x' and 'y' columns
+        crs: Coordinate reference system string (e.g. "EPSG:32611")
+
+    Returns:
+        GeoDataFrame with Point geometry, without the x and y columns
     """
-    fs = get_gcsfs_client()
-    with fs.open(gcs_path, "wb") as f:
-        f.write(data)
+    geometry = shapely.points(df["x"].to_numpy(), df["y"].to_numpy())
+    return gpd.GeoDataFrame(df.drop(columns=["x", "y"]), geometry=geometry, crs=crs)
 
 
 def export_parquet(
@@ -131,21 +126,24 @@ def export_parquet(
     df = _load_and_select(source, progress)
     export_id = export["id"]
 
-    progress("Writing Parquet...", 60)
-    parquet_buffer = io.BytesIO()
-    df.to_parquet(parquet_buffer, index=False)
-    parquet_bytes = parquet_buffer.getvalue()
-
-    progress("Creating ZIP archive...", 80)
-    zip_buffer = io.BytesIO()
-    inner_name = sanitize_filename(export.get("name", ""), ".parquet")
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(inner_name, parquet_bytes)
-    zip_bytes = zip_buffer.getvalue()
-
     filename = sanitize_filename(export.get("name", ""), ".zip")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
-    _upload_bytes(zip_bytes, gcs_path)
+    # Same member metadata ZipFile.writestr() sets; open() defaults to 1980.
+    member_info = zipfile.ZipInfo(
+        sanitize_filename(export.get("name", ""), ".parquet"),
+        date_time=time.localtime()[:6],
+    )
+    member_info.compress_type = zipfile.ZIP_DEFLATED
+    member_info.external_attr = 0o600 << 16
+
+    progress("Writing Parquet...", 60)
+    fs = get_gcsfs_client()
+    with (
+        fs.open(gcs_path, "wb") as f,
+        zipfile.ZipFile(f, "w") as zf,
+        zf.open(member_info, "w", force_zip64=True) as member,
+    ):
+        df.to_parquet(member, index=False)
 
     return gcs_path
 
@@ -168,12 +166,12 @@ def export_csv(
     df = _load_and_select(source, progress)
     export_id = export["id"]
 
-    progress("Writing CSV...", 70)
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-
     filename = sanitize_filename(export.get("name", ""), ".csv")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
-    _upload_bytes(csv_bytes, gcs_path)
+
+    progress("Writing CSV...", 70)
+    with get_gcsfs_client().open(gcs_path, "wb") as f:
+        df.to_csv(f, index=False)
 
     return gcs_path
 
@@ -197,15 +195,23 @@ def export_geojson(
     export_id = export["id"]
     crs = source.get("crs")
 
-    progress("Converting to GeoDataFrame...", 60)
-    gdf = _to_geodataframe(df, crs)
-
-    progress("Writing GeoJSON...", 80)
-    geojson_bytes = gdf.to_json().encode("utf-8")
+    _require_xy(df)
 
     filename = sanitize_filename(export.get("name", ""), ".geojson")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
-    _upload_bytes(geojson_bytes, gcs_path)
+
+    progress("Writing GeoJSON...", 80)
+    # Same bytes as GeoDataFrame.to_json(), written in batches instead of as
+    # one string.
+    envelope = gpd.GeoDataFrame(geometry=[], crs=crs).to_json()
+    head, tail = envelope.split('"features": []')
+    with get_gcsfs_client().open(gcs_path, "wb") as f:
+        f.write(f'{head}"features": ['.encode())
+        for start in range(0, len(df), WRITE_BATCH_ROWS):
+            batch = _to_geodataframe(df.iloc[start : start + WRITE_BATCH_ROWS], crs)
+            features = ", ".join(json.dumps(ft) for ft in batch.iterfeatures(na="null"))
+            f.write(((", " if start else "") + features).encode())
+        f.write(f"]{tail}".encode())
 
     return gcs_path
 
@@ -228,19 +234,40 @@ def export_geopackage(
     df = _load_and_select(source, progress)
     export_id = export["id"]
     crs = source.get("crs")
-
-    progress("Converting to GeoDataFrame...", 60)
-    gdf = _to_geodataframe(df, crs)
-
-    progress("Writing GeoPackage...", 80)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = os.path.join(tmpdir, "export.gpkg")
-        gdf.to_file(tmp_path, driver="GPKG")
-        with open(tmp_path, "rb") as f:
-            gpkg_bytes = f.read()
+    _require_xy(df)
 
     filename = sanitize_filename(export.get("name", ""), ".gpkg")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
-    _upload_bytes(gpkg_bytes, gcs_path)
+
+    props = df.drop(columns=["x", "y"])
+    props_schema = pa.Schema.from_pandas(props, preserve_index=False)
+    schema = props_schema.append(pa.field("geometry", pa.binary()))
+
+    def batches():
+        for start in range(0, len(df), WRITE_BATCH_ROWS):
+            rows = slice(start, start + WRITE_BATCH_ROWS)
+            table = pa.RecordBatch.from_pandas(
+                props.iloc[rows], schema=props_schema, preserve_index=False
+            )
+            points = shapely.points(
+                df["x"].iloc[rows].to_numpy(), df["y"].iloc[rows].to_numpy()
+            )
+            geometry = pa.array(shapely.to_wkb(points), pa.binary())
+            yield pa.RecordBatch.from_arrays([*table.columns, geometry], schema=schema)
+
+    progress("Writing GeoPackage...", 80)
+    # GPKG is SQLite and needs a local path; on Cloud Run that is tmpfs.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = os.path.join(tmpdir, "export.gpkg")
+        pyogrio.write_arrow(
+            pa.RecordBatchReader.from_batches(schema, batches()),
+            tmp_path,
+            layer="export",
+            driver="GPKG",
+            geometry_name="geometry",
+            geometry_type="Point",
+            crs=crs,
+        )
+        get_gcsfs_client().put_file(tmp_path, gcs_path)
 
     return gcs_path

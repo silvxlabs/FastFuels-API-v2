@@ -16,13 +16,14 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-import fsspec
 import gcsfs
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
+from exporter import storage
 from exporter.errors import ProcessingError
+from exporter.handlers import inventory
 from exporter.handlers.inventory import (
     export_csv,
     export_geojson,
@@ -30,9 +31,10 @@ from exporter.handlers.inventory import (
     export_parquet,
 )
 
+from tests.fake_gcs import UPLOADS, FakeBlob
+
 EXPORTER_ROOT = Path(__file__).resolve().parents[2]
-MEMFS = fsspec.filesystem("memory")
-MOCK_UPLOAD = patch("exporter.handlers.inventory.get_gcsfs_client", return_value=MEMFS)
+MOCK_UPLOAD = patch("exporter.storage._blob", side_effect=FakeBlob)
 
 
 def make_test_dataframe(
@@ -121,7 +123,7 @@ class TestExportParquetUnit:
         )
 
         # Verify the uploaded data only has selected columns
-        with zipfile.ZipFile(io.BytesIO(MEMFS.cat(gcs_path))) as zf:
+        with zipfile.ZipFile(io.BytesIO(UPLOADS[gcs_path])) as zf:
             inner_name = zf.namelist()[0]
             df = pd.read_parquet(io.BytesIO(zf.read(inner_name)))
         assert list(df.columns) == ["x", "y", "dbh"]
@@ -220,7 +222,7 @@ class TestExportCsvUnit:
             noop_progress,
         )
 
-        df = pd.read_csv(io.BytesIO(MEMFS.cat(gcs_path)))
+        df = pd.read_csv(io.BytesIO(UPLOADS[gcs_path]))
         assert list(df.columns) == ["dbh", "height"]
 
     @patch("exporter.handlers.inventory.load_inventory_parquet")
@@ -304,7 +306,7 @@ class TestExportGeojsonUnit:
             noop_progress,
         )
 
-        geojson = json.loads(MEMFS.cat(gcs_path).decode("utf-8"))
+        geojson = json.loads(UPLOADS[gcs_path].decode("utf-8"))
         assert geojson["type"] == "FeatureCollection"
         # Should have dbh in properties (x,y moved to geometry)
         props = geojson["features"][0]["properties"]
@@ -415,7 +417,7 @@ class TestBatchedWritesUnit:
             geometry=gpd.points_from_xy(df["x"], df["y"]),
             crs=crs,
         ).to_json()
-        assert MEMFS.cat(gcs_path).decode("utf-8") == expected
+        assert UPLOADS[gcs_path].decode("utf-8") == expected
 
     @pytest.mark.parametrize("n_rows", [0, 1, 7, 23])
     @patch("exporter.handlers.inventory.WRITE_BATCH_ROWS", 7)
@@ -432,7 +434,7 @@ class TestBatchedWritesUnit:
         )
 
         local = tmp_path / "out.gpkg"
-        local.write_bytes(MEMFS.cat(gcs_path))
+        local.write_bytes(UPLOADS[gcs_path])
         gdf = gpd.read_file(local)
         assert gdf.crs == "EPSG:32611"
         assert len(gdf) == n_rows
@@ -440,6 +442,34 @@ class TestBatchedWritesUnit:
         np.testing.assert_array_equal(gdf.geometry.y, df["y"])
         for col in ["fia_status_code", "crown_ratio", "dbh"]:
             assert gdf[col].isna().tolist() == df[col].isna().tolist()
+
+
+class TestFailedWriteUnit:
+    """A failure partway through a streamed write uploads nothing."""
+
+    @patch("exporter.handlers.inventory.WRITE_BATCH_ROWS", 7)
+    @MOCK_UPLOAD
+    @patch("exporter.handlers.inventory.load_inventory_parquet")
+    def test_geojson_failure_uploads_nothing(self, mock_load, _mock_upload):
+        mock_load.return_value = make_test_dataframe(23)
+        real = inventory._to_geodataframe
+        calls = []
+
+        def fail_on_second_batch(df, crs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("boom")
+            return real(df, crs)
+
+        with (
+            patch.object(inventory, "_to_geodataframe", fail_on_second_batch),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            export_geojson(
+                {"id": "failed-export"}, {"inventory_id": "i"}, noop_progress
+            )
+
+        assert not [p for p in UPLOADS if "/failed-export/" in p]
 
 
 PEAK_RSS_SCRIPT = textwrap.dedent(
@@ -451,6 +481,7 @@ PEAK_RSS_SCRIPT = textwrap.dedent(
 
     import numpy as np, pandas as pd
 
+    from exporter import storage
     from exporter.handlers import inventory
 
     handler, rows = getattr(inventory, sys.argv[1]), int(sys.argv[2])
@@ -473,17 +504,20 @@ PEAK_RSS_SCRIPT = textwrap.dedent(
         def write(self, b):
             return len(b)
 
-    class DiscardFS:
-        def open(self, path, mode):
+    class DiscardBlob:
+        def __init__(self, path):
+            pass
+
+        def open(self, mode, **kwargs):
             return Discard()
 
-        def put_file(self, local, path):
+        def upload_from_filename(self, local, **kwargs):
             pass
 
     before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     with (
         patch.object(inventory, "load_inventory_parquet", return_value=df),
-        patch.object(inventory, "get_gcsfs_client", return_value=DiscardFS()),
+        patch.object(storage, "_blob", DiscardBlob),
     ):
         handler({"id": "e"}, {"inventory_id": "i", "crs": "EPSG:32611"}, print)
     after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -631,6 +665,40 @@ class TestExportGeojsonIntegration:
             geojson = json.loads(f.read().decode("utf-8"))
         assert geojson["type"] == "FeatureCollection"
         assert len(geojson["features"]) == 100
+
+    @patch("exporter.handlers.inventory.WRITE_BATCH_ROWS", 5_000)
+    @patch("exporter.handlers.inventory.load_inventory_parquet")
+    def test_failure_mid_upload_leaves_no_object(self, mock_load, export_id):
+        """Fail after a resumable chunk has gone to GCS; the upload is cancelled."""
+        mock_load.return_value = make_test_dataframe(20_000)
+        real_blob, real_to_gdf = storage._blob, inventory._to_geodataframe
+        calls = []
+
+        def small_chunks(gcs_path):
+            blob = real_blob(gcs_path)
+            blob.chunk_size = 256 * 1024  # GCS minimum, so a chunk uploads early
+            return blob
+
+        def fail_on_last_batch(df, crs):
+            calls.append(1)
+            if len(calls) == 4:
+                raise RuntimeError("boom")
+            return real_to_gdf(df, crs)
+
+        with (
+            patch.object(storage, "_blob", small_chunks),
+            patch.object(inventory, "_to_geodataframe", fail_on_last_batch),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            export_geojson(
+                {"id": export_id, "name": "failed"},
+                {"inventory_id": "inv-abc", "crs": "EPSG:32611"},
+                noop_progress,
+            )
+
+        bucket = self.BUCKET.removeprefix("gs://")
+        fs = gcsfs.GCSFileSystem()
+        assert not fs.exists(f"{bucket}/{export_id}/failed.geojson")
 
 
 class TestExportGeopackageIntegration:

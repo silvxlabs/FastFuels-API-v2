@@ -6,7 +6,11 @@ Integration tests write to the real GCS bucket.
 """
 
 import os
+import subprocess
+import sys
+import textwrap
 import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 import gcsfs
@@ -28,6 +32,7 @@ from rioxarray.raster_dataset import RasterDataset
 
 from lib.zarr_utils import load_zarr, save_zarr
 
+EXPORTER_ROOT = Path(__file__).resolve().parents[2]
 MOCK_TO_RASTER = patch.object(RasterDataset, "to_raster")
 
 
@@ -423,6 +428,121 @@ class TestExportGeotiffLocalWrite:
             assert r.nodata == 32767
             assert r.descriptions == ("elevation", "slope")
             np.testing.assert_array_equal(r.read(1), [[1500, 32767]])
+
+
+class TestGeotiffLayout:
+    """Band-interleaved 512 x 512 tiles, DEFLATE, written from tile-aligned chunks (#608)."""
+
+    @staticmethod
+    def _export_local(ds, tmp_path, chunk_shape):
+        zarr_path = str(tmp_path / "grid.zarr")
+        save_zarr(zarr_path, ds, chunk_shape=chunk_shape)
+        local_path = tmp_path / "export.tif"
+        original = RasterArray.to_raster
+
+        def to_local(self, raster_path, **kwargs):
+            return original(self, str(local_path), **kwargs)
+
+        with (
+            patch(
+                "exporter.handlers.grid.load_grid_zarr",
+                return_value=load_zarr(zarr_path),
+            ),
+            patch.object(RasterArray, "to_raster", to_local),
+        ):
+            export_geotiff({"id": "e"}, {"grid_id": "g"}, noop_progress)
+        return rasterio.open(local_path)
+
+    def test_multi_tile_float_grid(self, tmp_path):
+        """Source chunks that don't line up with the tiles still write exactly."""
+        rng = np.random.default_rng(0)
+        bands = {
+            "a": rng.random((600, 1100), dtype=np.float32),
+            "b": rng.random((600, 1100), dtype=np.float32),
+        }
+        bands["a"][::7, ::5] = np.nan
+        ds = make_test_dataset(
+            bands=bands, shape=(600, 1100), nodatas={"a": np.nan, "b": np.nan}
+        )
+        with self._export_local(ds, tmp_path, chunk_shape=(250, 300)) as r:
+            structure = r.tags(ns="IMAGE_STRUCTURE")
+            assert structure["COMPRESSION"] == "DEFLATE"
+            assert structure["INTERLEAVE"] == "BAND"
+            assert structure["PREDICTOR"] == "3"
+            assert r.block_shapes == [(512, 512), (512, 512)]
+            assert r.descriptions == ("a", "b")
+            np.testing.assert_array_equal(r.read(1), bands["a"])
+            np.testing.assert_array_equal(r.read(2), bands["b"])
+
+    def test_integer_grid_uses_horizontal_predictor(self, tmp_path):
+        """Integer bands take PREDICTOR=2; 3 is floating-point only."""
+        data = np.arange(700 * 520, dtype=np.int16).reshape(700, 520) % 300
+        ds = make_test_dataset(
+            bands={"fbfm": data}, shape=(700, 520), nodatas={"fbfm": 32767}
+        )
+        with self._export_local(ds, tmp_path, chunk_shape=(700, 520)) as r:
+            assert r.tags(ns="IMAGE_STRUCTURE")["PREDICTOR"] == "2"
+            np.testing.assert_array_equal(r.read(1), data)
+
+
+GEOTIFF_PEAK_RSS_SCRIPT = textwrap.dedent(
+    """
+    import resource, sys
+    from unittest.mock import patch
+
+    from rioxarray.raster_array import RasterArray
+
+    from exporter.handlers import grid
+    from lib.zarr_utils import load_zarr
+
+    store, out = sys.argv[1], sys.argv[2]
+    original = RasterArray.to_raster
+
+    def to_local(self, raster_path, **kwargs):
+        return original(self, out, **kwargs)
+
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    with (
+        patch.object(grid, "load_grid_zarr", return_value=load_zarr(store)),
+        patch.object(RasterArray, "to_raster", to_local),
+    ):
+        grid.export_geotiff({"id": "e"}, {"grid_id": "g"}, print)
+    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    scale = 1 if sys.platform == "darwin" else 1024  # bytes vs KiB
+    print((after - before) * scale)
+    """
+)
+
+
+class TestGeotiffPeakMemory:
+    """GeoTIFF memory is bounded by the tile, not the grid (#608)."""
+
+    def test_peak_rss_under_150mb_for_4_bands_of_9m_cells(self, tmp_path):
+        rng = np.random.default_rng(0)
+        shape = (3000, 3000)
+        bands = {f"b{i}": rng.random(shape, dtype=np.float32) for i in range(4)}
+        ds = make_test_dataset(
+            bands=bands, shape=shape, nodatas={k: np.nan for k in bands}
+        )
+        store = str(tmp_path / "grid.zarr")
+        save_zarr(store, ds, chunk_shape=(500, 500))
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                GEOTIFF_PEAK_RSS_SCRIPT,
+                store,
+                str(tmp_path / "export.tif"),
+            ],
+            cwd=EXPORTER_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert result.returncode == 0, result.stderr
+        delta_mb = int(result.stdout.strip().splitlines()[-1]) / 2**20
+        assert delta_mb < 150, f"export_geotiff grew peak RSS by {delta_mb:.0f} MB"
 
 
 class TestExportGeotiffIntegration:

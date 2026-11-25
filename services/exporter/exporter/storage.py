@@ -5,9 +5,14 @@ Handles loading grid data from Zarr and uploading export files to GCS.
 """
 
 import logging
+import mimetypes
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import BinaryIO
 
 import pandas as pd
 import xarray as xr
+from google.cloud import storage as gcs_storage
 
 from lib.config import EXPORTS_BUCKET, GRIDS_BUCKET, INVENTORIES_BUCKET
 from lib.gcs import delete_directory
@@ -85,3 +90,44 @@ def delete_export_files(export_id: str) -> None:
         logger.info(f"Deleted export files at {path}")
     except Exception as e:
         logger.warning(f"Failed to delete export files at {path}: {e}")
+
+
+def _blob(gcs_path: str) -> gcs_storage.Blob:
+    """Return the GCS blob for a gs://bucket/path URI."""
+    bucket_name, blob_path = gcs_path.removeprefix("gs://").split("/", 1)
+    return gcs_storage.Client().bucket(bucket_name).blob(blob_path)
+
+
+def _content_type(gcs_path: str) -> str:
+    """Content type guessed from the file extension, as gcsfs does."""
+    return mimetypes.guess_type(gcs_path)[0] or "application/octet-stream"
+
+
+@contextmanager
+def open_upload(gcs_path: str) -> Iterator[BinaryIO]:
+    """Open a streaming, unseekable writer for a GCS object.
+
+    An exception inside the block cancels the upload, so no partial object
+    is left behind.
+
+    Args:
+        gcs_path: Full GCS path (gs://bucket/path/to/file)
+    """
+    # zipfile and pandas call flush(); the GCS writer raises on flush()
+    # unless told to ignore it.
+    with _blob(gcs_path).open(
+        "wb", content_type=_content_type(gcs_path), ignore_flush=True
+    ) as f:
+        yield f
+
+
+def upload_file(local_path: str, gcs_path: str) -> None:
+    """Upload a local file to GCS.
+
+    Args:
+        local_path: Path of the file to upload
+        gcs_path: Full GCS path (gs://bucket/path/to/file)
+    """
+    _blob(gcs_path).upload_from_filename(
+        local_path, content_type=_content_type(gcs_path)
+    )

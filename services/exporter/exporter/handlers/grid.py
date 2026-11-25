@@ -8,25 +8,34 @@ and writes the requested format to GCS.
 import logging
 import math
 import os
-import shutil
 import tempfile
+import threading
 import traceback
+import zipfile
 from collections.abc import Callable
 
 import numpy as np
 import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
+from zarr.codecs import ZstdCodec
 
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
-from exporter.storage import load_grid_zarr
+from exporter.storage import load_grid_zarr, open_upload
 from lib.config import EXPORTS_BUCKET
 
 logger = logging.getLogger(__name__)
 
 # Shared GeoTIFF nodata for integer bands whose own nodata values disagree.
 _SHARED_NODATA = -9999
+
+# GeoTIFF tile edge. Each dask chunk is one tile of one band, written once.
+_TILE = 512
+
+# Chunk codec of the exported Zarr store, pinned like zarr_format so a library
+# default change can't alter what users receive.
+_ZARR_COMPRESSORS = (ZstdCodec(level=0, checksum=False),)
 
 
 def _load_and_select_bands(
@@ -134,6 +143,24 @@ def _stack_with_shared_nodata(ds: xr.Dataset) -> xr.DataArray:
     return stacked.rio.write_nodata(sentinel, encoded=False)
 
 
+def _geotiff_options(dtype: np.dtype) -> dict:
+    """GeoTIFF creation options: band-interleaved 512 x 512 tiles, DEFLATE.
+
+    Band interleave lets each tile of each band be written and compressed
+    once; pixel interleave would rewrite every tile once per band (#608).
+    """
+    return {
+        "driver": "GTiff",
+        "tiled": True,
+        "blockxsize": _TILE,
+        "blockysize": _TILE,
+        "interleave": "band",
+        "compress": "DEFLATE",
+        "predictor": 3 if np.issubdtype(dtype, np.floating) else 2,
+        "lock": threading.Lock(),
+    }
+
+
 def export_geotiff(
     export: dict,
     source: dict,
@@ -167,14 +194,19 @@ def export_geotiff(
     filename = sanitize_filename(export.get("name", ""), ".tif")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
     try:
+        # GDAL stages the compressed file in /tmp (tmpfs) and uploads it on close.
         with rasterio.Env(CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE="YES"):
             if _nodata_is_uniform(ds):
-                ds.rio.to_raster(gcs_path, driver="GTiff")
+                dtype = np.result_type(*(ds[v].dtype for v in ds.data_vars))
+                tiles = ds.chunk({"y": _TILE, "x": _TILE})
+                tiles.rio.to_raster(gcs_path, **_geotiff_options(dtype))
             else:
                 # Bands carry distinct nodata (e.g. LANDFIRE aspect -1 next to
                 # elevation 32767). A GeoTIFF has one dtype and one file-level
                 # nodata, so map every band's nodata onto a shared value.
-                _stack_with_shared_nodata(ds).rio.to_raster(gcs_path, driver="GTiff")
+                stacked = _stack_with_shared_nodata(ds)
+                tiles = stacked.chunk({"band": 1, "y": _TILE, "x": _TILE})
+                tiles.rio.to_raster(gcs_path, **_geotiff_options(stacked.dtype))
     except Exception as e:
         raise ProcessingError(
             code="GEOTIFF_WRITE_ERROR",
@@ -208,28 +240,38 @@ def export_zarr(
     filename = sanitize_filename(export.get("name", ""), ".zip")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
 
-    tmp_dir = tempfile.mkdtemp()
+    for variable in ds.variables.values():
+        variable.encoding.pop("compressor", None)
+        variable.encoding["compressors"] = _ZARR_COMPRESSORS
+
+    # The store is staged in /tmp (tmpfs); the zip streams straight to GCS.
     try:
-        zarr_dir = os.path.join(tmp_dir, "export.zarr")
-        # The format version is part of the export contract: users open this
-        # store with their own tooling, and zarr-python 2.x cannot read v3.
-        # Pinned rather than left to the library default so a future default
-        # flip can't silently change what users receive.
-        ds.to_zarr(zarr_dir, zarr_format=3)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zarr_dir = os.path.join(tmp_dir, "export.zarr")
+            # The format version is part of the export contract: users open this
+            # store with their own tooling, and zarr-python 2.x cannot read v3.
+            # Pinned rather than left to the library default so a future default
+            # flip can't silently change what users receive.
+            ds.to_zarr(zarr_dir, zarr_format=3)
 
-        progress("Zipping Zarr...", 85)
-        zip_path = os.path.join(tmp_dir, "export")
-        zip_file = shutil.make_archive(zip_path, "zip", tmp_dir, "export.zarr")
-
-        progress("Uploading...", 90)
-        from google.cloud import storage as gcs_storage
-
-        without_scheme = gcs_path.removeprefix("gs://")
-        bucket_name, blob_path = without_scheme.split("/", 1)
-        client = gcs_storage.Client()
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(blob_path)
-        blob.upload_from_filename(zip_file)
+            progress("Uploading...", 85)
+            # Same entries as shutil.make_archive. The chunks are already
+            # zstd-compressed, so they are stored; only the JSON is deflated.
+            with (
+                open_upload(gcs_path) as f,
+                zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED) as zf,
+            ):
+                zf.write(zarr_dir, "export.zarr")
+                for root, dirs, files in os.walk(zarr_dir):
+                    dirs.sort()
+                    for name in [*dirs, *sorted(files)]:
+                        path = os.path.join(root, name)
+                        stored = os.path.isfile(path) and not name.endswith(".json")
+                        zf.write(
+                            path,
+                            os.path.relpath(path, tmp_dir),
+                            compress_type=zipfile.ZIP_STORED if stored else None,
+                        )
     except ProcessingError:
         raise
     except Exception as e:
@@ -239,7 +281,5 @@ def export_zarr(
             suggestion="This may indicate an issue with the grid data.",
             traceback=traceback.format_exc(),
         )
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return gcs_path

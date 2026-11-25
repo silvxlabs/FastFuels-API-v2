@@ -23,9 +23,8 @@ import shapely
 
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
-from exporter.storage import load_inventory_parquet
+from exporter.storage import load_inventory_parquet, open_upload, upload_file
 from lib.config import EXPORTS_BUCKET
-from lib.gcs import get_gcsfs_client
 
 logger = logging.getLogger(__name__)
 
@@ -137,9 +136,8 @@ def export_parquet(
     member_info.external_attr = 0o600 << 16
 
     progress("Writing Parquet...", 60)
-    fs = get_gcsfs_client()
     with (
-        fs.open(gcs_path, "wb") as f,
+        open_upload(gcs_path) as f,
         zipfile.ZipFile(f, "w") as zf,
         zf.open(member_info, "w", force_zip64=True) as member,
     ):
@@ -170,7 +168,7 @@ def export_csv(
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
 
     progress("Writing CSV...", 70)
-    with get_gcsfs_client().open(gcs_path, "wb") as f:
+    with open_upload(gcs_path) as f:
         df.to_csv(f, index=False)
 
     return gcs_path
@@ -205,7 +203,7 @@ def export_geojson(
     # one string.
     envelope = gpd.GeoDataFrame(geometry=[], crs=crs).to_json()
     head, tail = envelope.split('"features": []')
-    with get_gcsfs_client().open(gcs_path, "wb") as f:
+    with open_upload(gcs_path) as f:
         f.write(f'{head}"features": ['.encode())
         for start in range(0, len(df), WRITE_BATCH_ROWS):
             batch = _to_geodataframe(df.iloc[start : start + WRITE_BATCH_ROWS], crs)
@@ -268,6 +266,6 @@ def export_geopackage(
             geometry_type="Point",
             crs=crs,
         )
-        get_gcsfs_client().put_file(tmp_path, gcs_path)
+        upload_file(tmp_path, gcs_path)
 
     return gcs_path

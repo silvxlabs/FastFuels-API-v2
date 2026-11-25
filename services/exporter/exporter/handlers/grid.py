@@ -142,11 +142,12 @@ def _stack_with_shared_nodata(ds: xr.Dataset) -> xr.DataArray:
     return stacked.rio.write_nodata(sentinel, encoded=False)
 
 
-def _geotiff_options(dtype: np.dtype) -> dict:
+def _geotiff_options() -> dict:
     """GeoTIFF creation options: band-interleaved 512 x 512 tiles, DEFLATE.
 
     Band interleave lets each tile of each band be written and compressed
     once; pixel interleave would rewrite every tile once per band (#608).
+    No predictor: on real grids it made files larger and writes slower.
     """
     return {
         "driver": "GTiff",
@@ -155,7 +156,6 @@ def _geotiff_options(dtype: np.dtype) -> dict:
         "blockysize": _TILE,
         "interleave": "band",
         "compress": "DEFLATE",
-        "predictor": 3 if np.issubdtype(dtype, np.floating) else 2,
         "lock": threading.Lock(),
     }
 
@@ -199,16 +199,15 @@ def export_geotiff(
         with tempfile.TemporaryDirectory() as tmp_dir:
             local_path = os.path.join(tmp_dir, "export.tif")
             if _nodata_is_uniform(ds):
-                dtype = np.result_type(*(ds[v].dtype for v in ds.data_vars))
                 tiles = ds.chunk({"y": _TILE, "x": _TILE})
-                tiles.rio.to_raster(local_path, **_geotiff_options(dtype))
+                tiles.rio.to_raster(local_path, **_geotiff_options())
             else:
                 # Bands carry distinct nodata (e.g. LANDFIRE aspect -1 next to
                 # elevation 32767). A GeoTIFF has one dtype and one file-level
                 # nodata, so map every band's nodata onto a shared value.
                 stacked = _stack_with_shared_nodata(ds)
                 tiles = stacked.chunk({"band": 1, "y": _TILE, "x": _TILE})
-                tiles.rio.to_raster(local_path, **_geotiff_options(stacked.dtype))
+                tiles.rio.to_raster(local_path, **_geotiff_options())
 
             upload_file(local_path, gcs_path)
     except Exception as e:

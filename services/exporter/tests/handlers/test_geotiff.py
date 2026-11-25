@@ -472,20 +472,22 @@ class TestGeotiffLayout:
             structure = r.tags(ns="IMAGE_STRUCTURE")
             assert structure["COMPRESSION"] == "DEFLATE"
             assert structure["INTERLEAVE"] == "BAND"
-            assert structure["PREDICTOR"] == "3"
+            assert "PREDICTOR" not in structure
             assert r.block_shapes == [(512, 512), (512, 512)]
             assert r.descriptions == ("a", "b")
             np.testing.assert_array_equal(r.read(1), bands["a"])
             np.testing.assert_array_equal(r.read(2), bands["b"])
 
-    def test_integer_grid_uses_horizontal_predictor(self, tmp_path):
-        """Integer bands take PREDICTOR=2; 3 is floating-point only."""
+    def test_integer_grid_round_trips(self, tmp_path):
+        """Integer bands are written with the same layout and read back exactly."""
         data = np.arange(700 * 520, dtype=np.int16).reshape(700, 520) % 300
         ds = make_test_dataset(
             bands={"fbfm": data}, shape=(700, 520), nodatas={"fbfm": 32767}
         )
         with self._export_local(ds, tmp_path, chunk_shape=(700, 520)) as r:
-            assert r.tags(ns="IMAGE_STRUCTURE")["PREDICTOR"] == "2"
+            structure = r.tags(ns="IMAGE_STRUCTURE")
+            assert structure["COMPRESSION"] == "DEFLATE"
+            assert "PREDICTOR" not in structure
             np.testing.assert_array_equal(r.read(1), data)
 
 

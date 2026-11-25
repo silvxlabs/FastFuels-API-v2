@@ -15,14 +15,13 @@ import zipfile
 from collections.abc import Callable
 
 import numpy as np
-import rasterio
 import rioxarray  # noqa: F401
 import xarray as xr
 from zarr.codecs import ZstdCodec
 
 from exporter.errors import ProcessingError
 from exporter.filename import sanitize_filename
-from exporter.storage import load_grid_zarr, open_upload
+from exporter.storage import load_grid_zarr, open_upload, upload_file
 from lib.config import EXPORTS_BUCKET
 
 logger = logging.getLogger(__name__)
@@ -193,20 +192,25 @@ def export_geotiff(
     progress("Writing GeoTIFF...", 70)
     filename = sanitize_filename(export.get("name", ""), ".tif")
     gcs_path = f"gs://{EXPORTS_BUCKET}/{export_id}/{filename}"
+    # Written locally (tmpfs on Cloud Run, so the compressed size counts toward
+    # memory) and uploaded only once complete. rioxarray reopens the file in
+    # r+ mode per chunk from dask threads, which /vsigs/ cannot do.
     try:
-        # GDAL stages the compressed file in /tmp (tmpfs) and uploads it on close.
-        with rasterio.Env(CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE="YES"):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            local_path = os.path.join(tmp_dir, "export.tif")
             if _nodata_is_uniform(ds):
                 dtype = np.result_type(*(ds[v].dtype for v in ds.data_vars))
                 tiles = ds.chunk({"y": _TILE, "x": _TILE})
-                tiles.rio.to_raster(gcs_path, **_geotiff_options(dtype))
+                tiles.rio.to_raster(local_path, **_geotiff_options(dtype))
             else:
                 # Bands carry distinct nodata (e.g. LANDFIRE aspect -1 next to
                 # elevation 32767). A GeoTIFF has one dtype and one file-level
                 # nodata, so map every band's nodata onto a shared value.
                 stacked = _stack_with_shared_nodata(ds)
                 tiles = stacked.chunk({"band": 1, "y": _TILE, "x": _TILE})
-                tiles.rio.to_raster(gcs_path, **_geotiff_options(stacked.dtype))
+                tiles.rio.to_raster(local_path, **_geotiff_options(stacked.dtype))
+
+            upload_file(local_path, gcs_path)
     except Exception as e:
         raise ProcessingError(
             code="GEOTIFF_WRITE_ERROR",

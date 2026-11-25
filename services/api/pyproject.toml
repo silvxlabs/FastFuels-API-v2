@@ -18,6 +18,8 @@ dependencies = [
     "google-cloud-run>=0.15.0",
     "google-cloud-storage>=3.9.0",
     "google-cloud-tasks>=2.21.0",
+    # 1.80 fixes the asyncio multi-loop BlockingIOError flood (grpc/grpc#25364).
+    "grpcio>=1.80.0",
     "gunicorn>=25.0.1",
     "lib[threedep,entwine,pointcloud,inventory]",
     "orjson>=3.13.0",

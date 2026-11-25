@@ -1,18 +1,24 @@
 """
 Tests for exporter inventory handlers.
 
-Unit tests mock storage to test handler logic.
+Unit tests mock the inventory load and write to an in-memory filesystem.
 Integration tests write to the real GCS bucket.
 """
 
 import io
 import json
 import os
+import subprocess
+import sys
+import textwrap
 import uuid
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
+import fsspec
 import gcsfs
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 import pytest
@@ -24,7 +30,9 @@ from exporter.handlers.inventory import (
     export_parquet,
 )
 
-MOCK_UPLOAD = patch("exporter.handlers.inventory._upload_bytes")
+EXPORTER_ROOT = Path(__file__).resolve().parents[2]
+MEMFS = fsspec.filesystem("memory")
+MOCK_UPLOAD = patch("exporter.handlers.inventory.get_gcsfs_client", return_value=MEMFS)
 
 
 def make_test_dataframe(
@@ -99,10 +107,10 @@ class TestExportParquetUnit:
 
     @MOCK_UPLOAD
     @patch("exporter.handlers.inventory.load_inventory_parquet")
-    def test_column_subset_applied(self, mock_load, mock_upload):
+    def test_column_subset_applied(self, mock_load, _mock_upload):
         mock_load.return_value = make_test_dataframe()
 
-        export_parquet(
+        gcs_path = export_parquet(
             {"id": "test-export"},
             {
                 "inventory_id": "inv-abc",
@@ -113,8 +121,7 @@ class TestExportParquetUnit:
         )
 
         # Verify the uploaded data only has selected columns
-        uploaded_bytes = mock_upload.call_args[0][0]
-        with zipfile.ZipFile(io.BytesIO(uploaded_bytes)) as zf:
+        with zipfile.ZipFile(io.BytesIO(MEMFS.cat(gcs_path))) as zf:
             inner_name = zf.namelist()[0]
             df = pd.read_parquet(io.BytesIO(zf.read(inner_name)))
         assert list(df.columns) == ["x", "y", "dbh"]
@@ -165,7 +172,6 @@ class TestExportParquetUnit:
         assert calls == [
             ("Loading inventory data...", 20),
             ("Writing Parquet...", 60),
-            ("Creating ZIP archive...", 80),
         ]
 
     @MOCK_UPLOAD
@@ -184,7 +190,6 @@ class TestExportParquetUnit:
             ("Loading inventory data...", 20),
             ("Selecting columns...", 40),
             ("Writing Parquet...", 60),
-            ("Creating ZIP archive...", 80),
         ]
 
 
@@ -206,17 +211,16 @@ class TestExportCsvUnit:
 
     @MOCK_UPLOAD
     @patch("exporter.handlers.inventory.load_inventory_parquet")
-    def test_column_subset_applied(self, mock_load, mock_upload):
+    def test_column_subset_applied(self, mock_load, _mock_upload):
         mock_load.return_value = make_test_dataframe()
 
-        export_csv(
+        gcs_path = export_csv(
             {"id": "test-export"},
             {"inventory_id": "inv-abc", "name": "csv", "columns": ["dbh", "height"]},
             noop_progress,
         )
 
-        uploaded_bytes = mock_upload.call_args[0][0]
-        df = pd.read_csv(io.BytesIO(uploaded_bytes))
+        df = pd.read_csv(io.BytesIO(MEMFS.cat(gcs_path)))
         assert list(df.columns) == ["dbh", "height"]
 
     @patch("exporter.handlers.inventory.load_inventory_parquet")
@@ -286,10 +290,10 @@ class TestExportGeojsonUnit:
 
     @MOCK_UPLOAD
     @patch("exporter.handlers.inventory.load_inventory_parquet")
-    def test_column_subset_with_xy(self, mock_load, mock_upload):
+    def test_column_subset_with_xy(self, mock_load, _mock_upload):
         mock_load.return_value = make_test_dataframe()
 
-        export_geojson(
+        gcs_path = export_geojson(
             {"id": "test-export"},
             {
                 "inventory_id": "inv-abc",
@@ -300,8 +304,7 @@ class TestExportGeojsonUnit:
             noop_progress,
         )
 
-        uploaded_bytes = mock_upload.call_args[0][0]
-        geojson = json.loads(uploaded_bytes.decode("utf-8"))
+        geojson = json.loads(MEMFS.cat(gcs_path).decode("utf-8"))
         assert geojson["type"] == "FeatureCollection"
         # Should have dbh in properties (x,y moved to geometry)
         props = geojson["features"][0]["properties"]
@@ -323,7 +326,6 @@ class TestExportGeojsonUnit:
 
         assert calls == [
             ("Loading inventory data...", 20),
-            ("Converting to GeoDataFrame...", 60),
             ("Writing GeoJSON...", 80),
         ]
 
@@ -376,9 +378,129 @@ class TestExportGeopackageUnit:
 
         assert calls == [
             ("Loading inventory data...", 20),
-            ("Converting to GeoDataFrame...", 60),
             ("Writing GeoPackage...", 80),
         ]
+
+
+def make_nullable_dataframe(n_rows: int = 23) -> pd.DataFrame:
+    """Synthetic inventory with NaN floats and NA integers, non-zero index."""
+    df = make_test_dataframe(n_rows)
+    df["fia_status_code"] = pd.array(df["fia_status_code"], dtype="Int64")
+    df.loc[df.index[::3], "fia_status_code"] = pd.NA
+    df.loc[df.index[::4], "crown_ratio"] = np.nan
+    df.index = df.index + 100
+    return df
+
+
+class TestBatchedWritesUnit:
+    """Batched GeoJSON/GeoPackage writes match the whole-frame output (#608)."""
+
+    @pytest.mark.parametrize("crs", ["EPSG:32611", None])
+    @pytest.mark.parametrize("n_rows", [0, 1, 7, 23])
+    @patch("exporter.handlers.inventory.WRITE_BATCH_ROWS", 7)
+    @MOCK_UPLOAD
+    @patch("exporter.handlers.inventory.load_inventory_parquet")
+    def test_geojson_matches_to_json(self, mock_load, _mock_upload, n_rows, crs):
+        df = make_nullable_dataframe().iloc[:n_rows]
+        mock_load.return_value = df
+
+        gcs_path = export_geojson(
+            {"id": "test-export"},
+            {"inventory_id": "inv-abc", "crs": crs},
+            noop_progress,
+        )
+
+        expected = gpd.GeoDataFrame(
+            df.drop(columns=["x", "y"]),
+            geometry=gpd.points_from_xy(df["x"], df["y"]),
+            crs=crs,
+        ).to_json()
+        assert MEMFS.cat(gcs_path).decode("utf-8") == expected
+
+    @pytest.mark.parametrize("n_rows", [0, 1, 7, 23])
+    @patch("exporter.handlers.inventory.WRITE_BATCH_ROWS", 7)
+    @MOCK_UPLOAD
+    @patch("exporter.handlers.inventory.load_inventory_parquet")
+    def test_geopackage_round_trips(self, mock_load, _mock_upload, tmp_path, n_rows):
+        df = make_nullable_dataframe().iloc[:n_rows]
+        mock_load.return_value = df
+
+        gcs_path = export_geopackage(
+            {"id": "test-export"},
+            {"inventory_id": "inv-abc", "crs": "EPSG:32611"},
+            noop_progress,
+        )
+
+        local = tmp_path / "out.gpkg"
+        local.write_bytes(MEMFS.cat(gcs_path))
+        gdf = gpd.read_file(local)
+        assert gdf.crs == "EPSG:32611"
+        assert len(gdf) == n_rows
+        np.testing.assert_array_equal(gdf.geometry.x, df["x"])
+        np.testing.assert_array_equal(gdf.geometry.y, df["y"])
+        for col in ["fia_status_code", "crown_ratio", "dbh"]:
+            assert gdf[col].isna().tolist() == df[col].isna().tolist()
+
+
+PEAK_RSS_SCRIPT = textwrap.dedent(
+    """
+    import resource, sys
+    from unittest.mock import patch
+
+    import fsspec, numpy as np, pandas as pd
+
+    from exporter.handlers import inventory
+
+    handler, rows = getattr(inventory, sys.argv[1]), int(sys.argv[2])
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({
+        "x": rng.uniform(5e5, 5.04e5, rows),
+        "y": rng.uniform(5.2e6, 5.204e6, rows),
+        "fia_species_code": pd.array(rng.integers(100, 999, rows), dtype="Int64"),
+        "fia_status_code": pd.array(rng.integers(1, 3, rows), dtype="Int64"),
+        "dbh": rng.uniform(5, 80, rows),
+        "height": rng.uniform(3, 40, rows),
+        "crown_ratio": rng.uniform(0.1, 0.9, rows),
+    })
+
+    class DiscardFS:
+        def open(self, path, mode):
+            return fsspec.filesystem("file").open("/dev/null", mode)
+
+        def put_file(self, local, path):
+            pass
+
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    with (
+        patch.object(inventory, "load_inventory_parquet", return_value=df),
+        patch.object(inventory, "get_gcsfs_client", return_value=DiscardFS()),
+    ):
+        handler({"id": "e"}, {"inventory_id": "i", "crs": "EPSG:32611"}, print)
+    after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    scale = 1 if sys.platform == "darwin" else 1024  # bytes vs KiB
+    print((after - before) * scale)
+    """
+)
+
+
+class TestPeakMemory:
+    """Handler memory is bounded by the write batch, not the row count (#608)."""
+
+    @pytest.mark.parametrize(
+        "handler",
+        ["export_geojson", "export_geopackage", "export_csv", "export_parquet"],
+    )
+    def test_peak_rss_under_400mb_at_1m_rows(self, handler):
+        result = subprocess.run(
+            [sys.executable, "-c", PEAK_RSS_SCRIPT, handler, "1000000"],
+            cwd=EXPORTER_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert result.returncode == 0, result.stderr
+        delta_mb = int(result.stdout.strip().splitlines()[-1]) / 2**20
+        assert delta_mb < 400, f"{handler} grew peak RSS by {delta_mb:.0f} MB"
 
 
 # Integration tests
